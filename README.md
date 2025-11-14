@@ -30,71 +30,65 @@ Crisis-Connect/
 ## Security and Privacy
 Crisis Connect is designed for reliability and trust in high-risk, safety-critical environments.
 
-End-to-end encrypted communication where applicable
+- End-to-end encrypted communication where applicable
 
-Publicly auditable networking and cryptographic logic
+- Publicly auditable networking and cryptographic logic
 
-Strong copyleft licensing (AGPL-3.0) to maintain long-term transparency
+- Strong copyleft licensing (AGPL-3.0) to maintain long-term transparency
 
 Independent review from the security community is encouraged.
 
 ## Connectivity Architecture
 
-## Bluetooth Classic (RFCOMM)
-Stable and low-latency data channels
+### Bluetooth Classic (RFCOMM)
+- Stable and low-latency data channels
 
-Authenticated session handshake
+- Authenticated session handshake
 
-Reliable message transfer under constrained conditions
+- Reliable message transfer under constrained conditions
 
-## Bluetooth Low Energy (GATT)
-Energy-efficient peer discovery
+### Bluetooth Low Energy (GATT)
+- Energy-efficient peer discovery
 
-Advertisement-based presence detection
+- Advertisement-based presence detection
 
-Flexible scanning and connection management
+- Flexible scanning and connection management
 
+Detailed technical specifications will be available under the docs/ directory.
 
 ## Platform Implementations
-## Android
-Kotlin and Jetpack Compose
+### Android
+- Kotlin and Jetpack Compose
 
-Foreground service communication layer
+- Foreground service communication layer
 
-BLE + Classic hybrid networking stack
+- BLE + Classic hybrid networking stack
 
-Encrypted local message storage
+- Encrypted local message storage
 
-Modular, maintainable, and testable architecture
+- Modular, maintainable, and testable architecture
 
-## iOS
-(Currently in development)
+### iOS (Currently in development)
+- Swift / SwiftUI
 
-Swift / SwiftUI
+- Multipeer Connectivity and Bluetooth abstractions
 
-Multipeer Connectivity and Bluetooth abstractions
-
-Offline-first local storage and synchronization
+- Offline-first local storage and synchronization
 
 ## Roadmap
-Wi-Fi Direct multi-hop mesh
 
-Cross-platform cryptographic key exchange
+- Cross-platform cryptographic key exchange
 
-iOS beta release
+- iOS beta release
 
-Encrypted voice and media transmission
+- Web-based operations dashboard
 
-Public cryptographic audit
+- Municipality and agency integration
 
-Web-based operations dashboard
-
-Municipality and agency integration
-
-Contributing
+## Contributing
 Contributions are welcome. Developers may submit issues, propose improvements, or open pull requests for discussion.
 
-License
+## License
 This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
 Any modified versions, derivative works, or network-accessible services must remain open source under the same license to ensure long-term transparency and trust.
 
