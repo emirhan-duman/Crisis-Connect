@@ -1,2 +1,5 @@
-# Crisis-Connect
-Offline-first disaster communication platform with Bluetooth networking, encrypted messaging, and rescue tools.
+# Crisis Connect
+
+**We are connecting lives when it matters most.**
+
+Crisis Connect is an offline-first, secure communication platform...
