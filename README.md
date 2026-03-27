@@ -1,97 +1,72 @@
-# Crisis Connect — Offline-First Disaster Communication Platform
+# Crisis Connect
 
-**We are connecting lives when it matters most.**
+[![Status](https://img.shields.io/badge/status-early%20stage-0f172a)](https://github.com/emirhan-duman/Crisis-Connect)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-8b0000.svg)](./LICENSE)
 
-Crisis Connect is an offline-first, secure communication platform designed for disaster and emergency scenarios where conventional communication infrastructure becomes unavailable. It enables device-to-device messaging, local peer discovery, and rescue coordination using Bluetooth networking and short-range mesh connectivity.
+Offline-first communication infrastructure for disaster and emergency scenarios.
 
----
+Crisis Connect is a public project focused on resilient communication workflows for situations where conventional infrastructure, including mobile networks and internet access, may be degraded or unavailable. The goal is to explore a practical system design centered on direct device-to-device interaction, local-first coordination, and transparent development.
 
-## Key Features
+## Current Status
 
-- Offline messaging without cellular or internet infrastructure  
-- Peer discovery and data exchange via Bluetooth  
-- Secure, authenticated, and encrypted communication flows  
-- Modular rescue and field-operation tools  
-- Cross-platform architecture (Android and iOS under one repository)  
-- Full transparency through open-source code for public verification  
+Crisis Connect is currently in an early public stage.
 
----
+This repository is being used as the public home for the project vision, roadmap, and upcoming implementation work. The full source code and technical documentation are not yet published here. At this stage, the project should be treated as an active build-in-public effort rather than a production-ready system.
 
-## Repository Structure
+## Why This Project Exists
 
-Crisis-Connect/
-  android/    → Android implementation (Kotlin, Jetpack Compose)
-  ios/        → iOS implementation (Swift / SwiftUI)
-  docs/       → Architecture, protocol specifications, and technical documentation
-  designs/    → UI/UX resources and design assets
-  LICENSE
-  README.md
-  
-## Security and Privacy
-Crisis Connect is designed for reliability and trust in high-risk, safety-critical environments.
+In disaster conditions, communication failure is often a systems problem before it becomes a human problem. When centralized infrastructure becomes unreliable, coordination becomes slower, visibility drops, and response quality deteriorates.
 
-- End-to-end encrypted communication where applicable
+Crisis Connect is being shaped around a different assumption: critical communication tools should remain useful even under degraded network conditions. That means prioritizing local resilience, operational simplicity, and architecture that can be inspected and improved in the open.
 
-- Publicly auditable networking and cryptographic logic
+## Project Direction
 
-- Strong copyleft licensing (AGPL-3.0) to maintain long-term transparency
+The long-term direction of the project includes:
 
-Independent review from the security community is encouraged.
+- Offline-first communication flows
+- Local peer discovery
+- Short-range device-to-device messaging
+- Coordination support for emergency and field operations
+- Publicly reviewable architecture and implementation decisions
 
-## Connectivity Architecture
+## Design Principles
 
-### Bluetooth Classic (RFCOMM)
-- Stable and low-latency data channels
+Crisis Connect is being developed around a small set of core principles:
 
-- Authenticated session handshake
+- Reliability under degraded conditions
+- Clear and stress-tolerant user flows
+- Security-conscious system design
+- Incremental delivery over inflated scope
+- Public accountability through open development
 
-- Reliable message transfer under constrained conditions
+## What Will Be Published Here
 
-### Bluetooth Low Energy (GATT)
-- Energy-efficient peer discovery
+As the project matures, this repository will be expanded to include:
 
-- Advertisement-based presence detection
-
-- Flexible scanning and connection management
-
-Detailed technical specifications will be available under the docs/ directory.
-
-## Platform Implementations
-### Android
-- Kotlin and Jetpack Compose
-
-- Foreground service communication layer
-
-- BLE + Classic hybrid networking stack
-
-- Encrypted local message storage
-
-- Modular, maintainable, and testable architecture
-
-### iOS (Currently in development)
-- Swift / SwiftUI
-
-- Multipeer Connectivity and Bluetooth abstractions
-
-- Offline-first local storage and synchronization
+- Source code
+- Architecture and protocol documentation
+- Development setup instructions
+- Milestone tracking
+- Contribution guidelines
 
 ## Roadmap
 
-- Cross-platform cryptographic key exchange
+Current milestones are expected to include:
 
-- iOS beta release
-
-- Web-based operations dashboard
-
-- Municipality and agency integration
+1. Publish the initial implementation baseline
+2. Add architecture and technical documentation
+3. Document local development and testing workflows
+4. Define contribution structure and issue process
+5. Expand platform coverage after the core architecture stabilizes
 
 ## Contributing
-Contributions are welcome. Developers may submit issues, propose improvements, or open pull requests for discussion.
+
+Feedback is welcome, especially on scope, architecture direction, documentation quality, and roadmap clarity.
+
+Once the implementation is published, this repository will also include development setup instructions and a more formal contribution workflow for pull requests and issue-based collaboration.
 
 ## License
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
-Any modified versions, derivative works, or network-accessible services must remain open source under the same license to ensure long-term transparency and trust.
 
-Transparency Statement
-Crisis Connect is built for environments where communication must remain reliable and verifiable.
-All components—including networking logic, cryptographic operations, and offline-first mechanisms—are fully open for public inspection. This ensures accountability, operational reliability, and transparent behavior during critical moments.
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+See [LICENSE](./LICENSE) for details.
