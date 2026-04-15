@@ -5,21 +5,30 @@
 <h1 align="center">Crisis Connect</h1>
 
 <p align="center">
-  Offline-first communication platform for disaster and emergency scenarios.<br/>
-  Peer-to-peer encrypted messaging, voice calls, and rescue coordination over Bluetooth.
+  <strong>Offline-first communication platform for disaster and emergency scenarios.</strong><br/>
+  Peer-to-peer encrypted messaging, voice calls, and rescue coordination over Bluetooth.<br/>
+  No internet required.
 </p>
 
 <p align="center">
-  <a href="https://play.google.com/store/apps/details?id=com.auralis.crisisconnect"><img src="https://img.shields.io/badge/Google%20Play-Available-3ddc84?logo=google-play&logoColor=white" alt="Google Play" /></a>
-  <a href="https://apps.apple.com/app/crisis-connect/id6742044940"><img src="https://img.shields.io/badge/App%20Store-Available-147efb?logo=app-store&logoColor=white" alt="App Store" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-8b0000.svg" alt="License: AGPL-3.0" /></a>
+  <a href="https://play.google.com/store/apps/details?id=com.auralis.crisisconnect"><img src="https://img.shields.io/badge/Google%20Play-Download-3ddc84?style=for-the-badge&logo=google-play&logoColor=white" alt="Google Play" /></a>&nbsp;
+  <a href="https://apps.apple.com/app/crisis-connect/id6759731195"><img src="https://img.shields.io/badge/App%20Store-Download-147efb?style=for-the-badge&logo=app-store&logoColor=white" alt="App Store" /></a>
+</p>
+
+<p align="center">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-8b0000.svg" alt="License" /></a>&nbsp;
+  <a href="https://crisisconnect.network"><img src="https://img.shields.io/badge/web-crisisconnect.network-0f172a" alt="Website" /></a>&nbsp;
+  <a href="https://x.com/CrisisConnectHQ"><img src="https://img.shields.io/badge/X-@CrisisConnectHQ-000000?logo=x&logoColor=white" alt="X" /></a>&nbsp;
+  <a href="https://www.instagram.com/crisisconnecthq/"><img src="https://img.shields.io/badge/Instagram-crisisconnecthq-E4405F?logo=instagram&logoColor=white" alt="Instagram" /></a>&nbsp;
+  <a href="https://www.linkedin.com/company/112030175"><img src="https://img.shields.io/badge/LinkedIn-Crisis%20Connect-0A66C2?logo=linkedin&logoColor=white" alt="LinkedIn" /></a>
 </p>
 
 <p align="center">
   <a href="#features">Features</a>&nbsp;&nbsp;&bull;&nbsp;&nbsp;
   <a href="#architecture">Architecture</a>&nbsp;&nbsp;&bull;&nbsp;&nbsp;
   <a href="#getting-started">Getting Started</a>&nbsp;&nbsp;&bull;&nbsp;&nbsp;
-  <a href="#contributing">Contributing</a>
+  <a href="#contributing">Contributing</a>&nbsp;&nbsp;&bull;&nbsp;&nbsp;
+  <a href="https://crisisconnect.network">Website</a>
 </p>
 
 ---
@@ -31,6 +40,8 @@ When disaster strikes, communication infrastructure is often the first thing to 
 Crisis Connect takes a different approach: **every core feature works without internet**. Devices communicate directly over Bluetooth, forming ad-hoc mesh networks that relay messages across multiple hops. Encryption is built in from the ground up. Rescue teams get dedicated coordination tools with cryptographically verified identities.
 
 The result is a communication system that remains operational when everything else fails.
+
+> Available now on [Google Play](https://play.google.com/store/apps/details?id=com.auralis.crisisconnect) and [App Store](https://apps.apple.com/app/crisis-connect/id6759731195). Learn more at [crisisconnect.network](https://crisisconnect.network).
 
 ## Features
 
@@ -235,6 +246,18 @@ Areas where contributions are especially valued:
 - Test coverage improvements
 - Localization (new languages)
 - Accessibility enhancements
+
+## Links
+
+| | |
+|:--|:--|
+| **Website** | [crisisconnect.network](https://crisisconnect.network) |
+| **Website (TR)** | [crisisconnect.com.tr](https://crisisconnect.com.tr) |
+| **Google Play** | [Download for Android](https://play.google.com/store/apps/details?id=com.auralis.crisisconnect) |
+| **App Store** | [Download for iOS](https://apps.apple.com/app/crisis-connect/id6759731195) |
+| **X** | [@CrisisConnectHQ](https://x.com/CrisisConnectHQ) |
+| **Instagram** | [@crisisconnecthq](https://www.instagram.com/crisisconnecthq/) |
+| **LinkedIn** | [Crisis Connect](https://www.linkedin.com/company/112030175) |
 
 ## License
 
