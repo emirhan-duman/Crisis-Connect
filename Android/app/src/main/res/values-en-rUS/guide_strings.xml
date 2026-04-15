@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Emergency Guide</string>
+    <string name="guide_screen_intro_subtitle">Reach critical information quickly and follow short actions under pressure.</string>
+    <string name="guide_screen_filter_all">All categories</string>
+    <string name="guide_screen_section_30_seconds">In 30 seconds</string>
+    <string name="guide_screen_section_step_by_step">Step by step</string>
+    <string name="guide_screen_section_dont">Don\'t do</string>
+    <string name="guide_screen_section_checklist">Checklist</string>
+    <string name="guide_screen_expand_details">Show details</string>
+    <string name="guide_screen_collapse_details">Hide details</string>
+    <string name="guide_screen_action_start_checklist">Start checklist</string>
+    <string name="guide_screen_action_call_local">Call %1$s</string>
+    <string name="guide_screen_action_open_assembly">Open assembly area</string>
+    <string name="guide_screen_source_note">Source note:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d completed</string>
+    <string name="guide_screen_no_dial_app_with_number">No app found to call %1$s.</string>
+    <string name="guide_screen_no_map_app">No app found to open maps.</string>
+    <string name="guide_screen_assembly_query">Disaster assembly area</string>
+    <string name="guide_screen_search_placeholder">Search by code, category, or topic</string>
+    <string name="guide_screen_clear_search">Clear search</string>
+    <string name="guide_screen_clear_filters">Clear filters</string>
+    <string name="guide_screen_empty_title">No guide found</string>
+    <string name="guide_screen_empty_body">Try reducing filters or searching with a broader keyword.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d more quick actions</string>
+    <string name="guide_screen_region_value">Region: %1$s • Emergency number: %2$s</string>
+    <string name="guide_screen_results_count">%1$d guides listed</string>
+    <string name="guide_screen_read_minutes_format">%1$d min</string>
+</resources>

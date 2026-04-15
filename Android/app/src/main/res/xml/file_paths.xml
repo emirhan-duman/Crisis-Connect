@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="camera_images" path="camera_images/" />
+    <files-path name="image_messages" path="image_messages/" />
+    <files-path name="image_thumbnails" path="image_thumbnails/" />
+    <files-path name="shared_documents" path="shared_documents/" />
+</paths>

@@ -1,0 +1,13 @@
+# This file should NOT be checked into version control.
+# Copy this file to local.properties and fill in the values.
+
+sdk.dir=/path/to/your/Android/sdk
+
+# Google Sign-In web client ID (from Firebase Console > Authentication > Sign-in method > Google)
+GOOGLE_WEB_CLIENT_ID=your-project-number-xxxxx.apps.googleusercontent.com
+
+# MapLibre API key (from https://cloud.maptiler.com/account/keys/)
+MAPLIBRE_API_KEY=your_maplibre_api_key
+
+# Firebase App Check debug token (only needed for debug/internal builds)
+APP_CHECK_DEBUG_TOKEN=

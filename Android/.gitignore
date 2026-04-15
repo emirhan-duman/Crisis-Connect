@@ -1,0 +1,65 @@
+# Built application files
+*.apk
+*.aar
+*.aab
+*.ap_
+*.dex
+
+# Files for the ART/Dalvik VM
+*.odex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+
+# Gradle files
+.gradle/
+local.properties
+
+# Signing
+keystore.properties
+*.jks
+*.keystore
+
+# Firebase config (contains API keys)
+app/google-services.json
+app/src/internal/google-services.json
+.firebaserc
+.secrets/
+
+# Cloud Functions
+functions/node_modules/
+functions/lib/
+functions/package-lock.json
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kotlin
+.kotlin/
+
+# Release artifacts
+app/release/
+captures/
+
+# Debug logs
+firestore-debug.log
+*.log
+
+# External native build
+.externalNativeBuild/
+.cxx/
+
+# Output
+output/

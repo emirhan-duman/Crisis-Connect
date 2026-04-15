@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Acil Durum Rehberi</string>
+    <string name="guide_screen_intro_subtitle">Kritik bilgiye hızla ulaş, panik anında kısa adımları uygula.</string>
+    <string name="guide_screen_filter_all">Tüm kategoriler</string>
+    <string name="guide_screen_section_30_seconds">30 saniyede</string>
+    <string name="guide_screen_section_step_by_step">Adım adım</string>
+    <string name="guide_screen_section_dont">Yapma</string>
+    <string name="guide_screen_section_checklist">Checklist</string>
+    <string name="guide_screen_expand_details">Detayları göster</string>
+    <string name="guide_screen_collapse_details">Detayları gizle</string>
+    <string name="guide_screen_action_start_checklist">Checklist\'i başlat</string>
+    <string name="guide_screen_action_call_local">%1$s\'i ara</string>
+    <string name="guide_screen_action_open_assembly">Toplanma alanını aç</string>
+    <string name="guide_screen_source_note">Kaynak notu:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d tamamlandı</string>
+    <string name="guide_screen_no_dial_app_with_number">%1$s için arama uygulaması bulunamadı.</string>
+    <string name="guide_screen_no_map_app">Harita açacak uygulama bulunamadı.</string>
+    <string name="guide_screen_assembly_query">Afet ve Acil Durum Toplanma Alanı</string>
+    <string name="guide_screen_search_placeholder">Kod, kategori veya konuya göre ara</string>
+    <string name="guide_screen_clear_search">Aramayı temizle</string>
+    <string name="guide_screen_clear_filters">Filtreleri temizle</string>
+    <string name="guide_screen_empty_title">Rehber bulunamadı</string>
+    <string name="guide_screen_empty_body">Filtreleri azaltıp daha genel bir anahtar kelime ile tekrar dene.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d hızlı adım daha</string>
+    <string name="guide_screen_region_value">Bölge: %1$s • Acil numara: %2$s</string>
+    <string name="guide_screen_results_count">%1$d rehber listeleniyor</string>
+    <string name="guide_screen_read_minutes_format">%1$d dk</string>
+</resources>
