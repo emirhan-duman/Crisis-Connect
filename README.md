@@ -51,6 +51,7 @@
 
 - [The Problem](#the-problem)
 - [How It Works](#how-it-works)
+- [Screenshots](#screenshots)
 - [Features](#features)
   - [Offline Communication](#offline-communication)
   - [Rescue Operations](#rescue-operations)
@@ -125,6 +126,18 @@ The system operates across three layers:
 3. **Communication** -- Messages, voice, images, and files flow through this encrypted channel. If the recipient is not in direct range, the GATT mesh protocol relays data through intermediate devices -- each hop maintaining end-to-end encryption.
 
 When internet *is* available, Firebase handles authentication and rescue team coordination -- but the core messaging stack never depends on it. The app is fully functional in airplane mode with Bluetooth enabled.
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/ios/messages.png" width="230" alt="Messages" />&nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/ios/chat.png" width="230" alt="Encrypted Chat" />&nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/ios/tools.png" width="230" alt="Emergency Tools" />
+</p>
+
+<p align="center">
+  <sub><strong>Left:</strong> Message inbox with trusted contacts and SOS chats&nbsp;&nbsp;&bull;&nbsp;&nbsp;<strong>Center:</strong> End-to-end encrypted P2P chat with voice messages and call history&nbsp;&nbsp;&bull;&nbsp;&nbsp;<strong>Right:</strong> Built-in emergency tools for disaster scenarios</sub>
+</p>
 
 ## Features
 
@@ -613,16 +626,51 @@ We take security reports seriously and will respond as quickly as possible.
 
 ## Roadmap
 
-Crisis Connect is actively developed. Current priorities include:
+Crisis Connect is in production on both app stores and under active development. The roadmap reflects what has been shipped and what comes next.
 
-- [ ] Protocol specification documentation (BLE framing, mesh routing, certificate format)
-- [ ] Architecture decision records (ADRs)
-- [ ] Cross-platform interoperability testing (Android-to-iOS mesh relay)
-- [ ] Expanded test coverage for BLE edge cases
-- [ ] Additional language support
-- [ ] Accessibility audit and improvements
-- [ ] Offline map region sharing between devices
-- [ ] Group mesh chat support
+### Shipped (v1.0.0)
+
+- [x] BLE GATT peer-to-peer encrypted messaging (Android + iOS)
+- [x] RFCOMM voice calls with Opus codec and jitter buffering (Android)
+- [x] GATT mesh multi-hop message relay
+- [x] QR-based ECDH key exchange and secure contact pairing
+- [x] AES-256-GCM end-to-end encryption (Tink on Android, CryptoKit on iOS)
+- [x] Image and file transfer over BLE with chunking and delivery receipts
+- [x] Voice message recording, sending, and waveform playback
+- [x] SOS emergency broadcast to nearby devices
+- [x] Rescue role system with ECDSA-signed certificates (72h TTL)
+- [x] CrisisLink background sync engine for rescue coordination
+- [x] Live GPS location sharing during rescue operations
+- [x] Dynamic feature module for rescue operations (Android Play Feature Delivery)
+- [x] Offline maps with downloadable regions (MapLibre)
+- [x] Emergency toolkit: compass, signal finder, metal detector, whistle, sensor dashboard
+- [x] LiDAR scanner and night vision tool (iOS)
+- [x] Survival guide with step-by-step checklists (EN/TR)
+- [x] SQLCipher encrypted local database (Android)
+- [x] Firebase App Check with Play Integrity and App Attest
+- [x] Firestore security rules with agency-scoped access control
+- [x] Google Sign-In authentication
+- [x] Localization: English and Turkish
+- [x] 213 automated tests (194 unit + 19 instrumented)
+- [x] GitHub Actions CI for Android
+- [x] Xcode Cloud CI for iOS
+- [x] Published on Google Play and App Store
+
+### In Progress
+
+- [ ] Protocol specification documentation (BLE framing format, mesh routing algorithm, certificate schema)
+- [ ] Cross-platform mesh relay testing (Android device relaying to iOS device and vice versa)
+- [ ] Expanded BLE edge-case test coverage (connection drops, MTU negotiation failures, background state)
+
+### Planned
+
+- [ ] Group mesh chat (multi-party encrypted conversation over GATT mesh)
+- [ ] Offline map region sharing between devices over BLE
+- [ ] Additional language localizations (community-driven)
+- [ ] Architecture decision records (ADRs) for key design choices
+- [ ] WCAG accessibility audit and improvements
+- [ ] Wi-Fi Direct transport layer as BLE alternative on Android
+- [ ] Bluetooth voice calls on iOS (currently Android-only via RFCOMM)
 
 ## Links
 
