@@ -129,14 +129,24 @@ When internet *is* available, Firebase handles authentication and rescue team co
 
 ## Screenshots
 
+### iOS
+
 <p align="center">
-  <img src="docs/screenshots/ios/messages.png" width="230" alt="Messages" />&nbsp;&nbsp;&nbsp;
-  <img src="docs/screenshots/ios/chat.png" width="230" alt="Encrypted Chat" />&nbsp;&nbsp;&nbsp;
-  <img src="docs/screenshots/ios/tools.png" width="230" alt="Emergency Tools" />
+  <img src="docs/screenshots/ios/messages.png" width="230" alt="iOS Messages" />&nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/ios/chat.png" width="230" alt="iOS Encrypted Chat" />&nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/ios/tools.png" width="230" alt="iOS Emergency Tools" />
+</p>
+
+### Android
+
+<p align="center">
+  <img src="docs/screenshots/android/messages.jpg" width="230" alt="Android Messages" />&nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/android/chat.jpg" width="230" alt="Android Encrypted Chat" />&nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/android/tools.jpg" width="230" alt="Android Emergency Tools" />
 </p>
 
 <p align="center">
-  <sub><strong>Left:</strong> Message inbox with trusted contacts and SOS chats&nbsp;&nbsp;&bull;&nbsp;&nbsp;<strong>Center:</strong> End-to-end encrypted P2P chat with voice messages and call history&nbsp;&nbsp;&bull;&nbsp;&nbsp;<strong>Right:</strong> Built-in emergency tools for disaster scenarios</sub>
+  <sub><strong>Left:</strong> Message inbox with trusted contacts and SOS broadcast&nbsp;&nbsp;&bull;&nbsp;&nbsp;<strong>Center:</strong> E2E encrypted chat with voice messages, calls, and read receipts&nbsp;&nbsp;&bull;&nbsp;&nbsp;<strong>Right:</strong> Built-in emergency tools for disaster scenarios</sub>
 </p>
 
 ## Features
