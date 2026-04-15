@@ -1,0 +1,40 @@
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+
+# SPM
+.build/
+.swiftpm/
+SourcePackages/
+
+# Firebase config (contains API keys)
+**/GoogleService-Info.plist
+
+# Codex / CI derived data
+.codex-derived*/
+.codex-temp/
+.spm-fresh-cache/
+
+# Debug & profiling
+*.trace
+*.trace/
+*-os-log.xml
+*-process-info.xml
+.tmp_crashlogs/
+.tmp_devicelogs/
+*.ips
+
+# Backups
+.duplicate-swift-backups/
+*.swift.disabled
+
+# Build output
+release/output/
+screenshots/
+Diagnostics/
+
+# OS
+.DS_Store
+Thumbs.db

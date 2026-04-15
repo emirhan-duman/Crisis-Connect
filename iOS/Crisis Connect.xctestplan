@@ -1,0 +1,33 @@
+{
+  "configurations" : [
+    {
+      "id" : "3F4DA3F8-88B2-4A2D-8F93-CEB6943B97D8",
+      "name" : "Default",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "testTimeoutsEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:Crisis Connect.xcodeproj",
+        "identifier" : "1E7EE2362EAD5A1700C66134",
+        "name" : "Crisis ConnectTests"
+      }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:Crisis Connect.xcodeproj",
+        "identifier" : "1E7EE2402EAD5A1700C66134",
+        "name" : "Crisis ConnectUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

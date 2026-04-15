@@ -1,0 +1,672 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1EE2249B2F05A2C9001F755A /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE2249A2F05A2C9001F755A /* FirebaseAuth */; };
+		1EE2249D2F05A2C9001F755A /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE2249C2F05A2C9001F755A /* FirebaseCore */; };
+		1EE2249F2F05A2C9001F755A /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE2249E2F05A2C9001F755A /* FirebaseFirestore */; };
+		1EE224A12F05A2C9001F755A /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE224A02F05A2C9001F755A /* FirebaseFunctions */; };
+		2A1F5F3A8F7C4B1282C0D001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 2A1F5F3A8F7C4B1282C0D002 /* GoogleSignIn */; };
+		2A1F5F3A8F7C4B1282C0D005 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 2A1F5F3A8F7C4B1282C0D004 /* FirebaseAppCheck */; };
+		2A1F5F3A8F7C4B1282C0D009 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 2A1F5F3A8F7C4B1282C0D008 /* FirebaseCrashlytics */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		1E7EE2382EAD5A1700C66134 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1E7EE2202EAD5A1500C66134 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1E7EE2272EAD5A1500C66134;
+			remoteInfo = "Crisis Connect";
+		};
+		1E7EE2422EAD5A1700C66134 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1E7EE2202EAD5A1500C66134 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1E7EE2272EAD5A1500C66134;
+			remoteInfo = "Crisis Connect";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		1E7EE2282EAD5A1500C66134 /* Crisis Connect.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Crisis Connect.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1E7EE2372EAD5A1700C66134 /* Crisis ConnectTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Crisis ConnectTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1E7EE2412EAD5A1700C66134 /* Crisis ConnectUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Crisis ConnectUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		1E7EE22A2EAD5A1500C66134 /* Crisis Connect */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Crisis Connect";
+			sourceTree = "<group>";
+		};
+		1E7EE23A2EAD5A1700C66134 /* Crisis ConnectTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Crisis ConnectTests";
+			sourceTree = "<group>";
+		};
+		1E7EE2442EAD5A1700C66134 /* Crisis ConnectUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Crisis ConnectUITests";
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1E7EE2252EAD5A1500C66134 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2A1F5F3A8F7C4B1282C0D005 /* FirebaseAppCheck in Frameworks */,
+				2A1F5F3A8F7C4B1282C0D009 /* FirebaseCrashlytics in Frameworks */,
+				1EE2249D2F05A2C9001F755A /* FirebaseCore in Frameworks */,
+				1EE2249B2F05A2C9001F755A /* FirebaseAuth in Frameworks */,
+				1EE2249F2F05A2C9001F755A /* FirebaseFirestore in Frameworks */,
+				1EE224A12F05A2C9001F755A /* FirebaseFunctions in Frameworks */,
+				2A1F5F3A8F7C4B1282C0D001 /* GoogleSignIn in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1E7EE2342EAD5A1700C66134 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1E7EE23E2EAD5A1700C66134 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1E7EE21F2EAD5A1500C66134 = {
+			isa = PBXGroup;
+			children = (
+				1E7EE22A2EAD5A1500C66134 /* Crisis Connect */,
+				1E7EE23A2EAD5A1700C66134 /* Crisis ConnectTests */,
+				1E7EE2442EAD5A1700C66134 /* Crisis ConnectUITests */,
+				1E7EE2292EAD5A1500C66134 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1E7EE2292EAD5A1500C66134 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1E7EE2282EAD5A1500C66134 /* Crisis Connect.app */,
+				1E7EE2372EAD5A1700C66134 /* Crisis ConnectTests.xctest */,
+				1E7EE2412EAD5A1700C66134 /* Crisis ConnectUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1E7EE2272EAD5A1500C66134 /* Crisis Connect */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1E7EE24B2EAD5A1700C66134 /* Build configuration list for PBXNativeTarget "Crisis Connect" */;
+			buildPhases = (
+				1E7EE2242EAD5A1500C66134 /* Sources */,
+				1E7EE2252EAD5A1500C66134 /* Frameworks */,
+				1E7EE2262EAD5A1500C66134 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1E7EE22A2EAD5A1500C66134 /* Crisis Connect */,
+			);
+			name = "Crisis Connect";
+			packageProductDependencies = (
+				2A1F5F3A8F7C4B1282C0D004 /* FirebaseAppCheck */,
+				2A1F5F3A8F7C4B1282C0D008 /* FirebaseCrashlytics */,
+				1EE2249A2F05A2C9001F755A /* FirebaseAuth */,
+				1EE2249C2F05A2C9001F755A /* FirebaseCore */,
+				1EE2249E2F05A2C9001F755A /* FirebaseFirestore */,
+				1EE224A02F05A2C9001F755A /* FirebaseFunctions */,
+				2A1F5F3A8F7C4B1282C0D002 /* GoogleSignIn */,
+			);
+			productName = "Crisis Connect";
+			productReference = 1E7EE2282EAD5A1500C66134 /* Crisis Connect.app */;
+			productType = "com.apple.product-type.application";
+		};
+		1E7EE2362EAD5A1700C66134 /* Crisis ConnectTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1E7EE24E2EAD5A1700C66134 /* Build configuration list for PBXNativeTarget "Crisis ConnectTests" */;
+			buildPhases = (
+				1E7EE2332EAD5A1700C66134 /* Sources */,
+				1E7EE2342EAD5A1700C66134 /* Frameworks */,
+				1E7EE2352EAD5A1700C66134 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1E7EE2392EAD5A1700C66134 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				1E7EE23A2EAD5A1700C66134 /* Crisis ConnectTests */,
+			);
+			name = "Crisis ConnectTests";
+			packageProductDependencies = (
+			);
+			productName = "Crisis ConnectTests";
+			productReference = 1E7EE2372EAD5A1700C66134 /* Crisis ConnectTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		1E7EE2402EAD5A1700C66134 /* Crisis ConnectUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1E7EE2512EAD5A1700C66134 /* Build configuration list for PBXNativeTarget "Crisis ConnectUITests" */;
+			buildPhases = (
+				1E7EE23D2EAD5A1700C66134 /* Sources */,
+				1E7EE23E2EAD5A1700C66134 /* Frameworks */,
+				1E7EE23F2EAD5A1700C66134 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1E7EE2432EAD5A1700C66134 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				1E7EE2442EAD5A1700C66134 /* Crisis ConnectUITests */,
+			);
+			name = "Crisis ConnectUITests";
+			packageProductDependencies = (
+			);
+			productName = "Crisis ConnectUITests";
+			productReference = 1E7EE2412EAD5A1700C66134 /* Crisis ConnectUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1E7EE2202EAD5A1500C66134 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2610;
+				TargetAttributes = {
+					1E7EE2272EAD5A1500C66134 = {
+						CreatedOnToolsVersion = 26.0.1;
+					};
+					1E7EE2362EAD5A1700C66134 = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 1E7EE2272EAD5A1500C66134;
+					};
+					1E7EE2402EAD5A1700C66134 = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 1E7EE2272EAD5A1500C66134;
+					};
+				};
+			};
+			buildConfigurationList = 1E7EE2232EAD5A1500C66134 /* Build configuration list for PBXProject "Crisis Connect" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				tr,
+				Base,
+			);
+			mainGroup = 1E7EE21F2EAD5A1500C66134;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				2A1F5F3A8F7C4B1282C0D003 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1E7EE2292EAD5A1500C66134 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1E7EE2272EAD5A1500C66134 /* Crisis Connect */,
+				1E7EE2362EAD5A1700C66134 /* Crisis ConnectTests */,
+				1E7EE2402EAD5A1700C66134 /* Crisis ConnectUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1E7EE2262EAD5A1500C66134 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1E7EE2352EAD5A1700C66134 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1E7EE23F2EAD5A1700C66134 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1E7EE2242EAD5A1500C66134 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1E7EE2332EAD5A1700C66134 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1E7EE23D2EAD5A1700C66134 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1E7EE2392EAD5A1700C66134 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1E7EE2272EAD5A1500C66134 /* Crisis Connect */;
+			targetProxy = 1E7EE2382EAD5A1700C66134 /* PBXContainerItemProxy */;
+		};
+		1E7EE2432EAD5A1700C66134 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1E7EE2272EAD5A1500C66134 /* Crisis Connect */;
+			targetProxy = 1E7EE2422EAD5A1700C66134 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1E7EE2492EAD5A1700C66134 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		1E7EE24A2EAD5A1700C66134 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		1E7EE24C2EAD5A1700C66134 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APP_ATTEST_ENVIRONMENT = production;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CrisisConnect.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 11;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Config/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1E7EE24D2EAD5A1700C66134 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APP_ATTEST_ENVIRONMENT = production;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CrisisConnect.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 11;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Config/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		1E7EE24F2EAD5A1700C66134 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnectTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Crisis Connect.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Crisis Connect";
+			};
+			name = Debug;
+		};
+		1E7EE2502EAD5A1700C66134 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnectTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Crisis Connect.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Crisis Connect";
+			};
+			name = Release;
+		};
+		1E7EE2522EAD5A1700C66134 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnectUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "Crisis Connect";
+			};
+			name = Debug;
+		};
+		1E7EE2532EAD5A1700C66134 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnectUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "Crisis Connect";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1E7EE2232EAD5A1500C66134 /* Build configuration list for PBXProject "Crisis Connect" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1E7EE2492EAD5A1700C66134 /* Debug */,
+				1E7EE24A2EAD5A1700C66134 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1E7EE24B2EAD5A1700C66134 /* Build configuration list for PBXNativeTarget "Crisis Connect" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1E7EE24C2EAD5A1700C66134 /* Debug */,
+				1E7EE24D2EAD5A1700C66134 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1E7EE24E2EAD5A1700C66134 /* Build configuration list for PBXNativeTarget "Crisis ConnectTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1E7EE24F2EAD5A1700C66134 /* Debug */,
+				1E7EE2502EAD5A1700C66134 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1E7EE2512EAD5A1700C66134 /* Build configuration list for PBXNativeTarget "Crisis ConnectUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1E7EE2522EAD5A1700C66134 /* Debug */,
+				1E7EE2532EAD5A1700C66134 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.7.0;
+			};
+		};
+		2A1F5F3A8F7C4B1282C0D003 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		1EE2249A2F05A2C9001F755A /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		1EE2249C2F05A2C9001F755A /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+		1EE2249E2F05A2C9001F755A /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		1EE224A02F05A2C9001F755A /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
+		};
+		2A1F5F3A8F7C4B1282C0D002 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2A1F5F3A8F7C4B1282C0D003 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+		2A1F5F3A8F7C4B1282C0D004 /* FirebaseAppCheck */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAppCheck;
+		};
+		2A1F5F3A8F7C4B1282C0D008 /* FirebaseCrashlytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCrashlytics;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 1E7EE2202EAD5A1500C66134 /* Project object */;
+}
