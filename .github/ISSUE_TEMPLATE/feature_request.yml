@@ -1,0 +1,62 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting an improvement. Please describe the feature and why it would be valuable.
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Android
+        - iOS
+        - Both
+        - Backend
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: "What problem does this feature solve? What is the current limitation?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: "How would you like this to work?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: "Have you considered any alternative solutions or workarounds?"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: feature-area
+    attributes:
+      label: Feature Area
+      options:
+        - Communication
+        - Rescue operations
+        - Emergency tools
+        - Security / encryption
+        - Maps / navigation
+        - UI / UX
+        - Localization
+        - Accessibility
+        - Performance
+        - Other
+    validations:
+      required: true

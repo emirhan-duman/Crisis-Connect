@@ -1,0 +1,11 @@
+# Default owner for everything
+* @emirhan-duman
+
+# Android
+/Android/ @emirhan-duman
+
+# iOS
+/iOS/ @emirhan-duman
+
+# Infrastructure and CI
+/.github/ @emirhan-duman
