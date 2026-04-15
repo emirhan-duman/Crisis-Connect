@@ -23,8 +23,9 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-8b0000.svg" alt="License" /></a>&nbsp;
   <img src="https://img.shields.io/badge/platforms-Android%20%7C%20iOS-blue" alt="Platforms" />&nbsp;
   <img src="https://img.shields.io/badge/version-1.0.0-green" alt="Version" />&nbsp;
-  <img src="https://img.shields.io/badge/kotlin-154k%20LOC-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />&nbsp;
-  <img src="https://img.shields.io/badge/swift-50k%20LOC-F05138?logo=swift&logoColor=white" alt="Swift" />
+  <img src="https://img.shields.io/badge/kotlin-104k%20LOC-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />&nbsp;
+  <img src="https://img.shields.io/badge/swift-50k%20LOC-F05138?logo=swift&logoColor=white" alt="Swift" />&nbsp;
+  <img src="https://img.shields.io/badge/tests-213-brightgreen" alt="Tests" />
 </p>
 
 <p align="center">
@@ -38,6 +39,7 @@
   <a href="#the-problem">Problem</a>&nbsp;&nbsp;&bull;&nbsp;&nbsp;
   <a href="#how-it-works">How It Works</a>&nbsp;&nbsp;&bull;&nbsp;&nbsp;
   <a href="#features">Features</a>&nbsp;&nbsp;&bull;&nbsp;&nbsp;
+  <a href="#security-model">Security</a>&nbsp;&nbsp;&bull;&nbsp;&nbsp;
   <a href="#architecture">Architecture</a>&nbsp;&nbsp;&bull;&nbsp;&nbsp;
   <a href="#getting-started">Build From Source</a>&nbsp;&nbsp;&bull;&nbsp;&nbsp;
   <a href="#contributing">Contribute</a>
@@ -45,15 +47,58 @@
 
 ---
 
+## Table of Contents
+
+- [The Problem](#the-problem)
+- [How It Works](#how-it-works)
+- [Features](#features)
+  - [Offline Communication](#offline-communication)
+  - [Rescue Operations](#rescue-operations)
+  - [Emergency Toolkit](#emergency-toolkit)
+- [Security Model](#security-model)
+  - [Encryption](#encryption)
+  - [Key Exchange](#key-exchange)
+  - [Identity & Certificates](#identity--certificates)
+  - [Data Storage](#data-storage)
+  - [API Protection](#api-protection)
+- [Architecture](#architecture)
+  - [Repository Structure](#repository-structure)
+  - [Tech Stack](#tech-stack)
+  - [Communication Protocol](#communication-protocol)
+  - [Mesh Networking](#mesh-networking)
+  - [Voice Pipeline](#voice-pipeline)
+  - [Backend Services](#backend-services)
+  - [Build Variants](#build-variants)
+- [Getting Started](#getting-started)
+  - [Download the App](#download-the-app)
+  - [Build From Source](#build-from-source)
+- [Testing](#testing)
+- [Privacy](#privacy)
+- [Permissions](#permissions)
+- [Localization](#localization)
+- [Contributing](#contributing)
+- [Security Policy](#security-policy)
+- [Roadmap](#roadmap)
+- [Links](#links)
+- [License](#license)
+
+---
+
 ## The Problem
 
 When disaster strikes, communication infrastructure is the first thing to fail. Cell towers collapse. Power grids go offline. Internet becomes unreachable. The very tools people depend on for coordination -- messaging apps, phone calls, maps -- stop working at the exact moment they are needed most.
 
-Every major earthquake, flood, and hurricane exposes the same gap: **there is no widely available communication tool designed to work without infrastructure.**
+This is not a hypothetical scenario. After the 2023 earthquakes in Turkey and Syria, cellular networks were down for days across entire provinces. During Hurricane Maria in Puerto Rico, 95% of cell sites were knocked out. In the 2011 Japan earthquake and tsunami, millions lost all connectivity.
+
+Every major disaster exposes the same gap: **there is no widely available communication tool designed to work without infrastructure.**
+
+Existing solutions either require specialized radio hardware (walkie-talkies, satellite phones) that most people don't carry, or depend on mesh networking protocols that still assume some form of internet backhaul.
+
+Crisis Connect was built to close that gap. A communication tool that runs on the phone already in your pocket, works over Bluetooth with zero infrastructure dependency, and encrypts everything end-to-end by default.
 
 ## How It Works
 
-Crisis Connect eliminates the dependency on centralized infrastructure. Instead of routing through cell towers or internet servers, devices talk directly to each other:
+Crisis Connect eliminates the dependency on centralized infrastructure. Instead of routing through cell towers or internet servers, devices talk directly to each other using the Bluetooth hardware already present in every modern smartphone.
 
 ```
      ┌──────────┐         ┌──────────┐         ┌──────────┐
@@ -71,90 +116,204 @@ Crisis Connect eliminates the dependency on centralized infrastructure. Instead 
      └─────────────────────────────────────────────────────┘
 ```
 
-**Bluetooth Low Energy** for discovery and messaging. **RFCOMM** for voice calls. **GATT mesh** for multi-hop relay when devices aren't in direct range. **QR codes** for secure key exchange. Everything encrypted with **AES-256-GCM** before it leaves the device.
+The system operates across three layers:
 
-When internet *is* available, Firebase handles authentication and rescue team coordination -- but the core messaging stack never depends on it.
+1. **Discovery** -- BLE advertising and scanning find nearby devices automatically. No pairing menu, no Bluetooth settings. The app handles everything.
+
+2. **Secure Channel** -- Before any communication, devices exchange cryptographic keys through QR code scanning. This creates a verified, encrypted channel between two specific devices using ECDH key agreement.
+
+3. **Communication** -- Messages, voice, images, and files flow through this encrypted channel. If the recipient is not in direct range, the GATT mesh protocol relays data through intermediate devices -- each hop maintaining end-to-end encryption.
+
+When internet *is* available, Firebase handles authentication and rescue team coordination -- but the core messaging stack never depends on it. The app is fully functional in airplane mode with Bluetooth enabled.
 
 ## Features
 
-<table>
-<tr>
-<td width="50%">
+### Offline Communication
 
-**Communication**
-- End-to-end encrypted P2P messaging (BLE / RFCOMM)
-- Multi-hop GATT mesh networking
-- Opus-encoded voice calls over Bluetooth Classic
-- Chunked image & file transfer with delivery receipts
-- QR-based ECDH key exchange for secure pairing
+| Feature | Description | Transport |
+|:--|:--|:--|
+| **Text Messaging** | End-to-end encrypted text messages with read receipts and timestamps | BLE GATT / RFCOMM |
+| **Voice Calls** | Real-time voice calls encoded with Opus codec at 16kHz sample rate | RFCOMM (Bluetooth Classic) |
+| **Voice Messages** | Record, send, and play back voice messages with waveform visualization | BLE GATT (chunked) |
+| **Image Transfer** | Send photos with automatic compression, chunked transfer, and progress tracking | BLE GATT (chunked) |
+| **File Transfer** | Share documents and files with delivery receipts | BLE GATT (chunked) |
+| **Mesh Relay** | Messages hop through intermediate devices when sender and receiver aren't in direct range | GATT mesh protocol |
+| **Contact Exchange** | Scan QR codes to securely add contacts and establish encrypted channels | Camera + ECDH |
+| **SOS Broadcast** | Emergency broadcast visible to all nearby devices running Crisis Connect | BLE advertising |
 
-</td>
-<td width="50%">
+All communication features work with **zero internet connectivity**. Messages are stored locally on-device and never pass through any server.
 
-**Rescue Operations**
-- Role-based access with ECDSA-signed certificates
-- Real-time GPS location sharing
-- CrisisLink background sync across rescue devices
-- Dynamic feature delivery (Android Play Feature Delivery)
-- Agency-scoped document access control
+### Rescue Operations
 
-</td>
-</tr>
-<tr>
-<td>
+Crisis Connect includes a dedicated rescue module designed for emergency response teams (AFAD, Red Cross, field teams):
 
-**Emergency Tools**
-- Offline maps with downloadable regions (MapLibre)
-- Digital compass
-- Cellular & Wi-Fi signal scanner
-- Magnetometer-based metal detector
-- High-volume emergency whistle
-- Localized survival guide (EN/TR)
-- LiDAR obstacle scanner (iOS)
-- Real-time sensor dashboard
+- **Role-Based Access Control** -- Rescue team members are assigned `admin` or `fieldteam` roles through Firebase custom claims. Roles are cryptographically verified even when offline through ECDSA-signed role certificates.
 
-</td>
-<td>
+- **Role Certificates** -- When a rescue device is online, it requests a signed certificate from Firebase Cloud Functions. This certificate (ECDSA P-256, 72-hour TTL) can be verified by any other device offline, proving the holder's rescue team identity without needing to contact a server.
 
-**Security**
-- AES-256-GCM message encryption (Tink / CryptoKit)
-- ECDSA role certificates for offline identity verification
-- SQLCipher encrypted database (Android)
-- Keychain / Android Keystore secure storage
-- Firebase App Check (Play Integrity + App Attest)
-- Zero plaintext on servers -- messages never leave the device unencrypted
+- **Live Location Sharing** -- Rescue devices share real-time GPS coordinates during active operations, with configurable update intervals and battery-aware policies.
 
-</td>
-</tr>
-</table>
+- **CrisisLink Sync** -- A background sync engine that maintains rescue session state across all team devices, handling merge conflicts and offline queue reconciliation.
+
+- **Agency Routing** -- Firestore security rules scope data access by agency, ensuring that different rescue organizations see only their own operational data.
+
+- **Dynamic Feature Module** -- On Android, rescue features are delivered as a dynamic feature module through Play Feature Delivery, keeping the base app lightweight for civilian users.
+
+### Emergency Toolkit
+
+Beyond communication, the app includes tools designed for disaster scenarios:
+
+| Tool | Description | Platform |
+|:--|:--|:--|
+| **Offline Maps** | Download map regions for offline use. Navigate without internet using MapLibre vector tiles. | Android + iOS |
+| **Compass** | Sensor-fused directional compass with heading, pitch, and roll readings. | Android + iOS |
+| **Signal Finder** | Scans for cellular, Wi-Fi, and Bluetooth signals in the area. Helps locate zones with potential connectivity. | Android + iOS |
+| **Metal Detector** | Uses the device magnetometer to detect metallic objects. Visual and audio feedback with adjustable sensitivity. | Android + iOS |
+| **Emergency Whistle** | Generates high-volume acoustic signals at configurable frequencies. Louder and more sustained than a physical whistle. | Android + iOS |
+| **Sensor Dashboard** | Real-time readouts from all device sensors: accelerometer, gyroscope, magnetometer, barometer, ambient light. | Android + iOS |
+| **Survival Guide** | Step-by-step emergency checklists for earthquakes, floods, fires, and other scenarios. Available offline in English and Turkish. | Android + iOS |
+| **LiDAR Scanner** | Uses LiDAR depth sensor for obstacle awareness in dark, smoky, or low-visibility environments. | iOS (LiDAR devices) |
+| **Night Vision** | Camera-assisted obstacle detection for low-light conditions using LiDAR point cloud. | iOS (LiDAR devices) |
+
+## Security Model
+
+Security is not a feature layer added on top -- it is foundational to the architecture. Every design decision assumes an adversarial environment where devices may be compromised, networks may be monitored, and identities may be spoofed.
+
+### Encryption
+
+All messages are encrypted with **AES-256-GCM** before leaving the sending device. The encryption key is derived from the ECDH shared secret established during QR code exchange.
+
+| Platform | Encryption Library | Algorithm |
+|:--|:--|:--|
+| Android | [Google Tink](https://github.com/tink-crypto/tink-java) | AES-256-GCM |
+| iOS | Apple CryptoKit | AES-256-GCM |
+
+Messages are encrypted **before** entering the BLE transport layer. Even if Bluetooth traffic is intercepted, the attacker sees only ciphertext. The GATT mesh relay nodes forward encrypted payloads without being able to read them.
+
+### Key Exchange
+
+Key exchange uses **Elliptic-Curve Diffie-Hellman (ECDH)** over the **P-256 curve**:
+
+1. Device A generates an ephemeral key pair
+2. Device A encodes its public key into a QR code
+3. Device B scans the QR code and generates its own key pair
+4. Both devices compute the shared secret using ECDH
+5. The shared secret is passed through **HKDF-SHA256** to derive the AES-256 session key
+
+This happens entirely offline. No certificate authority, no key server, no internet connection.
+
+### Identity & Certificates
+
+For rescue team identity verification, Crisis Connect uses a custom certificate chain:
+
+```
+Firebase Cloud Functions (trusted signer)
+        │
+        │── Signs certificate with ECDSA P-256
+        │   using server-held private key
+        │
+        ▼
+┌─────────────────────────────────────────┐
+│           Role Certificate              │
+├─────────────────────────────────────────┤
+│  Owner UID                              │
+│  Role (admin / fieldteam)               │
+│  Public Key (Base64)                    │
+│  Issued At (timestamp)                  │
+│  Expires At (issued + 72 hours)         │
+│  ECDSA Signature (DER-encoded)          │
+│  Algorithm: SHA256withECDSA             │
+│  Curve: P-256                           │
+└─────────────────────────────────────────┘
+```
+
+Any device can verify a role certificate offline using the embedded public key of the signing authority. This allows rescue teams to prove their identity to civilian devices without internet connectivity.
+
+### Data Storage
+
+| Data | Android | iOS |
+|:--|:--|:--|
+| Messages | SQLCipher encrypted Room database | Keychain-backed local storage |
+| Credentials | Android Keystore (hardware-backed) | iOS Keychain (Secure Enclave) |
+| Preferences | EncryptedSharedPreferences | Keychain-backed preferences |
+| Session keys | Keystore-backed encrypted storage | Keychain |
+
+Messages are stored **only on the two communicating devices**. There is no server-side message store. Deleting the app removes all messages permanently.
+
+### API Protection
+
+When internet is available, all Firebase API calls are protected by:
+
+- **Firebase App Check** with platform-native attestation:
+  - Android: [Play Integrity API](https://developer.android.com/google/play/integrity)
+  - iOS: [App Attest](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity)
+- **Firebase Authentication** (Google Sign-In)
+- **Firestore Security Rules** -- 400+ lines of server-side access control rules enforcing per-document permissions based on user roles, agency membership, and document ownership
 
 ## Architecture
+
+### Repository Structure
 
 ```
 Crisis-Connect/
 │
-├── Android/                        Kotlin  ·  Jetpack Compose  ·  Material 3
-│   ├── app/                        Main application (268 files · 104k LOC)
-│   │   ├── core/                   Crypto, chunking, media processing
-│   │   ├── data/                   Room DB, Firestore, BLE data layer
-│   │   ├── screens/                UI screens (Chat, Tools, Settings, QR, SOS)
-│   │   ├── security/              ECDSA certificates, role verification, keystore
-│   │   ├── service/               BLE GATT, RFCOMM, mesh, voice, file transfer
-│   │   └── ui/                    Design system, theme, shared components
-│   ├── feature_rescue/             Dynamic feature module (rescue operations)
-│   ├── functions/                  Firebase Cloud Functions (TypeScript)
-│   └── firestore.rules             Security rules for Firestore
+├── Android/                            Kotlin  ·  Jetpack Compose  ·  Material 3
+│   ├── app/                            Main application module
+│   │   ├── src/main/java/.../
+│   │   │   ├── core/                   Crypto primitives, chunking, media processing
+│   │   │   ├── data/                   Room DB, Firestore repos, BLE stores, offline maps
+│   │   │   ├── navigation/             Compose navigation, deep links, route resolution
+│   │   │   ├── screens/                UI: Chat, Tools, Settings, QR, SOS, Guide, Profile
+│   │   │   ├── security/              ECDSA certs, role proofs, keystore, crypto helpers
+│   │   │   ├── service/               BLE GATT server/client, RFCOMM, mesh, voice, files
+│   │   │   ├── telecom/               Android Telecom integration for call management
+│   │   │   └── ui/                    Theme, design system, shared components
+│   │   ├── src/test/                   194 unit tests
+│   │   └── src/androidTest/            19 instrumented tests
+│   │
+│   ├── feature_rescue/                 Dynamic feature module
+│   │   ├── CrisisLinkForegroundService  Background rescue sync service
+│   │   ├── GattRescueClientService      BLE client for rescue network
+│   │   ├── MeshAwareService             Mesh networking for rescue ops
+│   │   └── screens/                     Rescue UI, settings, mesh chat
+│   │
+│   ├── functions/                      Firebase Cloud Functions (TypeScript)
+│   │   └── src/index.ts                issueRoleCertificate endpoint
+│   │
+│   ├── firestore.rules                 Firestore security rules
+│   ├── firebase.json                   Firebase deployment config
+│   ├── build.gradle.kts                Project-level build config
+│   └── settings.gradle.kts             Module definitions
 │
-├── iOS/                            Swift  ·  SwiftUI
-│   ├── Crisis Connect/             Main application (113 files · 50k LOC)
-│   │   ├── Features/              Compass, Contacts, LiDAR, Maps, Rescue, SOS, ...
-│   │   ├── Security/              Keychain, certificates, role verification
-│   │   ├── Services/              BLE, GATT mesh, Firebase, background sync
-│   │   └── Shared/                Design system, utilities, media
-│   ├── Crisis ConnectTests/        Unit tests
-│   └── Crisis ConnectUITests/      UI tests
+├── iOS/                                Swift  ·  SwiftUI
+│   ├── Crisis Connect/
+│   │   ├── App/                        App entry point, root navigation, splash
+│   │   ├── Features/
+│   │   │   ├── Compass/                Sensor-fused compass
+│   │   │   ├── Contacts/               Contact management, QR pairing, broadcast
+│   │   │   ├── GattMesh/               GATT mesh chat interface
+│   │   │   ├── LiDAR/                  LiDAR depth scanning
+│   │   │   ├── MetalDetector/          Magnetometer metal detection
+│   │   │   ├── OfflineMap/             Tile-based offline maps
+│   │   │   ├── Profile/                User profile management
+│   │   │   ├── Rescue/                 Rescue client, live location, role access
+│   │   │   ├── SOS/                    SOS broadcast, chat, image transfer, voice
+│   │   │   ├── SensorsDashboard/       Real-time sensor readings
+│   │   │   ├── Settings/               App settings, theme, language, privacy
+│   │   │   ├── SignalScanner/          Signal strength scanning
+│   │   │   ├── SurvivalGuide/          Emergency checklists
+│   │   │   └── Whistle/                Emergency tone generator
+│   │   ├── Security/                   Keychain, certs, role verification
+│   │   ├── Services/
+│   │   │   ├── Background/             Background refresh manager
+│   │   │   ├── Connectivity/           BLE, GATT mesh, P2P, Wi-Fi Aware
+│   │   │   └── Firebase/               Auth, App Check, Crashlytics, role helper
+│   │   └── Shared/                     Design system, utilities, media
+│   │
+│   ├── Crisis ConnectTests/            Unit tests
+│   └── Crisis ConnectUITests/          UI tests
 │
-├── LICENSE                         AGPL-3.0
+├── LICENSE                             AGPL-3.0
 └── README.md
 ```
 
@@ -164,69 +323,155 @@ Crisis-Connect/
 |:--|:--|:--|
 | **Language** | Kotlin | Swift |
 | **UI Framework** | Jetpack Compose + Material 3 | SwiftUI |
-| **Bluetooth** | Android BLE GATT / RFCOMM | CoreBluetooth / Wi-Fi Aware |
-| **Mesh Protocol** | Custom GATT mesh | GATT mesh + Wi-Fi Aware |
+| **Bluetooth** | Android BLE GATT / RFCOMM | CoreBluetooth |
+| **Mesh Protocol** | Custom GATT mesh protocol | GATT mesh + Wi-Fi Aware |
 | **Encryption** | Google Tink · SQLCipher | CryptoKit · Keychain |
+| **Database** | Room (SQLCipher encrypted) | SwiftData / UserDefaults (Keychain-backed) |
 | **Maps** | MapLibre GL Native | MapLibre (tile-based offline) |
 | **Voice Codec** | Opus (native .aar) | AVFoundation |
 | **Auth** | Firebase Auth · Google Sign-In | Firebase Auth · Google Sign-In |
 | **Backend** | Firestore · Cloud Functions | Firestore · Cloud Functions |
 | **App Security** | Play Integrity · App Check | App Attest · App Check |
+| **Crash Reporting** | Firebase Crashlytics | Firebase Crashlytics |
 | **CI/CD** | GitHub Actions | Xcode Cloud |
 | **Min Version** | Android 7.0 (API 24) | iOS 17.0 |
-| **Test Framework** | JUnit · Espresso · MockK | XCTest |
+| **Target Version** | Android 15 (API 35) | iOS 18 |
+| **Test Frameworks** | JUnit · Espresso · MockK · Robolectric | XCTest |
 
-### Cloud Functions
+### Communication Protocol
 
-The only server-side logic is role certificate issuance:
+The BLE communication stack operates as follows:
 
 ```
-Client (rescue device)                     Firebase Cloud Functions
-        │                                           │
-        │── Request certificate ──────────────────►│
-        │   (authenticated + App Check)             │
-        │                                           │── Validate role claim
-        │                                           │── Sign with ECDSA P-256
-        │◄── Signed certificate ──────────────────│
-        │   (72h TTL)                               │
-        │                                           │
-        │   Certificate used offline                │
-        │   to prove identity over BLE              │
+┌─────────────────────────────────────────────────────────────┐
+│                     Application Layer                        │
+│  Text messages · Voice messages · Images · Files · Location  │
+├─────────────────────────────────────────────────────────────┤
+│                     Encryption Layer                         │
+│  AES-256-GCM envelope (Tink / CryptoKit)                    │
+│  Per-message nonce · HKDF-derived session keys               │
+├─────────────────────────────────────────────────────────────┤
+│                      Framing Layer                           │
+│  Chunking (BLE MTU ~512 bytes) · Reassembly · Sequencing    │
+│  Delivery receipts · Retry with exponential backoff          │
+├─────────────────────────────────────────────────────────────┤
+│                     Transport Layer                          │
+│  BLE GATT (messages, images, files)                          │
+│  RFCOMM (voice calls)                                        │
+│  GATT mesh (multi-hop relay)                                 │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+### Mesh Networking
+
+When two devices are not in direct BLE range, the GATT mesh protocol routes messages through intermediate devices:
+
+```
+Device A ──(encrypted)──► Device B ──(encrypted)──► Device C
+                          (relay node)
+
+  • Device B forwards the encrypted payload without decryption
+  • TTL-based hop limit prevents infinite relay loops
+  • Each device maintains a seen-message cache for deduplication
+  • Mesh operates at the GATT service level (no special hardware)
+```
+
+The mesh protocol is transport-agnostic -- the encrypted payload is the same regardless of how many hops it takes. Relay nodes never have access to plaintext.
+
+### Voice Pipeline
+
+Voice calls use a dedicated pipeline over Bluetooth Classic (RFCOMM):
+
+```
+Microphone ──► PCM 16kHz ──► Opus Encoder ──► RFCOMM Socket ──► Opus Decoder ──► Speaker
+                                    │
+                              Jitter Buffer
+                           (adaptive, 60-200ms)
+```
+
+- **Codec**: Opus at 16kHz mono (optimized for speech)
+- **Transport**: RFCOMM provides a reliable stream socket over Bluetooth Classic
+- **Latency**: ~100-200ms end-to-end depending on device and environment
+- **Call Management**: Integrated with Android Telecom API for native call UI
+
+### Backend Services
+
+Firebase is used for three specific purposes. None of them are required for core messaging:
+
+| Service | Purpose | Required? |
+|:--|:--|:--|
+| **Firebase Auth** | User identity for rescue role management | Only for rescue features |
+| **Cloud Firestore** | Rescue team coordination data, agency routing | Only for rescue features |
+| **Cloud Functions** | Role certificate issuance (`issueRoleCertificate`) | Only for rescue features |
+| **App Check** | API abuse prevention | Only when online |
+| **Crashlytics** | Crash reporting for production stability | Optional |
+
+The `issueRoleCertificate` Cloud Function is the only server-side business logic:
+
+1. Validates the caller's Firebase Auth token
+2. Verifies the caller has a rescue role custom claim
+3. Validates the provided public key
+4. Signs a role certificate with ECDSA P-256 (72-hour TTL)
+5. Returns the signed certificate for offline use
+
+### Build Variants
+
+**Android** provides three build types:
+
+| Variant | Purpose | Signing | App Check |
+|:--|:--|:--|:--|
+| `debug` | Development | Debug keystore | Debug provider |
+| `internal` | QA / testing | Release keystore | Debug provider |
+| `release` | Production (Play Store) | Release keystore | Play Integrity |
+
+**iOS** uses Xcode Cloud for CI/CD with App Attest configured for production builds.
 
 ## Getting Started
 
-> **Just want to use the app?** Download from [Google Play](https://play.google.com/store/apps/details?id=com.auralis.crisisconnect) or [App Store](https://apps.apple.com/app/crisis-connect/id6759731195).
->
-> The instructions below are for building from source.
+### Download the App
 
-### Prerequisites
+The easiest way to use Crisis Connect is to download it from the app stores:
+
+<p align="center">
+  <a href="https://play.google.com/store/apps/details?id=com.auralis.crisisconnect"><img src="https://img.shields.io/badge/Google%20Play-Download-3ddc84?style=for-the-badge&logo=google-play&logoColor=white" alt="Google Play" /></a>&nbsp;&nbsp;
+  <a href="https://apps.apple.com/app/crisis-connect/id6759731195"><img src="https://img.shields.io/badge/App%20Store-Download-147efb?style=for-the-badge&logo=app-store&logoColor=white" alt="App Store" /></a>
+</p>
+
+### Build From Source
+
+#### Prerequisites
 
 | Platform | Requirements |
 |:--|:--|
-| **Android** | Android Studio Ladybug+ · JDK 17 · SDK 35 |
-| **iOS** | Xcode 16+ · iOS 17+ deployment target |
-| **Backend** | Firebase project with Firestore, Auth, Cloud Functions |
+| **Android** | Android Studio Ladybug+ · JDK 17 · Android SDK 35 |
+| **iOS** | Xcode 16+ · iOS 17+ deployment target · macOS Sequoia+ |
+| **Backend** | Node.js 18+ · Firebase CLI · Firebase project (Firestore, Auth, Functions) |
 
-> BLE features require a **physical device**. Simulators and emulators do not support Bluetooth.
+> **Important:** BLE features require a **physical device**. Simulators and emulators do not support Bluetooth.
 
-### Android
+#### Android
 
 ```bash
 git clone https://github.com/emirhan-duman/Crisis-Connect.git
 cd Crisis-Connect/Android
 
 # Set up configuration files
-cp app/google-services.json.example app/google-services.json    # Replace with your Firebase config
-cp local.properties.example local.properties                     # Fill in API keys
-cp keystore.properties.example keystore.properties               # For release signing
+cp app/google-services.json.example app/google-services.json
+cp local.properties.example local.properties
+cp keystore.properties.example keystore.properties
 ```
 
-1. Download `google-services.json` from [Firebase Console](https://console.firebase.google.com) and replace the example
-2. Fill in `local.properties` with your `GOOGLE_WEB_CLIENT_ID` and `MAPLIBRE_API_KEY`
-3. Open in Android Studio, sync Gradle, run on a physical device
+1. Download `google-services.json` from [Firebase Console](https://console.firebase.google.com) > Project Settings > Your Apps > Android app, and replace the example file
+2. Edit `local.properties`:
+   ```properties
+   sdk.dir=/path/to/your/Android/sdk
+   GOOGLE_WEB_CLIENT_ID=your-client-id.apps.googleusercontent.com
+   MAPLIBRE_API_KEY=your_maplibre_api_key
+   ```
+3. Open in Android Studio, sync Gradle, and run on a physical device
+4. For release builds, fill in `keystore.properties` with your signing configuration
 
-### iOS
+#### iOS
 
 ```bash
 git clone https://github.com/emirhan-duman/Crisis-Connect.git
@@ -236,13 +481,19 @@ cd Crisis-Connect/iOS
 cp "Crisis Connect/GoogleService-Info.plist.example" "Crisis Connect/GoogleService-Info.plist"
 ```
 
-1. Download `GoogleService-Info.plist` from [Firebase Console](https://console.firebase.google.com) and replace the example
-2. Update URL schemes in `Config/Info.plist` with your reversed client ID
-3. Open `Crisis Connect.xcodeproj` in Xcode, resolve SPM dependencies, run on a physical device
+1. Download `GoogleService-Info.plist` from [Firebase Console](https://console.firebase.google.com) > Project Settings > Your Apps > iOS app, and replace the example file
+2. Update URL schemes in `Config/Info.plist` with your reversed Google client ID
+3. Open `Crisis Connect.xcodeproj` in Xcode
+4. SPM dependencies resolve automatically on first open
+5. Select a physical device target and run
 
-### Firebase Backend
+#### Firebase Backend
 
 ```bash
+# Install Firebase CLI if not already installed
+npm install -g firebase-tools
+firebase login
+
 # Deploy Firestore security rules
 firebase deploy --only firestore:rules
 
@@ -252,42 +503,126 @@ npm install
 firebase deploy --only functions
 ```
 
-Configure **App Check** with Play Integrity (Android) and App Attest (iOS) in the Firebase Console.
+After deployment, configure **App Check** in the Firebase Console:
+- Android: Enable Play Integrity provider
+- iOS: Enable App Attest provider
 
 ## Testing
 
-```bash
-# ── Android ──────────────────────────────────────
-cd Android
-./gradlew :app:testDebugUnitTest              # 44 unit test files
-./gradlew :app:connectedDebugAndroidTest      # Instrumented tests (device required)
-./gradlew :app:lintDebug                      # Static analysis
+The project includes 213 tests across both platforms:
 
-# ── iOS ──────────────────────────────────────────
+```bash
+# ── Android (194 unit tests + 19 instrumented tests) ─────────
+cd Android
+./gradlew :app:testDebugUnitTest              # Unit tests
+./gradlew :app:connectedDebugAndroidTest      # Instrumented tests (physical device)
+./gradlew :app:lintDebug                      # Static analysis
+./gradlew :feature_rescue:testDebugUnitTest   # Rescue module tests
+
+# ── iOS ───────────────────────────────────────────────────────
 cd iOS
 xcodebuild test \
   -scheme "Crisis Connect" \
   -destination "platform=iOS Simulator,name=iPhone 16"
 ```
 
+Test coverage includes:
+- Cryptographic operations (AES-GCM encrypt/decrypt, key derivation)
+- BLE message framing, chunking, and reassembly
+- Role certificate creation and verification
+- Mesh protocol command routing
+- Voice codec pipeline
+- Chat message formatting and parsing
+- Offline map region management
+- QR code encoding/decoding
+
+## Privacy
+
+Crisis Connect is designed with privacy as a core principle:
+
+- **No telemetry or analytics on messages.** Firebase Analytics is included for app-level usage metrics (screen views, crash-free rates) but never touches message content.
+- **No message content on servers.** All P2P messages are stored exclusively on the sender and receiver devices. There is no server-side message store.
+- **No contact upload.** Your contacts are never uploaded to any server. Contact exchange happens locally through QR code scanning.
+- **No tracking.** No advertising SDKs. No third-party tracking.
+- **Location is user-controlled.** GPS is only accessed when you explicitly use offline maps or opt into live location sharing during rescue operations.
+- **Data deletion.** Uninstalling the app permanently deletes all messages and keys. There is no cloud backup of conversations.
+
+## Permissions
+
+Crisis Connect requests only the permissions necessary for its features. Every permission maps to a specific user-facing capability:
+
+| Permission | Why It's Needed |
+|:--|:--|
+| **Bluetooth** (scan, advertise, connect) | Core P2P messaging and device discovery |
+| **Camera** | QR code scanning for contact exchange |
+| **Microphone** | Voice calls and voice message recording |
+| **Location** | Offline maps centering and rescue live location sharing |
+| **Internet** | Firebase auth, rescue sync, crash reporting (optional) |
+| **Notifications** | Message and call notifications |
+| **Foreground Service** | Maintaining BLE connections and active voice calls |
+| **Sensors** | Compass, metal detector, sensor dashboard |
+| **Wi-Fi State** | Signal finder tool |
+
+All permissions are requested at runtime with clear explanations. The app is functional with only Bluetooth permission granted -- all other permissions are optional and tied to specific features.
+
+## Localization
+
+Crisis Connect is currently available in:
+
+| Language | Coverage |
+|:--|:--|
+| **English** | Full (UI + Survival Guide) |
+| **Turkish** | Full (UI + Survival Guide) |
+
+We welcome contributions for additional languages. See [Contributing](#contributing) for details.
+
 ## Contributing
 
-We welcome contributions from developers, security researchers, and anyone who cares about resilient communication.
+We welcome contributions from developers, security researchers, translators, and anyone who cares about resilient communication.
+
+### How to Contribute
 
 1. **Fork** the repository
 2. **Create** a feature branch (`git checkout -b feature/your-feature`)
 3. **Commit** with clear, descriptive messages
-4. **Open** a Pull Request
+4. **Open** a Pull Request with a description of what you changed and why
+
+### Contribution Areas
+
+| Area | Description | Difficulty |
+|:--|:--|:--|
+| **Security Audit** | Review crypto implementation, key management, certificate verification | Advanced |
+| **BLE Protocol** | Edge-case handling, connection stability, MTU negotiation | Advanced |
+| **Mesh Improvements** | Routing efficiency, hop optimization, relay reliability | Advanced |
+| **Localization** | Translate UI strings and survival guide content to new languages | Beginner |
+| **Accessibility** | Screen reader support, dynamic type, high contrast | Intermediate |
+| **Test Coverage** | Add unit and integration tests for uncovered code paths | Intermediate |
+| **Documentation** | Protocol specs, architecture docs, API documentation | Intermediate |
+| **Bug Reports** | Report issues with clear reproduction steps | Beginner |
 
 For bugs and feature requests, open an [issue](https://github.com/emirhan-duman/Crisis-Connect/issues).
 
-**High-impact contribution areas:**
-- Security auditing and cryptographic review
-- BLE protocol improvements and edge-case handling
-- New language localizations
-- Accessibility (a11y) improvements
-- Test coverage expansion
-- Documentation and protocol specification
+## Security Policy
+
+If you discover a security vulnerability in Crisis Connect, **please do not open a public issue.** Instead, report it responsibly:
+
+- **Email**: Report security issues through the contact information on [crisisconnect.network](https://crisisconnect.network)
+- **Scope**: Encryption implementation, key management, certificate verification, data storage, API security, BLE protocol security
+
+We take security reports seriously and will respond as quickly as possible.
+
+## Roadmap
+
+Crisis Connect is actively developed. Current priorities include:
+
+- [ ] Protocol specification documentation (BLE framing, mesh routing, certificate format)
+- [ ] Architecture decision records (ADRs)
+- [ ] Cross-platform interoperability testing (Android-to-iOS mesh relay)
+- [ ] Expanded test coverage for BLE edge cases
+- [ ] Additional language support
+- [ ] Accessibility audit and improvements
+- [ ] Offline map region sharing between devices
+- [ ] Group mesh chat support
 
 ## Links
 
@@ -325,6 +660,6 @@ You are free to use, modify, and distribute this software. Any modified version 
 ---
 
 <p align="center">
-  <strong>Built for resilience. Designed for crisis. Open for everyone.</strong><br/>
-  <sub>154,000+ lines of code across Android and iOS, serving one purpose: keeping people connected when it matters most.</sub>
+  <strong>Built for resilience. Designed for crisis. Open for everyone.</strong><br/><br/>
+  <sub>154,000+ lines of code across Android and iOS, 213 tests, 2 platforms, 1 mission:<br/>keeping people connected when it matters most.</sub>
 </p>
