@@ -164,7 +164,7 @@ When internet *is* available, Firebase handles authentication and authorized res
 | **Contact Exchange** | Scan QR codes to securely add contacts and establish encrypted channels | Camera + ECDH |
 | **SOS Broadcast** | Emergency broadcast visible to all nearby devices running Crisis Connect | BLE advertising |
 
-Core contact-to-contact messaging and voice features work with **zero internet connectivity**. Message content is stored locally on participating devices and is not routed through a central chat server.
+Core contact-to-contact messaging and voice features work **without internet connectivity**. Message content is stored locally on participating devices and is not routed through a central chat server.
 
 ### Rescue Operations
 
@@ -223,7 +223,7 @@ Key exchange uses **Elliptic-Curve Diffie-Hellman (ECDH)** over the **P-256 curv
 4. Both devices compute the shared secret using ECDH
 5. The shared secret is passed through **HKDF-SHA256** to derive the AES-256 session key
 
-This happens entirely offline. No certificate authority, no key server, no internet connection.
+This happens locally between the two devices, without relying on an online certificate authority or key server.
 
 ### Identity & Certificates
 
