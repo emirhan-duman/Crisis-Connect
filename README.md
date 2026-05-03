@@ -7,8 +7,8 @@
 <p align="center">
   <strong>When networks fail, we connect.</strong><br/><br/>
   Open-source, offline-first communication platform for disaster response.<br/>
-  End-to-end encrypted core messaging and voice features over nearby Bluetooth.<br/>
-  Message and call content is not uploaded to a central server; online services are limited to account, diagnostics, and authorized rescue coordination flows when internet is available.
+  End-to-end encrypted messaging, voice calls, and rescue coordination over Bluetooth.<br/>
+  No servers. No internet. No single point of failure.
 </p>
 
 <br/>
@@ -95,11 +95,11 @@ Every major disaster exposes the same gap: **there is no widely available commun
 
 Existing solutions either require specialized radio hardware (walkie-talkies, satellite phones) that most people don't carry, or depend on mesh networking protocols that still assume some form of internet backhaul.
 
-Crisis Connect was built to close that gap. A communication tool that runs on the phone already in your pocket, keeps core communication working over Bluetooth when infrastructure is unavailable, and encrypts message content end-to-end by default.
+Crisis Connect was built to close that gap. A communication tool that runs on the phone already in your pocket, works over Bluetooth with zero infrastructure dependency, and encrypts everything end-to-end by default.
 
 ## How It Works
 
-Crisis Connect keeps core communication out of centralized chat infrastructure. Instead of routing message content through cell towers or internet servers, nearby devices talk directly to each other using the Bluetooth hardware already present in every modern smartphone.
+Crisis Connect eliminates the dependency on centralized infrastructure. Instead of routing through cell towers or internet servers, devices talk directly to each other using the Bluetooth hardware already present in every modern smartphone.
 
 ```
      ┌──────────┐         ┌──────────┐         ┌──────────┐
@@ -111,9 +111,9 @@ Crisis Connect keeps core communication out of centralized chat infrastructure. 
           │                     │                     │
           ▼                     ▼                     ▼
      ┌─────────────────────────────────────────────────────┐
-     │              Core messages E2E encrypted             │
-     │         Stored on participating devices              │
-     │       No central chat server receives content        │
+     │              All messages E2E encrypted              │
+     │         Stored only on sender & receiver             │
+     │            No server ever sees plaintext             │
      └─────────────────────────────────────────────────────┘
 ```
 
@@ -125,7 +125,7 @@ The system operates across three layers:
 
 3. **Communication** -- Messages, voice, images, and files flow through this encrypted channel. If the recipient is not in direct range, the GATT mesh protocol relays data through intermediate devices -- each hop maintaining end-to-end encryption.
 
-When internet *is* available, Firebase handles authentication and authorized rescue team coordination -- but the core messaging stack never depends on it. Core contact-to-contact communication remains available in airplane mode with Bluetooth enabled.
+When internet *is* available, Firebase handles authentication and rescue team coordination -- but the core messaging stack never depends on it. The app is fully functional in airplane mode with Bluetooth enabled.
 
 ## Screenshots
 
@@ -164,7 +164,7 @@ When internet *is* available, Firebase handles authentication and authorized res
 | **Contact Exchange** | Scan QR codes to securely add contacts and establish encrypted channels | Camera + ECDH |
 | **SOS Broadcast** | Emergency broadcast visible to all nearby devices running Crisis Connect | BLE advertising |
 
-Core contact-to-contact messaging and voice features work with **zero internet connectivity**. Message content is stored locally on participating devices and is not routed through a central chat server.
+All communication features work with **zero internet connectivity**. Messages are stored locally on-device and never pass through any server.
 
 ### Rescue Operations
 
@@ -261,7 +261,7 @@ Any device can verify a role certificate offline using the embedded public key o
 | Preferences | EncryptedSharedPreferences | Keychain-backed preferences |
 | Session keys | Keystore-backed encrypted storage | Keychain |
 
-Core message history is stored **on the participating communicating devices**. There is no central server-side message store for ordinary chats. Deleting the app removes local messages from that device.
+Messages are stored **only on the two communicating devices**. There is no server-side message store. Deleting the app removes all messages permanently.
 
 ### API Protection
 
@@ -564,7 +564,7 @@ Test coverage includes:
 Crisis Connect is designed with privacy as a core principle:
 
 - **No telemetry or analytics on messages.** Firebase Analytics is included for app-level usage metrics (screen views, crash-free rates) but never touches message content.
-- **No message content on central chat servers.** Core P2P message content is stored on participating devices. Online services are limited to account, diagnostics, and authorized rescue coordination flows when internet is available.
+- **No message content on servers.** All P2P messages are stored exclusively on the sender and receiver devices. There is no server-side message store.
 - **No contact upload.** Your contacts are never uploaded to any server. Contact exchange happens locally through QR code scanning.
 - **No tracking.** No advertising SDKs. No third-party tracking.
 - **Location is user-controlled.** GPS is only accessed when you explicitly use offline maps or opt into live location sharing during rescue operations.
