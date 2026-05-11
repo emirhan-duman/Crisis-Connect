@@ -107,13 +107,13 @@ Crisis Connect eliminates the dependency on centralized infrastructure. Instead 
      └──────────┘         └──────────┘         └──────────┘
           │                     │                     │
           │   QR Key Exchange   │   GATT Mesh Relay   │
-          │   ECDH + AES-256    │   Multi-hop Forward  │
+          │   ECDH + AES-256    │   Multi-hop Forward │
           │                     │                     │
           ▼                     ▼                     ▼
      ┌─────────────────────────────────────────────────────┐
-     │              All messages E2E encrypted              │
-     │         Stored only on sender & receiver             │
-     │            No server ever sees plaintext             │
+     │              All messages E2E encrypted             │
+     │         Stored only on sender & receiver            │
+     │            No server ever sees plaintext            │
      └─────────────────────────────────────────────────────┘
 ```
 
