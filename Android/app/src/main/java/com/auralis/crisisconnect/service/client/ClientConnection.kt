@@ -131,6 +131,7 @@ class ClientConnection(
     private var handshakeAck = CompletableDeferred<Boolean>()
 
     private var gatt: BluetoothGatt? = null
+    private var connectTimeoutJob: Job? = null
     private var reconnectJob: Job? = null
     private var closedByClient = false
     private var reconnectAttemptCount: Int = 0
@@ -196,6 +197,7 @@ class ClientConnection(
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.w(TAG, "[$address] Connection state change error status=$status newState=$newState")
             }
+            cancelConnectTimeout()
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     emitState(ConnectionStatus.Connected)
@@ -457,6 +459,7 @@ class ClientConnection(
     fun disconnect(manual: Boolean) {
         closedByClient = closedByClient || manual
         reconnectJob?.cancel()
+        cancelConnectTimeout()
         connectionScope.launch {
             closeGatt()
             emitState(if (manual) ConnectionStatus.Disconnected else ConnectionStatus.Failed)
@@ -504,6 +507,7 @@ class ClientConnection(
     @SuppressLint("MissingPermission")
     private suspend fun startGattConnection() {
         connectLifecycleMutex.withLock {
+            cancelConnectTimeout()
             closeGatt()
             peerBatteryPercent = null
             lastRemoteRssi = null
@@ -523,6 +527,7 @@ class ClientConnection(
             gatt = newGatt ?: throw IllegalStateException("connectGatt returned null for $address")
             Log.d(TAG, "[$address] connectGatt started autoConnect=$useAutoConnect knownPeer=$knownPeer retry=$reconnectAttemptCount")
             emitState(ConnectionStatus.Connecting)
+            scheduleConnectTimeout(newGatt)
         }
     }
 
@@ -1067,6 +1072,11 @@ class ClientConnection(
             context = context
         )
         peerBatteryPercent = identity.batteryPercent
+        BlePeerIdentityUtils.SignalLocationRegistry.updateVictimIdentity(
+            address = normalizedAddress,
+            displayName = displayName,
+            batteryPercent = identity.batteryPercent
+        )
         BleChatStore.ensureSession(sessionCode)
         withContext(Dispatchers.IO) {
             val contact = Contact(
@@ -1089,10 +1099,10 @@ class ClientConnection(
                 address = normalizedAddress,
                 location = location
             )
-            RescueFeatureManager(context).notifySignalLocationUpdated()
         } ?: connectionScope.launch {
             estimateAndStoreRelativeVictimLocation(normalizedAddress)
         }
+        RescueFeatureManager(context).notifySignalLocationUpdated()
         emitState(lastStatus, userId = userId, peerBatteryPercent = peerBatteryPercent)
     }
 
@@ -1986,6 +1996,27 @@ class ClientConnection(
         }
     }
 
+    private fun scheduleConnectTimeout(targetGatt: BluetoothGatt) {
+        connectTimeoutJob?.cancel()
+        connectTimeoutJob = connectionScope.launch {
+            delay(CONNECT_TIMEOUT_MS)
+            if (closedByClient || !isCurrentGatt(targetGatt) || lastStatus != ConnectionStatus.Connecting) {
+                return@launch
+            }
+            connectTimeoutJob = null
+            Log.w(TAG, "[$address] connectGatt timed out after ${CONNECT_TIMEOUT_MS}ms")
+            cleanupPendingOperations(BluetoothGatt.GATT_FAILURE)
+            emitState(ConnectionStatus.Failed, reason = "CONNECT_TIMEOUT")
+            closeGatt()
+            scheduleReconnect()
+        }
+    }
+
+    private fun cancelConnectTimeout() {
+        connectTimeoutJob?.cancel()
+        connectTimeoutJob = null
+    }
+
     @SuppressLint("MissingPermission")
     private fun requestConnectionPriorityForPhase(
         gatt: BluetoothGatt,
@@ -2104,6 +2135,7 @@ class ClientConnection(
         private const val MAX_CHUNK_WRITE_ATTEMPTS = 3
         private const val CHUNK_WRITE_RETRY_BASE_DELAY_MS = 40L
         private const val GATT_CALLBACK_TIMEOUT_MS = 3500L
+        private const val CONNECT_TIMEOUT_MS = 12_000L
         private const val RECONNECT_BASE_DELAY_MS = 1_800L
         private const val RECONNECT_BASE_CAP_MS = 60_000L
         private const val RECONNECT_MIN_DELAY_MS = 1_000L

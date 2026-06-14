@@ -42,6 +42,12 @@ fun buildConfigString(value: String): String {
 }
 
 val googleWebClientId = secretConfigValue("GOOGLE_WEB_CLIENT_ID", "GOOGLE_WEB_CLIENT_ID")
+val mobileSyncBaseUrl = secretConfigValue("MOBILE_SYNC_BASE_URL", "MOBILE_SYNC_BASE_URL")
+val mobileSyncPanelId = secretConfigValue("MOBILE_SYNC_PANEL_ID", "MOBILE_SYNC_PANEL_ID")
+val enterpriseSsoProviderId = secretConfigValue(
+    "ENTERPRISE_SSO_PROVIDER_ID",
+    "ENTERPRISE_SSO_PROVIDER_ID"
+).ifBlank { "oidc.crisisconnect-sso" }
 val mapLibreApiKey = secretConfigValue("MAPLIBRE_API_KEY", "MAPLIBRE_API_KEY")
 val appCheckDebugToken = secretConfigValue("APP_CHECK_DEBUG_TOKEN", "APP_CHECK_DEBUG_TOKEN")
 val rescueNodeIdHexLengthRaw = secretConfigValue(
@@ -89,8 +95,8 @@ android {
         applicationId = "com.auralis.crisisconnect"
         minSdk = 24
         targetSdk = 35
-        versionCode = 35
-        versionName = "1.0.0"
+        versionCode = 46
+        versionName = "1.1.1"
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
@@ -99,6 +105,21 @@ android {
             "String",
             "GOOGLE_WEB_CLIENT_ID",
             buildConfigString(googleWebClientId)
+        )
+        buildConfigField(
+            "String",
+            "ENTERPRISE_SSO_PROVIDER_ID",
+            buildConfigString(enterpriseSsoProviderId)
+        )
+        buildConfigField(
+            "String",
+            "MOBILE_SYNC_BASE_URL",
+            buildConfigString(mobileSyncBaseUrl)
+        )
+        buildConfigField(
+            "String",
+            "MOBILE_SYNC_PANEL_ID",
+            buildConfigString(mobileSyncPanelId)
         )
         buildConfigField(
             "int",
@@ -161,7 +182,7 @@ android {
             buildConfigField(
                 "String",
                 "APP_CHECK_DEBUG_TOKEN",
-                buildConfigString(appCheckDebugToken)
+                buildConfigString("")
             )
             buildConfigField(
                 "boolean",
@@ -248,6 +269,7 @@ dependencies {
     implementation(libs.androidx.compose.animation)
     implementation(libs.androidx.compose.foundation.layout)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
     testImplementation("androidx.test:core:1.6.1")
@@ -297,6 +319,7 @@ dependencies {
     implementation("androidx.camera:camera-mlkit-vision:1.4.0")// ML Kit için köprü
     // ML Kit Barcode Scanning (16 KB page‑size compatible)
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
 
     // AES Şifreleme
     implementation("com.google.crypto.tink:tink-android:1.18.0")
@@ -316,11 +339,18 @@ dependencies {
     implementation("com.google.firebase:firebase-auth-ktx:23.1.0")
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-functions")
+    implementation("com.google.firebase:firebase-storage")
+
+    // Offline profile photo upload queue
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("com.google.firebase:firebase-appcheck-playintegrity")
     debugImplementation("com.google.firebase:firebase-appcheck-debug")
-    add("internalImplementation", "com.google.firebase:firebase-appcheck-debug")
+
+    // Standalone Play Integrity for raw integrity tokens used by attestation flow
+    implementation("com.google.android.play:integrity:1.4.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     // Firebase

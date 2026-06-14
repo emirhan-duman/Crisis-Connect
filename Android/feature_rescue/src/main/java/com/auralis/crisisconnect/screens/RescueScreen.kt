@@ -66,11 +66,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -91,6 +94,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.ai.CrisisSentinelResponse
+import com.auralis.crisisconnect.ai.CrisisSentinelResponseSource
+import com.auralis.crisisconnect.ai.CrisisSentinelUserMode
 import com.auralis.crisisconnect.ui.components.AppBottomBar
 import java.text.DateFormat
 import java.util.Date
@@ -100,7 +106,8 @@ import java.util.Date
 fun RescueScreen(
     navController: NavController,
     onBackPressed: () -> Unit = { navController.popBackStack() },
-    onBottomBarRouteSelected: ((String) -> Unit)? = null
+    onBottomBarRouteSelected: ((String) -> Unit)? = null,
+    onConversationSelected: ((String) -> Unit)? = null
 ) {
     val viewModel: RescueScreenViewModel = viewModel()
     val settingsViewModel: RescueSettingsViewModel = viewModel()
@@ -185,6 +192,9 @@ fun RescueScreen(
         } else {
             viewModel.stopScanning()
         }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.refreshFieldAiAccess()
     }
     LaunchedEffect(uiState.peerAuthEvent?.eventId) {
         val event = uiState.peerAuthEvent ?: return@LaunchedEffect
@@ -295,6 +305,22 @@ fun RescueScreen(
                 )
             }
             item {
+                RescueFieldAiCard(
+                    canUseFieldAi = uiState.canUseFieldAi,
+                    mode = uiState.fieldAiMode,
+                    certificateRole = uiState.fieldAiCertificateRole,
+                    prompt = uiState.fieldAiPrompt,
+                    response = uiState.fieldAiResponse,
+                    isGenerating = uiState.isFieldAiGenerating,
+                    isModelReady = uiState.isFieldAiModelReady,
+                    messageId = uiState.fieldAiMessage,
+                    onPromptChanged = viewModel::onFieldAiPromptChanged,
+                    onDraftFromSignals = viewModel::generateFieldAiFromSignals,
+                    onAsk = viewModel::generateFieldAiFromPrompt,
+                    onCancel = viewModel::cancelFieldAiGeneration,
+                )
+            }
+            item {
                 AnimatedVisibility(
                     visible = showMeshStatusCard,
                     enter = fadeIn(animationSpec = tween(durationMillis = 260)) +
@@ -393,12 +419,16 @@ fun RescueScreen(
                         showAddress = settingsUiState.showDeviceAddress,
                         onClick = if (hasAddress) {
                             {
-                                val route = if (sessionCode.startsWith("ble:", ignoreCase = true)) {
-                                    "ble_chat/$encodedCode"
+                                if (onConversationSelected != null) {
+                                    onConversationSelected(sessionCode)
                                 } else {
-                                    "chat/$encodedCode"
+                                    val route = if (sessionCode.startsWith("ble:", ignoreCase = true)) {
+                                        "ble_chat/$encodedCode"
+                                    } else {
+                                        "chat/$encodedCode"
+                                    }
+                                    navController.navigate(route)
                                 }
-                                navController.navigate(route)
                             }
                         } else {
                             null
@@ -415,6 +445,7 @@ private fun RescueMeshToggleAction(
     isMeshEnabled: Boolean,
     isMeshBusy: Boolean,
     onToggle: (Boolean) -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -433,9 +464,12 @@ private fun RescueMeshToggleAction(
                 strokeWidth = 2.dp
             )
         } else {
+            // Always visible so authorities can find it; disabled until the device is a verified
+            // admin/fieldteam (canControlMesh), matching the iOS rescue-screen toggle.
             Switch(
                 checked = isMeshEnabled,
-                onCheckedChange = onToggle
+                onCheckedChange = onToggle,
+                enabled = enabled
             )
         }
     }
@@ -491,6 +525,293 @@ private fun RescueErrorCard(
             }
         }
     }
+}
+
+@Composable
+private fun RescueFieldAiCard(
+    canUseFieldAi: Boolean,
+    mode: CrisisSentinelUserMode,
+    certificateRole: String?,
+    prompt: String,
+    response: CrisisSentinelResponse?,
+    isGenerating: Boolean,
+    isModelReady: Boolean,
+    messageId: Int?,
+    onPromptChanged: (String) -> Unit,
+    onDraftFromSignals: () -> Unit,
+    onAsk: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Surface(
+                    modifier = Modifier.size(36.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SignalCellularAlt,
+                        contentDescription = null,
+                        modifier = Modifier.padding(8.dp),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.rescue_ai_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = stringResource(R.string.rescue_ai_body),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RescueAiPill(
+                    text = stringResource(R.string.rescue_ai_role_format, stringResource(mode.labelRes())),
+                    isPrimary = true,
+                    modifier = Modifier.weight(1f)
+                )
+                RescueAiPill(
+                    text = if (isModelReady) {
+                        stringResource(R.string.crisis_sentinel_model_active)
+                    } else {
+                        stringResource(R.string.crisis_sentinel_source_offline_rules)
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            if (!canUseFieldAi) {
+                Text(
+                    text = stringResource(R.string.rescue_ai_requires_role),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+                return@Column
+            }
+
+            certificateRole?.takeIf { it.isNotBlank() }?.let { role ->
+                Text(
+                    text = stringResource(R.string.rescue_ai_certificate_role_format, role),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            OutlinedTextField(
+                value = prompt,
+                onValueChange = onPromptChanged,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isGenerating,
+                minLines = 2,
+                maxLines = 5,
+                label = { Text(text = stringResource(R.string.rescue_ai_prompt_label)) },
+                placeholder = { Text(text = stringResource(R.string.rescue_ai_prompt_placeholder)) },
+                shape = RoundedCornerShape(14.dp)
+            )
+
+            messageId?.let {
+                Text(
+                    text = stringResource(it),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilledTonalButton(
+                    onClick = onDraftFromSignals,
+                    enabled = !isGenerating,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.rescue_ai_draft_from_signals),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                FilledTonalButton(
+                    onClick = onAsk,
+                    enabled = !isGenerating,
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(text = stringResource(R.string.crisis_sentinel_ask))
+                }
+            }
+
+            if (isGenerating) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.crisis_sentinel_generation_working),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onCancel) {
+                            Text(text = stringResource(R.string.crisis_sentinel_generation_cancel))
+                        }
+                    }
+                }
+            }
+
+            response?.let {
+                RescueAiResponseBlock(response = it)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RescueAiPill(
+    text: String,
+    isPrimary: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val container = if (isPrimary) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    val content = if (isPrimary) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(999.dp),
+        color = container,
+        border = BorderStroke(
+            width = 1.dp,
+            color = content.copy(alpha = 0.12f)
+        )
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = content,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun RescueAiResponseBlock(response: CrisisSentinelResponse) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                shape = RoundedCornerShape(16.dp)
+            )
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.crisis_sentinel_response_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = stringResource(response.source.labelRes()),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Text(
+            text = response.answer,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        if (response.safetyNotices.isNotEmpty()) {
+            Text(
+                text = stringResource(
+                    R.string.rescue_ai_safety_format,
+                    response.safetyNotices.take(2).joinToString(" • ")
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        if (response.followUpQuestions.isNotEmpty()) {
+            Text(
+                text = stringResource(
+                    R.string.rescue_ai_followup_format,
+                    response.followUpQuestions.take(2).joinToString(" • ")
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private fun CrisisSentinelUserMode.labelRes(): Int = when (this) {
+    CrisisSentinelUserMode.Public -> R.string.crisis_sentinel_mode_public
+    CrisisSentinelUserMode.FieldTeam -> R.string.crisis_sentinel_mode_field
+    CrisisSentinelUserMode.Coordinator -> R.string.crisis_sentinel_mode_coordinator
+}
+
+private fun CrisisSentinelResponseSource.labelRes(): Int = when (this) {
+    CrisisSentinelResponseSource.LocalModel -> R.string.crisis_sentinel_source_local_model
+    CrisisSentinelResponseSource.OfflineRules -> R.string.crisis_sentinel_source_offline_rules
 }
 
 @Composable
@@ -561,14 +882,13 @@ private fun RescueMissionOverview(
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
-                if (canControlMesh) {
-                    RescueMeshToggleAction(
-                        isMeshEnabled = isMeshEnabled,
-                        isMeshBusy = isMeshBusy,
-                        onToggle = onMeshToggle,
-                        modifier = Modifier
-                    )
-                }
+                RescueMeshToggleAction(
+                    isMeshEnabled = isMeshEnabled,
+                    isMeshBusy = isMeshBusy,
+                    enabled = canControlMesh,
+                    onToggle = onMeshToggle,
+                    modifier = Modifier
+                )
             }
 
             Row(

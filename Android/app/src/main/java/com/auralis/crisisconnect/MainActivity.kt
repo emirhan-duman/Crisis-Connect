@@ -7,9 +7,14 @@ import com.auralis.crisisconnect.screens.ToolsMainScreen
 import com.auralis.crisisconnect.screens.SettingsScreen
 import com.auralis.crisisconnect.screens.AdvancedSettingsScreen
 import com.auralis.crisisconnect.screens.settings.ProfileScreen
+import com.auralis.crisisconnect.screens.Tools.CrisisSentinelSwipeBackCoordinator
 import com.auralis.crisisconnect.screens.Tools.MetalDetectorScreen
 import com.auralis.crisisconnect.screens.Tools.SignalFinderScreen
 import com.auralis.crisisconnect.screens.Tools.CompassScreen
+import com.auralis.crisisconnect.screens.Tools.CrisisSentinelChatScreen
+import com.auralis.crisisconnect.screens.Tools.CrisisSentinelHomeScreen
+import com.auralis.crisisconnect.screens.Tools.CrisisSentinelScreen
+import com.auralis.crisisconnect.screens.Tools.CrisisSentinelSettingsScreen
 import com.auralis.crisisconnect.screens.Tools.OfflineMapScreen
 import com.auralis.crisisconnect.screens.Tools.SensorToolScreen
 import com.auralis.crisisconnect.screens.Tools.WhistleScreen
@@ -18,12 +23,14 @@ import com.auralis.crisisconnect.screens.Chat.ChatInfoScreen
 import com.auralis.crisisconnect.screens.Chat.BleChatScreen
 import com.auralis.crisisconnect.screens.Chat.GattMeshScreen
 import com.auralis.crisisconnect.screens.SOSScreen
+import com.auralis.crisisconnect.ui.cert.CertificateProvisioningBanner
 
 import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -67,6 +74,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -96,6 +104,7 @@ import com.auralis.crisisconnect.screens.QR.ChatEncryptionSetupScreen
 import com.auralis.crisisconnect.screens.QR.QrScannerScreen
 import com.auralis.crisisconnect.screens.Chat.resolveChatDisplayName
 import com.auralis.crisisconnect.data.database.DatabaseInitializer
+import com.auralis.crisisconnect.security.EnterpriseSsoBridge
 import com.auralis.crisisconnect.security.SecurityRepository
 import com.auralis.crisisconnect.service.CallState
 import com.auralis.crisisconnect.service.CallUiState
@@ -104,6 +113,8 @@ import com.auralis.crisisconnect.service.gattmesh.GattMeshForegroundService
 import com.google.android.play.core.splitinstall.SplitInstallStateUpdatedListener
 import com.google.android.play.core.splitinstall.model.SplitInstallSessionStatus
 import com.google.firebase.FirebaseApp
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import java.security.SecureRandom
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
@@ -116,6 +127,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private val ONBOARDING_TERMS_ACCEPTED_KEY = booleanPreferencesKey("terms_v2_accepted")
 
 class MainActivity : ComponentActivity() {
     private val navigationEvents = MutableSharedFlow<Intent>(extraBufferCapacity = 1)
@@ -141,6 +154,25 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    override fun attachBaseContext(newBase: Context) {
+        val savedTheme = runCatching { getSavedThemeOptionSync(newBase) }
+            .getOrDefault(ThemeOption.SYSTEM)
+        val baseUiMode = newBase.resources.configuration.uiMode
+        val systemInNight =
+            (baseUiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val desiredInNight = when (savedTheme) {
+            ThemeOption.DARK -> true
+            ThemeOption.LIGHT -> false
+            ThemeOption.SYSTEM -> systemInNight
+        }
+        val overrideConfig = Configuration(newBase.resources.configuration).apply {
+            uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                if (desiredInNight) Configuration.UI_MODE_NIGHT_YES
+                else Configuration.UI_MODE_NIGHT_NO
+        }
+        super.attachBaseContext(newBase.createConfigurationContext(overrideConfig))
+    }
+
     @OptIn(ExperimentalAnimationApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         val startupThemeOption = getSavedThemeOptionSync(this)
@@ -151,14 +183,21 @@ class MainActivity : ComponentActivity() {
             splashViewProvider.view.animate()
                 .alpha(0f)
                 .setDuration(220L)
-                .withEndAction { splashViewProvider.remove() }
+                .withEndAction {
+                    splashViewProvider.remove()
+                    // The splash screen window can reset the system bar appearance
+                    // when it tears down; re-apply once it is gone so the icons match
+                    // the active theme on cold start.
+                    configureSystemBars(getSavedThemeOptionSync(this@MainActivity))
+                }
                 .start()
         }
-        configureSystemBars(startupThemeOption)
         super.onCreate(savedInstanceState)
+        configureSystemBars(startupThemeOption)
         setLocale(this, startupLanguageCode, shouldRecreate = false)
         applyOrientationPolicyForDeviceClass()
         applyIncomingCallWakeWindowPolicy(intent)
+        handleSsoDeepLink(intent)
         rescueFeatureManager.registerListener(rescueFeatureInstallListener)
         FirebaseApp.initializeApp(this)
         lifecycleScope.launch(Dispatchers.IO) {
@@ -194,7 +233,7 @@ class MainActivity : ComponentActivity() {
         bootstrapCrisisLinkServiceIfEnabled()
         bootstrapGattMeshServiceIfEnabled()
         bootstrapMeshServiceIfAlwaysOn()
-        ensureCriticalPermissionsAndStartService()
+        startRfcommForegroundServiceAfterOnboarding()
 
         lifecycleScope.launch {
             val languageCode = runCatching {
@@ -321,6 +360,7 @@ class MainActivity : ComponentActivity() {
                         .defaultMinSize(minWidth = 1.dp, minHeight = 1.dp),
                     color = MaterialTheme.colorScheme.background
                 ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
                     val navController = rememberNavController()
                     val currentBackStackEntry by navController.currentBackStackEntryAsState()
                     var hasResolvedInitialDestination by remember { mutableStateOf(false) }
@@ -418,7 +458,8 @@ class MainActivity : ComponentActivity() {
                                             this
                                         } else {
                                             null
-                                        }
+                                        },
+                                        onOnboardingCompleted = ::ensureCriticalPermissionsAndStartService
                                     )
                                 }
                                 composable("sos_status") { SOSScreen(navController) }
@@ -551,6 +592,50 @@ class MainActivity : ComponentActivity() {
                                     GuideMainScreen(navController = navController)
                                 }
                                 composable("tools_main") { ToolsMainScreen(navController) }
+                                composable("crisis_sentinel") { CrisisSentinelScreen(navController) }
+                                composable(
+                                    route = "crisis_sentinel_home",
+                                    exitTransition = {
+                                        if (targetState.destination.route.isChatRoute()) {
+                                            chatForwardExitTransition()
+                                        } else {
+                                            ExitTransition.None
+                                        }
+                                    },
+                                    popEnterTransition = {
+                                        if (initialState.destination.route.isChatRoute() &&
+                                            !CrisisSentinelSwipeBackCoordinator.isArmed()
+                                        ) {
+                                            chatPopEnterTransition()
+                                        } else {
+                                            EnterTransition.None
+                                        }
+                                    }
+                                ) { CrisisSentinelHomeScreen(navController) }
+                                composable("crisis_sentinel_settings") { CrisisSentinelSettingsScreen(navController) }
+                                composable(
+                                    route = "crisis_sentinel_chat/{conversationId}",
+                                    enterTransition = { chatEnterTransition() },
+                                    exitTransition = { chatForwardExitTransition() },
+                                    popEnterTransition = { chatPopEnterTransition() },
+                                    popExitTransition = {
+                                        // The swipe-back gesture already slid this screen away.
+                                        if (CrisisSentinelSwipeBackCoordinator.isArmed()) {
+                                            ExitTransition.None
+                                        } else {
+                                            chatPopExitTransition()
+                                        }
+                                    }
+                                ) { backStackEntry ->
+                                    val conversationId = backStackEntry.arguments
+                                        ?.getString("conversationId")
+                                        ?.let(Uri::decode)
+                                        ?: ""
+                                    CrisisSentinelChatScreen(
+                                        navController = navController,
+                                        conversationId = conversationId
+                                    )
+                                }
                                 composable("metal_detector") { MetalDetectorScreen(navController) }
                                 composable("signal_finder") { SignalFinderScreen(navController) }
                                 composable("whistle") { WhistleScreen(navController) }
@@ -560,6 +645,10 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         GlobalIncomingCallOverlayHost(navController)
+                        CertificateProvisioningBanner(
+                            modifier = Modifier.align(Alignment.TopCenter)
+                        )
+                    }
                     }
                 }
             }
@@ -690,6 +779,7 @@ class MainActivity : ComponentActivity() {
         val route = this?.substringBefore("?") ?: return false
         return route.startsWith("chat/") ||
             route.startsWith("ble_chat/") ||
+            route.startsWith("crisis_sentinel_chat/") ||
             route == "mesh_chat" ||
             route == "gatt_mesh_chat"
     }
@@ -739,6 +829,27 @@ class MainActivity : ComponentActivity() {
             return
         }
         startRfcommForegroundServiceIfNeeded()
+    }
+
+    private fun startRfcommForegroundServiceAfterOnboarding() {
+        lifecycleScope.launch {
+            if (hasCompletedWelcomeOnboarding()) {
+                ensureCriticalPermissionsAndStartService()
+            }
+        }
+    }
+
+    private suspend fun hasCompletedWelcomeOnboarding(): Boolean {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val termsAccepted =
+                    onboardingDataStore.data.first()[ONBOARDING_TERMS_ACCEPTED_KEY] ?: false
+                val savedName = getSavedUserName(this@MainActivity).first().trim()
+                termsAccepted && savedName.isNotBlank()
+            }.onFailure { throwable ->
+                Log.w(TAG, "Unable to read onboarding state; deferring permission request", throwable)
+            }.getOrDefault(false)
+        }
     }
 
     private fun requiredPermissionsForRequest(): List<String> {
@@ -886,8 +997,31 @@ class MainActivity : ComponentActivity() {
         intent?.let {
             setIntent(it)
             applyIncomingCallWakeWindowPolicy(it)
+            handleSsoDeepLink(it)
             navigationEvents.tryEmit(it)
         }
+    }
+
+    /** Catches the `crisisconnect://sso/callback` deep link returned by the web enterprise-SSO flow. */
+    private fun handleSsoDeepLink(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "crisisconnect" || data.host != "sso") {
+            return
+        }
+        val code = data.getQueryParameter("code")
+        val error = data.getQueryParameter("error")
+        when {
+            !code.isNullOrBlank() -> EnterpriseSsoBridge.emit(EnterpriseSsoBridge.Result.Code(code))
+            else -> EnterpriseSsoBridge.emit(EnterpriseSsoBridge.Result.Error(error))
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-apply on warm start so the status/navigation bar icons stay in sync
+        // with the active theme even if the system reset them while we were
+        // backgrounded (e.g. another app changed the bar appearance).
+        configureSystemBars(getSavedThemeOptionSync(this))
     }
 
     override fun onStop() {
@@ -982,6 +1116,7 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_WAKE_FOR_INCOMING_CALL = "extra_wake_for_incoming_call"
         private const val EXTRA_TRUSTED_LAUNCH_TOKEN = "extra_trusted_launch_token"
         private const val LAUNCH_TRUST_PREFS = "main_activity_launch_trust"
+        private const val LAUNCH_TRUST_PREFS_ENCRYPTED = "main_activity_launch_trust_enc"
         private const val LAUNCH_TRUST_TOKEN_KEY = "launch_token"
         private const val LAUNCH_TRUST_TOKEN_BYTES = 32
         private val launchTokenRandom = SecureRandom()
@@ -1000,10 +1135,8 @@ class MainActivity : ComponentActivity() {
         }
 
         private fun getOrCreateTrustedLaunchToken(context: Context): String {
-            val prefs = context.applicationContext.getSharedPreferences(
-                LAUNCH_TRUST_PREFS,
-                Context.MODE_PRIVATE
-            )
+            val appContext = context.applicationContext
+            val prefs = openLaunchTokenPrefs(appContext)
             prefs.getString(LAUNCH_TRUST_TOKEN_KEY, null)
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() }
@@ -1014,6 +1147,45 @@ class MainActivity : ComponentActivity() {
             val token = Base64.encodeToString(tokenBytes, Base64.NO_WRAP or Base64.NO_PADDING)
             prefs.edit().putString(LAUNCH_TRUST_TOKEN_KEY, token).apply()
             return token
+        }
+
+        private fun openLaunchTokenPrefs(context: Context): SharedPreferences {
+            return runCatching { openEncryptedLaunchTokenPrefs(context) }
+                .onFailure { Log.w(TAG, "EncryptedSharedPreferences unavailable for launch token; using plain prefs", it) }
+                .getOrElse {
+                    context.getSharedPreferences(LAUNCH_TRUST_PREFS, Context.MODE_PRIVATE)
+                }
+        }
+
+        private fun openEncryptedLaunchTokenPrefs(context: Context): SharedPreferences {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            val encrypted = EncryptedSharedPreferences.create(
+                context,
+                LAUNCH_TRUST_PREFS_ENCRYPTED,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+            migrateLegacyLaunchTokenIfPresent(context, encrypted)
+            return encrypted
+        }
+
+        private fun migrateLegacyLaunchTokenIfPresent(
+            context: Context,
+            encrypted: SharedPreferences,
+        ) {
+            val legacy = context.getSharedPreferences(LAUNCH_TRUST_PREFS, Context.MODE_PRIVATE)
+            val legacyToken = legacy.getString(LAUNCH_TRUST_TOKEN_KEY, null)
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+            if (legacyToken != null && !encrypted.contains(LAUNCH_TRUST_TOKEN_KEY)) {
+                encrypted.edit().putString(LAUNCH_TRUST_TOKEN_KEY, legacyToken).apply()
+            }
+            if (legacy.contains(LAUNCH_TRUST_TOKEN_KEY)) {
+                legacy.edit().remove(LAUNCH_TRUST_TOKEN_KEY).apply()
+            }
         }
     }
 }

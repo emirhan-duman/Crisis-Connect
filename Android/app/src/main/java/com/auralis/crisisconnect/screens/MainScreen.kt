@@ -79,7 +79,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -91,7 +90,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -152,6 +150,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.ai.CrisisSentinelModelFileStore
+import com.auralis.crisisconnect.ai.CrisisSentinelModelManifestCache
 import com.auralis.crisisconnect.core.chat.parseReplyMetadata
 import com.auralis.crisisconnect.core.chat.stripReplyMetadata
 import com.auralis.crisisconnect.data.BlePeerStore
@@ -166,6 +166,8 @@ import com.auralis.crisisconnect.data.PREFERRED_TRANSPORT_BLE_GATT
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.data.local.ContactAvatarStorage
 import com.auralis.crisisconnect.feature.RescueFeatureManager
+import com.auralis.crisisconnect.isScreenshotDemoModeEnabledSync
+import com.auralis.crisisconnect.screens.Chat.ChatScreenshotDemoScenario
 import com.auralis.crisisconnect.navigation.buildConversationRoute
 import com.auralis.crisisconnect.navigation.ChatSharedElements
 import com.auralis.crisisconnect.screens.Chat.formatCallDuration
@@ -213,7 +215,6 @@ private const val MESH_GENERAL_SESSION_CODE = "gattmesh:general"
 private const val MESH_GENERAL_LIST_ITEM_KEY = "gattmesh:general:list_item"
 private const val PERMISSION_REQUEST_PREFS = "settings_permission_requests"
 private const val PERMISSION_REQUESTED_KEY_PREFIX = "requested_"
-private val WELCOME_BLOCKED_BUTTON_COLOR = Color(0xFFC62828)
 private val WELCOME_BLOCKED_TEXT_COLOR = Color(0xFFB71C1C)
 private val GOOGLE_MAPS_LOCATION_REGEX =
     Regex("""https?://maps\.google\.com/\?q=([-0-9.]+),([-0-9.]+)""")
@@ -263,9 +264,18 @@ private fun ConnectivityManager.hasUsableInternetConnection(): Boolean {
         capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 }
 
+private fun isCrisisSentinelModelReady(context: Context): Boolean {
+    val appContext = context.applicationContext
+    val release = CrisisSentinelModelManifestCache(appContext).load()
+        ?: CrisisSentinelModelFileStore.defaultRelease
+    return CrisisSentinelModelFileStore(appContext)
+        .status(release = release, verifyChecksum = false)
+        .isReady
+}
+
 private fun welcomePermissionRequirements(): List<WelcomePermissionRequirement> {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        buildList {
+    return buildList {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             add(
                 WelcomePermissionRequirement(
                     labelRes = R.string.permission_group_bluetooth,
@@ -285,14 +295,28 @@ private fun welcomePermissionRequirements(): List<WelcomePermissionRequirement> 
                     )
                 )
             )
-        }
-    } else {
-        listOf(
-            WelcomePermissionRequirement(
-                labelRes = R.string.permission_group_location,
-                permissions = listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        } else {
+            add(
+                WelcomePermissionRequirement(
+                    labelRes = R.string.permission_group_location,
+                    permissions = listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+                )
             )
-        )
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(
+                WelcomePermissionRequirement(
+                    labelRes = R.string.permission_group_nearby_wifi,
+                    permissions = listOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+                )
+            )
+            add(
+                WelcomePermissionRequirement(
+                    labelRes = R.string.permission_group_notifications,
+                    permissions = listOf(Manifest.permission.POST_NOTIFICATIONS)
+                )
+            )
+        }
     }
 }
 
@@ -390,7 +414,7 @@ private fun resolveWelcomeContinueBlocker(context: Context): WelcomeContinueBloc
             WelcomeContinueAction.OpenSettings
         }
         val actionText = if (requestablePermissions.isNotEmpty()) {
-            context.getString(R.string.settings_missing_permissions_request_button)
+            context.getString(R.string.welcome_continue_action_request_permissions)
         } else {
             context.getString(R.string.qr_scan_open_settings)
         }
@@ -421,7 +445,8 @@ private fun resolveWelcomeContinueBlocker(context: Context): WelcomeContinueBloc
 fun MainScreen(
     navController: NavController,
     sharedTransitionScope: SharedTransitionScope? = null,
-    animatedVisibilityScope: AnimatedVisibilityScope? = null
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    onOnboardingCompleted: () -> Unit = {}
 ) {
     val viewModel: MainScreenViewModel = viewModel()
     val showDialog by viewModel.showDialog.collectAsStateWithLifecycle()
@@ -689,34 +714,71 @@ fun MainScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     val hasValidName = fullName.isNotBlank()
-                    val isSystemBlocked = welcomeContinueBlocker != null
+                    val blocker = welcomeContinueBlocker
+                    val isSystemBlocked = blocker != null
+                    val hasBlockerAction = blocker?.action != null
                     Button(
                         modifier = Modifier.fillMaxWidth(),
                         onClick = {
-                            viewModel.acceptDialog(fullName)
+                            when (blocker?.action) {
+                                WelcomeContinueAction.RequestPermissions -> {
+                                    val missingPermissions = missingWelcomePermissions(context)
+                                    val requestablePermissions =
+                                        requestableWelcomePermissions(context, missingPermissions)
+                                    if (requestablePermissions.isNotEmpty()) {
+                                        markPermissionsAsRequested(context, requestablePermissions)
+                                        welcomePermissionRequestLauncher.launch(
+                                            requestablePermissions.toTypedArray()
+                                        )
+                                    } else {
+                                        openAppPermissionSettings(context)
+                                    }
+                                }
+
+                                WelcomeContinueAction.OpenSettings -> {
+                                    openAppPermissionSettings(context)
+                                }
+
+                                WelcomeContinueAction.EnableBluetooth -> {
+                                    runCatching {
+                                        welcomeEnableBluetoothLauncher.launch(
+                                            Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                                        )
+                                    }.onFailure { throwable ->
+                                        Log.w(
+                                            SOS_BROADCAST_LOG_TAG,
+                                            "Unable to show Bluetooth enable prompt from welcome dialog",
+                                            throwable
+                                        )
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.rescue_error_bluetooth_disabled),
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+
+                                null -> {
+                                    if (blocker == null) {
+                                        viewModel.acceptDialog(fullName)
+                                        onOnboardingCompleted()
+                                    }
+                                }
+                            }
                         },
-                        enabled = isChecked.value && hasValidName && !isSystemBlocked,
+                        enabled = isChecked.value && hasValidName && (!isSystemBlocked || hasBlockerAction),
                         shape = RoundedCornerShape(16.dp),
-                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
-                        colors = if (isSystemBlocked) {
-                            ButtonDefaults.buttonColors(
-                                containerColor = WELCOME_BLOCKED_BUTTON_COLOR,
-                                contentColor = Color.White,
-                                disabledContainerColor = WELCOME_BLOCKED_BUTTON_COLOR,
-                                disabledContentColor = Color.White
-                            )
-                        } else {
-                            ButtonDefaults.buttonColors()
-                        }
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)
                     ) {
                         Text(
-                            text = welcomeContinueBlocker?.buttonText
+                            text = blocker?.actionText
+                                ?: blocker?.buttonText
                                 ?: stringResource(R.string.continue_button),
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.Center
                         )
                     }
-                    welcomeContinueBlocker?.detailText?.let { detailText ->
+                    blocker?.detailText?.let { detailText ->
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
                             text = detailText,
@@ -725,62 +787,6 @@ fun MainScreen(
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodySmall
                         )
-                    }
-                    welcomeContinueBlocker?.let { blocker ->
-                        val actionText = blocker.actionText
-                        val action = blocker.action
-                        if (actionText != null && action != null) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            OutlinedButton(
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = {
-                                    when (action) {
-                                        WelcomeContinueAction.RequestPermissions -> {
-                                            val missingPermissions = missingWelcomePermissions(context)
-                                            val requestablePermissions =
-                                                requestableWelcomePermissions(context, missingPermissions)
-                                            if (requestablePermissions.isNotEmpty()) {
-                                                markPermissionsAsRequested(context, requestablePermissions)
-                                                welcomePermissionRequestLauncher.launch(
-                                                    requestablePermissions.toTypedArray()
-                                                )
-                                            } else {
-                                                openAppPermissionSettings(context)
-                                            }
-                                        }
-
-                                        WelcomeContinueAction.OpenSettings -> {
-                                            openAppPermissionSettings(context)
-                                        }
-
-                                        WelcomeContinueAction.EnableBluetooth -> {
-                                            runCatching {
-                                                welcomeEnableBluetoothLauncher.launch(
-                                                    Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-                                                )
-                                            }.onFailure { throwable ->
-                                                Log.w(
-                                                    SOS_BROADCAST_LOG_TAG,
-                                                    "Unable to show Bluetooth enable prompt from welcome dialog",
-                                                    throwable
-                                                )
-                                                Toast.makeText(
-                                                    context,
-                                                    context.getString(R.string.rescue_error_bluetooth_disabled),
-                                                    Toast.LENGTH_LONG
-                                                ).show()
-                                            }
-                                        }
-                                    }
-                                }
-                            ) {
-                                Text(
-                                    text = actionText,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -1105,6 +1111,9 @@ private fun MainConversationContent(
     val unreadCounts by viewModel.unreadCounts.collectAsStateWithLifecycle()
     val allMessages by viewModel.allMessagesNewestFirst.collectAsStateWithLifecycle()
     val meshGeneralMessages by GattMeshChatStore.messages.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val appContext = remember(context) { context.applicationContext }
+    val lifecycleOwner = LocalLifecycleOwner.current
     // Use screen width from configuration instead of BoxWithConstraints scope
     val configuration = LocalConfiguration.current
     val isExpandedScreen = configuration.screenWidthDp >= 600
@@ -1116,12 +1125,25 @@ private fun MainConversationContent(
     var maxPullDistancePx by remember { mutableFloatStateOf(0f) }
     var pullStartedAtMs by remember { mutableLongStateOf(0L) }
     var pullDurationMs by remember { mutableLongStateOf(0L) }
+    var isCrisisSentinelReady by remember(appContext) {
+        mutableStateOf(isCrisisSentinelModelReady(appContext))
+    }
     val pullThresholdPx = with(LocalDensity.current) { 92.dp.toPx() }
     val pullRevealStartPx = with(LocalDensity.current) { 16.dp.toPx() }
     val pullProgress = (
         (pullDistancePx - pullRevealStartPx) / (pullThresholdPx - pullRevealStartPx)
         ).coerceIn(0f, 1f)
     val showSearchBar = isSearchVisible || searchQuery.isNotBlank()
+    val showCrisisSentinelEntry = remember(isCrisisSentinelReady, searchQuery, context) {
+        if (!isCrisisSentinelReady) {
+            false
+        } else {
+            val query = searchQuery.trim()
+            query.isBlank() ||
+                context.getString(R.string.tool_crisis_sentinel_title).contains(query, ignoreCase = true) ||
+                context.getString(R.string.tool_crisis_sentinel_description).contains(query, ignoreCase = true)
+        }
+    }
     val isPreviewVisible = !showSearchBar &&
         pullDistancePx > pullRevealStartPx &&
         pullDurationMs >= SEARCH_PULL_MIN_PREVIEW_DURATION_MS
@@ -1144,7 +1166,8 @@ private fun MainConversationContent(
     val showSearchNoResults = isContactsLoaded &&
         searchQuery.isNotBlank() &&
         filteredContacts.isEmpty() &&
-        !showGeneralMeshEntry
+        !showGeneralMeshEntry &&
+        !showCrisisSentinelEntry
     val onContactSelected: (String, String?, String?) -> Unit = remember(navController) {
         { sessionCode, preferredDisplayName, preferredTransport ->
             navController.navigate(
@@ -1244,6 +1267,18 @@ private fun MainConversationContent(
             }
     }
 
+    DisposableEffect(lifecycleOwner, appContext) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isCrisisSentinelReady = isCrisisSentinelModelReady(appContext)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1272,7 +1307,7 @@ private fun MainConversationContent(
                     )
                 }
             }
-        } else if (contacts.isEmpty() && !showGeneralMeshEntry) {
+        } else if (contacts.isEmpty() && !showGeneralMeshEntry && !isCrisisSentinelReady) {
             Box(
                 modifier = contentModifier,
                 contentAlignment = Alignment.Center
@@ -1315,10 +1350,12 @@ private fun MainConversationContent(
                     connectedSessions = connectedSessions,
                     unreadCounts = unreadCounts,
                     isCurrentUserRescue = isCurrentUserRescue,
+                    showCrisisSentinelEntry = showCrisisSentinelEntry,
                     showGeneralMeshEntry = showGeneralMeshEntry,
                     meshGeneralUnreadCount = meshGeneralUnreadCount,
                     meshGeneralMessages = meshGeneralMessages,
                     onContactSelected = onContactSelected,
+                    onCrisisSentinelSelected = { navController.navigate("crisis_sentinel_home") },
                     listState = listState,
                     contentPadding = PaddingValues(top = listTopPadding),
                     sharedTransitionScope = sharedTransitionScope,
@@ -1547,10 +1584,12 @@ private fun ContactList(
     connectedSessions: Set<String>,
     unreadCounts: Map<String, Int>,
     isCurrentUserRescue: Boolean,
+    showCrisisSentinelEntry: Boolean,
     showGeneralMeshEntry: Boolean,
     meshGeneralUnreadCount: Int,
     meshGeneralMessages: List<MeshChatMessage>,
     onContactSelected: (String, String?, String?) -> Unit,
+    onCrisisSentinelSelected: () -> Unit,
     listState: LazyListState,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     sharedTransitionScope: SharedTransitionScope? = null,
@@ -1657,6 +1696,14 @@ private fun ContactList(
         state = listState,
         contentPadding = contentPadding
     ) {
+        if (showCrisisSentinelEntry) {
+            item(
+                key = "crisis_sentinel_main_entry",
+                contentType = "crisis_sentinel_entry"
+            ) {
+                CrisisSentinelMainListItem(onClick = onCrisisSentinelSelected)
+            }
+        }
         if (showGeneralMeshEntry) {
             item(
                 key = MESH_GENERAL_LIST_ITEM_KEY,
@@ -1996,7 +2043,15 @@ private fun rememberConnectedSessions(): Set<String> {
         }
     }
 
-    return connectedSessions
+    // Debug screenshot demo: always report the scripted contact as connected
+    // so the `ConnectedInlineIndicator` appears on its row in the Messages
+    // list. Gated on BuildConfig.DEBUG via `isScreenshotDemoModeEnabledSync`;
+    // in release builds this call returns `false` and the set is untouched.
+    return if (isScreenshotDemoModeEnabledSync(context)) {
+        connectedSessions + ChatScreenshotDemoScenario.DEMO_SESSION_CODE
+    } else {
+        connectedSessions
+    }
 }
 
 @Composable
@@ -2036,9 +2091,20 @@ private fun rememberRecentConnectedLabelSessions(
         }
     }
 
-    return labelVisibility
+    val visibleSessions = labelVisibility
         .filterValues { visible -> visible }
         .keys
+
+    // Debug screenshot demo: keep the "Connected" text label permanently
+    // pinned to the scripted contact instead of fading after ~4 seconds,
+    // so screenshots taken any time after app launch show the pill in its
+    // labelled state. BuildConfig.DEBUG gated via the sync helper.
+    val context = LocalContext.current
+    return if (isScreenshotDemoModeEnabledSync(context)) {
+        visibleSessions + ChatScreenshotDemoScenario.DEMO_SESSION_CODE
+    } else {
+        visibleSessions
+    }
 }
 
 private fun activeCallTimestampMillis(activeCall: CallUiState?): Long? {
@@ -2383,6 +2449,63 @@ private fun isChatLocationPayload(text: String): Boolean {
         return true
     }
     return GOOGLE_MAPS_LOCATION_REGEX.containsMatchIn(trimmed)
+}
+
+@Composable
+private fun CrisisSentinelMainListItem(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_tool_crisis_sentinel_shine),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.tool_crisis_sentinel_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = stringResource(R.string.crisis_sentinel_main_entry_preview),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.CallMade,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 12.dp)
+            )
+        }
+    }
 }
 
 @Composable

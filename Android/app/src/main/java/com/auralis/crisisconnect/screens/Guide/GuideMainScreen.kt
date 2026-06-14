@@ -1075,7 +1075,13 @@ private fun GuideItemEntry.matchesQuery(queryTokens: List<String>, locale: Local
 
 private fun resolveEmergencyContact(locale: Locale): EmergencyContact {
     val languageCode = locale.language.lowercase(Locale.US)
-    val number = if (languageCode == "tr") "112" else "911"
+    val number = when (languageCode) {
+        "tr" -> "112"
+        "ja" -> "119"
+        "es" -> "112"
+        "hi" -> "112"
+        else -> "911"
+    }
 
     return EmergencyContact(number = number)
 }

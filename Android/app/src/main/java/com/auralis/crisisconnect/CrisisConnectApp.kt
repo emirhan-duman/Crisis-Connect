@@ -7,6 +7,8 @@ import android.util.Log
 import com.auralis.crisisconnect.data.hasAnyBleGattContacts
 import com.auralis.crisisconnect.data.normalizeClassicCapableBleContacts
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
+import com.auralis.crisisconnect.security.CertificateProvisioningNotifier
+import com.auralis.crisisconnect.security.SecurityRepository
 import com.auralis.crisisconnect.service.p2p.P2pGattServerService
 import com.auralis.crisisconnect.telecom.RfcommTelecomCoordinator
 import com.auralis.crisisconnect.util.initializeMapLibreSafely
@@ -15,9 +17,12 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.AppCheckProviderFactory
 import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.crashlytics.FirebaseCrashlytics
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
@@ -46,12 +51,6 @@ class CrisisConnectApp : Application() {
             }
             defaultHandler?.uncaughtException(thread, throwable)
         }
-
-        // Theme – synchronous SharedPreferences read, no main-thread blocking.
-        val savedThemeOption = runCatching {
-            getSavedThemeOptionSync(this)
-        }.getOrDefault(ThemeOption.SYSTEM)
-        applyThemeOption(this, savedThemeOption)
 
         val savedLanguage = runCatching {
             getSavedLanguageSync(this)
@@ -85,14 +84,75 @@ class CrisisConnectApp : Application() {
         if (!initializeMapLibreSafely(this, TAG)) {
             Log.w(TAG, "Map runtime is unavailable on this device. Map features will be disabled.")
         }
+        attachCertificateAutoProvisioner()
     }
+
+    /**
+     * Watches Firebase Auth state. Whenever a real (non-anonymous) user becomes
+     * signed in, kicks off [SecurityRepository.getOrFetchCertificate] in the
+     * background so the device-bound rescue certificate is provisioned
+     * automatically. Failures are logged and otherwise ignored — the user can
+     * still trigger the flow manually from the profile certificate card.
+     */
+    private fun attachCertificateAutoProvisioner() {
+        val lastHandledUid = AtomicReference<String?>(null)
+        val inFlight = AtomicReference<Job?>(null)
+        FirebaseAuth.getInstance().addAuthStateListener { auth ->
+            val user = auth.currentUser
+            if (user == null || user.isAnonymous) {
+                lastHandledUid.set(null)
+                inFlight.getAndSet(null)?.cancel()
+                return@addAuthStateListener
+            }
+            val uid = user.uid.trim()
+            if (uid.isEmpty()) return@addAuthStateListener
+            if (lastHandledUid.getAndSet(uid) == uid && inFlight.get()?.isActive == true) {
+                return@addAuthStateListener
+            }
+            val job = appScope.launch {
+                val repo = SecurityRepository(this@CrisisConnectApp)
+                val alreadyHadUsable = runCatching { repo.hasUsableStoredCertificate() }
+                    .getOrDefault(false)
+                if (!alreadyHadUsable) {
+                    CertificateProvisioningNotifier.emitInProgress()
+                }
+                runCatching {
+                    repo.getOrFetchCertificate()
+                }.onSuccess {
+                    Log.i(TAG, "Auto-provisioned rescue certificate for uid=${uid.take(6)}…")
+                    if (!alreadyHadUsable) {
+                        CertificateProvisioningNotifier.emitSuccess()
+                    }
+                }.onFailure { throwable ->
+                    // Non-fatal: the user can retry from the profile card.
+                    // Common reasons: offline, Play Integrity rejection on this
+                    // build (debug APK without Play install), backend missing
+                    // service account permission.
+                    Log.w(
+                        TAG,
+                        "Auto-provision of rescue certificate failed for uid=${uid.take(6)}…",
+                        throwable
+                    )
+                    if (!alreadyHadUsable) {
+                        CertificateProvisioningNotifier.emitFailure(throwable)
+                    }
+                }
+            }
+            inFlight.set(job)
+        }
+    }
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private fun installFirebaseAppCheck() {
         val firebaseApp = FirebaseApp.initializeApp(this) ?: FirebaseApp.getInstance()
-        seedConfiguredDebugAppCheckToken(firebaseApp)
+        val useDebugAppCheck = BuildConfig.DEBUG && BuildConfig.BUILD_TYPE != INTERNAL_BUILD_TYPE
+        if (useDebugAppCheck) {
+            seedConfiguredDebugAppCheckToken(firebaseApp)
+        }
         val firebaseAppCheck = FirebaseAppCheck.getInstance(firebaseApp)
         val providerFactory = when {
-            BuildConfig.DEBUG || BuildConfig.BUILD_TYPE == INTERNAL_BUILD_TYPE -> {
+            useDebugAppCheck -> {
                 createDebugAppCheckProviderFactory() ?: run {
                     Log.e(TAG, "Debug App Check provider is unavailable; falling back to Play Integrity.")
                     PlayIntegrityAppCheckProviderFactory.getInstance()
@@ -107,7 +167,7 @@ class CrisisConnectApp : Application() {
             Log.w(TAG, "Failed to initialize Firebase App Check", throwable)
         }
 
-        if (BuildConfig.DEBUG || BuildConfig.BUILD_TYPE == INTERNAL_BUILD_TYPE) {
+        if (useDebugAppCheck) {
             warmUpDebugAppCheckToken(firebaseAppCheck)
         }
     }
@@ -125,7 +185,7 @@ class CrisisConnectApp : Application() {
     }
 
     private fun seedConfiguredDebugAppCheckToken(firebaseApp: FirebaseApp) {
-        if (!BuildConfig.DEBUG && BuildConfig.BUILD_TYPE != INTERNAL_BUILD_TYPE) {
+        if (!BuildConfig.DEBUG || BuildConfig.BUILD_TYPE == INTERNAL_BUILD_TYPE) {
             return
         }
         val configuredToken = BuildConfig.APP_CHECK_DEBUG_TOKEN.trim()

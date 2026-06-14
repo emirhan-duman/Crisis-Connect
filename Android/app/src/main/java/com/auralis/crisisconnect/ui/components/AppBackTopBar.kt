@@ -33,6 +33,20 @@ fun AppBackTopBar(
     onNavigateBack: () -> Unit,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
+    AppBackTopBar(
+        title = stringResource(titleRes),
+        onNavigateBack = onNavigateBack,
+        actions = actions
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppBackTopBar(
+    title: String,
+    onNavigateBack: () -> Unit,
+    actions: @Composable RowScope.() -> Unit = {}
+) {
     val containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
     val scrolledContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(4.dp)
     val isDarkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
@@ -45,7 +59,7 @@ fun AppBackTopBar(
         CenterAlignedTopAppBar(
             title = {
                 Text(
-                    text = stringResource(titleRes),
+                    text = title,
                     style = titleStyle,
                     color = if (isDarkTheme) Color.White else Color(0xFF042C43),
                     maxLines = 1,

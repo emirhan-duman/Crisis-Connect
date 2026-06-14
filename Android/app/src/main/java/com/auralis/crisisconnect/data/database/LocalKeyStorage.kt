@@ -28,6 +28,7 @@ object LocalKeyStorage {
     private const val ROLE_CACHE_SCHEMA_VERSION_KEY = "local_role_cache_schema_version"
     private const val ROLE_SAVED_AT_KEY = "local_role_saved_at"
     private const val RESCUE_DEVICE_ID_KEY = "local_rescue_device_id"
+    private const val RESCUE_DEVICE_OWNER_UID_KEY = "local_rescue_device_owner_uid"
     private const val P2P_DEVICE_ID_KEY = "local_p2p_device_id"
     private const val P2P_SESSION_CODE_KEY = "local_p2p_session_code"
     private const val ROLE_CACHE_SCHEMA_VERSION = 2
@@ -48,6 +49,7 @@ object LocalKeyStorage {
         ROLE_KEY,
         ROLE_UID_KEY,
         RESCUE_DEVICE_ID_KEY,
+        RESCUE_DEVICE_OWNER_UID_KEY,
         P2P_DEVICE_ID_KEY,
         P2P_SESSION_CODE_KEY
     )
@@ -208,7 +210,9 @@ object LocalKeyStorage {
                 ROLE_KEY,
                 ROLE_UID_KEY,
                 ROLE_CACHE_SCHEMA_VERSION_KEY,
-                ROLE_SAVED_AT_KEY
+                ROLE_SAVED_AT_KEY,
+                RESCUE_DEVICE_ID_KEY,
+                RESCUE_DEVICE_OWNER_UID_KEY
             )
         }
     }
@@ -308,6 +312,33 @@ object LocalKeyStorage {
         val generated = createRescueDeviceId()
         securePrefs.putString(RESCUE_DEVICE_ID_KEY, generated)
         return generated
+    }
+
+    fun rotateRescueDeviceId(context: Context, ownerUid: String? = null): String {
+        val generated = createRescueDeviceId()
+        val securePrefs = prefs(context)
+        securePrefs.putString(RESCUE_DEVICE_ID_KEY, generated)
+        val normalizedOwnerUid = ownerUid?.trim().orEmpty()
+        if (normalizedOwnerUid.isNotBlank()) {
+            securePrefs.putString(RESCUE_DEVICE_OWNER_UID_KEY, normalizedOwnerUid)
+        } else {
+            securePrefs.remove(RESCUE_DEVICE_OWNER_UID_KEY)
+        }
+        return generated
+    }
+
+    fun getRescueDeviceOwnerUid(context: Context): String? {
+        return prefs(context).getString(RESCUE_DEVICE_OWNER_UID_KEY, null)?.trim()?.takeIf {
+            it.isNotEmpty()
+        }
+    }
+
+    fun markRescueDeviceOwner(context: Context, ownerUid: String) {
+        val normalizedOwnerUid = ownerUid.trim()
+        if (normalizedOwnerUid.isBlank()) {
+            return
+        }
+        prefs(context).putString(RESCUE_DEVICE_OWNER_UID_KEY, normalizedOwnerUid)
     }
 
     /**

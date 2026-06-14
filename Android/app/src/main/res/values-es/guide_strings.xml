@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Guía de emergencia</string>
+    <string name="guide_screen_intro_subtitle">Llegue a información crítica rápidamente y siga acciones breves bajo presión.</string>
+    <string name="guide_screen_filter_all">Todas las categorías</string>
+    <string name="guide_screen_section_30_seconds">en 30 segundos</string>
+    <string name="guide_screen_section_step_by_step">Paso a paso</string>
+    <string name="guide_screen_section_dont">No hacer</string>
+    <string name="guide_screen_section_checklist">Lista de verificación</string>
+    <string name="guide_screen_expand_details">Mostrar detalles</string>
+    <string name="guide_screen_collapse_details">Ocultar detalles</string>
+    <string name="guide_screen_action_start_checklist">Iniciar lista de verificación</string>
+    <string name="guide_screen_action_call_local">Llamar %1$s</string>
+    <string name="guide_screen_action_open_assembly">Abrir área de reunión</string>
+    <string name="guide_screen_source_note">Nota de fuente:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d completado</string>
+    <string name="guide_screen_no_dial_app_with_number">No se encontró ninguna aplicación para llamar a %1$s.</string>
+    <string name="guide_screen_no_map_app">No se encontró ninguna aplicación para abrir mapas.</string>
+    <string name="guide_screen_assembly_query">Área de reunión de desastres</string>
+    <string name="guide_screen_search_placeholder">Buscar por código, categoría o tema</string>
+    <string name="guide_screen_clear_search">Borrar búsqueda</string>
+    <string name="guide_screen_clear_filters">Limpiar filtros</string>
+    <string name="guide_screen_empty_title">No se encontró ninguna guía</string>
+    <string name="guide_screen_empty_body">Intente reducir los filtros o buscar con una palabra clave más amplia.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d acciones más rápidas</string>
+    <string name="guide_screen_region_value">Región: %1$s • Número de emergencia: %2$s</string>
+    <string name="guide_screen_results_count">%1$d guías listadas</string>
+    <string name="guide_screen_read_minutes_format">%1$d mín.</string>
+</resources>

@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">緊急ガイド</string>
+    <string name="guide_screen_intro_subtitle">重要な情報に素早くアクセスし、プレッシャーの下でも短い手順に従えます。</string>
+    <string name="guide_screen_filter_all">すべてのカテゴリ</string>
+    <string name="guide_screen_section_30_seconds">30秒以内に</string>
+    <string name="guide_screen_section_step_by_step">ステップごと</string>
+    <string name="guide_screen_section_dont">してはいけないこと</string>
+    <string name="guide_screen_section_checklist">チェックリスト</string>
+    <string name="guide_screen_expand_details">詳細を表示</string>
+    <string name="guide_screen_collapse_details">詳細を非表示</string>
+    <string name="guide_screen_action_start_checklist">チェックリストを開始</string>
+    <string name="guide_screen_action_call_local">%1$s に電話</string>
+    <string name="guide_screen_action_open_assembly">避難場所を開く</string>
+    <string name="guide_screen_source_note">出典メモ:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d 完了</string>
+    <string name="guide_screen_no_dial_app_with_number">%1$s に電話するためのアプリが見つかりません。</string>
+    <string name="guide_screen_no_map_app">地図を開くためのアプリが見つかりません。</string>
+    <string name="guide_screen_assembly_query">災害避難場所</string>
+    <string name="guide_screen_search_placeholder">コード、カテゴリ、トピックで検索</string>
+    <string name="guide_screen_clear_search">検索をクリア</string>
+    <string name="guide_screen_clear_filters">フィルターをクリア</string>
+    <string name="guide_screen_empty_title">ガイドが見つかりません</string>
+    <string name="guide_screen_empty_body">フィルターを減らすか、より広いキーワードで検索してみてください。</string>
+    <string name="guide_screen_more_quick_steps">+%1$d 件のクイックアクション</string>
+    <string name="guide_screen_region_value">地域: %1$s • 緊急番号: %2$s</string>
+    <string name="guide_screen_results_count">%1$d 件のガイドがリストされました</string>
+    <string name="guide_screen_read_minutes_format">%1$d 分</string>
+</resources>

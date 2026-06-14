@@ -28,5 +28,8 @@ jobs:
       - name: Ensure gradlew is executable
         run: chmod +x gradlew
 
+      - name: Prepare Firebase placeholder config
+        run: cp app/google-services.json.example app/google-services.json
+
       - name: Run lint and unit tests
         run: ./gradlew :app:lintDebug :app:testDebugUnitTest --no-daemon

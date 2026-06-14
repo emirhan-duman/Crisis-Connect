@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">आपातकालीन गाइड</string>
+    <string name="guide_screen_intro_subtitle">महत्वपूर्ण जानकारी तक तुरंत पहुंचें और दबाव में छोटी कार्रवाई करें।</string>
+    <string name="guide_screen_filter_all">सभी श्रेणियां</string>
+    <string name="guide_screen_section_30_seconds">30 सेकंड में</string>
+    <string name="guide_screen_section_step_by_step">क्रमशः</string>
+    <string name="guide_screen_section_dont">मत करो</string>
+    <string name="guide_screen_section_checklist">जांच सूची</string>
+    <string name="guide_screen_expand_details">प्रदर्शन का विवरण</string>
+    <string name="guide_screen_collapse_details">विवरण छुपाओ</string>
+    <string name="guide_screen_action_start_checklist">चेकलिस्ट प्रारंभ करें</string>
+    <string name="guide_screen_action_call_local">%1$s पर कॉल करें</string>
+    <string name="guide_screen_action_open_assembly">खुला सभा क्षेत्र</string>
+    <string name="guide_screen_source_note">स्रोत नोट:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d पूरा हुआ</string>
+    <string name="guide_screen_no_dial_app_with_number">%1$s पर कॉल करने के लिए कोई ऐप नहीं मिला।</string>
+    <string name="guide_screen_no_map_app">मानचित्र खोलने के लिए कोई ऐप नहीं मिला.</string>
+    <string name="guide_screen_assembly_query">आपदा सभा क्षेत्र</string>
+    <string name="guide_screen_search_placeholder">कोड, श्रेणी या विषय के आधार पर खोजें</string>
+    <string name="guide_screen_clear_search">स्पष्ट खोज</string>
+    <string name="guide_screen_clear_filters">फ़िल्टर साफ़ करें</string>
+    <string name="guide_screen_empty_title">कोई मार्गदर्शक नहीं मिला</string>
+    <string name="guide_screen_empty_body">फ़िल्टर कम करने या व्यापक कीवर्ड से खोजने का प्रयास करें।</string>
+    <string name="guide_screen_more_quick_steps">+%1$d अधिक त्वरित कार्रवाई</string>
+    <string name="guide_screen_region_value">क्षेत्र: %1$s • आपातकालीन नंबर: %2$s</string>
+    <string name="guide_screen_results_count">%1$d गाइड सूचीबद्ध</string>
+    <string name="guide_screen_read_minutes_format">%1$d मि</string>
+</resources>

@@ -38,6 +38,7 @@ import com.auralis.crisisconnect.security.AesCipherHelper
 import com.auralis.crisisconnect.security.RescueDeviceRegistry
 import com.auralis.crisisconnect.security.SecurityRepository
 import com.auralis.crisisconnect.settingsDataStore
+import com.auralis.crisisconnect.sync.MobileSyncClient
 import com.google.android.gms.tasks.Task
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
@@ -546,12 +547,22 @@ class CrisisLinkForegroundService : Service() {
 
         serviceScope.launch {
             runCatching {
-                RescueDeviceRegistry.registerDevice(firestore, uid, responderDeviceId)
+                val registeredDeviceId = resolveSyncDeviceId(
+                    uid = uid,
+                    fallbackDeviceId = responderDeviceId
+                )
+                val inactiveResponderDoc = if (registeredDeviceId == responderDeviceId) {
+                    responderDoc
+                } else {
+                    HashMap(responderDoc).apply {
+                        this["responderDeviceId"] = registeredDeviceId
+                    }
+                }
                 firestore.collection(PANEL_COLLECTION)
                     .document(agencySlug)
                     .collection(RESPONDERS_COLLECTION)
-                    .document(responderDeviceId)
-                    .set(responderDoc, SetOptions.merge())
+                    .document(registeredDeviceId)
+                    .set(inactiveResponderDoc, SetOptions.merge())
                     .awaitResult()
             }.onFailure { throwable ->
                 Log.w(TAG, "Failed to mark responder inactive on Crisis Link stop", throwable)
@@ -633,63 +644,63 @@ class CrisisLinkForegroundService : Service() {
     }
 
     private suspend fun deliverPayload(payload: CrisisLinkSyncPayload): DeliveryResult {
-        runCatching {
-            RescueDeviceRegistry.registerDevice(
-                firestore = firestore,
-                uid = payload.uid,
-                deviceId = payload.rescuerDeviceId
-            )
-        }.getOrElse { throwable ->
-            return classifyDeliveryFailure(throwable)
+        val registeredDeviceId = resolveSyncDeviceId(
+            uid = payload.uid,
+            fallbackDeviceId = payload.rescuerDeviceId
+        )
+        val syncPayload = if (registeredDeviceId == payload.rescuerDeviceId) {
+            payload
+        } else {
+            payload.copy(rescuerDeviceId = registeredDeviceId)
         }
 
-        val panelRef = firestore.collection(PANEL_COLLECTION).document(payload.agencySlug)
+        val panelRef = firestore.collection(PANEL_COLLECTION).document(syncPayload.agencySlug)
         val batch = firestore.batch()
 
         val panelData = hashMapOf<String, Any>(
-            "agency" to payload.agency,
-            "agencySlug" to payload.agencySlug,
+            "agency" to syncPayload.agency,
+            "agencySlug" to syncPayload.agencySlug,
             "schemaVersion" to PANEL_SCHEMA_VERSION,
             "source" to PANEL_SOURCE,
-            "activeSignals" to payload.activeSignals.size,
-            "totalSignalsObserved" to payload.totalUniqueSignalCount,
-            "updatedByDeviceId" to payload.rescuerDeviceId,
-            "updatedByUid" to payload.uid,
+            "activeSignals" to syncPayload.activeSignals.size,
+            "totalSignalsObserved" to syncPayload.totalUniqueSignalCount,
+            "updatedByDeviceId" to syncPayload.rescuerDeviceId,
+            "updatedByUid" to syncPayload.uid,
             "updatedAt" to FieldValue.serverTimestamp()
         )
         batch.set(panelRef, panelData, SetOptions.merge())
 
         val responderData = hashMapOf<String, Any>(
-            "responderDeviceId" to payload.rescuerDeviceId,
-            "uid" to payload.uid,
-            "agency" to payload.agency,
-            "role" to payload.role,
+            "responderDeviceId" to syncPayload.rescuerDeviceId,
+            "uid" to syncPayload.uid,
+            "agency" to syncPayload.agency,
+            "role" to syncPayload.role,
             "schemaVersion" to RESPONDER_SCHEMA_VERSION,
             "crisisLinkEnabled" to true,
-            "activeSignalCount" to payload.activeSignals.size,
-            "totalUniqueSignalCount" to payload.totalUniqueSignalCount,
-            "totalScanEventCount" to payload.totalScanEventCount,
+            "activeSignalCount" to syncPayload.activeSignals.size,
+            "totalUniqueSignalCount" to syncPayload.totalUniqueSignalCount,
+            "totalScanEventCount" to syncPayload.totalScanEventCount,
             "updatedAt" to FieldValue.serverTimestamp()
         )
-        if (payload.operatorName.isNotBlank()) {
-            responderData["name"] = payload.operatorName
+        if (syncPayload.operatorName.isNotBlank()) {
+            responderData["name"] = syncPayload.operatorName
         }
-        if (payload.username.isNotBlank()) {
-            responderData["username"] = payload.username
+        if (syncPayload.username.isNotBlank()) {
+            responderData["username"] = syncPayload.username
         }
-        if (payload.country.isNotBlank()) {
-            responderData["country"] = payload.country
+        if (syncPayload.country.isNotBlank()) {
+            responderData["country"] = syncPayload.country
         }
-        payload.location?.let { snapshot ->
+        syncPayload.location?.let { snapshot ->
             responderData["gps"] = snapshot.toMap()
         }
         batch.set(
-            panelRef.collection(RESPONDERS_COLLECTION).document(payload.rescuerDeviceId),
+            panelRef.collection(RESPONDERS_COLLECTION).document(syncPayload.rescuerDeviceId),
             responderData,
             SetOptions.merge()
         )
 
-        val signalsToUpsert = selectSignalsForUpsert(payload.activeSignals)
+        val signalsToUpsert = selectSignalsForUpsert(syncPayload.activeSignals)
         signalsToUpsert.forEach { signal ->
             val signalRef = panelRef.collection(SIGNALS_COLLECTION).document(signal.signalId)
             val signalData = hashMapOf<String, Any>(
@@ -700,9 +711,10 @@ class CrisisLinkForegroundService : Service() {
                 "firstSeenMillis" to signal.firstSeenMillis,
                 "lastSeenMillis" to signal.lastSeenMillis,
                 "lastSeenAddress" to signal.address,
-                "lastReporterUid" to payload.uid,
+                "lastReporterUid" to syncPayload.uid,
+                "victimRole" to BlePeerIdentityUtils.ROLE_VICTIM,
                 "lastSeenAt" to FieldValue.serverTimestamp(),
-                "reporterIds" to FieldValue.arrayUnion(payload.rescuerDeviceId)
+                "reporterIds" to FieldValue.arrayUnion(syncPayload.rescuerDeviceId)
             )
             signal.victimLocation?.let { victimLocation ->
                 signalData["gps"] = victimLocation.toMap()
@@ -720,7 +732,7 @@ class CrisisLinkForegroundService : Service() {
                     signalData["relativeEstimate"] = estimate.toMap()
                 }
             }
-            payload.location?.let { reporterLocation ->
+            syncPayload.location?.let { reporterLocation ->
                 signalData["lastReporterLocation"] = reporterLocation.toMap()
             } ?: signal.relativeEstimate?.let { estimate ->
                 signalData["lastReporterLocation"] = estimate.originToMap()
@@ -730,22 +742,29 @@ class CrisisLinkForegroundService : Service() {
             signal.locationMetadataUpdatedAtMillis.takeIf { it > 0L }?.let { updatedAtMillis ->
                 signalData["locationUpdatedAtMillis"] = updatedAtMillis
             }
+            signal.victimDisplayName?.takeIf { it.isNotBlank() }?.let { displayName ->
+                signalData["victimName"] = displayName
+                signalData["victimDisplayName"] = displayName
+            }
+            signal.victimBatteryPercent?.let { batteryPercent ->
+                signalData["victimBatteryPercent"] = batteryPercent
+            }
             batch.set(signalRef, signalData, SetOptions.merge())
 
             val reporterData = hashMapOf<String, Any>(
-                "responderDeviceId" to payload.rescuerDeviceId,
-                "uid" to payload.uid,
-                "agency" to payload.agency,
+                "responderDeviceId" to syncPayload.rescuerDeviceId,
+                "uid" to syncPayload.uid,
+                "agency" to syncPayload.agency,
                 "lastSeenMillis" to signal.lastSeenMillis,
                 "lastSeenAt" to FieldValue.serverTimestamp()
             )
-            if (payload.operatorName.isNotBlank()) {
-                reporterData["name"] = payload.operatorName
+            if (syncPayload.operatorName.isNotBlank()) {
+                reporterData["name"] = syncPayload.operatorName
             }
-            if (payload.username.isNotBlank()) {
-                reporterData["username"] = payload.username
+            if (syncPayload.username.isNotBlank()) {
+                reporterData["username"] = syncPayload.username
             }
-            payload.location?.let { snapshot ->
+            syncPayload.location?.let { snapshot ->
                 reporterData["gps"] = snapshot.toMap()
             } ?: signal.relativeEstimate?.let { estimate ->
                 reporterData["gps"] = estimate.originToMap()
@@ -767,21 +786,140 @@ class CrisisLinkForegroundService : Service() {
             } ?: run {
                 reporterData["relativeEstimate"] = FieldValue.delete()
             }
+            signal.victimDisplayName?.takeIf { it.isNotBlank() }?.let { displayName ->
+                reporterData["signalVictimName"] = displayName
+                reporterData["signalVictimDisplayName"] = displayName
+            }
+            signal.victimBatteryPercent?.let { batteryPercent ->
+                reporterData["signalVictimBatteryPercent"] = batteryPercent
+            }
             batch.set(
-                signalRef.collection(REPORTERS_COLLECTION).document(payload.rescuerDeviceId),
+                signalRef.collection(REPORTERS_COLLECTION).document(syncPayload.rescuerDeviceId),
                 reporterData,
                 SetOptions.merge()
             )
         }
 
-        return runCatching {
+        return try {
             batch.commit().awaitResult()
-        }.fold(
-            onSuccess = { DeliveryResult.Success },
-            onFailure = { throwable ->
-                classifyDeliveryFailure(throwable)
+            syncPayloadToSelfHostedDashboard(syncPayload, signalsToUpsert)
+            DeliveryResult.Success
+        } catch (throwable: Throwable) {
+            classifyDeliveryFailure(throwable)
+        }
+    }
+
+    private suspend fun syncPayloadToSelfHostedDashboard(
+        syncPayload: CrisisLinkSyncPayload,
+        signalsToUpsert: List<SignalObservation>
+    ) {
+        val clientEventId = "android-crisis-link-${syncPayload.rescuerDeviceId}-${syncPayload.capturedAtMillis}"
+        val events = JSONArray()
+        syncPayload.location?.let { location ->
+            val payload = JSONObject(location.toMap())
+                .put("uid", syncPayload.uid)
+                .put("responderDeviceId", syncPayload.rescuerDeviceId)
+                .put("agency", syncPayload.agency)
+                .put("agencySlug", syncPayload.agencySlug)
+                .put("role", syncPayload.role)
+                .put("username", syncPayload.username)
+                .put("operatorName", syncPayload.operatorName)
+                .put("activeSignalCount", syncPayload.activeSignals.size)
+                .put("totalUniqueSignalCount", syncPayload.totalUniqueSignalCount)
+                .put("totalScanEventCount", syncPayload.totalScanEventCount)
+            events.put(
+                JSONObject()
+                    .put("id", "location-${syncPayload.rescuerDeviceId}-${location.capturedAtMillis}")
+                    .put("type", "location")
+                    .put("occurredAt", location.capturedAtMillis)
+                    .put("payload", payload)
+            )
+        }
+
+        signalsToUpsert.forEach { signal ->
+            val reporter = JSONObject()
+                .put("responderDeviceId", syncPayload.rescuerDeviceId)
+                .put("uid", syncPayload.uid)
+                .put("agency", syncPayload.agency)
+                .put("name", syncPayload.operatorName)
+                .put("username", syncPayload.username)
+                .put("lastSeenMillis", signal.lastSeenMillis)
+            val signalPayload = JSONObject()
+                .put("signalId", signal.signalId)
+                .put("schemaVersion", SIGNAL_SCHEMA_VERSION)
+                .put("status", "active")
+                .put("source", "ble")
+                .put("firstSeenMillis", signal.firstSeenMillis)
+                .put("lastSeenMillis", signal.lastSeenMillis)
+                .put("lastSeenAddress", signal.address)
+                .put("lastReporterUid", syncPayload.uid)
+                .put("lastReporterDeviceId", syncPayload.rescuerDeviceId)
+                .put("victimRole", BlePeerIdentityUtils.ROLE_VICTIM)
+                .put("reporter", reporter)
+            signal.victimLocation?.let { location ->
+                signalPayload
+                    .put("gps", JSONObject(location.toMap()))
+                    .put("victimGps", JSONObject(location.toMap()))
+                    .put("locationSource", "victim_gps")
             }
+            signal.estimatedVictimLocation?.let { estimate ->
+                signalPayload
+                    .put("gps", JSONObject(estimate.toMap()))
+                    .put("estimatedVictimGps", JSONObject(estimate.toMap()))
+                    .put("locationSource", "rescuer_relative_estimate")
+            }
+            signal.relativeEstimate?.let { estimate ->
+                signalPayload.put("relativeEstimate", JSONObject(estimate.toMap()))
+            }
+            syncPayload.location?.let { reporterLocation ->
+                signalPayload.put("lastReporterLocation", JSONObject(reporterLocation.toMap()))
+            }
+            signal.victimDisplayName?.takeIf { it.isNotBlank() }?.let { displayName ->
+                signalPayload
+                    .put("victimName", displayName)
+                    .put("victimDisplayName", displayName)
+            }
+            signal.victimBatteryPercent?.let { batteryPercent ->
+                signalPayload.put("victimBatteryPercent", batteryPercent)
+            }
+            events.put(
+                JSONObject()
+                    .put("id", "signal-${signal.signalId}-${signal.lastSeenMillis}")
+                    .put("type", "signal")
+                    .put("occurredAt", signal.lastSeenMillis)
+                    .put("payload", signalPayload)
+            )
+        }
+
+        MobileSyncClient.syncEvents(
+            context = applicationContext,
+            panelId = syncPayload.agencySlug,
+            deviceId = syncPayload.rescuerDeviceId,
+            clientEventId = clientEventId,
+            events = events,
         )
+    }
+
+    private suspend fun resolveSyncDeviceId(
+        uid: String,
+        fallbackDeviceId: String
+    ): String {
+        return runCatching {
+            RescueDeviceRegistry.registerLocalDevice(
+                firestore = firestore,
+                context = applicationContext,
+                uid = uid
+            )
+        }.getOrElse { throwable ->
+            Log.w(
+                TAG,
+                "Rescue device ownership registration failed; continuing telemetry sync with local device id",
+                throwable
+            )
+            LocalKeyStorage.getOrCreateRescueDeviceId(applicationContext)
+                .takeIf { it.isNotBlank() }
+                ?: fallbackDeviceId
+        }
     }
 
     private fun selectSignalsForUpsert(signals: List<SignalObservation>): List<SignalObservation> {
@@ -798,6 +936,8 @@ class CrisisLinkForegroundService : Service() {
                 current.victimLocation != previous.victimLocation ||
                 current.estimatedVictimLocation != previous.estimatedVictimLocation ||
                 current.relativeEstimate != previous.relativeEstimate ||
+                current.victimDisplayName != previous.victimDisplayName ||
+                current.victimBatteryPercent != previous.victimBatteryPercent ||
                 current.locationMetadataUpdatedAtMillis != previous.locationMetadataUpdatedAtMillis
         }
     }
@@ -997,6 +1137,12 @@ class CrisisLinkForegroundService : Service() {
             signal.relativeEstimate?.let { estimate ->
                 signalJson.put("relativeEstimate", estimate.toJson())
             }
+            signal.victimDisplayName?.takeIf { it.isNotBlank() }?.let { displayName ->
+                signalJson.put("victimDisplayName", displayName)
+            }
+            signal.victimBatteryPercent?.let { batteryPercent ->
+                signalJson.put("victimBatteryPercent", batteryPercent)
+            }
             signal.locationMetadataUpdatedAtMillis.takeIf { it > 0L }?.let { updatedAtMillis ->
                 signalJson.put("locationMetadataUpdatedAtMillis", updatedAtMillis)
             }
@@ -1040,6 +1186,14 @@ class CrisisLinkForegroundService : Service() {
                     signalJson.optJSONObject("estimatedVictimGps")
                 ),
                 relativeEstimate = parseRelativeEstimate(signalJson.optJSONObject("relativeEstimate")),
+                victimDisplayName = firstNonBlank(
+                    signalJson.optString("victimDisplayName"),
+                    signalJson.optString("victimName")
+                ).trim().take(MAX_SIGNAL_DISPLAY_NAME_LENGTH).takeIf { it.isNotBlank() },
+                victimBatteryPercent = signalJson.optInt(
+                    "victimBatteryPercent",
+                    Int.MIN_VALUE
+                ).takeIf { it in 0..100 },
                 locationMetadataUpdatedAtMillis = signalJson.optLong(
                     "locationMetadataUpdatedAtMillis",
                     0L
@@ -1283,22 +1437,18 @@ class CrisisLinkForegroundService : Service() {
     }
 
     private fun hasMeaningfulSignalLocationChange(signals: List<SignalObservation>): Boolean {
-        val previousSignals = lastSuccessfulSyncState?.signalFingerprints ?: return signals.any { signal ->
-            signal.victimLocation != null ||
-                signal.estimatedVictimLocation != null ||
-                signal.relativeEstimate != null
+        val previousSignals = lastSuccessfulSyncState?.signalFingerprints ?: return signals.any {
+            it.hasVictimMetadata()
         }
         return signals.any { current ->
             val previous = previousSignals[current.signalId]
-            previous == null && (
-                current.victimLocation != null ||
-                    current.estimatedVictimLocation != null ||
-                    current.relativeEstimate != null
-                ) ||
+            previous == null && current.hasVictimMetadata() ||
                 previous != null && (
                     current.victimLocation != previous.victimLocation ||
                         current.estimatedVictimLocation != previous.estimatedVictimLocation ||
                         current.relativeEstimate != previous.relativeEstimate ||
+                        current.victimDisplayName != previous.victimDisplayName ||
+                        current.victimBatteryPercent != previous.victimBatteryPercent ||
                         current.locationMetadataUpdatedAtMillis != previous.locationMetadataUpdatedAtMillis
                     )
         }
@@ -1327,6 +1477,8 @@ class CrisisLinkForegroundService : Service() {
                     victimLocation = signal.victimLocation,
                     estimatedVictimLocation = signal.estimatedVictimLocation,
                     relativeEstimate = signal.relativeEstimate,
+                    victimDisplayName = signal.victimDisplayName,
+                    victimBatteryPercent = signal.victimBatteryPercent,
                     locationMetadataUpdatedAtMillis = signal.locationMetadataUpdatedAtMillis
                 )
             },
@@ -1610,6 +1762,8 @@ class CrisisLinkForegroundService : Service() {
             victimLocation = metadata?.victimLocation,
             estimatedVictimLocation = metadata?.estimatedVictimLocation,
             relativeEstimate = metadata?.relativeEstimate,
+            victimDisplayName = metadata?.victimDisplayName,
+            victimBatteryPercent = metadata?.victimBatteryPercent,
             locationMetadataUpdatedAtMillis = metadata?.updatedAtMillis ?: 0L
         )
     }
@@ -1972,8 +2126,18 @@ class CrisisLinkForegroundService : Service() {
         val victimLocation: BlePeerIdentityUtils.PeerLocationSnapshot? = null,
         val estimatedVictimLocation: BlePeerIdentityUtils.PeerLocationSnapshot? = null,
         val relativeEstimate: BlePeerIdentityUtils.RelativeVictimEstimate? = null,
+        val victimDisplayName: String? = null,
+        val victimBatteryPercent: Int? = null,
         val locationMetadataUpdatedAtMillis: Long = 0L
-    )
+    ) {
+        fun hasVictimMetadata(): Boolean {
+            return victimLocation != null ||
+                estimatedVictimLocation != null ||
+                relativeEstimate != null ||
+                !victimDisplayName.isNullOrBlank() ||
+                victimBatteryPercent != null
+        }
+    }
 
     private data class RescuerProfile(
         val uid: String,
@@ -2180,6 +2344,8 @@ class CrisisLinkForegroundService : Service() {
         val victimLocation: BlePeerIdentityUtils.PeerLocationSnapshot?,
         val estimatedVictimLocation: BlePeerIdentityUtils.PeerLocationSnapshot?,
         val relativeEstimate: BlePeerIdentityUtils.RelativeVictimEstimate?,
+        val victimDisplayName: String?,
+        val victimBatteryPercent: Int?,
         val locationMetadataUpdatedAtMillis: Long
     )
 
@@ -2269,6 +2435,7 @@ class CrisisLinkForegroundService : Service() {
         private const val ACTIVE_SIGNAL_WINDOW_MS = 60_000L
         private const val STALE_SIGNAL_RETENTION_MS = 10 * 60_000L
         private const val MAX_ACTIVE_SIGNALS_PER_SYNC = 96
+        private const val MAX_SIGNAL_DISPLAY_NAME_LENGTH = 96
         private const val MAX_PENDING_PAYLOADS = 96
         private const val PENDING_QUEUE_FILE_NAME = "crisis_link_pending_queue.json"
         private const val IMMEDIATE_REASON_ACTIVE_SIGNALS_CHANGED = "active_signals_changed"
@@ -2276,14 +2443,14 @@ class CrisisLinkForegroundService : Service() {
         private const val IMMEDIATE_REASON_NETWORK_AVAILABLE = "network_available"
         private const val IMMEDIATE_REASON_NETWORK_CAPABILITIES_CHANGED = "network_capabilities_changed"
         private const val SIGNAL_HEX_LENGTH = 24
-        private const val PANEL_COLLECTION = "afadpanel"
+        private const val PANEL_COLLECTION = "agencyPanels"
         private const val RESPONDERS_COLLECTION = "responders"
         private const val SIGNALS_COLLECTION = "signals"
         private const val REPORTERS_COLLECTION = "reporters"
         private const val PANEL_SOURCE = "android-crisislink"
         private const val PANEL_SCHEMA_VERSION = 3
         private const val RESPONDER_SCHEMA_VERSION = 1
-        private const val SIGNAL_SCHEMA_VERSION = 2
+        private const val SIGNAL_SCHEMA_VERSION = 3
         private const val DEFAULT_LIVE_LOCATION_INTERVAL_SECONDS = 60
         private val LIVE_LOCATION_INTERVAL_OPTIONS_SECONDS = listOf(30, 60, 90, 300)
         private val CRISIS_LINK_LIVE_LOCATION_ENABLED_PREF = booleanPreferencesKey(

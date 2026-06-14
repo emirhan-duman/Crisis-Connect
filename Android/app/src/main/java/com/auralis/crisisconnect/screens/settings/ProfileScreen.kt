@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +32,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Lock
@@ -79,6 +81,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -117,16 +120,27 @@ fun ProfileScreen(
     var tempName by rememberSaveable { mutableStateOf("") }
     var emailLoginDialogOpen by rememberSaveable { mutableStateOf(false) }
     var emailInput by rememberSaveable { mutableStateOf("") }
-    var passwordInput by rememberSaveable { mutableStateOf("") }
+    // Password kept in process-only memory (not Bundle) to avoid being
+    // serialized to disk during save-state / process death.
+    var passwordInput by remember { mutableStateOf("") }
     var emailLoginValidationRequested by rememberSaveable { mutableStateOf(false) }
     var emailPasswordVisible by rememberSaveable { mutableStateOf(false) }
+    var phoneLoginDialogOpen by rememberSaveable { mutableStateOf(false) }
+    var phoneInput by rememberSaveable { mutableStateOf("") }
+    var phoneCodeInput by rememberSaveable { mutableStateOf("") }
+    var phoneCodeSent by rememberSaveable { mutableStateOf(false) }
+    var phoneLoginValidationRequested by rememberSaveable { mutableStateOf(false) }
     val emailLoginSheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true
+    )
+    val phoneLoginSheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true
     )
     val snackbarHostState = remember { SnackbarHostState() }
 
     val signInClient = remember(context) { Identity.getSignInClient(context) }
     val googleWebClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID.trim()
+    val activity = context as? Activity
 
     LaunchedEffect(nameDialogOpen) {
         if (nameDialogOpen) {
@@ -142,6 +156,15 @@ fun ProfileScreen(
             emailPasswordVisible = false
         }
         profileViewModel.clearEmailSignInError()
+    }
+
+    LaunchedEffect(phoneLoginDialogOpen) {
+        if (phoneLoginDialogOpen) {
+            phoneInput = uiState.phoneNumber
+            phoneCodeInput = ""
+            phoneCodeSent = false
+            phoneLoginValidationRequested = false
+        }
     }
 
     LaunchedEffect(uiState.username) {
@@ -291,6 +314,7 @@ fun ProfileScreen(
                             )
                         }
                     }
+                    ProfileCertificateCard(viewModel = profileViewModel)
                     OutlinedButton(
                         onClick = { profileViewModel.logout() },
                         modifier = Modifier.fillMaxWidth(),
@@ -313,13 +337,14 @@ fun ProfileScreen(
                 } else {
                     AuthorizedInstitutionNotice()
 
-                    Button(
-                        onClick = {
+                    AuthProviderButtonGroup(
+                        enabled = !uiState.isLoading,
+                        onGoogleClick = {
                             if (googleWebClientId.isBlank()) {
                                 profileViewModel.onGoogleSignInFailed(
                                     IllegalStateException("Google Sign-In client ID is not configured.")
                                 )
-                                return@Button
+                                return@AuthProviderButtonGroup
                             }
                             val request = GetSignInIntentRequest.Builder()
                                 .setServerClientId(googleWebClientId)
@@ -335,46 +360,21 @@ fun ProfileScreen(
                                     profileViewModel.onGoogleSignInFailed(error)
                                 }
                         },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        shape = MaterialTheme.shapes.large
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Person,
-                            contentDescription = null,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text(
-                            text = stringResource(R.string.profile_login_button),
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = { emailLoginDialogOpen = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.large,
-                        border = BorderStroke(
-                            1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.32f)
-                        ),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Email,
-                            contentDescription = null,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text(
-                            text = stringResource(R.string.profile_login_email_button),
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
+                        onMicrosoftClick = {
+                            activity?.let(profileViewModel::signInWithMicrosoft)
+                                ?: profileViewModel.onAuthProviderUnavailable()
+                        },
+                        onAppleClick = {
+                            activity?.let(profileViewModel::signInWithAppleProvider)
+                                ?: profileViewModel.onAuthProviderUnavailable()
+                        },
+                        onPhoneClick = { phoneLoginDialogOpen = true },
+                        onEnterpriseClick = {
+                            activity?.let(profileViewModel::signInWithEnterpriseSso)
+                                ?: profileViewModel.onAuthProviderUnavailable()
+                        },
+                        onEmailClick = { emailLoginDialogOpen = true }
+                    )
                 }
             }
 
@@ -634,6 +634,380 @@ fun ProfileScreen(
             }
         }
     }
+
+    if (phoneLoginDialogOpen) {
+        val focusManager = LocalFocusManager.current
+        val normalizedPhone = phoneInput.trim()
+        val normalizedCode = phoneCodeInput.trim()
+        val isPhoneValid = normalizedPhone.startsWith("+") &&
+            normalizedPhone.length in 8..16 &&
+            normalizedPhone.drop(1).all { it.isDigit() }
+        val isCodeValid = normalizedCode.length >= 4
+        val showPhoneError = phoneLoginValidationRequested && !isPhoneValid
+        val showCodeError = phoneLoginValidationRequested && phoneCodeSent && !isCodeValid
+
+        fun closePhoneSheet() {
+            phoneLoginDialogOpen = false
+            phoneInput = ""
+            phoneCodeInput = ""
+            phoneCodeSent = false
+            phoneLoginValidationRequested = false
+        }
+
+        fun submitPhoneLogin() {
+            phoneLoginValidationRequested = true
+            if (uiState.isLoading) return
+            val hostActivity = activity
+            if (hostActivity == null) {
+                profileViewModel.onAuthProviderUnavailable()
+                return
+            }
+            if (!phoneCodeSent) {
+                if (!isPhoneValid) return
+                profileViewModel.startPhoneSignIn(
+                    activity = hostActivity,
+                    phoneNumber = normalizedPhone,
+                    onCodeSent = {
+                        phoneCodeSent = true
+                        phoneLoginValidationRequested = false
+                    },
+                    onResult = { success ->
+                        if (success) closePhoneSheet()
+                    }
+                )
+                return
+            }
+
+            if (!isCodeValid) return
+            profileViewModel.confirmPhoneSignInCode(normalizedCode) { success ->
+                if (success) closePhoneSheet()
+            }
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = {
+                if (!uiState.isLoading) {
+                    focusManager.clearFocus(force = true)
+                    closePhoneSheet()
+                }
+            },
+            sheetState = phoneLoginSheetState,
+            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp),
+            dragHandle = { BottomSheetDefaults.DragHandle() }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Phone,
+                            contentDescription = null,
+                            modifier = Modifier.padding(10.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = stringResource(R.string.profile_phone_login_title),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = stringResource(R.string.profile_phone_login_subtitle),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = phoneInput,
+                    onValueChange = {
+                        phoneInput = it
+                        if (!phoneCodeSent) {
+                            phoneLoginValidationRequested = false
+                        }
+                    },
+                    enabled = !phoneCodeSent && !uiState.isLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.profile_phone_number_label)) },
+                    isError = showPhoneError,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Phone,
+                            contentDescription = null
+                        )
+                    },
+                    supportingText = {
+                        if (showPhoneError) {
+                            Text(text = stringResource(R.string.profile_phone_invalid))
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Phone,
+                        imeAction = if (phoneCodeSent) ImeAction.Next else ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            focusManager.clearFocus()
+                            submitPhoneLogin()
+                        }
+                    ),
+                    shape = MaterialTheme.shapes.large
+                )
+
+                if (phoneCodeSent) {
+                    OutlinedTextField(
+                        value = phoneCodeInput,
+                        onValueChange = {
+                            phoneCodeInput = it.filter(Char::isDigit).take(8)
+                            phoneLoginValidationRequested = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text(stringResource(R.string.profile_phone_code_label)) },
+                        isError = showCodeError,
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Outlined.Lock,
+                                contentDescription = null
+                            )
+                        },
+                        supportingText = {
+                            if (showCodeError) {
+                                Text(text = stringResource(R.string.profile_phone_code_invalid))
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.NumberPassword,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(onDone = {
+                            focusManager.clearFocus()
+                            submitPhoneLogin()
+                        }),
+                        shape = MaterialTheme.shapes.large
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        focusManager.clearFocus()
+                        submitPhoneLogin()
+                    },
+                    enabled = !uiState.isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    if (uiState.isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                    }
+                    Text(
+                        text = stringResource(
+                            if (phoneCodeSent) {
+                                R.string.profile_phone_verify_code_action
+                            } else {
+                                R.string.profile_phone_send_code_action
+                            }
+                        ),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                TextButton(
+                    onClick = {
+                        focusManager.clearFocus(force = true)
+                        closePhoneSheet()
+                    },
+                    enabled = !uiState.isLoading,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        }
+    }
+}
+
+private enum class AuthProviderBrand {
+    GOOGLE,
+    MICROSOFT,
+    APPLE,
+    PHONE,
+    ENTERPRISE,
+    EMAIL
+}
+
+@Composable
+private fun AuthProviderButtonGroup(
+    enabled: Boolean,
+    onGoogleClick: () -> Unit,
+    onMicrosoftClick: () -> Unit,
+    onAppleClick: () -> Unit,
+    onPhoneClick: () -> Unit,
+    onEnterpriseClick: () -> Unit,
+    onEmailClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        ProviderSignInButton(
+            text = stringResource(R.string.profile_login_button),
+            brand = AuthProviderBrand.GOOGLE,
+            enabled = enabled,
+            onClick = onGoogleClick
+        )
+        ProviderSignInButton(
+            text = stringResource(R.string.profile_login_microsoft_button),
+            brand = AuthProviderBrand.MICROSOFT,
+            enabled = enabled,
+            onClick = onMicrosoftClick
+        )
+        ProviderSignInButton(
+            text = stringResource(R.string.profile_login_apple_button),
+            brand = AuthProviderBrand.APPLE,
+            enabled = enabled,
+            onClick = onAppleClick
+        )
+        ProviderSignInButton(
+            text = stringResource(R.string.profile_login_phone_button),
+            brand = AuthProviderBrand.PHONE,
+            enabled = enabled,
+            onClick = onPhoneClick
+        )
+        ProviderSignInButton(
+            text = stringResource(R.string.profile_login_enterprise_sso_button),
+            brand = AuthProviderBrand.ENTERPRISE,
+            enabled = enabled,
+            onClick = onEnterpriseClick
+        )
+        ProviderSignInButton(
+            text = stringResource(R.string.profile_login_email_button),
+            brand = AuthProviderBrand.EMAIL,
+            enabled = enabled,
+            onClick = onEmailClick
+        )
+    }
+}
+
+@Composable
+private fun ProviderSignInButton(
+    text: String,
+    brand: AuthProviderBrand,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        shape = MaterialTheme.shapes.large,
+        border = BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)
+        ),
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp).copy(alpha = 0.48f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ProviderBrandBadge(brand = brand)
+            Text(
+                text = text,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+                textAlign = TextAlign.Center,
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Spacer(modifier = Modifier.width(34.dp))
+        }
+    }
+}
+
+@Composable
+private fun ProviderBrandBadge(brand: AuthProviderBrand) {
+    val isBrandMark = brand == AuthProviderBrand.GOOGLE ||
+        brand == AuthProviderBrand.MICROSOFT ||
+        brand == AuthProviderBrand.APPLE
+    Surface(
+        modifier = Modifier.size(34.dp),
+        shape = CircleShape,
+        color = if (isBrandMark) {
+            Color.White
+        } else {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.62f)
+        },
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            when (brand) {
+                AuthProviderBrand.GOOGLE -> Image(
+                    painter = painterResource(R.drawable.ic_brand_google),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+                AuthProviderBrand.MICROSOFT -> Image(
+                    painter = painterResource(R.drawable.ic_brand_microsoft),
+                    contentDescription = null,
+                    modifier = Modifier.size(19.dp)
+                )
+                AuthProviderBrand.APPLE -> Image(
+                    painter = painterResource(R.drawable.ic_brand_apple),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+                AuthProviderBrand.PHONE -> Icon(
+                    imageVector = Icons.Filled.Phone,
+                    contentDescription = null,
+                    modifier = Modifier.size(19.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                AuthProviderBrand.ENTERPRISE -> Icon(
+                    imageVector = Icons.Outlined.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.size(19.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                AuthProviderBrand.EMAIL -> Icon(
+                    imageVector = Icons.Outlined.Email,
+                    contentDescription = null,
+                    modifier = Modifier.size(19.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -689,6 +1063,7 @@ private fun ProfileHeader(
                     displayName = avatarDisplayName,
                     stableKey = "local_profile_avatar",
                     bitmap = bitmap,
+                    photoUrl = state.photoUrl,
                     modifier = Modifier
                         .size(128.dp)
                         .semantics { contentDescription = avatarContentDescription },
@@ -707,6 +1082,13 @@ private fun ProfileHeader(
                 if (state.email.isNotBlank()) {
                     Text(
                         text = state.email,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                } else if (state.phoneNumber.isNotBlank()) {
+                    Text(
+                        text = state.phoneNumber,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -757,11 +1139,23 @@ private fun ProfileHeader(
 @Composable
 private fun ProfileInfoCard(uiState: ProfileUiState) {
     val normalizedRole = uiState.role.trim().lowercase(Locale.US)
-    val infoItems = listOf(
-        stringResource(R.string.profile_username) to uiState.username.ifBlank { stringResource(R.string.profile_username_empty) },
-        stringResource(R.string.profile_email) to uiState.email.ifBlank { stringResource(R.string.profile_email_empty) },
-        stringResource(R.string.profile_country) to uiState.country.ifBlank { stringResource(R.string.profile_country_empty) }
-    )
+    val infoItems = buildList {
+        add(
+            stringResource(R.string.profile_username) to
+                uiState.username.ifBlank { stringResource(R.string.profile_username_empty) }
+        )
+        add(
+            stringResource(R.string.profile_email) to
+                uiState.email.ifBlank { stringResource(R.string.profile_email_empty) }
+        )
+        if (uiState.phoneNumber.isNotBlank()) {
+            add(stringResource(R.string.profile_phone) to uiState.phoneNumber)
+        }
+        add(
+            stringResource(R.string.profile_country) to
+                uiState.country.ifBlank { stringResource(R.string.profile_country_empty) }
+        )
+    }
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),

@@ -8,14 +8,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewModelScope
+import com.auralis.crisisconnect.BuildConfig
 import com.auralis.crisisconnect.getSavedLanguage
 import com.auralis.crisisconnect.ThemeOption
 import com.auralis.crisisconnect.getSavedThemeOption
 import com.auralis.crisisconnect.getSavedUserName
+import com.auralis.crisisconnect.getScreenshotDemoModeFlow
 import com.auralis.crisisconnect.saveLanguage
 import com.auralis.crisisconnect.saveThemeOption
 import com.auralis.crisisconnect.saveUserName
 import com.auralis.crisisconnect.setLocale
+import com.auralis.crisisconnect.setScreenshotDemoMode
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.launch
@@ -36,6 +39,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     var themeOption by mutableStateOf(ThemeOption.SYSTEM)
         private set
 
+    /** Screenshot Demo Mode is only surfaced in debug builds. */
+    val isDeveloperOptionsAvailable: Boolean = BuildConfig.DEBUG
+
+    var screenshotDemoMode by mutableStateOf(false)
+        private set
+
     init {
         viewModelScope.launch(exceptionHandler) {
             getSavedLanguage(appContext).collect { selectedCode = it }
@@ -45,6 +54,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch(exceptionHandler) {
             getSavedThemeOption(appContext).collect { themeOption = it }
+        }
+        if (isDeveloperOptionsAvailable) {
+            viewModelScope.launch(exceptionHandler) {
+                getScreenshotDemoModeFlow(appContext).collect { screenshotDemoMode = it }
+            }
         }
     }
 
@@ -63,10 +77,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun updateTheme(option: ThemeOption) {
+    fun updateTheme(option: ThemeOption, onApplied: () -> Unit = {}) {
         viewModelScope.launch(exceptionHandler) {
             themeOption = option
             saveThemeOption(appContext, option)
+            onApplied()
+        }
+    }
+
+    fun updateScreenshotDemoMode(enabled: Boolean) {
+        if (!isDeveloperOptionsAvailable) return
+        viewModelScope.launch(exceptionHandler) {
+            screenshotDemoMode = enabled
+            setScreenshotDemoMode(appContext, enabled)
         }
     }
 

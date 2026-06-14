@@ -1,6 +1,5 @@
 package com.auralis.crisisconnect.screens
 
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -57,7 +56,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -76,16 +74,16 @@ import com.auralis.crisisconnect.ui.components.AppBottomBar
 @Composable
 fun ToolsMainScreen(navController: NavController) {
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
-    val tools = remember(context, configuration) {
-        ToolsMainScreenViewModel.getVisibleTools(context)
+    val appContext = remember(context) { context.applicationContext }
+    val tools = remember(appContext) {
+        ToolsMainScreenViewModel.getVisibleTools(appContext)
     }
     val haptic = LocalHapticFeedback.current
     val focusManager = LocalFocusManager.current
     var searchQuery by rememberSaveable { mutableStateOf("") }
     val normalizedQuery = searchQuery.trim()
 
-    val filteredTools = remember(tools, normalizedQuery, configuration) {
+    val filteredTools = remember(tools, normalizedQuery, context) {
         if (normalizedQuery.isBlank()) {
             tools
         } else {
@@ -302,7 +300,6 @@ private fun ToolCard(
         elevation = CardDefaults.elevatedCardElevation(),
         modifier = Modifier
             .fillMaxWidth()
-            .animateContentSize()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = ripple(bounded = true),

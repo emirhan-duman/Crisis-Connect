@@ -27,6 +27,7 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.text.format.DateFormat as AndroidDateFormat
 import android.view.Surface
 import android.view.WindowManager
 import android.webkit.MimeTypeMap
@@ -291,7 +292,15 @@ fun ChatScreen(
         SimpleDateFormat("HH:mm", Locale.getDefault())
     }
     val dateHeaderFormatter = remember {
-        SimpleDateFormat("d MMMM", Locale.getDefault())
+        // Use the locale's preferred ordering rather than a hardcoded
+        // "d MMMM" pattern, which rendered as "23 4月" in Japanese
+        // (the correct Japanese form is "4月23日"). The "MMMMd" skeleton
+        // asks ICU for the best pattern that contains a full month and a
+        // day of month; ICU returns "M月d日" for ja, "MMMM d" for en, and
+        // "d MMMM" for tr — exactly what we want in each locale.
+        val locale = Locale.getDefault()
+        val pattern = AndroidDateFormat.getBestDateTimePattern(locale, "MMMMd")
+        SimpleDateFormat(pattern, locale)
     }
     val context = LocalContext.current
     val localUserName by getSavedUserName(context).collectAsState(initial = "")

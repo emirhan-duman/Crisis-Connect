@@ -69,7 +69,8 @@ class RescueActivity : ComponentActivity() {
                             RescueScreen(
                                 navController = navController,
                                 onBackPressed = ::finish,
-                                onBottomBarRouteSelected = ::openMainRoute
+                                onBottomBarRouteSelected = ::openMainRoute,
+                                onConversationSelected = ::openConversation
                             )
                         }
                         composable(ROUTE_RESCUE_SETTINGS) {
@@ -89,6 +90,11 @@ class RescueActivity : ComponentActivity() {
 
     private fun openMainRoute(route: String) {
         MainActivityRouteLauncher.launch(this, route)
+        finish()
+    }
+
+    private fun openConversation(sessionCode: String) {
+        MainActivityRouteLauncher.launchConversation(this, sessionCode)
         finish()
     }
 

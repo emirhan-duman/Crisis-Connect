@@ -1,0 +1,441 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isCurrentUser(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function hasRescueClaim() {
+      return isSignedIn()
+        && request.auth.token.role is string
+        && request.auth.token.role.lower() in ['admin', 'fieldteam', 'field-team', 'field_team'];
+    }
+
+    function currentUserExists() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function currentUserAgency() {
+      return currentUserData().agency;
+    }
+
+    function hasCurrentUserAgencyValue() {
+      return currentUserAgency() is string
+        && currentUserAgency().size() > 0;
+    }
+
+    function requestAgencyMatchesCurrentUser(requestAgency) {
+      return hasCurrentUserAgencyValue()
+        && requestAgency is string
+        && requestAgency == currentUserAgency();
+    }
+
+    function isRescueRoleValue(roleValue) {
+      return roleValue is string
+        && roleValue.lower() in ['authority', 'admin', 'fieldteam', 'field-team', 'field_team'];
+    }
+
+    function isVerifiedRescueProfile(data) {
+      return data is map
+        && data.verified == true
+        && isRescueRoleValue(data.role);
+    }
+
+    function hasCurrentUserAgencySlugBinding() {
+      return currentUserAgencySlug() is string
+        && currentUserAgencySlug().size() > 0;
+    }
+
+    function hasCurrentUserAgencyKeyBinding() {
+      return currentUserAgencyKey() is string
+        && currentUserAgencyKey().size() > 0
+        && hasCurrentUserAgencySlugBinding()
+        && currentUserAgencyKey() == currentUserAgencySlug();
+    }
+
+    function agencyIdMatchesCurrentUserBinding(agencyId) {
+      return (hasCurrentUserAgencySlugBinding() && currentUserAgencySlug() == agencyId)
+        || (hasCurrentUserAgencyKeyBinding() && currentUserAgencyKey() == agencyId);
+    }
+
+    function currentUserAgencySlug() {
+      return currentUserData().agencySlug;
+    }
+
+    function currentUserAgencyKey() {
+      return currentUserData().agencyKey;
+    }
+
+    function hasDashboardAccessEnabled() {
+      return currentUserData().dashboardAccess == true
+        || currentUserData().dashboardAccess == 'true';
+    }
+
+    function isAgencyPanelCollection(collectionId) {
+      return collectionId in ['agencyPanels', 'afadpanel'];
+    }
+
+    function panelDocData(panelCollection, panelId) {
+      return get(/databases/$(database)/documents/$(panelCollection)/$(panelId)).data;
+    }
+
+    function currentUserPanelDocData() {
+      return get(/databases/$(database)/documents/agencyPanels/$(currentUserAgencySlug())).data;
+    }
+
+    function canReadAgencyBySlug(panelId) {
+      return hasCurrentUserAgencySlugBinding()
+        && currentUserAgencySlug() == panelId;
+    }
+
+    function canReadAgencyByKey(panelId) {
+      return hasCurrentUserAgencyKeyBinding()
+        && currentUserAgencyKey() == panelId;
+    }
+
+    function canReadAgencyByName(panelCollection, panelId) {
+      return currentUserAgency() is string
+        && panelDocData(panelCollection, panelId) is map
+        && panelDocData(panelCollection, panelId).agency is string
+        && panelDocData(panelCollection, panelId).agency == currentUserAgency();
+    }
+
+    function canReadAgencyByHierarchy(agencyId, data) {
+      return data is map
+        && (
+          (
+            data.parentPanelId is string
+            && (
+              (hasCurrentUserAgencySlugBinding() && data.parentPanelId == currentUserAgencySlug())
+              || (hasCurrentUserAgencyKeyBinding() && data.parentPanelId == currentUserAgencyKey())
+            )
+          )
+          || (
+            data.ancestorPanelIds is list
+            && (
+              (hasCurrentUserAgencySlugBinding() && currentUserAgencySlug() in data.ancestorPanelIds)
+              || (hasCurrentUserAgencyKeyBinding() && currentUserAgencyKey() in data.ancestorPanelIds)
+            )
+          )
+          || (
+            hasCurrentUserAgencySlugBinding()
+            && currentUserPanelDocData().ancestorPanelIds is list
+            && agencyId in currentUserPanelDocData().ancestorPanelIds
+          )
+          || (
+            hasCurrentUserAgencySlugBinding()
+            && currentUserPanelDocData().parentPanelId is string
+            && currentUserPanelDocData().parentPanelId == agencyId
+          )
+        );
+    }
+
+    function isDashboardRole() {
+      return isRescueRoleValue(currentUserData().role);
+    }
+
+    function isRescueWriteRole() {
+      return isRescueRoleValue(currentUserData().role);
+    }
+
+    function canReadRescuePanel(panelCollection, agencyId) {
+      return currentUserExists()
+        && hasDashboardAccessEnabled()
+        && isDashboardRole()
+        && (
+          canReadAgencyBySlug(agencyId)
+          || canReadAgencyByKey(agencyId)
+          || canReadAgencyByName(panelCollection, agencyId)
+          || canReadAgencyByHierarchy(agencyId, panelDocData(panelCollection, agencyId))
+        );
+    }
+
+    function hasRescueProfileRole() {
+      return currentUserExists()
+        && currentUserData().verified == true
+        && isRescueWriteRole();
+    }
+
+    function canWriteRescuePanel(panelCollection, agencyId) {
+      return hasRescueProfileRole()
+        && (
+          agencyIdMatchesCurrentUserBinding(agencyId)
+          || (
+            requestAgencyMatchesCurrentUser(request.resource.data.agency)
+            && request.resource.data.agencySlug is string
+            && request.resource.data.agencySlug == agencyId
+            && agencyIdMatchesCurrentUserBinding(agencyId)
+          )
+          || (
+            currentUserAgency() is string
+            && panelDocData(panelCollection, agencyId) is map
+            && panelDocData(panelCollection, agencyId).agency is string
+            && panelDocData(panelCollection, agencyId).agency == currentUserAgency()
+          )
+        );
+    }
+
+    function isNumeric(value) {
+      return value is int || value is float;
+    }
+
+    function validGpsField(data) {
+      return !('gps' in data)
+        || (
+          data.gps is map
+          && isNumeric(data.gps.lat)
+          && isNumeric(data.gps.lon)
+          && data.gps.lat >= -90
+          && data.gps.lat <= 90
+          && data.gps.lon >= -180
+          && data.gps.lon <= 180
+          && (
+            !('accuracyMeters' in data.gps)
+            || isNumeric(data.gps.accuracyMeters)
+          )
+        );
+    }
+
+    function validSignalDocId(signalId, data) {
+      return (
+          !('signalId' in data)
+          || (
+            data.signalId is string
+            && data.signalId == signalId
+          )
+        )
+        && signalId is string
+        && signalId.matches('^cc-[0-9a-f]{24}$');
+    }
+
+    function validRescueDeviceId(deviceId) {
+      return deviceId is string
+        && deviceId.matches('^cc-[0-9a-f]{24}$');
+    }
+
+    function rescueDeviceDoc(deviceId) {
+      return get(/databases/$(database)/documents/rescueDevices/$(deviceId)).data;
+    }
+
+    function currentUserOwnsRescueDevice(deviceId) {
+      return isSignedIn()
+        && validRescueDeviceId(deviceId)
+        && exists(/databases/$(database)/documents/rescueDevices/$(deviceId))
+        && rescueDeviceDoc(deviceId).uid == request.auth.uid;
+    }
+
+    function validUserCreate(userId) {
+      let keys = request.resource.data.keys();
+      return keys.hasOnly([
+          'id',
+          'role',
+          'verified',
+          'dashboardAccess',
+          'email',
+          'username',
+          'country',
+          'countrySource',
+          'vpnActive',
+          'platform',
+          'createdAt',
+          'lastLinked'
+        ])
+        && (!('id' in request.resource.data) || request.resource.data.id == userId)
+        && (!('role' in request.resource.data) || request.resource.data.role == 'user')
+        && (!('verified' in request.resource.data) || request.resource.data.verified == false)
+        && (!('dashboardAccess' in request.resource.data) || request.resource.data.dashboardAccess == false);
+    }
+
+    function unchangedOptionalUserField(fieldName) {
+      return (
+          !(fieldName in resource.data)
+          && !(fieldName in request.resource.data)
+        )
+        || (
+          (fieldName in resource.data)
+          && (fieldName in request.resource.data)
+          && request.resource.data[fieldName] == resource.data[fieldName]
+        );
+    }
+
+    function validUserUpdate() {
+      let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return request.resource.data.id == resource.data.id
+        && changedKeys.hasOnly([
+          'email',
+          'username',
+          'country',
+          'countrySource',
+          'vpnActive',
+          'platform',
+          'lastLinked'
+        ])
+        && unchangedOptionalUserField('role')
+        && unchangedOptionalUserField('verified')
+        && unchangedOptionalUserField('dashboardAccess')
+        && unchangedOptionalUserField('agency')
+        && unchangedOptionalUserField('agencySlug')
+        && unchangedOptionalUserField('agencyKey')
+        && unchangedOptionalUserField('aesKey')
+        && unchangedOptionalUserField('aesKeyEncoding');
+    }
+
+    match /users/{userId} {
+      allow read: if isCurrentUser(userId);
+      allow create: if isCurrentUser(userId) && validUserCreate(userId);
+      allow update: if isCurrentUser(userId) && validUserUpdate();
+      allow delete: if false;
+    }
+
+    match /rescueKeys/{document} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // Shared authority-mesh group key. Only ever read/written by the issueAuthorityMeshKey
+    // Cloud Function (Admin SDK); clients must never read it directly.
+    match /authorityMeshKeys/{document} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    function isAdminClaim() {
+      return isSignedIn()
+        && request.auth.token.role is string
+        && request.auth.token.role.lower() == 'admin';
+    }
+
+    match /certificates/{certId} {
+      allow read: if isSignedIn() && (
+        resource.data.ownerUid == request.auth.uid
+        || isAdminClaim()
+      );
+      allow create, update, delete: if false;
+    }
+
+    match /attestation_nonces/{deviceId} {
+      allow read, write: if false;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdminClaim()
+        || (isSignedIn()
+          && resource.data.targetUid is string
+          && resource.data.targetUid == request.auth.uid);
+      allow create, update, delete: if false;
+    }
+
+    match /system/{docId} {
+      allow read, write: if false;
+    }
+
+    match /rescueDevices/{deviceId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if hasRescueProfileRole()
+        && validRescueDeviceId(deviceId)
+        && request.resource.data.keys().hasOnly([
+          'deviceId',
+          'uid',
+          'updatedAt'
+        ])
+        && request.resource.data.deviceId == deviceId
+        && request.resource.data.uid == request.auth.uid;
+      allow update: if hasRescueProfileRole()
+        && validRescueDeviceId(deviceId)
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.deviceId == resource.data.deviceId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /{panelCollection}/{agencyId} {
+      allow read: if isAgencyPanelCollection(panelCollection)
+        && canReadRescuePanel(panelCollection, agencyId);
+      allow create, update: if isAgencyPanelCollection(panelCollection)
+        && canWriteRescuePanel(panelCollection, agencyId)
+        && request.resource.data.schemaVersion is int
+        && request.resource.data.schemaVersion >= 3
+        && requestAgencyMatchesCurrentUser(request.resource.data.agency)
+        && request.resource.data.agencySlug is string
+        && request.resource.data.agencySlug == agencyId
+        && request.resource.data.updatedByUid == request.auth.uid
+        && request.resource.data.source in ['android-crisislink', 'ios-crisislink']
+        && request.resource.data.activeSignals is int
+        && request.resource.data.activeSignals >= 0
+        && request.resource.data.totalSignalsObserved is int
+        && request.resource.data.totalSignalsObserved >= 0
+        && request.resource.data.updatedByDeviceId is string
+        && currentUserOwnsRescueDevice(request.resource.data.updatedByDeviceId);
+      allow delete: if false;
+
+      match /responders/{responderId} {
+        allow read: if isAgencyPanelCollection(panelCollection)
+          && canReadRescuePanel(panelCollection, agencyId);
+        allow create, update: if isAgencyPanelCollection(panelCollection)
+          && canWriteRescuePanel(panelCollection, agencyId)
+          && request.resource.data.uid == request.auth.uid
+          && requestAgencyMatchesCurrentUser(request.resource.data.agency)
+          && request.resource.data.role is string
+          && request.resource.data.role.lower() in ['authority', 'admin', 'fieldteam', 'field-team', 'field_team']
+          && request.resource.data.schemaVersion is int
+          && request.resource.data.schemaVersion >= 1
+          && request.resource.data.responderDeviceId == responderId
+          && currentUserOwnsRescueDevice(request.resource.data.responderDeviceId)
+          && request.resource.data.crisisLinkEnabled is bool
+          && request.resource.data.activeSignalCount is int
+          && request.resource.data.activeSignalCount >= 0
+          && request.resource.data.totalUniqueSignalCount is int
+          && request.resource.data.totalUniqueSignalCount >= 0
+          && request.resource.data.totalScanEventCount is int
+          && request.resource.data.totalScanEventCount >= 0
+          && validGpsField(request.resource.data);
+        allow delete: if false;
+      }
+
+      match /signals/{signalId} {
+        allow read: if isAgencyPanelCollection(panelCollection)
+          && canReadRescuePanel(panelCollection, agencyId);
+        allow create, update: if isAgencyPanelCollection(panelCollection)
+          && canWriteRescuePanel(panelCollection, agencyId)
+          && validSignalDocId(signalId, request.resource.data)
+          && request.resource.data.lastReporterUid == request.auth.uid
+          && request.resource.data.schemaVersion is int
+          && request.resource.data.schemaVersion >= 1
+          && request.resource.data.status == 'active'
+          && request.resource.data.source == 'ble'
+          && request.resource.data.firstSeenMillis is int
+          && request.resource.data.firstSeenMillis > 0
+          && request.resource.data.lastSeenMillis is int
+          && request.resource.data.lastSeenMillis >= request.resource.data.firstSeenMillis;
+        allow delete: if false;
+
+        match /reporters/{responderId} {
+          allow read: if isAgencyPanelCollection(panelCollection)
+            && canReadRescuePanel(panelCollection, agencyId);
+          allow create, update: if isAgencyPanelCollection(panelCollection)
+            && canWriteRescuePanel(panelCollection, agencyId)
+            && request.resource.data.uid == request.auth.uid
+            && requestAgencyMatchesCurrentUser(request.resource.data.agency)
+            && request.resource.data.responderDeviceId == responderId
+            && currentUserOwnsRescueDevice(request.resource.data.responderDeviceId)
+            && request.resource.data.lastSeenMillis is int
+            && request.resource.data.lastSeenMillis > 0
+            && validGpsField(request.resource.data);
+          allow delete: if false;
+        }
+      }
+    }
+  }
+}

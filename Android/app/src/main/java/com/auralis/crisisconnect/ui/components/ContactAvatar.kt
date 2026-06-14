@@ -8,6 +8,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material3.Icon
@@ -55,6 +57,7 @@ fun ContactAvatar(
     displayName: String,
     stableKey: String,
     bitmap: Bitmap? = null,
+    photoUrl: String? = null,
     modifier: Modifier = Modifier,
     textStyle: TextStyle = MaterialTheme.typography.titleMedium
 ) {
@@ -100,6 +103,16 @@ fun ContactAvatar(
         if (bitmap != null) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else if (!photoUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(photoUrl)
+                    .crossfade(true)
+                    .build(),
                 contentDescription = null,
                 modifier = Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop

@@ -26,6 +26,12 @@ class ToolsMainScreenViewModel {
     companion object {
         val DEFAULT_TOOLS = listOf(
             ToolItem(
+                R.string.tool_crisis_sentinel_title,
+                R.string.tool_crisis_sentinel_description,
+                route = "crisis_sentinel",
+                drawableIcon = R.drawable.ic_tool_crisis_sentinel_shine
+            ),
+            ToolItem(
                 R.string.tool_metal_detector_title,
                 R.string.tool_metal_detector_description,
                 route = "metal_detector",

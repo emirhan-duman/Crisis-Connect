@@ -28,12 +28,7 @@ class RescueClientServiceBinding(context: Context) {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            val manager = runCatching {
-                service
-                    ?.javaClass
-                    ?.getMethod("getManager")
-                    ?.invoke(service) as? BleClientManager
-            }.getOrNull()
+            val manager = (service as? RescueClientManagerProvider)?.getManager()
             if (manager == null) {
                 isBound = false
                 _manager.value = null

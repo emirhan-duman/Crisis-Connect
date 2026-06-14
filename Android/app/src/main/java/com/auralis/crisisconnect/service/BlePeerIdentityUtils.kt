@@ -14,11 +14,13 @@ object BlePeerIdentityUtils {
     const val VICTIM_LABEL = "Kazazede"
     private const val RESCUER_LABEL_EN = "Field Team"
     private const val VICTIM_LABEL_EN = "Victim"
+    private const val RESCUER_LABEL_ES = "Equipo de campo"
+    private const val VICTIM_LABEL_ES = "Víctima"
 
     private const val PEER_INFO_KIND = "peer_info"
     private const val MAX_AVATAR_B64_LENGTH = 8_192
-    private val RESCUER_LABELS = setOf(RESCUER_LABEL, RESCUER_LABEL_EN)
-    private val VICTIM_LABELS = setOf(VICTIM_LABEL, VICTIM_LABEL_EN)
+    private val RESCUER_LABELS = setOf(RESCUER_LABEL, RESCUER_LABEL_EN, RESCUER_LABEL_ES)
+    private val VICTIM_LABELS = setOf(VICTIM_LABEL, VICTIM_LABEL_EN, VICTIM_LABEL_ES)
     private val ALL_ROLE_LABELS = (RESCUER_LABELS + VICTIM_LABELS)
     private val ROLE_LABEL_GROUP = ALL_ROLE_LABELS.joinToString("|") { labelPattern(it) }
     private val RESCUER_LABEL_GROUP = RESCUER_LABELS.joinToString("|") { labelPattern(it) }
@@ -36,6 +38,7 @@ object BlePeerIdentityUtils {
     private val RESCUER_LABEL_PATTERN = Regex("(?i)\\b$RESCUER_LABEL_GROUP\\b")
     private val EMPTY_TRAILING_BRACKET_GROUP_PATTERN =
         Regex("""(?:\s*\(\s*\)|\s*\[\s*\])+\s*$""")
+    private const val MAX_SIGNAL_DISPLAY_NAME_LENGTH = 96
 
     fun roleValue(savedRole: String?): String =
         if (isRescueRole(savedRole)) ROLE_RESCUE else ROLE_VICTIM
@@ -480,23 +483,26 @@ object BlePeerIdentityUtils {
             input.contains(RESCUER_LABEL_EN, ignoreCase = true) ||
                 input.contains(VICTIM_LABEL_EN, ignoreCase = true) -> Locale.US
 
+            input.contains(RESCUER_LABEL_ES, ignoreCase = true) ||
+                input.contains(VICTIM_LABEL_ES, ignoreCase = true) -> Locale("es", "ES")
+
             else -> null
         }
     }
 
     private fun localizedRescuerLabel(locale: Locale): String {
-        return if (locale.language.equals("tr", ignoreCase = true)) {
-            RESCUER_LABEL
-        } else {
-            RESCUER_LABEL_EN
+        return when {
+            locale.language.equals("tr", ignoreCase = true) -> RESCUER_LABEL
+            locale.language.equals("es", ignoreCase = true) -> RESCUER_LABEL_ES
+            else -> RESCUER_LABEL_EN
         }
     }
 
     private fun localizedVictimLabel(locale: Locale): String {
-        return if (locale.language.equals("tr", ignoreCase = true)) {
-            VICTIM_LABEL
-        } else {
-            VICTIM_LABEL_EN
+        return when {
+            locale.language.equals("tr", ignoreCase = true) -> VICTIM_LABEL
+            locale.language.equals("es", ignoreCase = true) -> VICTIM_LABEL_ES
+            else -> VICTIM_LABEL_EN
         }
     }
 
@@ -625,6 +631,27 @@ object BlePeerIdentityUtils {
             }
         }
 
+        fun updateVictimIdentity(
+            address: String,
+            displayName: String?,
+            batteryPercent: Int?
+        ) {
+            val normalizedAddress = normalizeRegistryAddress(address) ?: return
+            val normalizedDisplayName = normalizeSignalDisplayName(displayName)
+            val normalizedBatteryPercent = batteryPercent?.takeIf { it in 0..100 }
+            updateForAddress(normalizedAddress) { current ->
+                val base = current ?: SignalLocationMetadata()
+                val next = base.copy(
+                    victimDisplayName = chooseVictimDisplayName(
+                        incoming = normalizedDisplayName,
+                        existing = base.victimDisplayName
+                    ),
+                    victimBatteryPercent = normalizedBatteryPercent ?: base.victimBatteryPercent
+                )
+                next.takeIf { it.hasUsefulData() }
+            }
+        }
+
         fun updateRelativeEstimate(
             address: String,
             estimatedVictimLocation: PeerLocationSnapshot?,
@@ -710,12 +737,49 @@ object BlePeerIdentityUtils {
             } else {
                 normalizedIncoming.relativeEstimate ?: existing?.relativeEstimate
             }
+            val victimDisplayName = chooseVictimDisplayName(
+                incoming = normalizedIncoming.victimDisplayName,
+                existing = existing?.victimDisplayName
+            )
+            val victimBatteryPercent =
+                normalizedIncoming.victimBatteryPercent ?: existing?.victimBatteryPercent
             return SignalLocationMetadata(
                 victimLocation = victimLocation,
                 estimatedVictimLocation = estimatedVictimLocation,
                 relativeEstimate = relativeEstimate,
+                victimDisplayName = victimDisplayName,
+                victimBatteryPercent = victimBatteryPercent,
                 updatedAtMillis = maxOf(existing?.updatedAtMillis ?: 0L, normalizedIncoming.updatedAtMillis)
             ).takeIf { it.hasUsefulData() }
+        }
+
+        private fun normalizeSignalDisplayName(displayName: String?): String? {
+            val normalized = displayName
+                ?.let(::cleanupTrailingNameArtifacts)
+                ?.take(MAX_SIGNAL_DISPLAY_NAME_LENGTH)
+                ?.trim()
+            return normalized?.takeIf { it.isNotEmpty() }
+        }
+
+        private fun chooseVictimDisplayName(
+            incoming: String?,
+            existing: String?
+        ): String? {
+            if (incoming.isNullOrBlank()) {
+                return existing
+            }
+            if (!existing.isNullOrBlank() &&
+                isGenericVictimDisplayName(incoming) &&
+                !isGenericVictimDisplayName(existing)
+            ) {
+                return existing
+            }
+            return incoming
+        }
+
+        private fun isGenericVictimDisplayName(displayName: String): Boolean {
+            val normalized = cleanupTrailingNameArtifacts(displayName)
+            return VICTIM_LABELS.any { label -> normalized.equals(label, ignoreCase = true) }
         }
     }
 
@@ -752,10 +816,16 @@ object BlePeerIdentityUtils {
         val victimLocation: PeerLocationSnapshot? = null,
         val estimatedVictimLocation: PeerLocationSnapshot? = null,
         val relativeEstimate: RelativeVictimEstimate? = null,
+        val victimDisplayName: String? = null,
+        val victimBatteryPercent: Int? = null,
         val updatedAtMillis: Long = 0L
     ) {
         fun hasUsefulData(): Boolean {
-            return victimLocation != null || estimatedVictimLocation != null || relativeEstimate != null
+            return victimLocation != null ||
+                estimatedVictimLocation != null ||
+                relativeEstimate != null ||
+                !victimDisplayName.isNullOrBlank() ||
+                victimBatteryPercent != null
         }
 
         fun normalizedForComparison(): SignalLocationMetadata {

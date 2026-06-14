@@ -91,6 +91,7 @@ import com.auralis.crisisconnect.core.media.DEFAULT_CHAT_IMAGE_TRANSFER_PROFILE
 import com.auralis.crisisconnect.core.media.ImageFileUtils
 import com.auralis.crisisconnect.core.media.prepareImageAttachmentForTransfer
 import com.auralis.crisisconnect.data.observeCallEvents
+import com.auralis.crisisconnect.isScreenshotDemoModeEnabledSync
 import com.auralis.crisisconnect.settingsDataStore
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -250,6 +251,15 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     private val pendingP2pReadReceiptIds = linkedSetOf<String>()
     private var isFlushingPendingP2pReadReceipts = false
 
+    /**
+     * When true, the ViewModel has been bootstrapped with the scripted
+     * screenshot scenario in [applyScreenshotDemoScenario]. Used by
+     * [refreshTransportCapabilities] and [updateConnectionState] to avoid
+     * clobbering the fake "Connected / everything enabled" state when the
+     * real settings DataStore, BLE peers, or service binder emit events.
+     */
+    private var isInScreenshotDemoMode: Boolean = false
+
     private var mediaRecorder: MediaRecorder? = null
     private var currentRecordingFile: File? = null
     private var currentRecordingMimeType: String = VOICE_MIME_AAC
@@ -397,6 +407,13 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         if (this.sessionCode == sessionCode) {
             return
         }
+        if (isScreenshotDemoModeEnabledSync(context)) {
+            applyScreenshotDemoScenario(sessionCode)
+            return
+        }
+        // Reset in case a previous session was in demo mode and the same
+        // ViewModel instance is being reused for a real session.
+        isInScreenshotDemoMode = false
         val previousSessionCode = this.sessionCode
         val previousAddress = contactAddress
         if (!previousSessionCode.isNullOrBlank() && previousSessionCode != sessionCode && !previousAddress.isNullOrBlank()) {
@@ -2107,6 +2124,11 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun refreshTransportCapabilities() {
+        if (isInScreenshotDemoMode) {
+            // Demo mode has forced every capability to `true`; don't let a
+            // real-service check flip them back and dim the top-bar actions.
+            return
+        }
         _canSendVoiceMessages.value = supportsVoiceMessaging()
         _canSendAttachments.value = supportsAttachmentTransport()
         _canShareLocation.value = supportsLocationSharing()
@@ -2715,6 +2737,12 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun updateConnectionState(state: ChatConnectionState) {
+        if (isInScreenshotDemoMode) {
+            // Keep the scripted "Connected" state pinned; otherwise the real
+            // service / BLE observers would flip it to Connecting/Error once
+            // they realize there's no peer.
+            return
+        }
         if (_connectionState.value == state) {
             refreshSignalMonitoring()
             refreshBleFallbackRouteState()
@@ -2887,6 +2915,72 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         _activeCall.value = null
         refreshTransportCapabilities()
         refreshBleFallbackRouteState()
+    }
+
+    /**
+     * Replace the real DB-backed session state with the scripted scenario from
+     * [ChatScreenshotDemoScenario]. Only invoked from [initialize] when the
+     * debug "Screenshot Demo Mode" flag is on. Cancels every job the normal
+     * flow would start so nothing writes back to the real DataStore / DB, and
+     * forces the transport-capability state to "connected" so the chat screen
+     * renders the same chrome it would during a live session.
+     */
+    private fun applyScreenshotDemoScenario(sessionCode: String) {
+        // Tear down any previously running observers so demo state is the only
+        // source of truth for this ViewModel instance.
+        messageJob?.cancel()
+        contactJob?.cancel()
+        sessionMonitorJob?.cancel()
+        reconnectJob?.cancel()
+        callHistoryJob?.cancel()
+        deferredConnectJob?.cancel()
+        flushPendingTextJob?.cancel()
+        retryPendingTextJob?.cancel()
+        sosBindingJob?.cancel()
+        bleClientStateJob?.cancel()
+        p2pGattStatusJob?.cancel()
+        stopSignalMonitoring()
+
+        // Set BEFORE touching any of the StateFlows below. While this flag is
+        // true, refreshTransportCapabilities() and updateConnectionState()
+        // are no-ops, so the scripted values we write next are sticky even
+        // when the settings DataStore or other init-time collectors emit.
+        isInScreenshotDemoMode = true
+
+        this.sessionCode = sessionCode
+        activeContact = null
+        contactAddress = null
+        _contactAddressState.value = null
+
+        val demo = ChatScreenshotDemoScenario.buildTimeline(
+            context = context,
+            sessionCode = sessionCode
+        )
+        _callEvents.value = demo.callEvents
+        _messages.value = demo.messages
+        // Interleave messages and call events ordered by timestamp so the
+        // missed-call row sits above the subsequent text messages.
+        val timeline = buildList {
+            demo.messages.forEach { add(ChatTimelineItem.Msg(it)) }
+            demo.callEvents.forEach { add(ChatTimelineItem.Call(it)) }
+        }.sortedBy { it.timestampMillis }
+        _timelineItems.value = timeline
+        _contactName.value = ChatScreenshotDemoScenario.DEMO_CONTACT_NAME
+        _isSessionEncrypted.value = true
+        _isBleFallbackActive.value = false
+        _signalPermissionMissing.value = false
+        _signalInfo.value = null
+
+        // Present every transport capability as available so bottom-bar
+        // actions (voice, attachment, location, call) appear enabled in
+        // screenshots.
+        _canSendVoiceMessages.value = true
+        _canSendAttachments.value = true
+        _canShareLocation.value = true
+        _canPlaceCall.value = true
+        _showCallAction.value = true
+
+        _connectionState.value = ChatConnectionState.Connected
     }
 
     private data class TimelineSnapshot(

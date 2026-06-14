@@ -777,6 +777,19 @@ class GattSOSServerService : Service() {
         removeSharedGattDelegateService(serviceUuid)
     }
 
+    private fun ownsActiveSosPeerInternal(address: String): Boolean {
+        val normalizedAddress = address.trim().uppercase(Locale.US)
+        if (normalizedAddress.isEmpty()) {
+            return false
+        }
+        if (!connectedGattDevices.containsKey(normalizedAddress)) {
+            return false
+        }
+        return verifiedClients.contains(normalizedAddress) ||
+            sessionKeys.containsKey(normalizedAddress) ||
+            authSessionNonceByAddress.containsKey(normalizedAddress)
+    }
+
     @SuppressLint("MissingPermission")
     private fun disconnectSharedClientsInternal(addresses: Collection<String>) {
         if (addresses.isEmpty()) {
@@ -3119,6 +3132,10 @@ class GattSOSServerService : Service() {
 
         fun sharedGattServerOrNull(): BluetoothGattServer? {
             return activeInstance?.currentGattServer()
+        }
+
+        fun ownsActiveSosPeer(address: String): Boolean {
+            return activeInstance?.ownsActiveSosPeerInternal(address) ?: false
         }
 
         fun disconnectSharedClients(addresses: Collection<String>) {

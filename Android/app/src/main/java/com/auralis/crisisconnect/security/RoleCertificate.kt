@@ -7,10 +7,14 @@ import org.json.JSONObject
 
 /**
  * Signed role certificate issued by backend and cached on the device.
+ *
+ * Version 2 binds the certificate to the issuing device by including
+ * `deviceId` in both the signing payload and the storage envelope.
  */
 data class RoleCertificate(
     val ownerUid: String,
     val role: String,
+    val deviceId: String,
     val issuedAtMillis: Long,
     val expiresAtMillis: Long,
     val signatureBase64: String,
@@ -23,6 +27,7 @@ data class RoleCertificate(
         put(JSON_KEY_VERSION, version)
         put(JSON_KEY_OWNER_UID, ownerUid)
         put(JSON_KEY_ROLE, role)
+        put(JSON_KEY_DEVICE_ID, deviceId)
         put(JSON_KEY_ISSUED_AT, issuedAtMillis)
         put(JSON_KEY_EXPIRES_AT, expiresAtMillis)
         put(JSON_KEY_SIGNATURE, signatureBase64)
@@ -32,6 +37,7 @@ data class RoleCertificate(
         publicKeyBase64 = publicKeyBase64,
         ownerUid = ownerUid,
         role = role,
+        deviceId = deviceId,
         issuedAtMillis = issuedAtMillis,
         expiresAtMillis = expiresAtMillis
     )
@@ -39,6 +45,11 @@ data class RoleCertificate(
     fun isOwnedBy(userUid: String): Boolean {
         val normalizedUserUid = userUid.trim()
         return normalizedUserUid.isNotEmpty() && ownerUid == normalizedUserUid
+    }
+
+    fun isBoundTo(deviceIdToCheck: String): Boolean {
+        val normalized = deviceIdToCheck.trim()
+        return normalized.isNotEmpty() && deviceId == normalized
     }
 
     fun isValidAt(nowMillis: Long, maxClockSkewMillis: Long = DEFAULT_MAX_CLOCK_SKEW_MILLIS): Boolean {
@@ -86,6 +97,9 @@ data class RoleCertificate(
         if (role !in ALLOWED_ROLES) {
             return false
         }
+        if (deviceId.isBlank() || !DEVICE_ID_REGEX.matches(deviceId)) {
+            return false
+        }
         if (issuedAtMillis <= 0L || expiresAtMillis <= issuedAtMillis) {
             return false
         }
@@ -93,14 +107,16 @@ data class RoleCertificate(
     }
 
     companion object {
-        const val CERTIFICATE_VERSION = 1
+        const val CERTIFICATE_VERSION = 2
         const val DEFAULT_MAX_CLOCK_SKEW_MILLIS = 60_000L
         const val DEFAULT_OFFLINE_GRACE_MILLIS = 0L
         val ALLOWED_ROLES: Set<String> = setOf("admin", "fieldteam")
 
+        private val DEVICE_ID_REGEX = Regex("^cc-[0-9a-f]{24}$")
         private const val JSON_KEY_VERSION = "v"
         private const val JSON_KEY_OWNER_UID = "uid"
         private const val JSON_KEY_ROLE = "role"
+        private const val JSON_KEY_DEVICE_ID = "did"
         private const val JSON_KEY_ISSUED_AT = "iat"
         private const val JSON_KEY_EXPIRES_AT = "exp"
         private const val JSON_KEY_SIGNATURE = "sig"
@@ -115,6 +131,7 @@ data class RoleCertificate(
                     ownerUid = json.getString(JSON_KEY_OWNER_UID).trim(),
                     role = normalizeRoleOrNull(json.getString(JSON_KEY_ROLE))
                         ?: throw IllegalArgumentException("Stored certificate role is invalid"),
+                    deviceId = json.getString(JSON_KEY_DEVICE_ID).trim(),
                     issuedAtMillis = json.getLong(JSON_KEY_ISSUED_AT),
                     expiresAtMillis = json.getLong(JSON_KEY_EXPIRES_AT),
                     signatureBase64 = json.getString(JSON_KEY_SIGNATURE).trim(),
@@ -137,6 +154,11 @@ data class RoleCertificate(
                 ?: throw IllegalStateException("Certificate owner UID is missing")
             val role = normalizeRoleOrNull(data["role"] as? String)
                 ?: throw IllegalStateException("Certificate role is missing")
+            val deviceId = (data["deviceId"] as? String)?.trim()
+                ?: throw IllegalStateException("Certificate deviceId is missing")
+            require(DEVICE_ID_REGEX.matches(deviceId)) {
+                "Certificate deviceId does not match expected format"
+            }
             val issuedAtMillis = parseLongValue(data["issuedAtMs"] ?: data["issuedAt"] ?: data["iat"])
                 ?: throw IllegalStateException("Certificate issuedAt timestamp is missing")
             val expiresAtMillis = parseLongValue(data["expiresAtMs"] ?: data["expiresAt"] ?: data["exp"])
@@ -147,6 +169,7 @@ data class RoleCertificate(
             val certificate = RoleCertificate(
                 ownerUid = ownerUid,
                 role = role,
+                deviceId = deviceId,
                 issuedAtMillis = issuedAtMillis,
                 expiresAtMillis = expiresAtMillis,
                 signatureBase64 = signatureBase64.trim(),
@@ -162,6 +185,7 @@ data class RoleCertificate(
             publicKeyBase64: String,
             ownerUid: String,
             role: String,
+            deviceId: String,
             issuedAtMillis: Long,
             expiresAtMillis: Long,
         ): ByteArray {
@@ -169,17 +193,25 @@ data class RoleCertificate(
             val normalizedOwnerUid = ownerUid.trim()
             val normalizedRole = normalizeRoleOrNull(role)
                 ?: throw IllegalArgumentException("Unsupported role '${role.trim()}'")
+            val normalizedDeviceId = deviceId.trim()
             require(normalizedPublicKey.isNotEmpty()) { "publicKey is required" }
             require(normalizedOwnerUid.isNotEmpty()) { "ownerUid is required" }
+            require(DEVICE_ID_REGEX.matches(normalizedDeviceId)) {
+                "deviceId is required and must match 'cc-' + 24 hex characters"
+            }
             require(issuedAtMillis > 0L) { "issuedAtMillis must be positive" }
             require(expiresAtMillis > issuedAtMillis) { "expiresAtMillis must be after issuedAtMillis" }
 
-            val canonical = StringBuilder(normalizedPublicKey.length + normalizedOwnerUid.length + 48)
+            val canonical = StringBuilder(
+                normalizedPublicKey.length + normalizedOwnerUid.length + normalizedDeviceId.length + 64
+            )
                 .append(normalizedPublicKey)
                 .append('|')
                 .append(normalizedOwnerUid)
                 .append('|')
                 .append(normalizedRole)
+                .append('|')
+                .append(normalizedDeviceId)
                 .append('|')
                 .append(issuedAtMillis)
                 .append('|')

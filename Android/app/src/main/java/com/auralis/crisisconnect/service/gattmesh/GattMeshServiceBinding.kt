@@ -3,6 +3,7 @@ package com.auralis.crisisconnect.service.gattmesh
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.ServiceConnection
 import android.os.IBinder
 import kotlinx.coroutines.CoroutineScope
@@ -16,7 +17,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-class GattMeshServiceBinding(context: Context) {
+class GattMeshServiceBinding(
+    context: Context,
+    private val controller: MeshServiceController = PublicMeshServiceController,
+) {
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -107,7 +111,7 @@ class GattMeshServiceBinding(context: Context) {
     fun setEnabled(enabled: Boolean) {
         if (enabled) {
             keepBound = true
-            GattMeshForegroundService.start(appContext)
+            controller.start(appContext)
             tryBind(createIfNeeded = true)
             startStateWatchdog()
             scheduleRebind()
@@ -119,7 +123,7 @@ class GattMeshServiceBinding(context: Context) {
         bindRetryJob = null
         stateWatchdogJob?.cancel()
         stateWatchdogJob = null
-        GattMeshForegroundService.stop(appContext)
+        controller.stop(appContext)
         _state.update {
             it.copy(
                 isEnabled = false,
@@ -145,6 +149,22 @@ class GattMeshServiceBinding(context: Context) {
         return service?.sendGroupMessage(message, messageId)
     }
 
+    fun sendImageMessage(uri: Uri): String? {
+        service?.let { return it.sendImageMessage(uri) }
+        if (keepBound && !isBound) {
+            tryBind(createIfNeeded = true)
+        }
+        return service?.sendImageMessage(uri)
+    }
+
+    fun sendVoiceMessage(audioFile: java.io.File, durationMillis: Long): String? {
+        service?.let { return it.sendVoiceMessage(audioFile, durationMillis) }
+        if (keepBound && !isBound) {
+            tryBind(createIfNeeded = true)
+        }
+        return service?.sendVoiceMessage(audioFile, durationMillis)
+    }
+
     fun sendReadReceipt(messageIds: Collection<String>): Boolean {
         service?.let { return it.sendReadReceipt(messageIds) }
         if (keepBound && !isBound) {
@@ -158,9 +178,9 @@ class GattMeshServiceBinding(context: Context) {
             return true
         }
         if (createIfNeeded) {
-            GattMeshForegroundService.start(appContext)
+            controller.start(appContext)
         }
-        val intent = Intent(appContext, GattMeshForegroundService::class.java)
+        val intent = Intent(appContext, controller.serviceClass)
         val flags = if (createIfNeeded) Context.BIND_AUTO_CREATE else 0
         val bound = appContext.bindService(intent, serviceConnection, flags)
         isBound = bound
@@ -191,7 +211,7 @@ class GattMeshServiceBinding(context: Context) {
         }
         stateWatchdogJob = scope.launch {
             while (keepBound) {
-                val directState = GattMeshForegroundService.currentStateSnapshot()
+                val directState = controller.currentStateSnapshot()
                 if (directState != null) {
                     _state.value = directState
                     if (!isBound) {
@@ -201,7 +221,7 @@ class GattMeshServiceBinding(context: Context) {
                     if (_state.value != GattMeshServiceState()) {
                         _state.value = GattMeshServiceState()
                     }
-                    if (!isBound && !GattMeshForegroundService.isRunning.value) {
+                    if (!isBound && !controller.isRunning()) {
                         tryBind(createIfNeeded = true)
                     }
                 }

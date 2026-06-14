@@ -1,6 +1,13 @@
 package com.auralis.crisisconnect.screens.Chat
 
+import android.Manifest
+import android.graphics.BitmapFactory
+import android.media.MediaPlayer
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,17 +20,24 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,9 +52,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +70,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.MeshChatMessage
+import com.auralis.crisisconnect.data.imageMessageFile
+import com.auralis.crisisconnect.data.imageThumbnailFile
+import com.auralis.crisisconnect.data.voiceMessageFile
 import com.auralis.crisisconnect.ui.components.ContactAvatar
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -65,6 +88,7 @@ fun MeshChatScreen(
     val meshState by viewModel.meshState.collectAsState()
     val messages by viewModel.messages.collectAsState()
     val messageDraft by viewModel.messageDraft.collectAsState()
+    val isRecordingVoice by viewModel.isRecordingVoice.collectAsState()
     val canChat = remember(meshState) { MeshChatViewModel.isSecureMeshChatReady(meshState) }
     val listState = rememberLazyListState()
     val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -131,6 +155,18 @@ fun MeshChatScreen(
                 shadowElevation = 3.dp,
                 color = MaterialTheme.colorScheme.surface
             ) {
+                val imagePickerLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.PickVisualMedia()
+                ) { uri ->
+                    uri?.let(viewModel::sendImage)
+                }
+                val audioPermissionLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { granted ->
+                    if (granted) {
+                        viewModel.startVoiceRecording()
+                    }
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -138,26 +174,70 @@ fun MeshChatScreen(
                         .navigationBarsPadding(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    IconButton(
+                        onClick = {
+                            imagePickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        enabled = canChat
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Image,
+                            contentDescription = stringResource(R.string.mesh_chat_attach_image)
+                        )
+                    }
                     OutlinedTextField(
                         value = messageDraft,
                         onValueChange = viewModel::updateDraft,
                         modifier = Modifier.weight(1f),
-                        enabled = canChat,
+                        enabled = canChat && !isRecordingVoice,
                         singleLine = true,
                         shape = RoundedCornerShape(18.dp),
                         placeholder = {
-                            Text(text = stringResource(R.string.mesh_chat_message_placeholder))
+                            Text(
+                                text = stringResource(
+                                    if (isRecordingVoice) {
+                                        R.string.mesh_chat_recording
+                                    } else {
+                                        R.string.mesh_chat_message_placeholder
+                                    }
+                                )
+                            )
                         }
                     )
                     Spacer(modifier = Modifier.width(10.dp))
-                    IconButton(
-                        onClick = { viewModel.sendMessage() },
-                        enabled = canChat && messageDraft.isNotBlank()
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Send,
-                            contentDescription = stringResource(R.string.chat_send_message)
-                        )
+                    if (messageDraft.isBlank()) {
+                        IconButton(
+                            onClick = {
+                                if (isRecordingVoice) {
+                                    viewModel.stopAndSendVoiceRecording()
+                                } else {
+                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            },
+                            enabled = canChat
+                        ) {
+                            Icon(
+                                imageVector = if (isRecordingVoice) Icons.Filled.Stop else Icons.Filled.Mic,
+                                tint = if (isRecordingVoice) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    LocalContentColor.current
+                                },
+                                contentDescription = stringResource(R.string.mesh_chat_voice_record)
+                            )
+                        }
+                    } else {
+                        IconButton(
+                            onClick = { viewModel.sendMessage() },
+                            enabled = canChat && messageDraft.isNotBlank()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Send,
+                                contentDescription = stringResource(R.string.chat_send_message)
+                            )
+                        }
                     }
                 }
             }
@@ -188,6 +268,86 @@ fun MeshChatScreen(
             }
         }
     }
+}
+
+@Composable
+private fun MeshChatImageContent(message: MeshChatMessage) {
+    val context = LocalContext.current
+    val bitmap = remember(message.id, message.imageThumbnailName, message.imageFileName) {
+        val file = message.imageThumbnailName
+            ?.let { imageThumbnailFile(context, it) }
+            ?.takeIf { it.exists() }
+            ?: message.imageFileName
+                ?.let { imageMessageFile(context, it) }
+                ?.takeIf { it.exists() }
+        file?.let { BitmapFactory.decodeFile(it.absolutePath) }?.asImageBitmap()
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = stringResource(R.string.mesh_chat_attach_image),
+            modifier = Modifier
+                .widthIn(max = 220.dp)
+                .heightIn(max = 260.dp)
+                .clip(RoundedCornerShape(12.dp)),
+            contentScale = ContentScale.Fit
+        )
+    } else {
+        Text(
+            text = "🖼️",
+            style = MaterialTheme.typography.headlineMedium
+        )
+    }
+}
+
+@Composable
+private fun MeshChatVoiceContent(
+    message: MeshChatMessage,
+    tint: Color
+) {
+    val context = LocalContext.current
+    var isPlaying by remember(message.id) { mutableStateOf(false) }
+    val player = remember(message.id) { MediaPlayer() }
+    DisposableEffect(message.id) {
+        onDispose {
+            runCatching { player.release() }
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = {
+            if (isPlaying) {
+                runCatching { player.pause() }
+                isPlaying = false
+            } else {
+                val fileName = message.voiceFileName ?: return@IconButton
+                runCatching {
+                    player.reset()
+                    player.setDataSource(voiceMessageFile(context, fileName).absolutePath)
+                    player.setOnCompletionListener { isPlaying = false }
+                    player.prepare()
+                    player.start()
+                }.onSuccess { isPlaying = true }
+            }
+        }) {
+            Icon(
+                imageVector = if (isPlaying) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                contentDescription = stringResource(R.string.mesh_chat_voice_record),
+                tint = tint
+            )
+        }
+        Text(
+            text = formatVoiceDuration(message.voiceDurationMillis),
+            style = MaterialTheme.typography.labelMedium,
+            color = tint
+        )
+    }
+}
+
+private fun formatVoiceDuration(durationMillis: Long?): String {
+    val totalSeconds = ((durationMillis ?: 0L) / 1000L).coerceAtLeast(0L)
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "%d:%02d".format(minutes, seconds)
 }
 
 @Composable
@@ -263,11 +423,18 @@ private fun MeshChatMessageBubble(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                 }
-                Text(
-                    text = message.text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = contentColor
-                )
+                when {
+                    message.imageFileName != null -> MeshChatImageContent(message = message)
+                    message.voiceFileName != null -> MeshChatVoiceContent(
+                        message = message,
+                        tint = contentColor
+                    )
+                    else -> Text(
+                        text = message.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = contentColor
+                    )
+                }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = timeFormatter.format(Date(message.timestampMillis)),

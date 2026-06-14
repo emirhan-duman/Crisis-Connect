@@ -601,29 +601,33 @@ class P2pGattServerService : Service() {
             .setTimeout(0)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
             .build()
+        // The P2P service UUID must stay in the primary advertisement packet: iOS
+        // centrals scan with a CoreBluetooth service filter that only matches the
+        // primary packet, so a CD00 placed in the scan response is never discovered.
+        // CD00 uses the SIG base UUID and encodes as a 2-byte 16-bit entry, which
+        // fits next to the 128-bit mesh UUID; the 4-byte mesh initiator rank moves
+        // to the scan response (Android merges both packets into one ScanRecord).
         val advertiseDataBuilder = AdvertiseData.Builder()
-        if (shouldAdvertiseMeshProfile()) {
-            advertiseDataBuilder
-                .addServiceUuid(ParcelUuid(GattMeshForegroundService.meshServiceUuidForAdvertising()))
-                .addManufacturerData(
-                    MESH_INITIATOR_RANK_MANUFACTURER_ID,
-                    GattMeshForegroundService.meshManufacturerDataForAdvertising(
-                        context = applicationContext,
-                        adapter = bluetoothAdapter
-                    )
-                )
-        } else {
-            advertiseDataBuilder.addServiceUuid(ParcelUuid(P2pBleProtocol.SERVICE_UUID))
-        }
+            .addServiceUuid(ParcelUuid(P2pBleProtocol.SERVICE_UUID))
         val scanResponseBuilder = AdvertiseData.Builder()
+        if (shouldAdvertiseMeshProfile()) {
+            advertiseDataBuilder.addServiceUuid(
+                ParcelUuid(GattMeshForegroundService.meshServiceUuidForAdvertising())
+            )
+            scanResponseBuilder.addManufacturerData(
+                MESH_INITIATOR_RANK_MANUFACTURER_ID,
+                GattMeshForegroundService.meshManufacturerDataForAdvertising(
+                    context = applicationContext,
+                    adapter = bluetoothAdapter
+                )
+            )
+        }
         if (shareSession != null) {
             val session = shareSession ?: return false
             scanResponseBuilder.addServiceData(
                 ParcelUuid(P2pBleProtocol.SERVICE_UUID),
                 P2pBleProtocol.encodeAdvertisedShareId(session.shareId)
             )
-        } else if (shouldAdvertiseMeshProfile()) {
-            scanResponseBuilder.addServiceUuid(ParcelUuid(P2pBleProtocol.SERVICE_UUID))
         }
         return runCatching {
             localAdvertiser.startAdvertising(

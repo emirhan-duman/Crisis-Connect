@@ -14,6 +14,7 @@ import java.util.Locale
 class BlePeerIdentityUtilsTest {
     private val trLocale = Locale("tr", "TR")
     private val enLocale = Locale.US
+    private val esLocale = Locale("es", "ES")
 
     @Test
     fun `roleValue maps rescue roles to rescue and others to victim`() {
@@ -31,6 +32,9 @@ class BlePeerIdentityUtilsTest {
         assertEquals("Field Team", BlePeerIdentityUtils.roleLabel("rescue", enLocale))
         assertEquals("Victim", BlePeerIdentityUtils.roleLabel("victim", enLocale))
         assertEquals("Victim", BlePeerIdentityUtils.roleLabel("unknown", enLocale))
+        assertEquals("Equipo de campo", BlePeerIdentityUtils.roleLabel("rescue", esLocale))
+        assertEquals("Víctima", BlePeerIdentityUtils.roleLabel("victim", esLocale))
+        assertEquals("Víctima", BlePeerIdentityUtils.roleLabel("unknown", esLocale))
     }
 
     @Test
@@ -40,6 +44,8 @@ class BlePeerIdentityUtilsTest {
         assertTrue(BlePeerIdentityUtils.looksLikeBleIdentifier("peer 1a:2b", null))
         assertTrue(BlePeerIdentityUtils.looksLikeBleIdentifier("Saha Ekibi", null))
         assertTrue(BlePeerIdentityUtils.looksLikeBleIdentifier("Field Team", null))
+        assertTrue(BlePeerIdentityUtils.looksLikeBleIdentifier("Equipo de campo", null))
+        assertTrue(BlePeerIdentityUtils.looksLikeBleIdentifier("Víctima", null))
         assertTrue(BlePeerIdentityUtils.looksLikeBleIdentifier("session-1", "session-1"))
         assertFalse(BlePeerIdentityUtils.looksLikeBleIdentifier("Ahmet Kaya", "session-1"))
     }
@@ -314,5 +320,49 @@ class BlePeerIdentityUtilsTest {
         assertTrue(BlePeerIdentityUtils.isRescuerDisplayName("Ahmet (Saha Ekibi)"))
         assertTrue(BlePeerIdentityUtils.isRescuerDisplayName("John (Field Team)"))
         assertFalse(BlePeerIdentityUtils.isRescuerDisplayName("Ayse (Kazazede)"))
+    }
+
+    @Test
+    fun `signal registry carries victim identity when address is later bound`() {
+        val address = "10:20:30:40:50:61"
+        val signalId = "cc-test-victim-identity"
+
+        BlePeerIdentityUtils.SignalLocationRegistry.updateVictimIdentity(
+            address = address,
+            displayName = "Ayse Demir",
+            batteryPercent = 42
+        )
+        BlePeerIdentityUtils.SignalLocationRegistry.bindSignalId(address, signalId)
+
+        val metadata = BlePeerIdentityUtils.SignalLocationRegistry.snapshotForSignalId(signalId)
+        assertNotNull(metadata)
+        metadata ?: return
+        assertEquals("Ayse Demir", metadata.victimDisplayName)
+        assertEquals(42, metadata.victimBatteryPercent)
+        assertTrue(metadata.updatedAtMillis > 0L)
+    }
+
+    @Test
+    fun `signal registry keeps specific victim name over generic fallback`() {
+        val address = "10:20:30:40:50:62"
+        val signalId = "cc-test-victim-specific-name"
+
+        BlePeerIdentityUtils.SignalLocationRegistry.bindSignalId(address, signalId)
+        BlePeerIdentityUtils.SignalLocationRegistry.updateVictimIdentity(
+            address = address,
+            displayName = "Ayse Demir",
+            batteryPercent = null
+        )
+        BlePeerIdentityUtils.SignalLocationRegistry.updateVictimIdentity(
+            address = address,
+            displayName = "Victim",
+            batteryPercent = 39
+        )
+
+        val metadata = BlePeerIdentityUtils.SignalLocationRegistry.snapshotForSignalId(signalId)
+        assertNotNull(metadata)
+        metadata ?: return
+        assertEquals("Ayse Demir", metadata.victimDisplayName)
+        assertEquals(39, metadata.victimBatteryPercent)
     }
 }

@@ -22,7 +22,7 @@
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-8b0000.svg" alt="License" /></a>&nbsp;
   <img src="https://img.shields.io/badge/platforms-Android%20%7C%20iOS-blue" alt="Platforms" />&nbsp;
-  <img src="https://img.shields.io/badge/version-1.0.0-green" alt="Version" />&nbsp;
+  <img src="https://img.shields.io/badge/version-1.1.1-green" alt="Version" />&nbsp;
   <img src="https://img.shields.io/badge/kotlin-104k%20LOC-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />&nbsp;
   <img src="https://img.shields.io/badge/swift-50k%20LOC-F05138?logo=swift&logoColor=white" alt="Swift" />&nbsp;
   <img src="https://img.shields.io/badge/tests-213-brightgreen" alt="Tests" />
@@ -638,7 +638,7 @@ We take security reports seriously and will respond as quickly as possible.
 
 Crisis Connect is in production on both app stores and under active development. The roadmap reflects what has been shipped and what comes next.
 
-### Shipped (v1.0.0)
+### Shipped (v1.1.1)
 
 - [x] BLE GATT peer-to-peer encrypted messaging (Android + iOS)
 - [x] RFCOMM voice calls with Opus codec and jitter buffering (Android)

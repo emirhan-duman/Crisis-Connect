@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.auralis.crisisconnect.service.RfcommForegroundService
 import com.auralis.crisisconnect.service.gattmesh.GattMeshForegroundService
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -19,8 +20,8 @@ class ServiceManifestContractInstrumentedTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
-    fun crisisLinkService_isDeclaredEnabledAndNotExported() {
-        val serviceInfo = readServiceInfo(ComponentName(context, CrisisLinkForegroundService::class.java))
+    fun rfcommService_isDeclaredEnabledAndNotExported() {
+        val serviceInfo = readServiceInfo(ComponentName(context, RfcommForegroundService::class.java))
 
         assertTrue(serviceInfo.enabled)
         assertFalse(serviceInfo.exported)
@@ -36,7 +37,7 @@ class ServiceManifestContractInstrumentedTest {
 
     @Test
     fun explicitServiceIntents_areResolvable() {
-        val crisisIntent = Intent(context, CrisisLinkForegroundService::class.java)
+        val crisisIntent = Intent(context, RfcommForegroundService::class.java)
         val gattIntent = Intent(context, GattMeshForegroundService::class.java)
 
         val crisisResolve = context.packageManager.resolveService(crisisIntent, 0)
@@ -52,7 +53,7 @@ class ServiceManifestContractInstrumentedTest {
             return
         }
 
-        val crisisInfo = readServiceInfo(ComponentName(context, CrisisLinkForegroundService::class.java))
+        val crisisInfo = readServiceInfo(ComponentName(context, RfcommForegroundService::class.java))
         val gattInfo = readServiceInfo(ComponentName(context, GattMeshForegroundService::class.java))
 
         val crisisType = crisisInfo.foregroundServiceType

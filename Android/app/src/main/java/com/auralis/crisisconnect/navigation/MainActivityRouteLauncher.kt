@@ -17,6 +17,18 @@ object MainActivityRouteLauncher {
         context.startActivity(intent)
     }
 
+    fun launchConversation(context: Context, sessionCode: String) {
+        val normalizedSessionCode = sessionCode.trim()
+        if (normalizedSessionCode.isEmpty()) {
+            return
+        }
+        val intent = MainActivity.createTrustedLaunchIntent(context) {
+            putExtra(MainActivity.EXTRA_NAVIGATE_TO_SESSION, normalizedSessionCode)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        context.startActivity(intent)
+    }
+
     fun isSupportedRoute(route: String): Boolean = route in SUPPORTED_ROUTES
 
     private val SUPPORTED_ROUTES = setOf(

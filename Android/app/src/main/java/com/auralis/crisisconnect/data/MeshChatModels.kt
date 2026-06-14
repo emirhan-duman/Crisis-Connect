@@ -13,7 +13,13 @@ data class MeshChatMessage(
     val status: MeshMessageStatus = MeshMessageStatus.SENT,
     val sentTo: List<String> = emptyList(),
     val deliveredTo: List<String> = emptyList(),
-    val readBy: List<String> = emptyList()
+    val readBy: List<String> = emptyList(),
+    val imageFileName: String? = null,
+    val imageThumbnailName: String? = null,
+    val imageWidth: Int? = null,
+    val imageHeight: Int? = null,
+    val voiceFileName: String? = null,
+    val voiceDurationMillis: Long? = null
 )
 
 enum class MeshMessageStatus {

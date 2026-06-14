@@ -45,11 +45,14 @@ private enum class AppTab(
 private val MESSAGE_ROUTES = setOf(
     "main",
     "sos_status",
-    "new_chat"
+    "new_chat",
+    "crisis_sentinel_home",
+    "crisis_sentinel_settings"
 )
 
 private val TOOLS_ROUTES = setOf(
     "tools_main",
+    "crisis_sentinel",
     "metal_detector",
     "signal_finder",
     "whistle",

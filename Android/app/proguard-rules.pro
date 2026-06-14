@@ -37,3 +37,11 @@
 # Keep explicit implementations to avoid ClassNotFoundException on release builds.
 -keep class com.auralis.crisisconnect.data.AppDatabase_Impl { *; }
 -keep class com.auralis.crisisconnect.data.offline.OfflineDatabase_Impl { *; }
+
+# Strip verbose/debug log calls in release builds so they cannot leak PII,
+# key sizes, or document identifiers. Log.i/w/e are retained for Crashlytics
+# breadcrumbs and real-error visibility.
+-assumenosideeffects class android.util.Log {
+    public static *** d(...);
+    public static *** v(...);
+}

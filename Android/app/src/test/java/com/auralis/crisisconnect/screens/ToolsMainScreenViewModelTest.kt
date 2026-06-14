@@ -41,4 +41,16 @@ class ToolsMainScreenViewModelTest {
 
         assertFalse(isToolSupported("compass", capabilities))
     }
+
+    @Test
+    fun `crisis sentinel shown without hardware sensors`() {
+        val capabilities = ToolDeviceCapabilities(
+            hasRotationVector = false,
+            hasGameRotationVector = false,
+            hasAccelerometer = false,
+            hasMagnetometer = false
+        )
+
+        assertTrue(isToolSupported("crisis_sentinel", capabilities))
+    }
 }

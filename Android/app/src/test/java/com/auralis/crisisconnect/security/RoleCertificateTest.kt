@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets
 
 @RunWith(RobolectricTestRunner::class)
 class RoleCertificateTest {
+    private val deviceId = "cc-0123456789abcdef01234567"
 
     @Test
     fun signingPayload_normalizesFieldTeamAliases() {
@@ -18,6 +19,7 @@ class RoleCertificateTest {
             publicKeyBase64 = "public-key",
             ownerUid = "user-1",
             role = "field_team",
+            deviceId = deviceId,
             issuedAtMillis = 1_000L,
             expiresAtMillis = 2_000L
         )
@@ -47,6 +49,7 @@ class RoleCertificateTest {
         val cert = RoleCertificate(
             ownerUid = "user-1",
             role = "admin",
+            deviceId = deviceId,
             issuedAtMillis = 100_000L,
             expiresAtMillis = 200_000L,
             signatureBase64 = signature
@@ -65,6 +68,7 @@ class RoleCertificateTest {
         val cert = RoleCertificate(
             ownerUid = "user-1",
             role = "admin",
+            deviceId = deviceId,
             issuedAtMillis = 100_000L,
             expiresAtMillis = 200_000L,
             signatureBase64 = signature
@@ -88,6 +92,7 @@ class RoleCertificateTest {
         val cert = RoleCertificate(
             ownerUid = "user-1",
             role = "admin",
+            deviceId = deviceId,
             issuedAtMillis = 100_000L,
             expiresAtMillis = 200_000L,
             signatureBase64 = signature

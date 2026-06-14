@@ -6,7 +6,6 @@ import android.util.Log
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
-import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.data.BlePeerStore
@@ -20,7 +19,11 @@ import com.auralis.crisisconnect.data.observeMessagesNewestFirst
 import com.auralis.crisisconnect.data.observeUnreadCounts
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.getSavedUserName
+import com.auralis.crisisconnect.getScreenshotDemoModeFlow
+import com.auralis.crisisconnect.isScreenshotDemoModeEnabledSync
+import com.auralis.crisisconnect.onboardingDataStore
 import com.auralis.crisisconnect.saveUserName
+import com.auralis.crisisconnect.screens.Chat.ChatScreenshotDemoScenario
 import com.auralis.crisisconnect.settingsDataStore
 import com.auralis.crisisconnect.service.BlePeerIdentityUtils
 import com.auralis.crisisconnect.service.RfcommForegroundService.CallEvent
@@ -39,7 +42,6 @@ import kotlinx.coroutines.launch
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlin.collections.LinkedHashMap
 
-private val Context.dataStore by preferencesDataStore(name = "popup_prefs")
 private val TERMS_ACCEPTED_KEY = booleanPreferencesKey("terms_v2_accepted")
 
 class MainScreenViewModel(application: Application) : AndroidViewModel(application) {
@@ -78,7 +80,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     init {
         viewModelScope.launch(exceptionHandler) {
-            val termsAccepted = context.dataStore.data
+            val termsAccepted = context.onboardingDataStore.data
                 .catch { error ->
                     Log.w(TAG, "Unable to read onboarding preference, showing dialog", error)
                     emit(emptyPreferences())
@@ -101,15 +103,20 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
             val contactsFlow = runCatching { observeContacts(context) }
                 .getOrElse { error ->
                     Log.e(TAG, "Unable to initialize contacts flow", error)
-                    _contacts.value = emptyList()
+                    _contacts.value = if (isDemoFlagCurrentlyOn()) {
+                        listOf(ChatScreenshotDemoScenario.buildDemoContact())
+                    } else {
+                        emptyList()
+                    }
                     _isContactsLoaded.value = true
                     return@launch
                 }
 
             combine(
                 contactsFlow,
-                BlePeerStore.peers
-            ) { saved, peersMap ->
+                BlePeerStore.peers,
+                getScreenshotDemoModeFlow(context)
+            ) { saved, peersMap, demoOn ->
                 val merged = LinkedHashMap<String, Contact>()
                 saved.forEach { contact ->
                     val key = contact.sessionCode.ifBlank { contact.address }
@@ -127,12 +134,27 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
                         )
                     }
                 }
-                merged.values.toList()
+                val base = merged.values.toList()
+                if (demoOn) {
+                    // Prepend the scripted demo contact so it's the first row in
+                    // the Messages list. Any real contacts stay visible underneath
+                    // so the developer can still tell them apart.
+                    val demoContact = ChatScreenshotDemoScenario.buildDemoContact()
+                    listOf(demoContact) + base.filterNot {
+                        it.sessionCode == demoContact.sessionCode
+                    }
+                } else {
+                    base
+                }
             }
                 .distinctUntilChanged()
                 .catch { error ->
                     Log.e(TAG, "Unable to observe contacts", error)
-                    _contacts.value = emptyList()
+                    _contacts.value = if (isDemoFlagCurrentlyOn()) {
+                        listOf(ChatScreenshotDemoScenario.buildDemoContact())
+                    } else {
+                        emptyList()
+                    }
                     _isContactsLoaded.value = true
                 }
                 .collect { mergedList ->
@@ -144,15 +166,24 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
             val latestMessagesFlow = runCatching { observeLatestMessages(context) }
                 .getOrElse { error ->
                     Log.e(TAG, "Unable to initialize latest messages flow", error)
-                    _latestMessages.value = emptyMap()
+                    _latestMessages.value = demoLatestMessagesOrEmpty()
                     return@launch
                 }
 
-            latestMessagesFlow
+            combine(
+                latestMessagesFlow,
+                getScreenshotDemoModeFlow(context)
+            ) { latest, demoOn ->
+                if (demoOn) {
+                    withDemoLatestMessage(latest)
+                } else {
+                    latest
+                }
+            }
                 .distinctUntilChanged()
                 .catch { error ->
                     Log.e(TAG, "Latest messages stream failed", error)
-                    emit(emptyMap())
+                    emit(demoLatestMessagesOrEmpty())
                 }
                 .collect { latest ->
                     _latestMessages.value = latest
@@ -180,15 +211,20 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
             val unreadCountsFlow = runCatching { observeUnreadCounts(context) }
                 .getOrElse { error ->
                     Log.e(TAG, "Unable to initialize unread count flow", error)
-                    _unreadCounts.value = emptyMap()
+                    _unreadCounts.value = demoUnreadCountsOrEmpty()
                     return@launch
                 }
 
-            unreadCountsFlow
+            combine(
+                unreadCountsFlow,
+                getScreenshotDemoModeFlow(context)
+            ) { counts, demoOn ->
+                if (demoOn) withDemoUnread(counts) else counts
+            }
                 .distinctUntilChanged()
                 .catch { error ->
                     Log.e(TAG, "Unread count stream failed", error)
-                    emit(emptyMap())
+                    emit(demoUnreadCountsOrEmpty())
                 }
                 .collect { counts ->
                     _unreadCounts.value = counts
@@ -226,6 +262,48 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Cheap synchronous check used only from the `getOrElse` error recovery
+     * branches, where we can't re-enter a flow. In the happy path we combine
+     * with [getScreenshotDemoModeFlow] instead so the data stays reactive.
+     */
+    private fun isDemoFlagCurrentlyOn(): Boolean =
+        isScreenshotDemoModeEnabledSync(context)
+
+    private fun withDemoLatestMessage(
+        real: Map<String, ChatMessage>
+    ): Map<String, ChatMessage> {
+        val demo = ChatScreenshotDemoScenario.buildDemoLatestMessage(
+            context = context,
+            nowMillis = System.currentTimeMillis()
+        )
+        // Use LinkedHashMap so the demo entry stays first in iteration order,
+        // matching the way we put it at the top of the contacts list.
+        val merged = LinkedHashMap<String, ChatMessage>()
+        merged[demo.sessionCode] = demo
+        real.forEach { (k, v) ->
+            if (k != demo.sessionCode) merged[k] = v
+        }
+        return merged
+    }
+
+    private fun demoLatestMessagesOrEmpty(): Map<String, ChatMessage> =
+        if (isDemoFlagCurrentlyOn()) {
+            withDemoLatestMessage(emptyMap())
+        } else {
+            emptyMap()
+        }
+
+    private fun withDemoUnread(real: Map<String, Int>): Map<String, Int> {
+        // Demo screenshot mode: present the conversation as fully read.
+        // Strip any real entry that happens to share the demo session code
+        // so neither the contact-row badge nor the Messages bottom-tab
+        // badge shows a "1" in screenshots.
+        return real.filterKeys { it != ChatScreenshotDemoScenario.DEMO_SESSION_CODE }
+    }
+
+    private fun demoUnreadCountsOrEmpty(): Map<String, Int> = emptyMap()
+
     private fun mergeSavedAndPeerContact(
         savedContact: Contact,
         peerContact: Contact
@@ -250,7 +328,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     fun acceptDialog(fullName: String) {
         viewModelScope.launch(exceptionHandler) {
-            context.dataStore.edit { prefs ->
+            context.onboardingDataStore.edit { prefs ->
                 prefs[TERMS_ACCEPTED_KEY] = true
             }
             val trimmed = fullName.trim()

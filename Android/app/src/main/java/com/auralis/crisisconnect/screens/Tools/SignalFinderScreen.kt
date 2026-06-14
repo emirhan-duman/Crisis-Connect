@@ -1,5 +1,11 @@
 package com.auralis.crisisconnect.screens.Tools
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,10 +33,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.auralis.crisisconnect.R
@@ -43,15 +51,29 @@ import java.util.Date
 @Composable
 fun SignalFinderScreen(navController: NavController) {
     val viewModel: SignalFinderViewModel = viewModel()
+    val context = LocalContext.current
     val cellSignals by viewModel.cells.collectAsState()
     val wifiSignals by viewModel.wifi.collectAsState()
     val bluetoothSignals by viewModel.bluetooth.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val lastUpdated by viewModel.lastUpdated.collectAsState()
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        viewModel.refreshSignals()
+    }
+    val refreshOrRequestPermissions = {
+        val missingPermissions = context.missingSignalFinderPermissions()
+        if (missingPermissions.isNotEmpty() && !context.hasSignalFinderLocationPermission()) {
+            permissionLauncher.launch(missingPermissions.toTypedArray())
+        } else {
+            viewModel.refreshSignals()
+        }
+    }
 
     LaunchedEffect(Unit) {
-        viewModel.refreshSignals()
+        refreshOrRequestPermissions()
     }
 
     Scaffold(
@@ -82,7 +104,7 @@ fun SignalFinderScreen(navController: NavController) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        TextButton(onClick = { viewModel.refreshSignals() }, enabled = !isRefreshing) {
+                        TextButton(onClick = refreshOrRequestPermissions, enabled = !isRefreshing) {
                             Text(text = stringResource(R.string.signal_finder_refresh))
                         }
                         if (lastUpdated != null) {
@@ -266,4 +288,28 @@ private fun EmptyState(text: String) {
     ) {
         Text(text = text, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
     }
+}
+
+private fun Context.missingSignalFinderPermissions(): List<String> {
+    return requiredSignalFinderPermissions().filter { permission ->
+        ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED
+    }
+}
+
+private fun Context.hasSignalFinderLocationPermission(): Boolean {
+    return ContextCompat.checkSelfPermission(
+        this,
+        Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+}
+
+private fun requiredSignalFinderPermissions(): List<String> {
+    return buildList {
+        add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            add(Manifest.permission.BLUETOOTH_SCAN)
+            add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+    }.distinct()
 }

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network security configuration for Crisis Connect.
+
+    Decisions documented at the top of this file so future maintainers
+    understand the threat model:
+
+    1. Cleartext traffic is disabled globally. Any plaintext HTTP request
+       (including from third-party SDKs) is rejected at the OS layer.
+
+    2. We intentionally DO NOT pin Firebase / *.googleapis.com hosts.
+       Google rotates TLS leaves frequently and Firebase team does not
+       officially support pinning. Pinning these hosts is a brick risk,
+       not a security win. App Check (PlayIntegrity) + Firestore Security
+       Rules + the device-bound attested role certificate are the layered
+       defenses for Firebase calls.
+
+    3. Custom domains (e.g. a future Cloud Run gateway, an internal
+       analytics endpoint, a self-hosted MapLibre tile server) MUST be
+       pinned. Add a <domain-config> block per host following the example
+       below. Always include a backup pin and an `expiration` attribute
+       no more than ~6 months past the leaf certificate's actual expiry.
+
+    4. Debug-overrides allows user-installed CAs only in debug builds so
+       engineers can use mitmproxy / Charles to inspect requests. Release
+       builds do NOT trust user CAs.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!--
+    Example custom-host pin set. Uncomment and adapt when a custom backend
+    is introduced. Extract SPKI pins with:
+
+      echo | openssl s_client -servername api.example.com \
+           -connect api.example.com:443 2>/dev/null \
+        | openssl x509 -pubkey -noout \
+        | openssl pkey -pubin -outform der \
+        | openssl dgst -sha256 -binary \
+        | openssl enc -base64
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.crisisconnect.example.com</domain>
+        <pin-set expiration="2027-06-01">
+            <pin digest="SHA-256">REPLACE_WITH_PRIMARY_LEAF_SPKI</pin>
+            <pin digest="SHA-256">REPLACE_WITH_OFFLINE_BACKUP_SPKI</pin>
+        </pin-set>
+    </domain-config>
+    -->
+
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

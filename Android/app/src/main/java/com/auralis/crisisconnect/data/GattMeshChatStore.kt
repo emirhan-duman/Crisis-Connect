@@ -6,13 +6,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-object GattMeshChatStore {
-    const val SESSION_CODE: String = "gattmesh:general"
+/**
+ * Reusable in-memory mesh chat store. Each instance keeps its own message list / unread count /
+ * chat-open flag, keyed by [sessionCode], so two networks (public + authority) never share a
+ * conversation. See [GattMeshChatStore] (public) and [AuthorityMeshChatStore].
+ */
+open class MeshChatStoreCore(val sessionCode: String) {
 
-    private const val MAX_MESSAGES = 500
-    private const val MAX_MESSAGE_LENGTH = 1024
-    private const val MAX_SENDER_LABEL_LENGTH = 48
-    private const val MAX_VERIFIED_ROLE_LENGTH = 24
+    private val MAX_MESSAGES = 500
+    private val MAX_MESSAGE_LENGTH = 1024
+    private val MAX_SENDER_LABEL_LENGTH = 48
+    private val MAX_VERIFIED_ROLE_LENGTH = 24
 
     private val lock = Any()
     private val _messages = MutableStateFlow<List<MeshChatMessage>>(emptyList())
@@ -54,6 +58,158 @@ object GattMeshChatStore {
             normalizeMessageList(current + message)
         }
         return existing ?: message
+    }
+
+    fun appendLocalImageMessage(
+        messageId: String,
+        imageFileName: String,
+        imageThumbnailName: String?,
+        imageWidth: Int?,
+        imageHeight: Int?,
+        status: MeshMessageStatus = MeshMessageStatus.SENDING,
+        timestampMillis: Long = System.currentTimeMillis()
+    ): MeshChatMessage {
+        val normalizedId = messageId.trim().ifEmpty { UUID.randomUUID().toString() }
+        val message = MeshChatMessage(
+            id = normalizedId,
+            text = "",
+            senderLabel = null,
+            isLocal = true,
+            timestampMillis = timestampMillis,
+            status = status,
+            imageFileName = imageFileName,
+            imageThumbnailName = imageThumbnailName,
+            imageWidth = imageWidth,
+            imageHeight = imageHeight
+        )
+        var existing: MeshChatMessage? = null
+        _messages.update { current ->
+            current.firstOrNull { it.id == normalizedId }?.let { duplicate ->
+                existing = duplicate
+                return@update current
+            }
+            normalizeMessageList(current + message)
+        }
+        return existing ?: message
+    }
+
+    fun appendRemoteImageMessage(
+        messageId: String,
+        senderLabel: String?,
+        sourceAddress: String?,
+        imageFileName: String,
+        imageThumbnailName: String?,
+        imageWidth: Int?,
+        imageHeight: Int?,
+        timestampMillis: Long = System.currentTimeMillis()
+    ): Boolean {
+        val normalizedId = messageId.trim()
+        if (normalizedId.isEmpty()) {
+            return false
+        }
+        val message = MeshChatMessage(
+            id = normalizedId,
+            text = "",
+            senderLabel = senderLabel?.trim()?.take(MAX_SENDER_LABEL_LENGTH)?.takeIf { it.isNotEmpty() },
+            sourceAddress = normalizeStoredSenderAddress(sourceAddress),
+            isLocal = false,
+            timestampMillis = timestampMillis,
+            status = MeshMessageStatus.DELIVERED,
+            imageFileName = imageFileName,
+            imageThumbnailName = imageThumbnailName,
+            imageWidth = imageWidth,
+            imageHeight = imageHeight
+        )
+        var inserted = false
+        _messages.update { current ->
+            if (current.any { it.id == normalizedId }) {
+                return@update current
+            }
+            inserted = true
+            normalizeMessageList(current + message)
+        }
+        if (inserted) {
+            synchronized(lock) {
+                if (!isChatOpen) {
+                    _unreadCount.update { count ->
+                        if (count == Int.MAX_VALUE) count else count + 1
+                    }
+                }
+            }
+        }
+        return inserted
+    }
+
+    fun appendLocalVoiceMessage(
+        messageId: String,
+        voiceFileName: String,
+        voiceDurationMillis: Long?,
+        status: MeshMessageStatus = MeshMessageStatus.SENDING,
+        timestampMillis: Long = System.currentTimeMillis()
+    ): MeshChatMessage {
+        val normalizedId = messageId.trim().ifEmpty { UUID.randomUUID().toString() }
+        val message = MeshChatMessage(
+            id = normalizedId,
+            text = "",
+            senderLabel = null,
+            isLocal = true,
+            timestampMillis = timestampMillis,
+            status = status,
+            voiceFileName = voiceFileName,
+            voiceDurationMillis = voiceDurationMillis
+        )
+        var existing: MeshChatMessage? = null
+        _messages.update { current ->
+            current.firstOrNull { it.id == normalizedId }?.let { duplicate ->
+                existing = duplicate
+                return@update current
+            }
+            normalizeMessageList(current + message)
+        }
+        return existing ?: message
+    }
+
+    fun appendRemoteVoiceMessage(
+        messageId: String,
+        senderLabel: String?,
+        sourceAddress: String?,
+        voiceFileName: String,
+        voiceDurationMillis: Long?,
+        timestampMillis: Long = System.currentTimeMillis()
+    ): Boolean {
+        val normalizedId = messageId.trim()
+        if (normalizedId.isEmpty()) {
+            return false
+        }
+        val message = MeshChatMessage(
+            id = normalizedId,
+            text = "",
+            senderLabel = senderLabel?.trim()?.take(MAX_SENDER_LABEL_LENGTH)?.takeIf { it.isNotEmpty() },
+            sourceAddress = normalizeStoredSenderAddress(sourceAddress),
+            isLocal = false,
+            timestampMillis = timestampMillis,
+            status = MeshMessageStatus.DELIVERED,
+            voiceFileName = voiceFileName,
+            voiceDurationMillis = voiceDurationMillis
+        )
+        var inserted = false
+        _messages.update { current ->
+            if (current.any { it.id == normalizedId }) {
+                return@update current
+            }
+            inserted = true
+            normalizeMessageList(current + message)
+        }
+        if (inserted) {
+            synchronized(lock) {
+                if (!isChatOpen) {
+                    _unreadCount.update { count ->
+                        if (count == Int.MAX_VALUE) count else count + 1
+                    }
+                }
+            }
+        }
+        return inserted
     }
 
     fun currentMessages(): List<MeshChatMessage> = _messages.value
@@ -456,3 +612,11 @@ object GattMeshChatStore {
         return nextStatus
     }
 }
+
+/** Public, open mesh chat store (unchanged behavior + session code). */
+object GattMeshChatStore : MeshChatStoreCore("gattmesh:general") {
+    const val SESSION_CODE: String = "gattmesh:general"
+}
+
+/** Authority-only mesh chat store, kept fully separate from the public chat. */
+object AuthorityMeshChatStore : MeshChatStoreCore("authority:general")

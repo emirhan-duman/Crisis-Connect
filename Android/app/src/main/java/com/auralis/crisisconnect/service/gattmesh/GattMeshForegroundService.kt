@@ -43,7 +43,9 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.core.crypto.AesGcm
 import com.auralis.crisisconnect.data.Contact
+import com.auralis.crisisconnect.data.AuthorityMeshChatStore
 import com.auralis.crisisconnect.data.GattMeshChatStore
+import com.auralis.crisisconnect.data.MeshChatStoreCore
 import com.auralis.crisisconnect.data.MessageDeliveryStatus
 import com.auralis.crisisconnect.data.MeshMessageStatus
 import com.auralis.crisisconnect.data.getContact
@@ -55,6 +57,18 @@ import com.auralis.crisisconnect.data.saveRemoteMessage
 import com.auralis.crisisconnect.data.updateRemoteMessageMetadata
 import com.auralis.crisisconnect.data.updateLocalMessageSentToRecipients
 import com.auralis.crisisconnect.data.upsertLocalTextMessage
+import com.auralis.crisisconnect.data.imageMessageFile
+import com.auralis.crisisconnect.data.imageThumbnailFile
+import com.auralis.crisisconnect.data.saveLocalImageMessage
+import com.auralis.crisisconnect.data.saveRemoteImageMessage
+import com.auralis.crisisconnect.data.saveLocalAudioMessage
+import com.auralis.crisisconnect.data.saveRemoteAudioMessage
+import com.auralis.crisisconnect.data.voiceMessageFile
+import com.auralis.crisisconnect.core.media.BLE_IMAGE_TRANSFER_PROFILE
+import com.auralis.crisisconnect.core.media.ImageFileUtils
+import com.auralis.crisisconnect.core.media.generateImageThumbnail
+import com.auralis.crisisconnect.core.media.prepareImageAttachmentForTransfer
+import android.net.Uri
 import com.auralis.crisisconnect.security.BleChunkReceiver
 import com.auralis.crisisconnect.security.Crypto
 import com.auralis.crisisconnect.security.MissingRoleCertificateException
@@ -80,7 +94,6 @@ import java.io.File
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.security.KeyFactory
-import java.security.MessageDigest
 import java.security.PublicKey
 import java.security.spec.X509EncodedKeySpec
 import java.util.LinkedHashMap
@@ -107,7 +120,19 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 
-class GattMeshForegroundService : Service() {
+open class GattMeshForegroundService : Service() {
+
+    /**
+     * The mesh network this instance speaks. Defaults to the public mesh; the authority-only mesh
+     * subclass overrides this to broadcast on a separate service UUID and encrypt with a separate
+     * key. Implemented as a getter (no backing field) so it stays valid while the service and its
+     * delegate fields are still being constructed.
+     */
+    protected open val profile: MeshProfile get() = MeshProfiles.PUBLIC
+
+    /** In-memory chat store for this profile; public and authority chats are kept fully separate. */
+    private val chatStore: MeshChatStoreCore
+        get() = if (profile.id == MeshProfiles.AUTHORITY.id) AuthorityMeshChatStore else GattMeshChatStore
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -141,6 +166,8 @@ class GattMeshForegroundService : Service() {
     private val inboundChunkReceivers =
         mutableMapOf<String, MutableMap<InboundTransportChannel, BleChunkReceiver>>()
     private val outboundSendLocks = mutableMapOf<String, Any>()
+    private val inboundImageBlobs = mutableMapOf<String, InboundImageBlobState>()
+    private var awareAccelerator: AuthorityMeshAwareAccelerator? = null
     private val clientNotificationSettleJobs = mutableMapOf<String, Job>()
     private val clientNotificationBypassPeers = mutableSetOf<String>()
     private val clientNoResponsePreferredPeers = mutableSetOf<String>()
@@ -219,7 +246,7 @@ class GattMeshForegroundService : Service() {
         RoleProofVerifier(maxClockSkewMillis = MAX_ORIGIN_PROOF_AGE_MS)
     }
     private val meshPayloadKey: ByteArray by lazy(LazyThreadSafetyMode.NONE) {
-        deriveMeshPayloadKey()
+        profile.derivePayloadKey(this) ?: ByteArray(32) { index -> (index + 1).toByte() }
     }
 
     private val classicDiscoveryReceiver = object : BroadcastReceiver() {
@@ -255,7 +282,7 @@ class GattMeshForegroundService : Service() {
     private fun createServerCallback(callbackGeneration: Long): BluetoothGattServerCallback {
         return object : BluetoothGattServerCallback() {
             override fun onServiceAdded(status: Int, service: BluetoothGattService) {
-                if (service.uuid != MESH_SERVICE_UUID) {
+                if (service.uuid != profile.serviceUuid) {
                     return
                 }
                 if (!shouldHandleLocalServerCallback(callbackGeneration, requireStartupPending = true)) {
@@ -392,7 +419,7 @@ class GattMeshForegroundService : Service() {
     }
 
     private val sharedSosGattDelegate = object : GattSOSServerService.SharedGattDelegate {
-        override val serviceUuid: UUID = MESH_SERVICE_UUID
+        override val serviceUuid: UUID = profile.serviceUuid
 
         override fun createService(): BluetoothGattService = createMeshGattService()
 
@@ -468,7 +495,7 @@ class GattMeshForegroundService : Service() {
     }
 
     private val sharedP2pGattDelegate = object : P2pGattServerService.SharedGattDelegate {
-        override val serviceUuid: UUID = MESH_SERVICE_UUID
+        override val serviceUuid: UUID = profile.serviceUuid
 
         override fun createService(): BluetoothGattService = createMeshGattService()
 
@@ -631,7 +658,7 @@ class GattMeshForegroundService : Service() {
 
             val discoveredServices = runCatching { gatt.services.map { it.uuid.toString() } }
                 .getOrDefault(emptyList())
-            val meshService = gatt.getService(MESH_SERVICE_UUID)
+            val meshService = gatt.getService(profile.serviceUuid)
             if (meshService == null) {
                 if (attemptClientGattCacheRefresh(address, gatt, discoveredServices)) {
                     return
@@ -643,8 +670,8 @@ class GattMeshForegroundService : Service() {
                 return
             }
 
-            val incoming = meshService.getCharacteristic(MESSAGE_IN_CHARACTERISTIC_UUID)
-            val outgoing = meshService.getCharacteristic(MESSAGE_OUT_CHARACTERISTIC_UUID)
+            val incoming = meshService.getCharacteristic(profile.messageInUuid)
+            val outgoing = meshService.getCharacteristic(profile.messageOutUuid)
             val incomingPermissions = incoming?.permissions ?: 0
             val outgoingPermissions = outgoing?.permissions ?: 0
             val bondState = getDeviceBondStateSafely(gatt.device)
@@ -733,7 +760,7 @@ class GattMeshForegroundService : Service() {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
-            if (characteristic.uuid != MESSAGE_OUT_CHARACTERISTIC_UUID) {
+            if (characteristic.uuid != profile.messageOutUuid) {
                 return
             }
             val address = normalizeAddress(gatt.device.address)
@@ -756,7 +783,7 @@ class GattMeshForegroundService : Service() {
             characteristic: BluetoothGattCharacteristic,
             status: Int
         ) {
-            if (characteristic.uuid != MESSAGE_IN_CHARACTERISTIC_UUID) {
+            if (characteristic.uuid != profile.messageInUuid) {
                 return
             }
             val address = normalizeAddress(gatt.device.address)
@@ -790,7 +817,7 @@ class GattMeshForegroundService : Service() {
         ) {
             if (
                 descriptor.uuid != CLIENT_CHARACTERISTIC_CONFIG_UUID ||
-                descriptor.characteristic.uuid != MESSAGE_OUT_CHARACTERISTIC_UUID
+                descriptor.characteristic.uuid != profile.messageOutUuid
             ) {
                 return
             }
@@ -844,7 +871,7 @@ class GattMeshForegroundService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 return
             }
-            if (characteristic.uuid != MESSAGE_OUT_CHARACTERISTIC_UUID) {
+            if (characteristic.uuid != profile.messageOutUuid) {
                 return
             }
             val address = normalizeAddress(gatt.device.address)
@@ -870,8 +897,7 @@ class GattMeshForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        activeInstance = this
-        runningState.value = true
+        MeshServiceRegistry.register(profile.id, this)
         ensureForegroundStarted()
         serviceScope.launch {
             if (!isGattMeshRuntimeEnabledInSettings()) {
@@ -960,10 +986,7 @@ class GattMeshForegroundService : Service() {
         serviceScope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
         foregroundStarted = false
-        if (activeInstance === this) {
-            activeInstance = null
-        }
-        runningState.value = false
+        MeshServiceRegistry.unregister(profile.id, this)
         super.onDestroy()
     }
 
@@ -973,13 +996,13 @@ class GattMeshForegroundService : Service() {
         }
         ensureNotificationChannel()
         startForeground(
-            NOTIFICATION_ID,
+            profile.notificationId,
             GattMeshNotificationFactory.build(
                 context = this,
                 connectedCount = stateFlow.value.connectedPeerCount,
-                notificationChannelId = NOTIFICATION_CHANNEL_ID,
+                notificationChannelId = profile.notificationChannelId,
                 requestCode = GATT_MESH_NOTIFICATION_REQUEST_CODE,
-                sessionCode = GattMeshChatStore.SESSION_CODE
+                sessionCode = chatStore.sessionCode
             )
         )
         foregroundStarted = true
@@ -1342,7 +1365,7 @@ class GattMeshForegroundService : Service() {
         sourceAddress: String,
         originVerification: MessageOriginVerification?
     ) {
-        GattMeshChatStore.updateRemoteMessageMetadata(
+        chatStore.updateRemoteMessageMetadata(
             messageId = packet.id,
             senderLabel = packet.senderLabel,
             sourceAddress = sourceAddress,
@@ -1387,7 +1410,7 @@ class GattMeshForegroundService : Service() {
         if (directPeerLabels.isEmpty()) {
             return
         }
-        val targetMessages = GattMeshChatStore.currentMessages().filter { message ->
+        val targetMessages = chatStore.currentMessages().filter { message ->
             !message.isLocal &&
                 message.originVerifiedAtMillis == null &&
                 message.sourceAddress?.equals(normalizedSourceAddress, ignoreCase = true) == true &&
@@ -1399,7 +1422,7 @@ class GattMeshForegroundService : Service() {
             return
         }
         targetMessages.forEach { message ->
-            GattMeshChatStore.updateRemoteMessageMetadata(
+            chatStore.updateRemoteMessageMetadata(
                 messageId = message.id,
                 senderLabel = null,
                 sourceAddress = normalizedSourceAddress,
@@ -1948,7 +1971,7 @@ class GattMeshForegroundService : Service() {
         )
         if (sentAny) {
             if (dispatchPacket.type == MeshPacketType.CHAT) {
-                GattMeshChatStore.updateLocalMessageStatus(
+                chatStore.updateLocalMessageStatus(
                     dispatchPacket.id,
                     MeshMessageStatus.SENT
                 )
@@ -1975,7 +1998,7 @@ class GattMeshForegroundService : Service() {
         }
         enqueuePendingOutboundPacket(dispatchPacket)
         if (dispatchPacket.type == MeshPacketType.CHAT) {
-            GattMeshChatStore.updateLocalMessageStatus(
+            chatStore.updateLocalMessageStatus(
                 dispatchPacket.id,
                 MeshMessageStatus.QUEUED
             )
@@ -2216,7 +2239,7 @@ class GattMeshForegroundService : Service() {
             )
             if (sent) {
                 if (dispatchPacket.type == MeshPacketType.CHAT) {
-                    GattMeshChatStore.updateLocalMessageStatus(
+                    chatStore.updateLocalMessageStatus(
                         dispatchPacket.id,
                         MeshMessageStatus.SENT
                     )
@@ -2266,7 +2289,7 @@ class GattMeshForegroundService : Service() {
                     TAG,
                     "Dropping stale pending outbound packet id=${packet.id} ageMs=$packetAgeMillis"
                 )
-                GattMeshChatStore.updateLocalMessageStatus(
+                chatStore.updateLocalMessageStatus(
                     packet.id,
                     MeshMessageStatus.FAILED
                 )
@@ -2545,6 +2568,14 @@ class GattMeshForegroundService : Service() {
                 publishErrorAndStop(R.string.gatt_mesh_error_bluetooth_disabled)
                 return
             }
+            if (profile.derivePayloadKey(this) == null) {
+                // Authority mesh stays off until the device is provisioned with the shared group
+                // key. Civilian/unprovisioned devices never hold it, so they never broadcast or
+                // join the authority network. The public profile always returns a key here.
+                Log.w(TAG, "[${profile.id}] mesh payload key unavailable; not starting runtime")
+                stopSelfSafely()
+                return
+            }
 
             bluetoothManager = manager
             bluetoothAdapter = adapter
@@ -2552,8 +2583,18 @@ class GattMeshForegroundService : Service() {
             advertiser = adapter.bluetoothLeAdvertiser
 
             runtimeActive = true
-            globalRuntimeActive = true
+            MeshServiceRegistry.setRuntimeActive(profile.id, true)
             registerClassicDiscoveryReceiver()
+            if (profile.admission is AdmissionPolicy.RequireVerifiedRole) {
+                if (awareAccelerator == null) {
+                    awareAccelerator = AuthorityMeshAwareAccelerator(
+                        context = this,
+                        groupKeyProvider = { profile.derivePayloadKey(this) },
+                        onBlobReceived = ::handleAcceleratorBlob
+                    )
+                }
+                awareAccelerator?.start()
+            }
             val existingP2pSharedServer = P2pGattServerService.sharedGattServerOrNull()
             if (existingP2pSharedServer != null && attachToP2pGattServer()) {
                 p2pSharedGattServerMode = true
@@ -2619,7 +2660,7 @@ class GattMeshForegroundService : Service() {
                         !usesExternalGattServer &&
                         !localGattServerStartupCompleted &&
                         activeLocalServerCallbackGeneration == startupCallbackGeneration &&
-                        !BleScanCoordinator.isActive(SCAN_COORDINATOR_OWNER)
+                        !BleScanCoordinator.isActive(profile.scanCoordinatorOwner)
                 }
                 if (shouldRecover) {
                     Log.w(
@@ -2652,7 +2693,7 @@ class GattMeshForegroundService : Service() {
                         gattServer != null &&
                         !usesExternalGattServer &&
                         !localGattServerStartupCompleted &&
-                        !BleScanCoordinator.isActive(SCAN_COORDINATOR_OWNER)
+                        !BleScanCoordinator.isActive(profile.scanCoordinatorOwner)
                 }
                 if (shouldForceRecovery) {
                     Log.w(
@@ -2663,7 +2704,7 @@ class GattMeshForegroundService : Service() {
                     delay(STARTUP_TIMEOUT_RECOVERY_GRACE_MS)
                 }
                 val shouldFail = synchronized(lock) {
-                    !BleScanCoordinator.isActive(SCAN_COORDINATOR_OWNER) &&
+                    !BleScanCoordinator.isActive(profile.scanCoordinatorOwner) &&
                         gattServer != null &&
                         runtimeActive
                 }
@@ -2694,7 +2735,7 @@ class GattMeshForegroundService : Service() {
     @SuppressLint("MissingPermission")
     private fun stopMeshRuntime(clearError: Boolean) {
         val sharedServerDisconnectCandidates = LinkedHashSet<String>()
-        BleScanCoordinator.unregister(SCAN_COORDINATOR_OWNER)
+        BleScanCoordinator.unregister(profile.scanCoordinatorOwner)
 
         runCatching {
             advertiser?.stopAdvertising(advertiseCallback)
@@ -2796,13 +2837,13 @@ class GattMeshForegroundService : Service() {
             if (sharedServerDisconnectCandidates.isNotEmpty()) {
                 GattSOSServerService.disconnectSharedClients(sharedServerDisconnectCandidates)
             }
-            GattSOSServerService.unregisterSharedGattDelegate(MESH_SERVICE_UUID)
+            GattSOSServerService.unregisterSharedGattDelegate(profile.serviceUuid)
         }
         if (p2pSharedGattServerMode) {
             if (sharedServerDisconnectCandidates.isNotEmpty()) {
                 P2pGattServerService.disconnectSharedClients(sharedServerDisconnectCandidates)
             }
-            P2pGattServerService.unregisterSharedGattDelegate(MESH_SERVICE_UUID)
+            P2pGattServerService.unregisterSharedGattDelegate(profile.serviceUuid)
             P2pGattServerService.releaseSharedHost(applicationContext)
         }
         if (usesExternalGattServer) {
@@ -2811,8 +2852,9 @@ class GattMeshForegroundService : Service() {
             runCatching { gattServer?.close() }
             gattServer = null
         }
+        awareAccelerator?.stop()
         runtimeActive = false
-        globalRuntimeActive = false
+        MeshServiceRegistry.setRuntimeActive(profile.id, false)
         sosSharedGattServerMode = false
         p2pSharedGattServerMode = false
         usesExternalGattServer = false
@@ -2849,7 +2891,7 @@ class GattMeshForegroundService : Service() {
         val sharedServer = GattSOSServerService.sharedGattServerOrNull()
         if (sharedServer == null) {
             Log.w(TAG, "SOS GATT server reference unavailable after shared profile registration")
-            GattSOSServerService.unregisterSharedGattDelegate(MESH_SERVICE_UUID)
+            GattSOSServerService.unregisterSharedGattDelegate(profile.serviceUuid)
             return false
         }
         gattServer = sharedServer
@@ -2891,7 +2933,7 @@ class GattMeshForegroundService : Service() {
             }
         }
         if (delegateRegistered) {
-            P2pGattServerService.unregisterSharedGattDelegate(MESH_SERVICE_UUID)
+            P2pGattServerService.unregisterSharedGattDelegate(profile.serviceUuid)
         }
         return false
     }
@@ -2916,19 +2958,19 @@ class GattMeshForegroundService : Service() {
 
     private fun createMeshGattService(): BluetoothGattService {
         val meshService = BluetoothGattService(
-            MESH_SERVICE_UUID,
+            profile.serviceUuid,
             BluetoothGattService.SERVICE_TYPE_PRIMARY,
         )
 
         val inCharacteristic = BluetoothGattCharacteristic(
-            MESSAGE_IN_CHARACTERISTIC_UUID,
+            profile.messageInUuid,
             BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
             // Transport link can stay unpaired; payload is protected at app layer (AES-GCM).
             BluetoothGattCharacteristic.PERMISSION_WRITE,
         )
 
         val outCharacteristic = BluetoothGattCharacteristic(
-            MESSAGE_OUT_CHARACTERISTIC_UUID,
+            profile.messageOutUuid,
             BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
             BluetoothGattCharacteristic.PERMISSION_READ,
         )
@@ -3019,11 +3061,11 @@ class GattMeshForegroundService : Service() {
         offset: Int,
         value: ByteArray?
     ): Int {
-        if (characteristic.uuid == MESSAGE_IN_CHARACTERISTIC_UUID) {
+        if (characteristic.uuid == profile.messageInUuid) {
             qualifySharedModeMeshPeer(device)
         }
         return when {
-            characteristic.uuid != MESSAGE_IN_CHARACTERISTIC_UUID -> BluetoothGatt.GATT_FAILURE
+            characteristic.uuid != profile.messageInUuid -> BluetoothGatt.GATT_FAILURE
             preparedWrite -> BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED
             offset != 0 -> BluetoothGatt.GATT_INVALID_OFFSET
             else -> {
@@ -3048,11 +3090,11 @@ class GattMeshForegroundService : Service() {
         characteristic: BluetoothGattCharacteristic,
         offset: Int
     ): Pair<Int, ByteArray> {
-        if (characteristic.uuid == MESSAGE_OUT_CHARACTERISTIC_UUID) {
+        if (characteristic.uuid == profile.messageOutUuid) {
             qualifySharedModeMeshPeer(device)
         }
         val address = normalizeAddress(device.address)
-        val fullValue = if (characteristic.uuid == MESSAGE_OUT_CHARACTERISTIC_UUID) {
+        val fullValue = if (characteristic.uuid == profile.messageOutUuid) {
             synchronized(lock) {
                 serverPendingPayload[address] ?: ByteArray(0)
             }
@@ -3060,7 +3102,7 @@ class GattMeshForegroundService : Service() {
             ByteArray(0)
         }
         return when {
-            characteristic.uuid != MESSAGE_OUT_CHARACTERISTIC_UUID -> BluetoothGatt.GATT_FAILURE to ByteArray(0)
+            characteristic.uuid != profile.messageOutUuid -> BluetoothGatt.GATT_FAILURE to ByteArray(0)
             offset < 0 || offset > fullValue.size -> BluetoothGatt.GATT_INVALID_OFFSET to ByteArray(0)
             else -> BluetoothGatt.GATT_SUCCESS to fullValue.copyOfRange(offset, fullValue.size)
         }
@@ -3073,7 +3115,7 @@ class GattMeshForegroundService : Service() {
     ): Pair<Int, ByteArray> {
         if (
             descriptor.uuid != CLIENT_CHARACTERISTIC_CONFIG_UUID ||
-            descriptor.characteristic.uuid != MESSAGE_OUT_CHARACTERISTIC_UUID
+            descriptor.characteristic.uuid != profile.messageOutUuid
         ) {
             return BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED to ByteArray(0)
         }
@@ -3105,7 +3147,7 @@ class GattMeshForegroundService : Service() {
             offset != 0 -> BluetoothGatt.GATT_INVALID_OFFSET
             !(
                 descriptor.uuid == CLIENT_CHARACTERISTIC_CONFIG_UUID &&
-                    descriptor.characteristic.uuid == MESSAGE_OUT_CHARACTERISTIC_UUID
+                    descriptor.characteristic.uuid == profile.messageOutUuid
                 ) -> BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED
 
             value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) ||
@@ -3436,7 +3478,7 @@ class GattMeshForegroundService : Service() {
             .build()
 
         val advertiseData = AdvertiseData.Builder()
-            .addServiceUuid(ParcelUuid(MESH_SERVICE_UUID))
+            .addServiceUuid(ParcelUuid(profile.serviceUuid))
             // Keep initiator metadata in the primary advertising payload so tie-breaker information
             // survives tight payload budgets on older scanners.
             .addManufacturerData(
@@ -3445,7 +3487,7 @@ class GattMeshForegroundService : Service() {
             )
             .build()
         val scanResponse = AdvertiseData.Builder()
-            .addServiceUuid(ParcelUuid(MESH_SERVICE_UUID))
+            .addServiceUuid(ParcelUuid(profile.serviceUuid))
             .build()
 
         return runCatching {
@@ -3468,7 +3510,7 @@ class GattMeshForegroundService : Service() {
         }
         stopClassicDiscoveryIfRunning(reason = "scan-start")
 
-        BleScanCoordinator.setPaused(SCAN_COORDINATOR_OWNER, paused = false)
+        BleScanCoordinator.setPaused(profile.scanCoordinatorOwner, paused = false)
         scanResumeJob?.cancel()
         scanResumeJob = null
 
@@ -3482,7 +3524,7 @@ class GattMeshForegroundService : Service() {
         // silently block filtered scans. GattMesh already validates service/manufacturer markers in
         // software, so prefer an unfiltered scan here to keep peer discovery symmetric.
         val started = BleScanCoordinator.registerOrUpdate(
-            owner = SCAN_COORDINATOR_OWNER,
+            owner = profile.scanCoordinatorOwner,
             scanner = localScanner,
             mode = radioDecision.scanMode,
             filters = null,
@@ -3499,7 +3541,7 @@ class GattMeshForegroundService : Service() {
     private fun handleScanResult(result: ScanResult) {
         val device = result.device ?: return
         val serviceUuids = result.scanRecord?.serviceUuids
-        val hasMeshService = serviceUuids?.any { it.uuid == MESH_SERVICE_UUID } == true
+        val hasMeshService = serviceUuids?.any { it.uuid == profile.serviceUuid } == true
         val hasSosService = serviceUuids?.any { it.uuid == GattSOSServerService.CRISIS_SERVICE_UUID } == true
         val address = normalizeAddress(device.address)
         val localAddress = getLocalAdapterAddressOrNull()
@@ -4173,7 +4215,7 @@ class GattMeshForegroundService : Service() {
                     )
                 }
                 if (useAutoConnect) {
-                    if (hasBluetoothScanPermission() && !BleScanCoordinator.isActive(SCAN_COORDINATOR_OWNER)) {
+                    if (hasBluetoothScanPermission() && !BleScanCoordinator.isActive(profile.scanCoordinatorOwner)) {
                         startScanLoop()
                     }
                     Log.d(TAG, "[$address] Keeping BLE scan active for autoConnect recovery")
@@ -4229,10 +4271,10 @@ class GattMeshForegroundService : Service() {
         if (!hasBluetoothScanPermission()) {
             return false
         }
-        if (!BleScanCoordinator.isActive(SCAN_COORDINATOR_OWNER)) {
+        if (!BleScanCoordinator.isActive(profile.scanCoordinatorOwner)) {
             return false
         }
-        val paused = BleScanCoordinator.setPaused(SCAN_COORDINATOR_OWNER, paused = true)
+        val paused = BleScanCoordinator.setPaused(profile.scanCoordinatorOwner, paused = true)
         if (!paused) {
             return false
         }
@@ -4247,7 +4289,7 @@ class GattMeshForegroundService : Service() {
         scanResumeJob = serviceScope.launch {
             while (runtimeActive) {
                 delay(SCAN_RESUME_CHECK_INTERVAL_MS)
-                if (!runtimeActive || BleScanCoordinator.isActive(SCAN_COORDINATOR_OWNER) || !hasBluetoothScanPermission()) {
+                if (!runtimeActive || BleScanCoordinator.isActive(profile.scanCoordinatorOwner) || !hasBluetoothScanPermission()) {
                     return@launch
                 }
                 val shouldKeepPaused = synchronized(lock) {
@@ -4269,6 +4311,13 @@ class GattMeshForegroundService : Service() {
             // Let peer finish service discovery + CCCD before forcing an outbound fallback.
             delay(INBOUND_NOTIFY_GRACE_MS)
             if (!runtimeActive || !hasBluetoothConnectPermission()) {
+                return@launch
+            }
+            if (usesExternalGattServer && GattSOSServerService.ownsActiveSosPeer(address)) {
+                synchronized(lock) {
+                    sharedModeObservedInboundConnectedAt.remove(address)
+                }
+                Log.d(TAG, "[$address] Skipping mesh fallback connect because SOS session owns peer")
                 return@launch
             }
             if (shouldSuppressForP2p(address)) {
@@ -4850,7 +4899,7 @@ class GattMeshForegroundService : Service() {
                     )
                 } else {
                     val receivedAtMillis = System.currentTimeMillis()
-                    val inserted = GattMeshChatStore.appendRemoteMessage(
+                    val inserted = chatStore.appendRemoteMessage(
                         id = packet.id,
                         text = packet.message,
                         senderLabel = packet.senderLabel,
@@ -4875,7 +4924,7 @@ class GattMeshForegroundService : Service() {
                         receivedAtMillis = receivedAtMillis,
                         originVerification = originVerification
                     )
-                    if (!GattMeshChatStore.isChatOpen()) {
+                    if (!chatStore.isChatOpen()) {
                         queueDeliveryReceipt(packet.id)
                     }
                     Log.d(TAG, "[$sourceAddress] Accepted chat packet id=${packet.id} hop=${packet.hop}")
@@ -4890,12 +4939,12 @@ class GattMeshForegroundService : Service() {
                         sourceAddress = sourceAddress
                     )
                     when (packet.receiptType) {
-                        ReceiptType.DELIVERED -> GattMeshChatStore.markDelivered(
+                        ReceiptType.DELIVERED -> chatStore.markDelivered(
                             messageIds = receiptIds,
                             recipientLabel = receiptRecipientLabel
                         )
 
-                        ReceiptType.READ -> GattMeshChatStore.markRead(
+                        ReceiptType.READ -> chatStore.markRead(
                             messageIds = receiptIds,
                             recipientLabel = receiptRecipientLabel
                         )
@@ -4941,6 +4990,12 @@ class GattMeshForegroundService : Service() {
                     "[$sourceAddress] Accepted auth proof packet id=${packet.id} hop=${packet.hop}"
                 )
             }
+
+            MeshPacketType.IMAGE_INIT -> handleInboundImageInit(packet, sourceAddress)
+
+            MeshPacketType.IMAGE_CHUNK -> handleInboundImageChunk(packet, sourceAddress)
+
+            MeshPacketType.IMAGE_DONE -> handleInboundImageDone(packet, sourceAddress)
         }
         if (senderLabelChanged) {
             publishState()
@@ -4949,6 +5004,11 @@ class GattMeshForegroundService : Service() {
         if (
             packet.type == MeshPacketType.AUTH_CHALLENGE ||
             packet.type == MeshPacketType.AUTH_PROOF ||
+            // Image blobs are deliberately single-hop: relaying hundreds of chunk packets through
+            // store-and-forward would flood the mesh.
+            packet.type == MeshPacketType.IMAGE_INIT ||
+            packet.type == MeshPacketType.IMAGE_CHUNK ||
+            packet.type == MeshPacketType.IMAGE_DONE ||
             packet.hop >= MAX_FORWARD_HOPS
         ) {
             return true
@@ -4985,7 +5045,7 @@ class GattMeshForegroundService : Service() {
         }
         BleMessageNotifier.notifyIncoming(
             context = applicationContext,
-            sessionCode = GattMeshChatStore.SESSION_CODE,
+            sessionCode = chatStore.sessionCode,
             contactName = getString(R.string.mesh_chat_general_title),
             body = notificationBody
         )
@@ -5002,7 +5062,7 @@ class GattMeshForegroundService : Service() {
                 ensureGattMeshGeneralContact()
                 val inserted = saveRemoteMessage(
                     context = applicationContext,
-                    sessionCode = GattMeshChatStore.SESSION_CODE,
+                    sessionCode = chatStore.sessionCode,
                     uuid = packet.id,
                     text = packet.message,
                     createdAtMillis = packet.timestampMillis,
@@ -5038,7 +5098,7 @@ class GattMeshForegroundService : Service() {
                 ensureGattMeshGeneralContact()
                 upsertLocalTextMessage(
                     context = applicationContext,
-                    sessionCode = GattMeshChatStore.SESSION_CODE,
+                    sessionCode = chatStore.sessionCode,
                     uuid = packet.id,
                     text = packet.message,
                     deliveryStatus = status,
@@ -5099,7 +5159,7 @@ class GattMeshForegroundService : Service() {
                     ReceiptType.DELIVERED -> {
                         markLocalMessagesDeliveredWithRecipient(
                             context = applicationContext,
-                            sessionCode = GattMeshChatStore.SESSION_CODE,
+                            sessionCode = chatStore.sessionCode,
                             messageUuids = messageIds,
                             recipientLabel = recipientLabel
                         )
@@ -5108,7 +5168,7 @@ class GattMeshForegroundService : Service() {
                     ReceiptType.READ -> {
                         markLocalMessagesReadWithRecipient(
                             context = applicationContext,
-                            sessionCode = GattMeshChatStore.SESSION_CODE,
+                            sessionCode = chatStore.sessionCode,
                             messageUuids = messageIds,
                             recipientLabel = recipientLabel
                         )
@@ -5125,7 +5185,7 @@ class GattMeshForegroundService : Service() {
     }
 
     private fun ensureGattMeshGeneralContact() {
-        if (getContact(applicationContext, GattMeshChatStore.SESSION_CODE) != null) {
+        if (getContact(applicationContext, chatStore.sessionCode) != null) {
             return
         }
         saveContact(
@@ -5133,7 +5193,7 @@ class GattMeshForegroundService : Service() {
             Contact(
                 name = getString(R.string.mesh_chat_general_title),
                 aesKey = "",
-                sessionCode = GattMeshChatStore.SESSION_CODE,
+                sessionCode = chatStore.sessionCode,
                 address = ""
             )
         )
@@ -5393,7 +5453,7 @@ class GattMeshForegroundService : Service() {
         if (recipientLabels.isEmpty()) {
             return
         }
-        GattMeshChatStore.markSentTo(messageId, recipientLabels)
+        chatStore.markSentTo(messageId, recipientLabels)
         persistSentToUpdate(messageId = messageId, recipients = recipientLabels)
     }
 
@@ -5552,8 +5612,8 @@ class GattMeshForegroundService : Service() {
         val server = gattServer ?: return false
         val device = synchronized(lock) { serverDevices[address] } ?: return false
         val characteristic = server
-            .getService(MESH_SERVICE_UUID)
-            ?.getCharacteristic(MESSAGE_OUT_CHARACTERISTIC_UUID)
+            .getService(profile.serviceUuid)
+            ?.getCharacteristic(profile.messageOutUuid)
             ?: return false
 
         synchronized(lock) {
@@ -6188,6 +6248,562 @@ class GattMeshForegroundService : Service() {
         return false
     }
 
+    /**
+     * Sends an image into the mesh as a single-hop encrypted blob (init → chunks → done) to all
+     * currently connected peers. Authority-mesh only in v1: the blob is encrypted once with the
+     * shared group key, so only provisioned authorities can decrypt it.
+     *
+     * Returns the message/blob id immediately; progress lands in the chat store
+     * (SENDING → SENT/FAILED).
+     */
+    fun sendImageMessage(uri: Uri): String? {
+        if (profile.admission !is AdmissionPolicy.RequireVerifiedRole) {
+            return null
+        }
+        if (!runtimeActive) {
+            requestRuntimeSelfHeal(reason = "send-image-message")
+        }
+        val blobId = UUID.randomUUID().toString()
+        serviceScope.launch {
+            transferOutboundImageBlob(blobId = blobId, uri = uri)
+        }
+        return blobId
+    }
+
+    private suspend fun transferOutboundImageBlob(blobId: String, uri: Uri) {
+        val prepared = runCatching {
+            prepareImageAttachmentForTransfer(
+                context = applicationContext,
+                uuid = blobId,
+                uri = uri,
+                mimeType = null,
+                fallbackWidth = null,
+                fallbackHeight = null,
+                profile = MESH_IMAGE_TRANSFER_PROFILE
+            )
+        }.getOrNull()
+        if (prepared == null || prepared.bytes.isEmpty() || prepared.bytes.size > MESH_IMAGE_MAX_PLAIN_BYTES) {
+            Log.w(TAG, "Unable to prepare mesh image blob=$blobId")
+            return
+        }
+        chatStore.appendLocalImageMessage(
+            messageId = blobId,
+            imageFileName = prepared.fileName,
+            imageThumbnailName = prepared.thumbnailName,
+            imageWidth = prepared.width,
+            imageHeight = prepared.height,
+            status = MeshMessageStatus.SENDING
+        )
+
+        val encrypted = runCatching {
+            AesGcm.encryptAesGcm(
+                keyBytes = meshPayloadKey,
+                plaintext = prepared.bytes,
+                aad = buildImageBlobAad(blobId = blobId, mimeType = prepared.mimeType)
+            )
+        }.getOrNull()
+        if (encrypted == null) {
+            finalizeOutboundImageBlob(blobId, prepared, success = false)
+            return
+        }
+        val cipher = encrypted.cipher
+        val chunkCount = (cipher.size + MESH_IMAGE_CHUNK_BYTES - 1) / MESH_IMAGE_CHUNK_BYTES
+        if (chunkCount !in 1..MESH_IMAGE_MAX_CHUNKS) {
+            finalizeOutboundImageBlob(blobId, prepared, success = false)
+            return
+        }
+
+        val initPacket = MeshPacket(
+            id = blobId,
+            senderLabel = localSenderLabel,
+            timestampMillis = System.currentTimeMillis(),
+            message = IMAGE_PLACEHOLDER_MESSAGE,
+            type = MeshPacketType.IMAGE_INIT,
+            hop = 0,
+            protocol = PACKET_PROTOCOL_VALUE_V5,
+            encrypted = true,
+            keyId = profile.payloadKeyId,
+            encryptedIvBase64 = Base64.encodeToString(encrypted.iv, Base64.NO_WRAP),
+            blobId = blobId,
+            blobChunkCount = chunkCount,
+            blobCipherBytes = cipher.size,
+            blobMime = prepared.mimeType,
+            blobWidth = prepared.width,
+            blobHeight = prepared.height
+        )
+        // Fast lane: also push the whole blob over Wi-Fi Aware when peers support it; receivers
+        // dedupe by blob id, so the BLE copy below stays the universal baseline.
+        awareAccelerator?.offerBlob(encodePacket(initPacket), cipher)
+        if (sendOrQueuePacket(initPacket, queueWhenFailed = false) == DispatchOutcome.FAILED) {
+            finalizeOutboundImageBlob(blobId, prepared, success = false)
+            return
+        }
+
+        var index = 0
+        while (index < chunkCount) {
+            delay(MESH_IMAGE_CHUNK_SEND_SPACING_MS)
+            val start = index * MESH_IMAGE_CHUNK_BYTES
+            val length = minOf(MESH_IMAGE_CHUNK_BYTES, cipher.size - start)
+            val chunkPacket = MeshPacket(
+                id = "$blobId-c$index",
+                senderLabel = localSenderLabel,
+                timestampMillis = System.currentTimeMillis(),
+                message = IMAGE_PLACEHOLDER_MESSAGE,
+                type = MeshPacketType.IMAGE_CHUNK,
+                hop = 0,
+                protocol = PACKET_PROTOCOL_VALUE_V5,
+                blobId = blobId,
+                blobIndex = index,
+                blobDataBase64 = Base64.encodeToString(cipher, start, length, Base64.NO_WRAP)
+            )
+            if (sendOrQueuePacket(chunkPacket, queueWhenFailed = false) == DispatchOutcome.FAILED) {
+                finalizeOutboundImageBlob(blobId, prepared, success = false)
+                return
+            }
+            index++
+        }
+
+        delay(MESH_IMAGE_CHUNK_SEND_SPACING_MS)
+        val donePacket = MeshPacket(
+            id = "$blobId-done",
+            senderLabel = localSenderLabel,
+            timestampMillis = System.currentTimeMillis(),
+            message = IMAGE_PLACEHOLDER_MESSAGE,
+            type = MeshPacketType.IMAGE_DONE,
+            hop = 0,
+            protocol = PACKET_PROTOCOL_VALUE_V5,
+            blobId = blobId
+        )
+        val outcome = sendOrQueuePacket(donePacket, queueWhenFailed = false)
+        finalizeOutboundImageBlob(blobId, prepared, success = outcome != DispatchOutcome.FAILED)
+    }
+
+    private suspend fun finalizeOutboundImageBlob(
+        blobId: String,
+        prepared: com.auralis.crisisconnect.core.media.PreparedImageAttachment,
+        success: Boolean
+    ) {
+        chatStore.updateLocalMessageStatus(
+            messageId = blobId,
+            status = if (success) MeshMessageStatus.SENT else MeshMessageStatus.FAILED
+        )
+        if (success) {
+            runCatching {
+                ensureGattMeshGeneralContact()
+                saveLocalImageMessage(
+                    context = applicationContext,
+                    sessionCode = chatStore.sessionCode,
+                    uuid = blobId,
+                    fileName = prepared.fileName,
+                    thumbnailName = prepared.thumbnailName,
+                    width = prepared.width,
+                    height = prepared.height,
+                    mimeType = prepared.mimeType
+                )
+            }.onFailure { throwable ->
+                Log.w(TAG, "Unable to persist local mesh image blob=$blobId", throwable)
+            }
+        }
+    }
+
+    /**
+     * Sends a recorded voice note into the mesh as a single-hop encrypted blob, reusing the image
+     * blob pipeline with kind=voice. Authority mesh only; AAC/M4A capped at 400KB / 90s.
+     */
+    fun sendVoiceMessage(audioFile: java.io.File, durationMillis: Long): String? {
+        if (profile.admission !is AdmissionPolicy.RequireVerifiedRole) {
+            return null
+        }
+        if (!runtimeActive) {
+            requestRuntimeSelfHeal(reason = "send-voice-message")
+        }
+        val blobId = UUID.randomUUID().toString()
+        serviceScope.launch {
+            transferOutboundVoiceBlob(blobId = blobId, audioFile = audioFile, durationMillis = durationMillis)
+        }
+        return blobId
+    }
+
+    private suspend fun transferOutboundVoiceBlob(
+        blobId: String,
+        audioFile: java.io.File,
+        durationMillis: Long
+    ) {
+        val plain = runCatching { audioFile.readBytes() }.getOrNull()
+        if (plain == null || plain.isEmpty() || plain.size > MESH_IMAGE_MAX_PLAIN_BYTES) {
+            Log.w(TAG, "Unable to prepare mesh voice blob=$blobId bytes=${plain?.size}")
+            return
+        }
+        val safeDuration = durationMillis.coerceIn(1L, MESH_VOICE_MAX_DURATION_MS)
+        val voiceFileName = "$blobId.m4a"
+        runCatching {
+            val target = voiceMessageFile(applicationContext, voiceFileName)
+            target.parentFile?.mkdirs()
+            target.writeBytes(plain)
+        }.getOrElse { throwable ->
+            Log.w(TAG, "Unable to store local mesh voice blob=$blobId", throwable)
+            return
+        }
+        chatStore.appendLocalVoiceMessage(
+            messageId = blobId,
+            voiceFileName = voiceFileName,
+            voiceDurationMillis = safeDuration,
+            status = MeshMessageStatus.SENDING
+        )
+
+        val encrypted = runCatching {
+            AesGcm.encryptAesGcm(
+                keyBytes = meshPayloadKey,
+                plaintext = plain,
+                aad = buildImageBlobAad(blobId = blobId, mimeType = MESH_VOICE_MIME)
+            )
+        }.getOrNull()
+        if (encrypted == null) {
+            finalizeOutboundVoiceBlob(blobId, voiceFileName, safeDuration, success = false)
+            return
+        }
+        val cipher = encrypted.cipher
+        val chunkCount = (cipher.size + MESH_IMAGE_CHUNK_BYTES - 1) / MESH_IMAGE_CHUNK_BYTES
+        if (chunkCount !in 1..MESH_IMAGE_MAX_CHUNKS) {
+            finalizeOutboundVoiceBlob(blobId, voiceFileName, safeDuration, success = false)
+            return
+        }
+
+        val initPacket = MeshPacket(
+            id = blobId,
+            senderLabel = localSenderLabel,
+            timestampMillis = System.currentTimeMillis(),
+            message = IMAGE_PLACEHOLDER_MESSAGE,
+            type = MeshPacketType.IMAGE_INIT,
+            hop = 0,
+            protocol = PACKET_PROTOCOL_VALUE_V5,
+            encrypted = true,
+            keyId = profile.payloadKeyId,
+            encryptedIvBase64 = Base64.encodeToString(encrypted.iv, Base64.NO_WRAP),
+            blobId = blobId,
+            blobChunkCount = chunkCount,
+            blobCipherBytes = cipher.size,
+            blobMime = MESH_VOICE_MIME,
+            blobKind = BLOB_KIND_VOICE,
+            blobDurationMillis = safeDuration
+        )
+        // Fast lane: also push the whole blob over Wi-Fi Aware when peers support it; receivers
+        // dedupe by blob id, so the BLE copy below stays the universal baseline.
+        awareAccelerator?.offerBlob(encodePacket(initPacket), cipher)
+        if (sendOrQueuePacket(initPacket, queueWhenFailed = false) == DispatchOutcome.FAILED) {
+            finalizeOutboundVoiceBlob(blobId, voiceFileName, safeDuration, success = false)
+            return
+        }
+
+        var index = 0
+        while (index < chunkCount) {
+            delay(MESH_IMAGE_CHUNK_SEND_SPACING_MS)
+            val start = index * MESH_IMAGE_CHUNK_BYTES
+            val length = minOf(MESH_IMAGE_CHUNK_BYTES, cipher.size - start)
+            val chunkPacket = MeshPacket(
+                id = "$blobId-c$index",
+                senderLabel = localSenderLabel,
+                timestampMillis = System.currentTimeMillis(),
+                message = IMAGE_PLACEHOLDER_MESSAGE,
+                type = MeshPacketType.IMAGE_CHUNK,
+                hop = 0,
+                protocol = PACKET_PROTOCOL_VALUE_V5,
+                blobId = blobId,
+                blobIndex = index,
+                blobDataBase64 = Base64.encodeToString(cipher, start, length, Base64.NO_WRAP)
+            )
+            if (sendOrQueuePacket(chunkPacket, queueWhenFailed = false) == DispatchOutcome.FAILED) {
+                finalizeOutboundVoiceBlob(blobId, voiceFileName, safeDuration, success = false)
+                return
+            }
+            index++
+        }
+
+        delay(MESH_IMAGE_CHUNK_SEND_SPACING_MS)
+        val donePacket = MeshPacket(
+            id = "$blobId-done",
+            senderLabel = localSenderLabel,
+            timestampMillis = System.currentTimeMillis(),
+            message = IMAGE_PLACEHOLDER_MESSAGE,
+            type = MeshPacketType.IMAGE_DONE,
+            hop = 0,
+            protocol = PACKET_PROTOCOL_VALUE_V5,
+            blobId = blobId
+        )
+        val outcome = sendOrQueuePacket(donePacket, queueWhenFailed = false)
+        finalizeOutboundVoiceBlob(blobId, voiceFileName, safeDuration, success = outcome != DispatchOutcome.FAILED)
+    }
+
+    private suspend fun finalizeOutboundVoiceBlob(
+        blobId: String,
+        voiceFileName: String,
+        durationMillis: Long,
+        success: Boolean
+    ) {
+        chatStore.updateLocalMessageStatus(
+            messageId = blobId,
+            status = if (success) MeshMessageStatus.SENT else MeshMessageStatus.FAILED
+        )
+        if (success) {
+            runCatching {
+                ensureGattMeshGeneralContact()
+                saveLocalAudioMessage(
+                    context = applicationContext,
+                    sessionCode = chatStore.sessionCode,
+                    uuid = blobId,
+                    fileName = voiceFileName,
+                    audioDurationMillis = durationMillis
+                )
+            }.onFailure { throwable ->
+                Log.w(TAG, "Unable to persist local mesh voice blob=$blobId", throwable)
+            }
+        }
+    }
+
+    private fun handleInboundImageInit(packet: MeshPacket, sourceAddress: String) {
+        if (profile.admission !is AdmissionPolicy.RequireVerifiedRole) {
+            return
+        }
+        val blobId = packet.blobId ?: return
+        val ivBase64 = packet.encryptedIvBase64 ?: return
+        if (packet.keyId != profile.payloadKeyId) {
+            Log.d(TAG, "[$sourceAddress] Dropped image blob with foreign keyId=${packet.keyId}")
+            return
+        }
+        synchronized(lock) {
+            if (inboundImageBlobs.size >= MESH_IMAGE_MAX_CONCURRENT_INBOUND) {
+                val oldest = inboundImageBlobs.minByOrNull { it.value.lastActivityAtMillis }?.key
+                if (oldest != null) {
+                    inboundImageBlobs.remove(oldest)
+                }
+            }
+            inboundImageBlobs[blobId] = InboundImageBlobState(
+                sourceAddress = sourceAddress,
+                senderLabel = packet.senderLabel,
+                ivBase64 = ivBase64,
+                keyId = packet.keyId ?: profile.payloadKeyId,
+                mimeType = packet.blobMime,
+                width = packet.blobWidth,
+                height = packet.blobHeight,
+                chunkCount = packet.blobChunkCount,
+                cipherBytes = packet.blobCipherBytes,
+                kind = packet.blobKind,
+                durationMillis = packet.blobDurationMillis
+            )
+        }
+        Log.d(
+            TAG,
+            "[$sourceAddress] Accepted image blob init id=$blobId chunks=${packet.blobChunkCount} " +
+                "cipherBytes=${packet.blobCipherBytes}"
+        )
+    }
+
+    private fun handleInboundImageChunk(packet: MeshPacket, sourceAddress: String) {
+        val blobId = packet.blobId ?: return
+        val dataBase64 = packet.blobDataBase64 ?: return
+        val bytes = runCatching { Base64.decode(dataBase64, Base64.NO_WRAP) }.getOrNull() ?: return
+        val completedState = synchronized(lock) {
+            val state = inboundImageBlobs[blobId] ?: return
+            if (packet.blobIndex !in state.chunks.indices) {
+                return
+            }
+            if (state.chunks[packet.blobIndex] == null) {
+                state.chunks[packet.blobIndex] = bytes
+                state.receivedCount++
+                state.receivedBytes += bytes.size
+                if (state.receivedBytes > state.cipherBytes) {
+                    inboundImageBlobs.remove(blobId)
+                    return
+                }
+            }
+            state.lastActivityAtMillis = System.currentTimeMillis()
+            if (state.receivedCount == state.chunkCount) {
+                inboundImageBlobs.remove(blobId)
+                state
+            } else {
+                null
+            }
+        }
+        if (completedState != null) {
+            assembleInboundImageBlob(blobId, completedState)
+        }
+    }
+
+    private fun handleInboundImageDone(packet: MeshPacket, sourceAddress: String) {
+        val blobId = packet.blobId ?: return
+        val completedState = synchronized(lock) {
+            val state = inboundImageBlobs[blobId] ?: return
+            if (state.receivedCount == state.chunkCount) {
+                inboundImageBlobs.remove(blobId)
+                state
+            } else {
+                // Chunks still in flight (writes can land out of order); the assembly completes
+                // from handleInboundImageChunk, and the cleanup loop reaps stalled transfers.
+                null
+            }
+        }
+        if (completedState != null) {
+            assembleInboundImageBlob(blobId, completedState)
+        }
+    }
+
+    private fun handleAcceleratorBlob(initPacketPayload: ByteArray, cipher: ByteArray) {
+        val packet = decodePacket(initPacketPayload) ?: return
+        if (packet.type != MeshPacketType.IMAGE_INIT) {
+            return
+        }
+        val blobId = packet.blobId ?: return
+        val ivBase64 = packet.encryptedIvBase64 ?: return
+        if (packet.keyId != profile.payloadKeyId) {
+            return
+        }
+        if (cipher.size != packet.blobCipherBytes) {
+            return
+        }
+        // Same dedup as the BLE lane: whichever lane lands first claims the blob id; the late
+        // BLE INIT is then dropped as a duplicate packet.
+        if (!rememberMessageId(packet.id, packet.timestampMillis)) {
+            return
+        }
+        val state = InboundImageBlobState(
+            sourceAddress = WIFI_AWARE_SOURCE_TAG,
+            senderLabel = packet.senderLabel,
+            ivBase64 = ivBase64,
+            keyId = packet.keyId ?: profile.payloadKeyId,
+            mimeType = packet.blobMime,
+            width = packet.blobWidth,
+            height = packet.blobHeight,
+            chunkCount = packet.blobChunkCount,
+            cipherBytes = packet.blobCipherBytes,
+            kind = packet.blobKind,
+            durationMillis = packet.blobDurationMillis
+        )
+        Log.i(TAG, "Accelerator delivered blob=$blobId bytes=${cipher.size}")
+        assembleInboundImageBlob(blobId = blobId, state = state, preassembledCipher = cipher)
+    }
+
+    private fun assembleInboundImageBlob(
+        blobId: String,
+        state: InboundImageBlobState,
+        preassembledCipher: ByteArray? = null
+    ) {
+        serviceScope.launch {
+            val cipher: ByteArray
+            if (preassembledCipher != null) {
+                if (preassembledCipher.size != state.cipherBytes) {
+                    return@launch
+                }
+                cipher = preassembledCipher
+            } else {
+                val assembled = ByteArray(state.receivedBytes)
+                var offset = 0
+                for (chunk in state.chunks) {
+                    if (chunk == null) {
+                        return@launch
+                    }
+                    chunk.copyInto(assembled, offset)
+                    offset += chunk.size
+                }
+                if (offset != state.cipherBytes) {
+                    Log.w(TAG, "Mesh image blob=$blobId size mismatch got=$offset expected=${state.cipherBytes}")
+                    return@launch
+                }
+                cipher = assembled
+            }
+            val iv = runCatching { Base64.decode(state.ivBase64, Base64.NO_WRAP) }.getOrNull()
+                ?: return@launch
+            val plain = runCatching {
+                AesGcm.decryptAesGcm(
+                    keyBytes = meshPayloadKey,
+                    iv = iv,
+                    cipher = cipher,
+                    aad = buildImageBlobAad(blobId = blobId, mimeType = state.mimeType)
+                )
+            }.getOrNull()
+            if (plain == null || plain.isEmpty() || plain.size > MESH_IMAGE_MAX_PLAIN_BYTES) {
+                Log.w(TAG, "Unable to decrypt mesh image blob=$blobId")
+                return@launch
+            }
+            if (state.kind == BLOB_KIND_VOICE) {
+                val voiceFileName = "$blobId.m4a"
+                runCatching {
+                    val voiceFile = voiceMessageFile(applicationContext, voiceFileName)
+                    voiceFile.parentFile?.mkdirs()
+                    voiceFile.writeBytes(plain)
+                }.onFailure { throwable ->
+                    Log.w(TAG, "Unable to store mesh voice blob=$blobId", throwable)
+                    return@launch
+                }
+                runCatching {
+                    ensureGattMeshGeneralContact()
+                    saveRemoteAudioMessage(
+                        context = applicationContext,
+                        sessionCode = chatStore.sessionCode,
+                        uuid = blobId,
+                        fileName = voiceFileName,
+                        audioDurationMillis = state.durationMillis
+                    )
+                }.onFailure { throwable ->
+                    Log.w(TAG, "Unable to persist remote mesh voice blob=$blobId", throwable)
+                }
+                chatStore.appendRemoteVoiceMessage(
+                    messageId = blobId,
+                    senderLabel = state.senderLabel,
+                    sourceAddress = state.sourceAddress,
+                    voiceFileName = voiceFileName,
+                    voiceDurationMillis = state.durationMillis
+                )
+                Log.i(TAG, "Mesh voice blob=$blobId assembled bytes=${plain.size} from=${state.sourceAddress}")
+                return@launch
+            }
+            val mime = state.mimeType ?: "image/jpeg"
+            val fileName = ImageFileUtils.fileNameFor(blobId, mime)
+            val thumbnailName = ImageFileUtils.thumbnailNameFor(blobId, mime)
+            val imageFile = imageMessageFile(applicationContext, fileName)
+            runCatching {
+                imageFile.parentFile?.mkdirs()
+                imageFile.writeBytes(plain)
+            }.onFailure { throwable ->
+                Log.w(TAG, "Unable to store mesh image blob=$blobId", throwable)
+                return@launch
+            }
+            val thumbnailOk = generateImageThumbnail(
+                source = imageFile,
+                target = imageThumbnailFile(applicationContext, thumbnailName),
+                mimeType = mime
+            )
+            runCatching {
+                ensureGattMeshGeneralContact()
+                saveRemoteImageMessage(
+                    context = applicationContext,
+                    sessionCode = chatStore.sessionCode,
+                    uuid = blobId,
+                    fileName = fileName,
+                    thumbnailName = thumbnailName.takeIf { thumbnailOk },
+                    width = state.width,
+                    height = state.height,
+                    mimeType = mime
+                )
+            }.onFailure { throwable ->
+                Log.w(TAG, "Unable to persist remote mesh image blob=$blobId", throwable)
+            }
+            chatStore.appendRemoteImageMessage(
+                messageId = blobId,
+                senderLabel = state.senderLabel,
+                sourceAddress = state.sourceAddress,
+                imageFileName = fileName,
+                imageThumbnailName = thumbnailName.takeIf { thumbnailOk },
+                imageWidth = state.width,
+                imageHeight = state.height
+            )
+            Log.i(TAG, "Mesh image blob=$blobId assembled bytes=${plain.size} from=${state.sourceAddress}")
+        }
+    }
+
+    private fun buildImageBlobAad(blobId: String, mimeType: String?): ByteArray {
+        return "blob|$blobId|${mimeType.orEmpty()}".toByteArray(UTF_8)
+    }
+
     private fun decodePacket(payload: ByteArray): MeshPacket? {
         val text = payload.toString(UTF_8).trim()
         if (text.isEmpty() || text.length > MAX_PACKET_TEXT_LENGTH) {
@@ -6222,7 +6838,8 @@ class GattMeshForegroundService : Service() {
                 protocol != PACKET_PROTOCOL_VALUE_V1 &&
                 protocol != PACKET_PROTOCOL_VALUE_V2 &&
                 protocol != PACKET_PROTOCOL_VALUE_V3 &&
-                protocol != PACKET_PROTOCOL_VALUE_V4
+                protocol != PACKET_PROTOCOL_VALUE_V4 &&
+                protocol != PACKET_PROTOCOL_VALUE_V5
             ) {
                 return null
             }
@@ -6238,7 +6855,7 @@ class GattMeshForegroundService : Service() {
                         protocol == PACKET_PROTOCOL_VALUE_V3
                     if (encrypted) {
                         val keyId = json.optString(PACKET_FIELD_KEY_ID).trim()
-                            .ifEmpty { DEFAULT_MESH_PAYLOAD_KEY_ID }
+                            .ifEmpty { profile.payloadKeyId }
                         val ivBase64 = json.optString(PACKET_FIELD_IV).trim()
                         val cipherBase64 = json.optString(PACKET_FIELD_CIPHER).trim()
                         if (
@@ -6364,6 +6981,105 @@ class GattMeshForegroundService : Service() {
                         authProofJson = proofJson
                     )
                 }
+
+                MeshPacketType.IMAGE_INIT -> {
+                    if (protocol != PACKET_PROTOCOL_VALUE_V5) {
+                        return null
+                    }
+                    val blobId = json.optString(PACKET_FIELD_BLOB_ID).trim()
+                    val chunkCount = json.optInt(PACKET_FIELD_BLOB_COUNT, 0)
+                    val cipherBytes = json.optInt(PACKET_FIELD_BLOB_BYTES, 0)
+                    val ivBase64 = json.optString(PACKET_FIELD_IV).trim()
+                    val keyId = json.optString(PACKET_FIELD_KEY_ID).trim()
+                        .ifEmpty { profile.payloadKeyId }
+                    if (blobId.isEmpty() || blobId.length > MAX_MESSAGE_ID_LENGTH ||
+                        !MESSAGE_ID_REGEX.matches(blobId)
+                    ) {
+                        return null
+                    }
+                    if (chunkCount !in 1..MESH_IMAGE_MAX_CHUNKS) {
+                        return null
+                    }
+                    if (cipherBytes !in 1..(MESH_IMAGE_MAX_PLAIN_BYTES + 64)) {
+                        return null
+                    }
+                    if (ivBase64.isEmpty() || ivBase64.length > MAX_ENCRYPTED_FIELD_LENGTH) {
+                        return null
+                    }
+                    MeshPacket(
+                        id = id,
+                        senderLabel = sender,
+                        timestampMillis = timestamp,
+                        message = IMAGE_PLACEHOLDER_MESSAGE,
+                        type = MeshPacketType.IMAGE_INIT,
+                        hop = hop,
+                        protocol = protocol,
+                        encrypted = true,
+                        keyId = keyId,
+                        encryptedIvBase64 = ivBase64,
+                        blobId = blobId,
+                        blobChunkCount = chunkCount,
+                        blobCipherBytes = cipherBytes,
+                        blobMime = json.optString(PACKET_FIELD_BLOB_MIME).trim()
+                            .take(64).takeIf { it.isNotEmpty() },
+                        blobWidth = json.optInt(PACKET_FIELD_BLOB_WIDTH, 0).takeIf { it > 0 },
+                        blobHeight = json.optInt(PACKET_FIELD_BLOB_HEIGHT, 0).takeIf { it > 0 },
+                        blobKind = json.optString(PACKET_FIELD_BLOB_KIND).trim()
+                            .take(16).takeIf { it.isNotEmpty() },
+                        blobDurationMillis = json.optLong(PACKET_FIELD_BLOB_DURATION, 0L)
+                            .takeIf { it in 1..MESH_VOICE_MAX_DURATION_MS }
+                    )
+                }
+
+                MeshPacketType.IMAGE_CHUNK -> {
+                    if (protocol != PACKET_PROTOCOL_VALUE_V5) {
+                        return null
+                    }
+                    val blobId = json.optString(PACKET_FIELD_BLOB_ID).trim()
+                    val blobIndex = json.optInt(PACKET_FIELD_BLOB_INDEX, -1)
+                    val dataBase64 = json.optString(PACKET_FIELD_BLOB_DATA).trim()
+                    if (blobId.isEmpty() || !MESSAGE_ID_REGEX.matches(blobId)) {
+                        return null
+                    }
+                    if (blobIndex !in 0 until MESH_IMAGE_MAX_CHUNKS) {
+                        return null
+                    }
+                    if (dataBase64.isEmpty() || dataBase64.length > MAX_ENCRYPTED_FIELD_LENGTH) {
+                        return null
+                    }
+                    MeshPacket(
+                        id = id,
+                        senderLabel = sender,
+                        timestampMillis = timestamp,
+                        message = IMAGE_PLACEHOLDER_MESSAGE,
+                        type = MeshPacketType.IMAGE_CHUNK,
+                        hop = hop,
+                        protocol = protocol,
+                        blobId = blobId,
+                        blobIndex = blobIndex,
+                        blobDataBase64 = dataBase64
+                    )
+                }
+
+                MeshPacketType.IMAGE_DONE -> {
+                    if (protocol != PACKET_PROTOCOL_VALUE_V5) {
+                        return null
+                    }
+                    val blobId = json.optString(PACKET_FIELD_BLOB_ID).trim()
+                    if (blobId.isEmpty() || !MESSAGE_ID_REGEX.matches(blobId)) {
+                        return null
+                    }
+                    MeshPacket(
+                        id = id,
+                        senderLabel = sender,
+                        timestampMillis = timestamp,
+                        message = IMAGE_PLACEHOLDER_MESSAGE,
+                        type = MeshPacketType.IMAGE_DONE,
+                        hop = hop,
+                        protocol = protocol,
+                        blobId = blobId
+                    )
+                }
             }
         }.getOrNull()
     }
@@ -6388,7 +7104,7 @@ class GattMeshForegroundService : Service() {
                         !packet.encryptedCipherBase64.isNullOrBlank()
                     ) {
                         put(PACKET_FIELD_ENCRYPTED, true)
-                        put(PACKET_FIELD_KEY_ID, packet.keyId ?: DEFAULT_MESH_PAYLOAD_KEY_ID)
+                        put(PACKET_FIELD_KEY_ID, packet.keyId ?: profile.payloadKeyId)
                         put(PACKET_FIELD_IV, packet.encryptedIvBase64)
                         put(PACKET_FIELD_CIPHER, packet.encryptedCipherBase64)
                         put(PACKET_FIELD_MESSAGE, ENCRYPTED_CHAT_PLACEHOLDER_MESSAGE)
@@ -6422,6 +7138,32 @@ class GattMeshForegroundService : Service() {
                     put(PACKET_FIELD_AUTH_NONCE, packet.authNonce)
                     put(PACKET_FIELD_AUTH_PROOF, packet.authProofJson)
                 }
+
+                MeshPacketType.IMAGE_INIT -> {
+                    put(PACKET_FIELD_MESSAGE, packet.message)
+                    put(PACKET_FIELD_BLOB_ID, packet.blobId)
+                    put(PACKET_FIELD_BLOB_COUNT, packet.blobChunkCount)
+                    put(PACKET_FIELD_BLOB_BYTES, packet.blobCipherBytes)
+                    put(PACKET_FIELD_KEY_ID, packet.keyId ?: profile.payloadKeyId)
+                    put(PACKET_FIELD_IV, packet.encryptedIvBase64)
+                    packet.blobMime?.takeIf { it.isNotBlank() }?.let { put(PACKET_FIELD_BLOB_MIME, it) }
+                    packet.blobWidth?.let { put(PACKET_FIELD_BLOB_WIDTH, it) }
+                    packet.blobHeight?.let { put(PACKET_FIELD_BLOB_HEIGHT, it) }
+                    packet.blobKind?.takeIf { it.isNotBlank() }?.let { put(PACKET_FIELD_BLOB_KIND, it) }
+                    packet.blobDurationMillis?.takeIf { it > 0L }?.let { put(PACKET_FIELD_BLOB_DURATION, it) }
+                }
+
+                MeshPacketType.IMAGE_CHUNK -> {
+                    put(PACKET_FIELD_MESSAGE, packet.message)
+                    put(PACKET_FIELD_BLOB_ID, packet.blobId)
+                    put(PACKET_FIELD_BLOB_INDEX, packet.blobIndex)
+                    put(PACKET_FIELD_BLOB_DATA, packet.blobDataBase64)
+                }
+
+                MeshPacketType.IMAGE_DONE -> {
+                    put(PACKET_FIELD_MESSAGE, packet.message)
+                    put(PACKET_FIELD_BLOB_ID, packet.blobId)
+                }
             }
         }
     }
@@ -6436,7 +7178,7 @@ class GattMeshForegroundService : Service() {
             messageId = messageId,
             senderLabel = senderLabel,
             timestampMillis = timestampMillis,
-            keyId = DEFAULT_MESH_PAYLOAD_KEY_ID
+            keyId = profile.payloadKeyId
         )
         val encrypted = runCatching {
             AesGcm.encryptAesGcm(
@@ -6451,7 +7193,7 @@ class GattMeshForegroundService : Service() {
             return null
         }
         return EncryptedMeshPayload(
-            keyId = DEFAULT_MESH_PAYLOAD_KEY_ID,
+            keyId = profile.payloadKeyId,
             ivBase64 = ivBase64,
             cipherBase64 = cipherBase64
         )
@@ -6465,7 +7207,7 @@ class GattMeshForegroundService : Service() {
         ivBase64: String,
         cipherBase64: String
     ): String? {
-        if (keyId != DEFAULT_MESH_PAYLOAD_KEY_ID) {
+        if (keyId != profile.payloadKeyId) {
             return null
         }
         val ivBytes = runCatching {
@@ -6523,18 +7265,6 @@ class GattMeshForegroundService : Service() {
         return payload.toByteArray(UTF_8)
     }
 
-    private fun deriveMeshPayloadKey(): ByteArray {
-        val material = buildString(128) {
-            append(MESH_PAYLOAD_KEY_SEED)
-            append('|')
-            append(packageName)
-        }.toByteArray(UTF_8)
-        return runCatching {
-            MessageDigest.getInstance("SHA-256").digest(material)
-        }.getOrElse {
-            ByteArray(32) { index -> (index + 1).toByte() }
-        }
-    }
 
     private fun parsePacketType(rawType: String, protocol: String): MeshPacketType {
         return when {
@@ -6546,6 +7276,15 @@ class GattMeshForegroundService : Service() {
 
             rawType.equals(MeshPacketType.AUTH_PROOF.wireValue, ignoreCase = true) &&
                 protocol == PACKET_PROTOCOL_VALUE_V4 -> MeshPacketType.AUTH_PROOF
+
+            rawType.equals(MeshPacketType.IMAGE_INIT.wireValue, ignoreCase = true) &&
+                protocol == PACKET_PROTOCOL_VALUE_V5 -> MeshPacketType.IMAGE_INIT
+
+            rawType.equals(MeshPacketType.IMAGE_CHUNK.wireValue, ignoreCase = true) &&
+                protocol == PACKET_PROTOCOL_VALUE_V5 -> MeshPacketType.IMAGE_CHUNK
+
+            rawType.equals(MeshPacketType.IMAGE_DONE.wireValue, ignoreCase = true) &&
+                protocol == PACKET_PROTOCOL_VALUE_V5 -> MeshPacketType.IMAGE_DONE
 
             else -> MeshPacketType.CHAT
         }
@@ -6917,6 +7656,9 @@ class GattMeshForegroundService : Service() {
                         !isActiveAddress ||
                             now - state.lastFailureAtMillis > CLIENT_FAILURE_RETENTION_MS
                     }
+                    inboundImageBlobs.entries.removeIf { (_, blob) ->
+                        now - blob.lastActivityAtMillis > MESH_IMAGE_INBOUND_TIMEOUT_MS
+                    }
                     inboundRateWindows.entries.removeIf { (_, state) ->
                         now - state.windowStartMillis > INBOUND_RATE_WINDOW_MS
                     }
@@ -7105,7 +7847,7 @@ class GattMeshForegroundService : Service() {
         stateFlow.update {
             it.copy(
                 isEnabled = runtimeActive,
-                isScanning = BleScanCoordinator.isActive(SCAN_COORDINATOR_OWNER),
+                isScanning = BleScanCoordinator.isActive(profile.scanCoordinatorOwner),
                 connectedPeerCount = connectedCount,
                 discoveredPeerCount = discoveredCount,
                 sendReadyPeerCount = sendReadyCount,
@@ -7205,7 +7947,7 @@ class GattMeshForegroundService : Service() {
     }
 
     private suspend fun isGattMeshRuntimeEnabledInSettings(): Boolean {
-        val publicMeshKey = booleanPreferencesKey(PUBLIC_MESH_ENABLED_PREF)
+        val publicMeshKey = booleanPreferencesKey(profile.enabledPrefKey)
         return runCatching {
             val prefs = applicationContext.settingsDataStore.data.first()
             prefs[publicMeshKey] ?: false
@@ -7347,13 +8089,13 @@ class GattMeshForegroundService : Service() {
         }
         val manager = getSystemService(NotificationManager::class.java) ?: return
         manager.notify(
-            NOTIFICATION_ID,
+            profile.notificationId,
             GattMeshNotificationFactory.build(
                 context = this,
                 connectedCount = connectedCount,
-                notificationChannelId = NOTIFICATION_CHANNEL_ID,
+                notificationChannelId = profile.notificationChannelId,
                 requestCode = GATT_MESH_NOTIFICATION_REQUEST_CODE,
-                sessionCode = GattMeshChatStore.SESSION_CODE
+                sessionCode = chatStore.sessionCode
             )
         )
     }
@@ -7361,7 +8103,7 @@ class GattMeshForegroundService : Service() {
     private fun ensureNotificationChannel() {
         GattMeshNotificationFactory.ensureChannel(
             context = this,
-            notificationChannelId = NOTIFICATION_CHANNEL_ID
+            notificationChannelId = profile.notificationChannelId
         )
     }
 
@@ -7448,8 +8190,6 @@ class GattMeshForegroundService : Service() {
         private const val ACTION_STOP = "com.auralis.crisisconnect.action.gattmesh.STOP"
         private const val ACTION_RECONCILE_SOS_MODE = "com.auralis.crisisconnect.action.gattmesh.RECONCILE_SOS_MODE"
 
-        private const val NOTIFICATION_CHANNEL_ID = "gatt_mesh_channel"
-        private const val NOTIFICATION_ID = 3055
         private const val GATT_MESH_NOTIFICATION_REQUEST_CODE = 3056
 
         private const val PACKET_FIELD_ID = "id"
@@ -7608,6 +8348,7 @@ class GattMeshForegroundService : Service() {
         private const val PACKET_PROTOCOL_VALUE_V2 = "dcs-gattmesh-v2"
         private const val PACKET_PROTOCOL_VALUE_V3 = "dcs-gattmesh-v3"
         private const val PACKET_PROTOCOL_VALUE_V4 = "dcs-gattmesh-v4"
+        private const val PACKET_PROTOCOL_VALUE_V5 = "dcs-gattmesh-v5"
         private const val RECEIPT_PLACEHOLDER_MESSAGE = "mesh-receipt"
         private const val AUTH_CHALLENGE_PLACEHOLDER_MESSAGE = "c"
         private const val AUTH_PROOF_PLACEHOLDER_MESSAGE = "p"
@@ -7624,14 +8365,38 @@ class GattMeshForegroundService : Service() {
         private const val COMPACT_ROLE_PROOF_NONCE_FIELD = "n"
         private const val COMPACT_ROLE_PROOF_ALLOW_EXPIRED_FIELD = "g"
         private const val ENCRYPTED_CHAT_PLACEHOLDER_MESSAGE = "mesh-secure"
-        private const val DEFAULT_MESH_PAYLOAD_KEY_ID = "public-v1"
-        private const val MESH_PAYLOAD_KEY_SEED = "dcs-gattmesh-public-payload-key-v1"
+        private const val IMAGE_PLACEHOLDER_MESSAGE = "mesh-image"
+        private const val PACKET_FIELD_BLOB_ID = "blobId"
+        private const val PACKET_FIELD_BLOB_INDEX = "blobIdx"
+        private const val PACKET_FIELD_BLOB_COUNT = "blobCnt"
+        private const val PACKET_FIELD_BLOB_BYTES = "blobLen"
+        private const val PACKET_FIELD_BLOB_DATA = "blobData"
+        private const val PACKET_FIELD_BLOB_MIME = "blobMime"
+        private const val PACKET_FIELD_BLOB_WIDTH = "blobW"
+        private const val PACKET_FIELD_BLOB_HEIGHT = "blobH"
+        // Image blobs ride the mesh as single-hop packets; size/pace limits keep one transfer
+        // under the per-source inbound rate window (180 packets / 10s).
+        private const val MESH_IMAGE_MAX_PLAIN_BYTES = 400_000
+        private const val MESH_IMAGE_CHUNK_BYTES = 2_800
+        private const val MESH_IMAGE_MAX_CHUNKS = 160
+        private const val MESH_IMAGE_CHUNK_SEND_SPACING_MS = 75L
+        private const val MESH_IMAGE_INBOUND_TIMEOUT_MS = 45_000L
+        private const val MESH_IMAGE_MAX_CONCURRENT_INBOUND = 3
+        private const val PACKET_FIELD_BLOB_KIND = "blobKind"
+        private const val PACKET_FIELD_BLOB_DURATION = "blobDur"
+        private const val BLOB_KIND_IMAGE = "image"
+        private const val BLOB_KIND_VOICE = "voice"
+        private const val MESH_VOICE_MIME = "audio/mp4"
+        private const val MESH_VOICE_MAX_DURATION_MS = 90_000L
+        private const val WIFI_AWARE_SOURCE_TAG = "wifi-aware"
+        private val MESH_IMAGE_TRANSFER_PROFILE = BLE_IMAGE_TRANSFER_PROFILE.copy(
+            targetBytes = 360_000,
+            maxOutputBytes = MESH_IMAGE_MAX_PLAIN_BYTES
+        )
         private const val MESH_GCM_IV_BYTES = 12
         private const val PERSISTED_QUEUE_VERSION = 1
         private const val PERSISTED_QUEUE_FILE_NAME = "gatt_mesh_pending_outbound_queue.json"
-        private const val PUBLIC_MESH_ENABLED_PREF = "advanced_public_mesh_enabled"
         private const val GATT_MESH_NOTIFICATIONS_ENABLED_PREF = "advanced_gatt_mesh_notifications_enabled"
-        private const val SCAN_COORDINATOR_OWNER = "gattmesh-foreground-service"
         private const val INVALID_MAC_ADDRESS = "02:00:00:00:00:00"
         private const val DEFAULT_INITIATOR_SALT = 0x6F4B5D5E
         private val GATT_MESH_NOTIFICATIONS_ENABLED_KEY =
@@ -7640,29 +8405,22 @@ class GattMeshForegroundService : Service() {
         private val MESSAGE_ID_REGEX = Regex("^[a-zA-Z0-9-]{8,128}$")
         private val UTF_8: Charset = StandardCharsets.UTF_8
 
-        private val MESH_SERVICE_UUID: UUID = UUID.fromString("6f4b5d5e-2e0a-4f13-9b89-7d9f3f1d1001")
-        private val MESSAGE_IN_CHARACTERISTIC_UUID: UUID = UUID.fromString("6f4b5d5e-2e0a-4f13-9b89-7d9f3f1d1002")
-        private val MESSAGE_OUT_CHARACTERISTIC_UUID: UUID = UUID.fromString("6f4b5d5e-2e0a-4f13-9b89-7d9f3f1d1003")
         private val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID =
             UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         // Stack-level GATT status seen when remote attribute requires authorization/security.
         private const val GATT_STATUS_INSUFFICIENT_AUTHORIZATION = 8
         private const val GATT_STATUS_INSUFFICIENT_KEY_SIZE = 12
 
-        @Volatile
-        private var globalRuntimeActive: Boolean = false
+        val isRunning: StateFlow<Boolean> = MeshServiceRegistry.runningState(MeshProfiles.PUBLIC.id)
 
-        @Volatile
-        private var activeInstance: GattMeshForegroundService? = null
-        private val runningState = MutableStateFlow(false)
-        val isRunning: StateFlow<Boolean> = runningState.asStateFlow()
+        internal fun meshServiceUuidForAdvertising(): UUID = MeshProfiles.PUBLIC.serviceUuid
 
-        internal fun meshServiceUuidForAdvertising(): UUID = MESH_SERVICE_UUID
-
-        fun currentStateSnapshot(): GattMeshServiceState? = activeInstance?.state?.value
+        fun currentStateSnapshot(): GattMeshServiceState? =
+            MeshServiceRegistry.instance(MeshProfiles.PUBLIC.id)?.state?.value
 
         fun deprioritizePeerForP2p(address: String, durationMs: Long = P2P_CHAT_PEER_SUPPRESSION_MS) {
-            activeInstance?.deprioritizePeerForP2pInternal(address, durationMs)
+            MeshServiceRegistry.instance(MeshProfiles.PUBLIC.id)
+                ?.deprioritizePeerForP2pInternal(address, durationMs)
         }
 
         @SuppressLint("HardwareIds")
@@ -7713,6 +8471,6 @@ class GattMeshForegroundService : Service() {
             ContextCompat.startForegroundService(appContext, intent)
         }
 
-        fun isRuntimeActive(): Boolean = globalRuntimeActive
+        fun isRuntimeActive(): Boolean = MeshServiceRegistry.isRuntimeActive(MeshProfiles.PUBLIC.id)
     }
 }

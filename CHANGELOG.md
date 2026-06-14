@@ -4,6 +4,21 @@ All notable changes to Crisis Connect are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-06-14
+
+### Added
+- Android Crisis Sentinel offline assistant, model manifest/download flow, and quality coverage tests
+- Android authority mesh, certificate provisioning, Enterprise SSO, and rescue mobile sync support
+- Expanded Android localization resources and rescue mesh service coverage
+
+### Changed
+- Bumped Android and iOS release metadata to 1.1.1
+- Refreshed Firebase Functions sources for certificate issuance, attestation, model access, and authority mesh key handling
+- Updated Android build, ProGuard, Gradle, and CI-facing source files for the new release line
+
+### Security
+- Kept release signing files, Firebase config files, local property files, generated build outputs, and packaged APK/AAB artifacts out of the public source tree
+
 ## [1.0.0] - 2026-04-03
 
 Initial public release on Google Play and App Store.

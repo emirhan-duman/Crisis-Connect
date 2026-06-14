@@ -219,7 +219,7 @@ object AesCipherHelper {
             val decoded = hexToBytes(withoutWhitespace)
             validateKeyLength(decoded)
             val canonical = encodeKeyToBase64(decoded)
-            Log.w(TAG, "Converted AES key from hex to Base64 for document=${document.id}")
+            Log.w(TAG, "Converted AES key from hex to Base64 (legacy migration)")
             updateStoredKey(document, fieldName, canonical)
             return canonical to decoded
         }
@@ -227,7 +227,7 @@ object AesCipherHelper {
         val utf8Bytes = sanitized.toByteArray(Charsets.UTF_8)
         validateKeyLength(utf8Bytes)
         val canonical = encodeKeyToBase64(utf8Bytes)
-        Log.w(TAG, "Converted AES key from UTF-8 to Base64 for document=${document.id}")
+        Log.w(TAG, "Converted AES key from UTF-8 to Base64 (legacy migration)")
         updateStoredKey(document, fieldName, canonical)
         return canonical to utf8Bytes
     }

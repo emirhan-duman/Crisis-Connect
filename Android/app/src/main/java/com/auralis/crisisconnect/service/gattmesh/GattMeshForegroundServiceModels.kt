@@ -52,7 +52,17 @@ internal data class MeshPacket(
     val authProofJson: String? = null,
     val originProofJson: String? = null,
     val originSignatureBase64: String? = null,
-    val isReadable: Boolean = true
+    val isReadable: Boolean = true,
+    val blobId: String? = null,
+    val blobIndex: Int = -1,
+    val blobChunkCount: Int = 0,
+    val blobCipherBytes: Int = 0,
+    val blobDataBase64: String? = null,
+    val blobMime: String? = null,
+    val blobWidth: Int? = null,
+    val blobHeight: Int? = null,
+    val blobKind: String? = null,
+    val blobDurationMillis: Long? = null
 )
 
 internal data class MessageOriginAuth(
@@ -69,7 +79,33 @@ internal enum class MeshPacketType(val wireValue: String) {
     CHAT("chat"),
     RECEIPT("receipt"),
     AUTH_CHALLENGE("auth_challenge"),
-    AUTH_PROOF("auth_proof")
+    AUTH_PROOF("auth_proof"),
+    IMAGE_INIT("image_init"),
+    IMAGE_CHUNK("image_chunk"),
+    IMAGE_DONE("image_done")
+}
+
+/**
+ * Reassembly state for one inbound image blob. Blob packets are single-hop only (never relayed),
+ * so the whole transfer comes from one directly connected peer.
+ */
+internal class InboundImageBlobState(
+    val sourceAddress: String,
+    val senderLabel: String,
+    val ivBase64: String,
+    val keyId: String,
+    val mimeType: String?,
+    val width: Int?,
+    val height: Int?,
+    val chunkCount: Int,
+    val cipherBytes: Int,
+    val kind: String? = null,
+    val durationMillis: Long? = null,
+) {
+    val chunks: Array<ByteArray?> = arrayOfNulls(chunkCount)
+    var receivedCount: Int = 0
+    var receivedBytes: Int = 0
+    var lastActivityAtMillis: Long = System.currentTimeMillis()
 }
 
 internal enum class ReceiptType(val wireValue: String) {

@@ -16,12 +16,22 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.BuildConfig
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.ai.CrisisSentinelLiteRtModelRuntime
+import com.auralis.crisisconnect.ai.CrisisSentinelModelFileStore
+import com.auralis.crisisconnect.ai.CrisisSentinelModelManifestCache
+import com.auralis.crisisconnect.ai.CrisisSentinelModelRelease
+import com.auralis.crisisconnect.ai.CrisisSentinelOfflineEngine
+import com.auralis.crisisconnect.ai.CrisisSentinelRequest
+import com.auralis.crisisconnect.ai.CrisisSentinelResponse
+import com.auralis.crisisconnect.ai.CrisisSentinelUserMode
 import com.auralis.crisisconnect.service.client.BleClientManager
 import com.auralis.crisisconnect.service.mesh.MeshPeerAuthEvent
-import com.auralis.crisisconnect.service.mesh.MeshAwareServiceBinding
+import com.auralis.crisisconnect.service.gattmesh.GattMeshServiceBinding
+import com.auralis.crisisconnect.service.mesh.AuthorityMeshServiceController
 import com.auralis.crisisconnect.data.BleBroadcastDirectory
 import com.auralis.crisisconnect.data.BleSessionResolver
 import com.auralis.crisisconnect.data.updateContactAddress
+import com.auralis.crisisconnect.security.CertificateProvisioningNotifier
 import com.auralis.crisisconnect.security.SecurityRepository
 import com.auralis.crisisconnect.service.BleRadioPolicy
 import com.auralis.crisisconnect.service.client.RescueClientServiceBinding
@@ -75,6 +85,14 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
         val meshErrorMessage: Int? = null,
         val peerAuthEvent: MeshPeerAuthEvent? = null,
         val lastUpdated: Long? = null,
+        val canUseFieldAi: Boolean = false,
+        val fieldAiMode: CrisisSentinelUserMode = CrisisSentinelUserMode.FieldTeam,
+        val fieldAiCertificateRole: String? = null,
+        val fieldAiPrompt: String = "",
+        val fieldAiResponse: CrisisSentinelResponse? = null,
+        val isFieldAiGenerating: Boolean = false,
+        val isFieldAiModelReady: Boolean = false,
+        val fieldAiMessage: Int? = null,
     )
 
     private val context = application.applicationContext
@@ -83,8 +101,28 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
     private val crisisServiceUuid: UUID = UUIDGenerator.fromAssignedNumber(SERVICE_ASSIGNED_NUMBER)
     private val gattMeshServiceUuid: UUID = UUID.fromString(GATT_MESH_SERVICE_UUID)
     private val serviceBinding = RescueClientServiceBinding(context)
-    private val meshServiceBinding = MeshAwareServiceBinding(context)
+    private val meshServiceBinding = GattMeshServiceBinding(context, AuthorityMeshServiceController)
     private val securityRepository = SecurityRepository(context)
+    private val modelStore = CrisisSentinelModelFileStore(context)
+    private val modelManifestCache = CrisisSentinelModelManifestCache(context)
+    private var currentAiRelease: CrisisSentinelModelRelease =
+        modelManifestCache.load() ?: CrisisSentinelModelFileStore.defaultRelease
+    private val fieldAiRuntime = CrisisSentinelLiteRtModelRuntime(
+        context = context,
+        store = modelStore,
+        releaseProvider = { currentAiRelease }
+    )
+    private val fieldAiEngine by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        CrisisSentinelOfflineEngine(
+            modelRuntime = fieldAiRuntime,
+            onModelFailure = { throwable ->
+                Log.w(TAG, "Rescue field AI local model generation failed", throwable)
+            },
+            onModelRejected = { preview ->
+                Log.w(TAG, "Rescue field AI local model output rejected. preview=${preview.take(160)}")
+            }
+        )
+    }
 
     private val _uiState = MutableStateFlow(RescueUiState())
     val uiState: StateFlow<RescueUiState> = _uiState.asStateFlow()
@@ -95,6 +133,7 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
     private var cleanupJob: Job? = null
     private var managerJob: Job? = null
     private var meshStateCollector: Job? = null
+    private var fieldAiJob: Job? = null
     private var canControlMesh: Boolean = false
     private var autoConnectToScannedBroadcasts: Boolean = true
     @Volatile
@@ -128,25 +167,67 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
     init {
         observeManager()
         viewModelScope.launch(exceptionHandler) {
-            val canControl = hasMeshControlRole()
-            canControlMesh = canControl
-            _uiState.update { it.copy(canControlMesh = canControl) }
-            if (canControl) {
-                // Avoid auto-creating mesh service (and foreground notification) when toggle is off.
-                meshServiceBinding.bind(createIfNeeded = false)
-            } else {
-                _uiState.update {
-                    it.copy(meshErrorMessage = R.string.rescue_mesh_error_unauthorized)
+            refreshRoleAuthorization(attemptProvisioning = true)
+        }
+        viewModelScope.launch(exceptionHandler) {
+            // The app auto-provisions the role certificate in the background at sign-in. If it
+            // completes while this screen is open, lift the "unauthorized" gate immediately.
+            CertificateProvisioningNotifier.events.collect { event ->
+                if (event is CertificateProvisioningNotifier.Event.Success && !canControlMesh) {
+                    refreshRoleAuthorization(attemptProvisioning = false)
                 }
             }
         }
         observeMeshState()
     }
 
+    private suspend fun refreshRoleAuthorization(attemptProvisioning: Boolean) {
+        var role = storedRescueRole()
+        if (role == null && attemptProvisioning) {
+            // No usable role certificate on this device yet — the background auto-provision may
+            // still be running or may have failed (offline, first run). Try the full provisioning
+            // flow once before declaring the device unauthorized.
+            runCatching { securityRepository.warmUpCertificate() }
+            role = storedRescueRole()
+        }
+        val canControl = role in MESH_CONTROL_ROLES
+        canControlMesh = canControl
+        _uiState.update {
+            it.copy(
+                canControlMesh = canControl,
+                canUseFieldAi = role in RESCUE_AI_ROLES,
+                fieldAiMode = rescueAiModeForRole(role),
+                fieldAiCertificateRole = role,
+                isFieldAiModelReady = fieldAiRuntime.isReady,
+                meshErrorMessage = if (canControl &&
+                    it.meshErrorMessage == R.string.rescue_mesh_error_unauthorized
+                ) {
+                    null
+                } else {
+                    it.meshErrorMessage
+                },
+            )
+        }
+        if (canControl) {
+            // Fetch the shared authority-mesh group key so the mesh can actually start when the
+            // user enables it; without the key the foreground service self-stops immediately.
+            runCatching { securityRepository.ensureAuthorityMeshGroupKey() }
+            // Avoid auto-creating mesh service (and foreground notification) when toggle is off.
+            meshServiceBinding.bind(createIfNeeded = false)
+        } else {
+            _uiState.update {
+                it.copy(meshErrorMessage = R.string.rescue_mesh_error_unauthorized)
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         meshServiceBinding.unbind()
         stopScanning()
+        fieldAiRuntime.close()
+        fieldAiJob?.cancel()
+        fieldAiJob = null
         autoConnectScanResumeJob?.cancel()
         autoConnectScanResumeJob = null
         managerJob?.cancel()
@@ -176,11 +257,123 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
 
     fun setMeshEnabled(enabled: Boolean) {
         if (!canControlMesh) return
-        meshServiceBinding.setMeshEnabled(enabled)
+        meshServiceBinding.setEnabled(enabled)
     }
 
     fun setAutoConnectToScannedBroadcasts(enabled: Boolean) {
         autoConnectToScannedBroadcasts = enabled
+    }
+
+    fun refreshFieldAiAccess() {
+        viewModelScope.launch(exceptionHandler) {
+            val role = storedRescueRole()
+            _uiState.update {
+                it.copy(
+                    canUseFieldAi = role in RESCUE_AI_ROLES,
+                    fieldAiMode = rescueAiModeForRole(role),
+                    fieldAiCertificateRole = role,
+                    isFieldAiModelReady = fieldAiRuntime.isReady,
+                    fieldAiMessage = null,
+                )
+            }
+        }
+    }
+
+    fun onFieldAiPromptChanged(prompt: String) {
+        _uiState.update {
+            it.copy(
+                fieldAiPrompt = prompt,
+                fieldAiMessage = null,
+            )
+        }
+    }
+
+    fun generateFieldAiFromPrompt() {
+        val prompt = _uiState.value.fieldAiPrompt.trim()
+        if (prompt.isBlank()) {
+            _uiState.update { it.copy(fieldAiMessage = R.string.crisis_sentinel_prompt_empty) }
+            return
+        }
+        generateFieldAi(prompt)
+    }
+
+    fun generateFieldAiFromSignals() {
+        val state = _uiState.value
+        generateFieldAi(
+            buildRescueAiSignalPrompt(
+                broadcasts = state.broadcasts,
+                activeStatus = context.getString(R.string.rescue_status_active),
+            )
+        )
+    }
+
+    fun cancelFieldAiGeneration() {
+        fieldAiRuntime.cancelGeneration()
+        fieldAiJob?.cancel()
+        fieldAiJob = null
+        _uiState.update {
+            it.copy(
+                isFieldAiGenerating = false,
+                fieldAiMessage = R.string.crisis_sentinel_generation_cancelled,
+                isFieldAiModelReady = fieldAiRuntime.isReady,
+            )
+        }
+    }
+
+    private fun generateFieldAi(prompt: String) {
+        val state = _uiState.value
+        if (!state.canUseFieldAi) {
+            _uiState.update { it.copy(fieldAiMessage = R.string.rescue_ai_requires_role) }
+            return
+        }
+        if (state.isFieldAiGenerating) return
+
+        fieldAiJob?.cancel()
+        fieldAiJob = viewModelScope.launch(exceptionHandler) {
+            _uiState.update {
+                it.copy(
+                    isFieldAiGenerating = true,
+                    fieldAiMessage = null,
+                    isFieldAiModelReady = fieldAiRuntime.isReady,
+                )
+            }
+            val current = _uiState.value
+            val signalPrompt = buildRescueAiSignalPrompt(
+                broadcasts = current.broadcasts,
+                activeStatus = context.getString(R.string.rescue_status_active),
+            )
+            val result = runCatching {
+                withContext(Dispatchers.Default) {
+                    fieldAiEngine.respondWithModel(
+                        CrisisSentinelRequest(
+                            prompt = prompt,
+                            mode = current.fieldAiMode,
+                            locale = Locale.getDefault(),
+                            recentMessages = buildRescueAiContext(current.broadcasts)
+                        )
+                    )
+                }
+            }
+            val response = result.getOrElse { throwable ->
+                Log.e(TAG, "Rescue field AI response failed", throwable)
+                _uiState.update {
+                    it.copy(
+                        isFieldAiGenerating = false,
+                        fieldAiMessage = R.string.crisis_sentinel_error_response,
+                        isFieldAiModelReady = fieldAiRuntime.isReady,
+                    )
+                }
+                return@launch
+            }
+            _uiState.update {
+                it.copy(
+                    fieldAiResponse = response,
+                    isFieldAiGenerating = false,
+                    isFieldAiModelReady = fieldAiRuntime.isReady,
+                    fieldAiPrompt = prompt.takeIf { text -> text != signalPrompt } ?: it.fieldAiPrompt,
+                )
+            }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -304,10 +497,12 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
                 _uiState.update { current ->
                     current.copy(
                         isMeshEnabled = meshState.isEnabled,
-                        isMeshBusy = meshState.isBusy,
+                        // GattMeshServiceState has no "busy" phase; setEnabled() flips state quickly.
+                        isMeshBusy = false,
                         meshConnectedPeerCount = meshState.connectedPeerCount,
                         meshErrorMessage = meshState.errorMessage,
-                        peerAuthEvent = meshState.peerAuthEvent,
+                        // peerAuthEvent is Wi-Fi Aware-specific; the GATT authority mesh exposes
+                        // verified peers via meshState.connectedPeers instead. Left dormant here.
                     )
                 }
             }
@@ -317,7 +512,6 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
     fun consumeMeshPeerAuthEvent(event: MeshPeerAuthEvent?) {
         if (_uiState.value.peerAuthEvent == event) {
             _uiState.update { it.copy(peerAuthEvent = null) }
-            meshServiceBinding.clearPeerAuthEvent()
         }
     }
 
@@ -617,11 +811,10 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    private suspend fun hasMeshControlRole(): Boolean {
-        val cachedRole = withContext(Dispatchers.IO) {
+    private suspend fun storedRescueRole(): String? {
+        return withContext(Dispatchers.IO) {
             securityRepository.getUsableStoredCertificateRole(allowExpired = true)
-        }
-        return cachedRole?.trim()?.lowercase(Locale.US)?.let { it in MESH_CONTROL_ROLES } == true
+        }?.trim()?.lowercase(Locale.US)
     }
 
     private fun parseBroadcastId(record: android.bluetooth.le.ScanRecord, serviceUuid: android.os.ParcelUuid): String? {
@@ -678,6 +871,52 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
         private const val STALE_ENTRY_TIMEOUT_MS = 20_000L
         private const val AUTO_CONNECT_SCAN_RESUME_TIMEOUT_MS = 12_000L
         private val MESH_CONTROL_ROLES = setOf("admin", "fieldteam")
+        private val RESCUE_AI_ROLES = setOf("admin", "fieldteam")
+
+        internal fun rescueAiModeForRole(role: String?): CrisisSentinelUserMode {
+            return when (role?.trim()?.lowercase(Locale.US)) {
+                "admin" -> CrisisSentinelUserMode.Coordinator
+                "fieldteam" -> CrisisSentinelUserMode.FieldTeam
+                else -> CrisisSentinelUserMode.Public
+            }
+        }
+
+        internal fun buildRescueAiSignalPrompt(
+            broadcasts: List<SOSBroadcast>,
+            activeStatus: String,
+        ): String {
+            if (broadcasts.isEmpty()) {
+                return "Saha ekibiyim. Yakında rescue sinyali görünmüyor; tarama durumu, eksik bilgiler ve güvenli takip adımlarını içeren kısa SITREP kontrol listesi hazırla."
+            }
+            val activeCount = broadcasts.count { it.status == activeStatus }
+            val signalLines = broadcasts
+                .sortedByDescending { it.lastSeen }
+                .take(5)
+                .mapIndexed { index, broadcast ->
+                    val rssi = broadcast.rssi?.toString() ?: "bilinmiyor"
+                    "${index + 1}) ${broadcast.userId.ifBlank { "Bilinmeyen" }}; " +
+                        "durum=${broadcast.status}; kanal=${broadcast.channelId}; " +
+                        "sinyal=$rssi; oturum=${broadcast.sessionCode}"
+                }
+                .joinToString("\n")
+            return "Saha ekibiyim. Rescue ekranında $activeCount aktif / ${broadcasts.size} toplam sinyal var. " +
+                "Aşağıdaki sinyaller için kısa SITREP taslağı, riskler, eksik bilgiler ve takip soruları hazırla. " +
+                "Konum veya yaralı sayısı doğrulanmamışsa uydurma.\n$signalLines"
+        }
+
+        internal fun buildRescueAiContext(broadcasts: List<SOSBroadcast>): List<String> {
+            if (broadcasts.isEmpty()) {
+                return listOf("Rescue scan context: no visible nearby rescue signal.")
+            }
+            val recent = broadcasts
+                .sortedByDescending { it.lastSeen }
+                .take(5)
+                .joinToString(" | ") { broadcast ->
+                    val rssi = broadcast.rssi?.toString() ?: "unknown"
+                    "${broadcast.channelId} status=${broadcast.status} rssi=$rssi session=${broadcast.sessionCode}"
+                }
+            return listOf("Rescue scan context: $recent")
+        }
 
         internal fun updateBroadcastFromConnectionState(
             current: SOSBroadcast,

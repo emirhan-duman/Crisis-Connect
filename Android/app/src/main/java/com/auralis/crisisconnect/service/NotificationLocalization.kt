@@ -15,9 +15,18 @@ object NotificationLocalization {
         }.getOrElse {
             Locale.getDefault().language
         }
+        val normalizedLanguage = languageCode.trim().replace('_', '-').lowercase(Locale.US)
         val locale = when {
-            languageCode.trim().replace('_', '-').lowercase(Locale.US).startsWith("tr") -> {
+            normalizedLanguage.startsWith("tr") -> {
                 Locale("tr", "TR")
+            }
+
+            normalizedLanguage.startsWith("ja") -> {
+                Locale("ja", "JP")
+            }
+
+            normalizedLanguage.startsWith("es") -> {
+                Locale("es", "ES")
             }
 
             else -> Locale("en", "US")

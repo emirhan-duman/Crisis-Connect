@@ -55,6 +55,7 @@ class RoleProofVerifierInstrumentedTest {
         }.generateKeyPair()
 
         val roleCertificate = RoleCertificate(
+            deviceId = TEST_DEVICE_ID,
             ownerUid = "user-1",
             role = "admin",
             issuedAtMillis = expiresAtMillis - (24L * 60L * 60L * 1000L),
@@ -77,6 +78,7 @@ class RoleProofVerifierInstrumentedTest {
     }
 
     private companion object {
+        private const val TEST_DEVICE_ID = "cc-0123456789abcdef01234567"
         private const val TEST_NONCE = "nonce-1"
     }
 }

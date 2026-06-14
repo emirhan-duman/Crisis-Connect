@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.SettingsSuggest
@@ -50,6 +51,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -254,9 +256,15 @@ fun SettingsScreen(navController: NavController) {
 
                 val english = stringResource(R.string.english)
                 val turkish = stringResource(R.string.turkish)
+                val japanese = stringResource(R.string.japanese)
+                val spanish = stringResource(R.string.spanish)
+                val hindi = stringResource(R.string.hindi)
                 val languages = listOf(
                     "en" to english,
                     "tr" to turkish,
+                    "ja" to japanese,
+                    "es" to spanish,
+                    "hi" to hindi,
                 )
                 val selectedCode = viewModel.selectedCode
                 val selectedLabel = languages.firstOrNull { it.first == selectedCode }?.second ?: english
@@ -449,7 +457,11 @@ fun SettingsScreen(navController: NavController) {
                                 SegmentedButton(
                                     modifier = Modifier.weight(1f),
                                     shape = SegmentedButtonDefaults.itemShape(index, themeOptions.size),
-                                    onClick = { viewModel.updateTheme(option) },
+                                    onClick = {
+                                        viewModel.updateTheme(option) {
+                                            (context as? Activity)?.recreate()
+                                        }
+                                    },
                                     selected = viewModel.themeOption == option,
                                     icon = {
                                         Icon(
@@ -521,6 +533,16 @@ fun SettingsScreen(navController: NavController) {
                     }
                 }
 
+                if (viewModel.isDeveloperOptionsAvailable) {
+                    Spacer(modifier = Modifier.height(24.dp))
+                    DeveloperDebugSection(
+                        screenshotDemoMode = viewModel.screenshotDemoMode,
+                        onScreenshotDemoModeChange = { enabled ->
+                            viewModel.updateScreenshotDemoMode(enabled)
+                        }
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
@@ -532,6 +554,73 @@ fun SettingsScreen(navController: NavController) {
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Debug-only UI block. Only composed when [SettingsViewModel.isDeveloperOptionsAvailable]
+ * is true, which itself is gated on `BuildConfig.DEBUG`, so none of this ever ships
+ * in a release build.
+ *
+ * Strings are hardcoded (not stringResource) on purpose: this surface is for the
+ * developer only and does not need to be localized.
+ */
+@Composable
+private fun DeveloperDebugSection(
+    screenshotDemoMode: Boolean,
+    onScreenshotDemoModeChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = "Developer / Debug",
+            style = MaterialTheme.typography.titleMedium
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Only visible in debug builds.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.BugReport,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Screenshot Demo Mode",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Replaces the chat screen with a scripted messaging scenario and shows the device as connected. Re-open the chat after toggling.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = screenshotDemoMode,
+                    onCheckedChange = onScreenshotDemoModeChange
                 )
             }
         }
@@ -789,6 +878,10 @@ private fun settingsPermissionRequirements(): List<SettingsPermissionRequirement
         )
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        requirements += SettingsPermissionRequirement(
+            labelRes = R.string.permission_group_nearby_wifi,
+            permissions = listOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+        )
         requirements += SettingsPermissionRequirement(
             labelRes = R.string.permission_group_notifications,
             permissions = listOf(Manifest.permission.POST_NOTIFICATIONS)

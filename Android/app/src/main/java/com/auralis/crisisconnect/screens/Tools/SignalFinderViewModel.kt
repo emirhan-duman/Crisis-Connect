@@ -127,30 +127,21 @@ class SignalFinderViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private fun hasRequiredPermissions(): Boolean {
-        val fine = ContextCompat.checkSelfPermission(
+        return ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
-        val coarse = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        val nearbyWifiGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.NEARBY_WIFI_DEVICES
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
-        return (fine || coarse) && nearbyWifiGranted
     }
 
     @SuppressLint("MissingPermission")
     private fun loadCellSignals() {
         val info = runCatching { telephonyManager?.allCellInfo.orEmpty() }
             .getOrElse {
-                _errorMessage.value = R.string.signal_finder_error_telephony
+                _errorMessage.value = if (it is SecurityException) {
+                    R.string.signal_finder_permission_required
+                } else {
+                    R.string.signal_finder_error_telephony
+                }
                 emptyList()
             }
         if (info.isEmpty()) {
@@ -168,8 +159,16 @@ class SignalFinderViewModel(application: Application) : AndroidViewModel(applica
             _wifi.value = emptyList()
             return
         }
-        manager.startScan()
-        val results = manager.scanResults.orEmpty()
+        val results = runCatching {
+            manager.startScan()
+            manager.scanResults.orEmpty()
+        }.getOrElse {
+            if (it is SecurityException) {
+                _errorMessage.value = R.string.signal_finder_permission_required
+            }
+            _wifi.value = emptyList()
+            return
+        }
         val mapped = results.map {
             WifiSignal(
                 ssid = if (it.SSID.isNullOrBlank()) context.getString(R.string.signal_unknown_ssid) else it.SSID,

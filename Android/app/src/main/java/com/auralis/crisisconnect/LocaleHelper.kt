@@ -15,6 +15,9 @@ private const val KEY_LANGUAGE = "language"
 private val LANGUAGE_KEY = stringPreferencesKey(KEY_LANGUAGE)
 private const val LANGUAGE_EN = "en"
 private const val LANGUAGE_TR = "tr"
+private const val LANGUAGE_JA = "ja"
+private const val LANGUAGE_ES = "es"
+private const val LANGUAGE_HI = "hi"
 private const val SYNC_PREFS_NAME = "language_sync_prefs"
 private const val SYNC_KEY_LANGUAGE = "language"
 
@@ -57,6 +60,9 @@ fun setLocale(context: Context, languageCode: String, shouldRecreate: Boolean = 
     val normalizedCode = normalizeLanguageCode(languageCode)
     val locale = when (normalizedCode) {
         LANGUAGE_TR -> Locale("tr", "TR")
+        LANGUAGE_JA -> Locale("ja", "JP")
+        LANGUAGE_ES -> Locale("es", "ES")
+        LANGUAGE_HI -> Locale("hi", "IN")
         else -> Locale("en", "US")
     }
     Locale.setDefault(locale)
@@ -77,6 +83,9 @@ private fun normalizeLanguageCode(languageCode: String): String {
     val normalized = languageCode.trim().replace('_', '-').lowercase(Locale.US)
     return when {
         normalized.startsWith(LANGUAGE_TR) -> LANGUAGE_TR
+        normalized.startsWith(LANGUAGE_JA) -> LANGUAGE_JA
+        normalized.startsWith(LANGUAGE_ES) -> LANGUAGE_ES
+        normalized.startsWith(LANGUAGE_HI) -> LANGUAGE_HI
         else -> LANGUAGE_EN
     }
 }

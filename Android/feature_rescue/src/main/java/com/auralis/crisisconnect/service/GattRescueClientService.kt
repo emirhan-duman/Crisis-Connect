@@ -38,6 +38,7 @@ import com.auralis.crisisconnect.data.voiceMessageFile
 import com.auralis.crisisconnect.data.voiceMessageFileName
 import com.auralis.crisisconnect.service.BleMessageNotifier
 import com.auralis.crisisconnect.service.client.BleClientManager
+import com.auralis.crisisconnect.service.client.RescueClientManagerProvider
 import com.auralis.crisisconnect.service.media.ImageTransferDirection
 import com.auralis.crisisconnect.service.media.ImageTransferState
 import com.auralis.crisisconnect.service.p2p.P2pBleProtocol
@@ -346,8 +347,8 @@ class GattRescueClientService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    inner class LocalBinder : Binder() {
-        fun getManager(): BleClientManager = manager
+    inner class LocalBinder : Binder(), RescueClientManagerProvider {
+        override fun getManager(): BleClientManager = manager
     }
 
     private fun scheduleIdleDisconnect() {

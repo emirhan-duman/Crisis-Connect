@@ -1,10 +1,7 @@
 package com.auralis.crisisconnect
 
-import android.app.UiModeManager
 import android.content.Context
 import android.content.res.Configuration
-import android.os.Build
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
@@ -60,28 +57,6 @@ suspend fun saveThemeOption(context: Context, option: ThemeOption) {
         prefs[THEME_KEY] = option.value
     }
     cacheThemeOptionSync(context, option)
-    applyThemeOption(context, option)
-}
-
-fun applyThemeOption(context: Context, option: ThemeOption) {
-    AppCompatDelegate.setDefaultNightMode(
-        when (option) {
-            ThemeOption.DARK -> AppCompatDelegate.MODE_NIGHT_YES
-            ThemeOption.LIGHT -> AppCompatDelegate.MODE_NIGHT_NO
-            ThemeOption.SYSTEM -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
-        }
-    )
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val uiModeManager = context.getSystemService(UiModeManager::class.java)
-        uiModeManager?.setApplicationNightMode(
-            when (option) {
-                ThemeOption.DARK -> UiModeManager.MODE_NIGHT_YES
-                ThemeOption.LIGHT -> UiModeManager.MODE_NIGHT_NO
-                ThemeOption.SYSTEM -> UiModeManager.MODE_NIGHT_AUTO
-            }
-        )
-    }
 }
 
 private fun getCurrentDeviceThemeOption(context: Context): ThemeOption {

@@ -27,6 +27,12 @@
             android:foregroundServiceType="dataSync|connectedDevice"
             android:stopWithTask="false" />
         <service
+            android:name="com.auralis.crisisconnect.service.mesh.AuthorityMeshForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="false" />
+        <service
             android:name="com.auralis.crisisconnect.service.CrisisLinkForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync|location" />
