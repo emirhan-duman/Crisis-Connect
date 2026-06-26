@@ -194,7 +194,7 @@ Beyond communication, the app includes tools designed for disaster scenarios:
 | **Metal Detector** | Uses the device magnetometer to detect metallic objects. Visual and audio feedback with adjustable sensitivity. | Android + iOS |
 | **Emergency Whistle** | Generates high-volume acoustic signals at configurable frequencies. Louder and more sustained than a physical whistle. | Android + iOS |
 | **Sensor Dashboard** | Real-time readouts from all device sensors: accelerometer, gyroscope, magnetometer, barometer, ambient light. | Android + iOS |
-| **Survival Guide** | Step-by-step emergency checklists for earthquakes, floods, fires, and other scenarios. Available offline in English and Turkish. | Android + iOS |
+| **Survival Guide** | Step-by-step emergency checklists for earthquakes, floods, fires, and other scenarios. Available offline in English, Turkish, Spanish, Japanese and Hindi. | Android + iOS |
 | **LiDAR Scanner** | Uses LiDAR depth sensor for obstacle awareness in dark, smoky, or low-visibility environments. | iOS (LiDAR devices) |
 | **Night Vision** | Camera-assisted obstacle detection for low-light conditions using LiDAR point cloud. | iOS (LiDAR devices) |
 
@@ -596,6 +596,9 @@ Crisis Connect is currently available in:
 |:--|:--|
 | **English** | Full (UI + Survival Guide) |
 | **Turkish** | Full (UI + Survival Guide) |
+| **Spanish** | Full (UI + Survival Guide) |
+| **Japanese** | Full (UI + Survival Guide) |
+| **Hindi** | Full (UI + Survival Guide) |
 
 We welcome contributions for additional languages. See [Contributing](#contributing) for details.
 
@@ -660,7 +663,7 @@ Crisis Connect is in production on both app stores and under active development.
 - [x] Firebase App Check with Play Integrity and App Attest
 - [x] Firestore security rules with agency-scoped access control
 - [x] Google Sign-In authentication
-- [x] Localization: English and Turkish
+- [x] Localization: English, Turkish, Spanish, Japanese, Hindi
 - [x] 213 automated tests (194 unit + 19 instrumented)
 - [x] GitHub Actions CI for Android
 - [x] Xcode Cloud CI for iOS
