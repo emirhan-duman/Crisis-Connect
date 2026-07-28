@@ -24,8 +24,8 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-8b0000.svg" alt="License" /></a>&nbsp;
   <img src="https://img.shields.io/badge/platforms-Android%20%7C%20iOS-blue" alt="Platforms" />&nbsp;
   <img src="https://img.shields.io/badge/version-1.1.8-green" alt="Version" />&nbsp;
-  <img src="https://img.shields.io/badge/kotlin-166k%20LOC-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />&nbsp;
-  <img src="https://img.shields.io/badge/swift-96k%20LOC-F05138?logo=swift&logoColor=white" alt="Swift" />&nbsp;
+  <img src="https://img.shields.io/badge/kotlin-149k%20LOC-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />&nbsp;
+  <img src="https://img.shields.io/badge/swift-82k%20LOC-F05138?logo=swift&logoColor=white" alt="Swift" />&nbsp;
   <img src="https://img.shields.io/badge/tests-534-brightgreen" alt="Tests" />&nbsp;
   <img src="https://img.shields.io/badge/languages-19-orange" alt="Languages" />
 </p>
@@ -80,6 +80,7 @@
 - [Getting Started](#getting-started)
   - [Download the App](#download-the-app)
   - [Build From Source](#build-from-source)
+- [Codebase](#codebase)
 - [Testing](#testing)
 - [Privacy](#privacy)
 - [Permissions](#permissions)
@@ -600,6 +601,23 @@ After deployment, configure **App Check** in the Firebase Console:
 - Android: Enable Play Integrity provider
 - iOS: Enable App Attest provider
 
+## Codebase
+
+Measured with [tokei](https://github.com/XAMPPRocky/tokei), excluding the vendored
+`iOS/Packages` sources:
+
+| Language | Files | Code | Comments | Blank |
+|:--|--:|--:|--:|--:|
+| Kotlin | 468 | 149,255 | 6,695 | 10,825 |
+| Swift | 249 | 81,600 | 5,672 | 8,667 |
+| **Total** | **717** | **230,855** | **12,367** | **19,492** |
+
+```bash
+tokei Android iOS --exclude Packages -t Kotlin,Swift
+```
+
+Android also carries 36,670 lines of XML resources and 5,103 lines of TypeScript Cloud Functions.
+
 ## Testing
 
 The project includes 534 tests across both platforms:
@@ -800,5 +818,5 @@ Crisis Connect vendors [libsignal](https://github.com/signalapp/libsignal) (AGPL
 
 <p align="center">
   <strong>Built for resilience. Designed for crisis. Open for everyone.</strong><br/><br/>
-  <sub>260,000+ lines of code across Android and iOS, 534 tests, 19 languages, 2 platforms, 1 mission:<br/>keeping people connected when it matters most.</sub>
+  <sub>230,000+ lines of code across Android and iOS, 534 tests, 19 languages, 2 platforms, 1 mission:<br/>keeping people connected when it matters most.</sub>
 </p>
