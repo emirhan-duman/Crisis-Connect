@@ -27,6 +27,7 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.text.format.DateUtils
 import android.text.format.DateFormat as AndroidDateFormat
 import android.view.Surface
 import android.view.WindowManager
@@ -153,7 +154,7 @@ import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -206,6 +207,7 @@ import coil.request.ImageRequest
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.getSavedUserName
 import com.auralis.crisisconnect.core.chat.ActiveChatTracker
+import com.auralis.crisisconnect.messaging.clearInternetMessageNotification
 import com.auralis.crisisconnect.core.chat.parseReplyMetadata
 import com.auralis.crisisconnect.core.chat.stripReplyMetadata
 import com.auralis.crisisconnect.data.ChatMessage
@@ -222,6 +224,7 @@ import com.auralis.crisisconnect.service.media.ImageTransferState
 import com.auralis.crisisconnect.service.voice.VoiceTransferDirection
 import com.auralis.crisisconnect.service.voice.VoiceTransferProgress
 import com.auralis.crisisconnect.service.voice.VoiceTransferState
+import com.auralis.crisisconnect.messaging.call.InternetCallManager
 import com.auralis.crisisconnect.service.CallAudioRoute
 import com.auralis.crisisconnect.service.RfcommForegroundService.CallDirection
 import com.auralis.crisisconnect.service.RfcommForegroundService.CallEvent
@@ -237,6 +240,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import com.auralis.crisisconnect.service.sos.SosEmergencyContactsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -280,8 +284,13 @@ fun ChatScreen(
     animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
     val viewModel: ChatScreenViewModel = viewModel()
+    val notificationContext = LocalContext.current.applicationContext
     DisposableEffect(sessionCode) {
         ActiveChatTracker.setActiveSession(sessionCode)
+        // Opening the chat consumes its notification: cancel the card AND the stacked MessagingStyle
+        // history, or the next incoming message re-posts up to six already-read messages inside a
+        // newly alerting card.
+        clearInternetMessageNotification(notificationContext, sessionCode)
         onDispose { ActiveChatTracker.clearSession(sessionCode) }
     }
     val listState = rememberLazyListState()
@@ -303,10 +312,20 @@ fun ChatScreen(
         SimpleDateFormat(pattern, locale)
     }
     val context = LocalContext.current
-    val localUserName by getSavedUserName(context).collectAsState(initial = "")
+    val localUserName by getSavedUserName(context).collectAsStateWithLifecycle(initialValue = "")
+    // One-time offer to save a freshly added contact (QR, directory, or someone who added us) as
+    // an SOS emergency contact. The store gates it to new conversations, so old threads never ask.
+    val sosPromptScope = rememberCoroutineScope()
+    var showSosContactPrompt by remember(sessionCode) { mutableStateOf(false) }
+    LaunchedEffect(sessionCode) {
+        showSosContactPrompt = withContext(Dispatchers.IO) {
+            runCatching { SosEmergencyContactsStore.shouldPromptFor(context, sessionCode) }
+                .getOrDefault(false)
+        }
+    }
     val localProfileBitmap = remember(context) { ProfileImageStorage.loadProfileImage(context) }
     val contactAvatarVersion by ContactAvatarStorage.observeAvatarVersion(sessionCode)
-        .collectAsState(initial = 0L)
+        .collectAsStateWithLifecycle(initialValue = 0L)
     val remoteProfileBitmap by produceState<Bitmap?>(
         initialValue = null,
         key1 = sessionCode,
@@ -317,7 +336,7 @@ fun ChatScreen(
         }
     }
     val timelineListOffset = 1
-    val contactName by viewModel.contactName.collectAsState()
+    val contactName by viewModel.contactName.collectAsStateWithLifecycle()
     val displayName = remember(contactName, preferredDisplayName, sessionCode) {
         resolveChatDisplayName(
             context = context,
@@ -326,8 +345,50 @@ fun ChatScreen(
             preferredDisplayName = preferredDisplayName
         )
     }
-    val messages by viewModel.messages.collectAsState()
-    val timelineItems by viewModel.timelineItems.collectAsState()
+    if (showSosContactPrompt) {
+        AlertDialog(
+            onDismissRequest = {
+                showSosContactPrompt = false
+                sosPromptScope.launch {
+                    runCatching { SosEmergencyContactsStore.markPrompted(context, sessionCode) }
+                }
+            },
+            title = { Text(stringResource(R.string.sos_ec_prompt_title)) },
+            text = { Text(stringResource(R.string.sos_ec_prompt_message, displayName)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSosContactPrompt = false
+                        sosPromptScope.launch {
+                            runCatching {
+                                SosEmergencyContactsStore.addEmergencyContact(context, sessionCode)
+                            }
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.sos_ec_prompt_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showSosContactPrompt = false
+                        sosPromptScope.launch {
+                            runCatching {
+                                SosEmergencyContactsStore.markPrompted(context, sessionCode)
+                            }
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.sos_ec_prompt_decline))
+                }
+            }
+        )
+    }
+    val messages by viewModel.messages.collectAsStateWithLifecycle()
+    val timelineItems by viewModel.timelineItems.collectAsStateWithLifecycle()
+    val isPeerTyping by viewModel.isPeerTyping.collectAsStateWithLifecycle()
+    val peerPresence by viewModel.peerPresence.collectAsStateWithLifecycle()
     val hasSharedLocationMessages = remember(timelineItems) {
         timelineItems.any { item ->
             val message = (item as? ChatTimelineItem.Msg)?.message ?: return@any false
@@ -346,29 +407,38 @@ fun ChatScreen(
             }
             .firstOrNull()
     }
-    val connectionState by viewModel.connectionState.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
+    // Broad-scope consumers only need the Connected/not-Connected boolean; derivedStateOf keeps
+    // Connecting↔Disconnected reconnect churn from invalidating them.
+    val isBluetoothConnected by remember { derivedStateOf { connectionState == ChatConnectionState.Connected } }
+    val transport by viewModel.transport.collectAsStateWithLifecycle()
+    val contactPhotoUrl by viewModel.contactPhotoUrl.collectAsStateWithLifecycle()
     val ownLocationSnapshot = rememberOwnLocationSnapshot(
         enabled = hasSharedLocationMessages && hasLocationPermission(context),
-        liveTracking = connectionState == ChatConnectionState.Connected
+        liveTracking = isBluetoothConnected
     )
-    val signalInfo by viewModel.signalInfo.collectAsState()
-    val signalPermissionMissing by viewModel.signalPermissionMissing.collectAsState()
-    val isBleFallbackActive by viewModel.isBleFallbackActive.collectAsState()
-    val canSendVoiceMessages by viewModel.canSendVoiceMessages.collectAsState()
-    val canSendAttachments by viewModel.canSendAttachments.collectAsState()
-    val canShareLocation by viewModel.canShareLocation.collectAsState()
-    val canPlaceCall by viewModel.canPlaceCall.collectAsState()
-    val showCallAction by viewModel.showCallAction.collectAsState()
-    val errorMessage by viewModel.errorMessage.collectAsState()
-    val isRecording by viewModel.isRecording.collectAsState()
-    val recordingFilePath by viewModel.recordingFilePath.collectAsState()
-    val recordingDuration by viewModel.recordingDuration.collectAsState()
-    val voiceTransfers by viewModel.voiceTransfers.collectAsState()
-    val imageTransfers by viewModel.imageTransfers.collectAsState()
-    val isSendingVoice by viewModel.isSendingVoice.collectAsState()
-    val isSendingImage by viewModel.isSendingImage.collectAsState()
-    val isSendingDocument by viewModel.isSendingDocument.collectAsState()
-    val activeCall by viewModel.activeCall.collectAsState()
+    val signalInfo by viewModel.signalInfo.collectAsStateWithLifecycle()
+    // Stable deferred-read provider: bubbles take a lambda instead of the value, so an RSSI hit no
+    // longer invalidates every visible bubble — only the spots that actually call this.
+    val signalInfoProvider = remember { { signalInfo } }
+    val signalPermissionMissing by viewModel.signalPermissionMissing.collectAsStateWithLifecycle()
+    val isBleFallbackActive by viewModel.isBleFallbackActive.collectAsStateWithLifecycle()
+    val canSendVoiceMessages by viewModel.canSendVoiceMessages.collectAsStateWithLifecycle()
+    val canSendAttachments by viewModel.canSendAttachments.collectAsStateWithLifecycle()
+    val canShareLocation by viewModel.canShareLocation.collectAsStateWithLifecycle()
+    val canPlaceCall by viewModel.canPlaceCall.collectAsStateWithLifecycle()
+    val showCallAction by viewModel.showCallAction.collectAsStateWithLifecycle()
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
+    val recordingFilePath by viewModel.recordingFilePath.collectAsStateWithLifecycle()
+    val recordingDuration by viewModel.recordingDuration.collectAsStateWithLifecycle()
+    val voiceTransfers by viewModel.voiceTransfers.collectAsStateWithLifecycle()
+    val imageTransfers by viewModel.imageTransfers.collectAsStateWithLifecycle()
+    val isSendingVoice by viewModel.isSendingVoice.collectAsStateWithLifecycle()
+    val isSendingImage by viewModel.isSendingImage.collectAsStateWithLifecycle()
+    val isSendingDocument by viewModel.isSendingDocument.collectAsStateWithLifecycle()
+    val activeCall by viewModel.activeCall.collectAsStateWithLifecycle()
+    val internetCall by viewModel.internetCall.collectAsStateWithLifecycle()
     var isCallScreenVisible by rememberSaveable { mutableStateOf(false) }
     var messageDraft by rememberSaveable { mutableStateOf("") }
     var showAttachmentMenu by rememberSaveable { mutableStateOf(false) }
@@ -717,26 +787,23 @@ fun ChatScreen(
             }
         }
     }
-    val hasRecordedVoice = !recordingFilePath.isNullOrEmpty()
-    LaunchedEffect(
-        isRecording,
-        hasRecordedVoice,
-        isSendingVoice,
-        pendingImage,
-        isSendingImage,
-        isSharingLocation,
-        isSendingDocument
-    ) {
-        if (
+    val hasRecordedVoice by remember { derivedStateOf { !recordingFilePath.isNullOrEmpty() } }
+    // snapshotFlow instead of effect keys: the flags were read at screen-root purely to close the
+    // attachment menu, so every toggle recomposed the whole screen. snapshotFlow reads happen
+    // outside composition.
+    LaunchedEffect(Unit) {
+        snapshotFlow {
             isRecording ||
-            hasRecordedVoice ||
-            isSendingVoice ||
-            pendingImage != null ||
-            isSendingImage ||
-            isSharingLocation ||
-            isSendingDocument
-        ) {
-            showAttachmentMenu = false
+                hasRecordedVoice ||
+                isSendingVoice ||
+                pendingImage != null ||
+                isSendingImage ||
+                isSharingLocation ||
+                isSendingDocument
+        }.collect { busy ->
+            if (busy) {
+                showAttachmentMenu = false
+            }
         }
     }
     val startVoiceRecording: () -> Unit = {
@@ -959,6 +1026,7 @@ fun ChatScreen(
                                     displayName = displayName,
                                     stableKey = sessionCode,
                                     bitmap = remoteProfileBitmap,
+                                    photoUrl = contactPhotoUrl,
                                     modifier = Modifier.size(40.dp),
                                     textStyle = MaterialTheme.typography.titleMedium
                                 )
@@ -972,7 +1040,59 @@ fun ChatScreen(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = titleSharedModifier
                                     )
-                                    ConnectionStatusBadge(connectionState)
+                                    // Transport badge + presence side by side: the badge shows its
+                                    // full label for a moment after every (state, transport) change,
+                                    // then collapses to just the icon so "çevrimiçi / son görülme"
+                                    // has room next to it.
+                                    var badgeCompact by remember { mutableStateOf(false) }
+                                    LaunchedEffect(connectionState, transport) {
+                                        badgeCompact = false
+                                        if (connectionState == ChatConnectionState.Connected) {
+                                            delay(2_500)
+                                            badgeCompact = true
+                                        }
+                                    }
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        ConnectionStatusBadge(
+                                            connectionState,
+                                            transport,
+                                            compact = badgeCompact
+                                        )
+                                        when {
+                                            isPeerTyping -> Text(
+                                                text = stringResource(R.string.chat_typing),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                maxLines = 1
+                                            )
+                                            peerPresence.online -> Text(
+                                                text = stringResource(R.string.chat_presence_online),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                maxLines = 1
+                                            )
+                                            peerPresence.lastSeenMillis != null -> Text(
+                                                text = stringResource(
+                                                    R.string.chat_presence_last_seen,
+                                                    DateUtils.getRelativeTimeSpanString(
+                                                        peerPresence.lastSeenMillis ?: 0L
+                                                    ).toString()
+                                                ),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                // The TIME is the payload and it sits at the END of
+                                                // "son görülme <time>" — when space is tight (badge
+                                                // expanded), drop the label from the START and keep
+                                                // the time visible (WhatsApp behavior).
+                                                overflow = TextOverflow.StartEllipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -982,9 +1102,12 @@ fun ChatScreen(
                             }
                         },
                         actions = {
-                            val isConnected = connectionState == ChatConnectionState.Connected
                             val hasActiveCall = activeCall?.let { call ->
                                 call.state != CallState.Idle && call.state != CallState.Ended
+                            } == true
+                            val hasActiveInternetCall = internetCall?.let { call ->
+                                call.state != InternetCallManager.State.ENDED &&
+                                    call.state != InternetCallManager.State.IDLE
                             } == true
                             val phoneIconTint = if (canPlaceCall) {
                                 MaterialTheme.colorScheme.onSurface
@@ -992,7 +1115,7 @@ fun ChatScreen(
                                 MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                             }
 
-                            if (!hasActiveCall && showCallAction) {
+                            if (!hasActiveCall && !hasActiveInternetCall && showCallAction) {
                                 IconButton(
                                     onClick = {
                                         ensureMicrophonePermission {
@@ -1078,7 +1201,10 @@ fun ChatScreen(
                 ) {
                     MessageComposer(
                         value = messageDraft,
-                        onValueChange = { messageDraft = it },
+                        onValueChange = {
+                            messageDraft = it
+                            viewModel.onComposerTyping(it)
+                        },
                         onInputFocusChanged = { isFocused ->
                             isComposerInputFocused = isFocused
                             if (timelineItems.isNotEmpty()) {
@@ -1125,7 +1251,7 @@ fun ChatScreen(
                         isRecording = isRecording,
                         hasRecordedVoice = hasRecordedVoice,
                         isSendingVoice = isSendingVoice,
-                        recordingDurationMillis = recordingDuration,
+                        recordingDurationMillis = { recordingDuration },
                         canRecordVoice = canSendVoiceMessages,
                         onAttachmentClick = {
                             if (!canOpenAttachmentMenu) {
@@ -1206,6 +1332,7 @@ fun ChatScreen(
                                         MessageType.TEXT -> "msg_text"
                                         MessageType.AUDIO -> "msg_audio"
                                         MessageType.IMAGE -> "msg_image"
+                                        MessageType.SOS_ALERT -> "msg_sos"
                                     }
                                 }
                                 is ChatTimelineItem.Call -> "call_event"
@@ -1225,19 +1352,29 @@ fun ChatScreen(
                         when (item) {
                             is ChatTimelineItem.Msg -> {
                                 val message = item.message
+                                // The transfer maps are rebuilt as new instances on every progress
+                                // chunk; reading them raw here recomposed every visible bubble per
+                                // tick. derivedStateOf only invalidates this bubble when ITS entry
+                                // actually changes.
+                                val voiceProgress by remember(message.messageUuid) {
+                                    derivedStateOf { voiceTransfers[message.messageUuid] }
+                                }
+                                val imageProgress by remember(message.messageUuid) {
+                                    derivedStateOf { imageTransfers[message.messageUuid] }
+                                }
                                 ChatBubble(
                                     message = message,
                                     messageFormatter = messageFormatter,
-                                    voiceProgress = voiceTransfers[message.messageUuid],
-                                    imageProgress = imageTransfers[message.messageUuid],
+                                    voiceProgress = voiceProgress,
+                                    imageProgress = imageProgress,
                                     onImageClick = { uri -> fullScreenImageUri = uri },
                                     onReply = { replyTarget = it },
                                     onInfoRequested = { selected ->
                                         infoTargetMessageUuid = selected.messageUuid
                                     },
                                     onReplyNavigate = navigateToMessage,
-                                    isBluetoothConnected = connectionState == ChatConnectionState.Connected,
-                                    bluetoothSignalInfo = signalInfo,
+                                    isBluetoothConnected = isBluetoothConnected,
+                                    bluetoothSignalInfo = signalInfoProvider,
                                     signalPermissionMissing = signalPermissionMissing,
                                     conversationDisplayName = displayName,
                                     conversationStableKey = sessionCode,
@@ -1256,6 +1393,11 @@ fun ChatScreen(
                                     messageFormatter = messageFormatter
                                 )
                             }
+                        }
+                    }
+                    if (isPeerTyping) {
+                        item(key = "typing_indicator", contentType = "typing_indicator") {
+                            TypingIndicatorBubble()
                         }
                     }
                 }
@@ -1383,4 +1525,8 @@ fun ChatScreen(
             )
         }
     }
+
+    // The internet (WebRTC) call UI is rendered app-wide by MainActivity.GlobalInternetCallOverlayHost
+    // (so a call rings from any screen); here we only use `internetCall` to hide the start-call button
+    // while a call is in progress.
 }

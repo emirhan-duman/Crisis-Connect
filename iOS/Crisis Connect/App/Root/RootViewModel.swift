@@ -8,6 +8,7 @@
 import SwiftUI
 import Combine
 
+@MainActor
 final class RootViewModel: ObservableObject {
     @Published var showSplash: Bool = true
     private var hasStarted: Bool = false
@@ -15,11 +16,9 @@ final class RootViewModel: ObservableObject {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
-        Task {
+        Task { @MainActor in
             try? await Task.sleep(nanoseconds: 900_000_000) // 0.9s
-            await MainActor.run {
-                withAnimation(.easeOut(duration: 0.28)) { self.showSplash = false }
-            }
+            withAnimation(.easeOut(duration: 0.28)) { self.showSplash = false }
         }
     }
 }

@@ -40,6 +40,13 @@ struct NotificationsView: View {
                 }
                 .listRowBackground(Color.appRowBackground)
 
+                // Chat content has its own switch: it used to ride the contact-updates kind, so
+                // turning "contact updates" off silently silenced every 1:1 message in the app.
+                Toggle(isOn: $viewModel.chatMessagesEnabled) {
+                    Text(LocalizedStringKey("NOTIFICATIONS_ALERT_MESSAGES"))
+                }
+                .listRowBackground(Color.appRowBackground)
+
                 Toggle(isOn: $viewModel.contactUpdatesEnabled) {
                     Text(LocalizedStringKey("NOTIFICATIONS_ALERT_CONTACTS"))
                 }

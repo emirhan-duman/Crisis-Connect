@@ -9,7 +9,7 @@ import com.auralis.crisisconnect.ui.theme.MidnightBlue
 import com.auralis.crisisconnect.ui.theme.OutgoingBubbleGrayLight
 
 @Composable
-internal fun incomingChatBubbleColors(): Pair<Color, Color> {
+fun incomingChatBubbleColors(): Pair<Color, Color> {
     val colorScheme = MaterialTheme.colorScheme
     return if (colorScheme.surface.luminance() > 0.5f) {
         IncomingBubbleBlueLight to MidnightBlue

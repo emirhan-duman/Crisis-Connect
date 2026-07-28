@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.auralis.crisisconnect.feature.rescue"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 24
@@ -50,10 +50,11 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.compose.animation)
     implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material:material-icons-extended:1.5.4")
-    implementation("androidx.navigation:navigation-compose:2.8.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.1")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.1")
+    // icons-extended's last release is 1.7.8 (data-only ImageVectors, works with any newer Compose)
+    implementation("androidx.compose.material:material-icons-extended:1.7.8")
+    implementation("androidx.navigation:navigation-compose:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("androidx.datastore:datastore-preferences:1.0.0")
     implementation(platform("com.google.firebase:firebase-bom:34.5.0"))
     implementation("com.google.firebase:firebase-auth-ktx:23.1.0")

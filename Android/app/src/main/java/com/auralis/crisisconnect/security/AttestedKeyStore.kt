@@ -24,8 +24,6 @@ object AttestedKeyStore {
 
     private const val TAG = "AttestedKeyStore"
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-    private const val STRONG_BOX_UNAVAILABLE_EXCEPTION_CLASS =
-        "android.security.keystore.StrongBoxUnavailableException"
     const val ATTESTED_SIGNING_KEY_ALIAS = "dcs_attested_signing_key"
 
     data class AttestedKeyMaterial(
@@ -71,9 +69,7 @@ object AttestedKeyStore {
                 requireUnlockedDevice = requireUnlockedDevice,
             )
         } catch (error: Exception) {
-            if (!strongBoxAvailable || !error.isStrongBoxUnavailable()) {
-                throw error
-            }
+            if (!strongBoxAvailable) throw error
             Log.w(TAG, "StrongBox unavailable for $alias; falling back to TEE", error)
             securityHint = SecurityHint.TEE_BACKED
             generateKeyPair(
@@ -93,10 +89,6 @@ object AttestedKeyStore {
             securityHint = securityHint,
         )
     }
-
-    private fun Throwable.isStrongBoxUnavailable(): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
-            javaClass.name == STRONG_BOX_UNAVAILABLE_EXCEPTION_CLASS
 
     fun loadExistingAttestedKey(alias: String = ATTESTED_SIGNING_KEY_ALIAS): KeyPair? {
         return runCatching {

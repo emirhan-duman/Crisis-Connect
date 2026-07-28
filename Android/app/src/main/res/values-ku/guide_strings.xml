@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Rêbera Awarte</string>
+    <string name="guide_screen_intro_subtitle">Bi lez bigihîje agahiya krîtîk û di bin zextê de kirinên kurt bişopîne.</string>
+    <string name="guide_screen_filter_all">Hemû kategorî</string>
+    <string name="guide_screen_section_30_seconds">Di 30 çirkeyan de</string>
+    <string name="guide_screen_section_step_by_step">Gav bi gav</string>
+    <string name="guide_screen_section_dont">Neke</string>
+    <string name="guide_screen_section_checklist">Lîsteya kontrolê</string>
+    <string name="guide_screen_expand_details">Hûrguliyan nîşan bide</string>
+    <string name="guide_screen_collapse_details">Hûrguliyan veşêre</string>
+    <string name="guide_screen_action_start_checklist">Lîsteya kontrolê dest pê bike</string>
+    <string name="guide_screen_action_call_local">Bang bike %1$s</string>
+    <string name="guide_screen_action_open_assembly">Qada kombûnê veke</string>
+    <string name="guide_screen_source_note">Nota çavkaniyê:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d qediya</string>
+    <string name="guide_screen_no_dial_app_with_number">Ji bo bangkirina %1$s tu sepan nehat dîtin.</string>
+    <string name="guide_screen_no_map_app">Ji bo vekirina nexşeyan tu sepan nehat dîtin.</string>
+    <string name="guide_screen_assembly_query">Qada kombûnê ya karesatê</string>
+    <string name="guide_screen_search_placeholder">Li gorî kod, kategorî an mijarê bigere</string>
+    <string name="guide_screen_clear_search">Lêgerînê paqij bike</string>
+    <string name="guide_screen_clear_filters">Parzûnan paqij bike</string>
+    <string name="guide_screen_empty_title">Tu rêber nehat dîtin</string>
+    <string name="guide_screen_empty_body">Parzûnan kêm bike an bi peyveke berfirehtir bigere.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d kirinên bilez ên din</string>
+    <string name="guide_screen_region_value">Herêm: %1$s • Hejmara awarte: %2$s</string>
+    <string name="guide_screen_results_count">%1$d rêber hatin rêzkirin</string>
+    <string name="guide_screen_read_minutes_format">%1$d deq</string>
+</resources>

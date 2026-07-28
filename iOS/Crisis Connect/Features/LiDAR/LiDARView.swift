@@ -7,37 +7,19 @@
 
 import SwiftUI
 import ARKit
-import SceneKit
+import MetalKit
 import UIKit
 
 private enum LiDARNightStyle {
     static let accent = Color(red: 0.32, green: 1.0, blue: 0.52)
     static let accentSoft = Color(red: 0.12, green: 0.55, blue: 0.3)
-    static let hudBorder = Color(red: 0.22, green: 0.75, blue: 0.45).opacity(0.55)
 
     static func tint(for alertState: LiDARAlertState) -> Color {
         switch alertState {
-        case .clear:
-            return accent
-        case .caution:
-            return .yellow
-        case .danger:
-            return .red
-        case .signalLost:
-            return .orange
-        }
-    }
-
-    static func tint(for guidance: LiDARGuidanceState) -> Color {
-        switch guidance {
-        case .moveForward:
-            return accent
-        case .moveLeft, .moveRight:
-            return .yellow
-        case .stop:
-            return .red
-        case .scanSlowly:
-            return .orange
+        case .clear: return accent
+        case .caution: return .yellow
+        case .danger: return .red
+        case .signalLost: return .orange
         }
     }
 }
@@ -53,20 +35,29 @@ struct LiDARView: View {
                     LiDARCameraView(viewModel: viewModel)
                         .ignoresSafeArea()
 
-                    LiDARDepthLayer(
-                        viewModel: viewModel,
-                        depthImage: viewModel.depthImage,
-                        normalizedDisplayTransform: viewModel.depthDisplayTransform
-                    )
+                    LiDARViewportObserver(viewModel: viewModel)
 
                     LiDARTargetFrame(
                         detectionRegion: viewModel.detectionRegion,
-                        tint: frameTint
+                        tint: LiDARNightStyle.tint(for: viewModel.alertState)
                     )
+
+                    if viewModel.alertState == .danger {
+                        Rectangle()
+                            .strokeBorder(Color.red.opacity(0.88), lineWidth: 4)
+                            .ignoresSafeArea()
+                            .allowsHitTesting(false)
+                    }
 
                     VStack(spacing: 0) {
                         HStack(spacing: 12) {
-                            LiDARStatusPill(statusKey: viewModel.statusKey, isRunning: viewModel.isRunning)
+                            if let status = topStatus {
+                                LiDARStatusPill(
+                                    statusKey: status.key,
+                                    tint: status.tint,
+                                    systemImage: status.systemImage
+                                )
+                            }
 
                             Spacer()
 
@@ -94,17 +85,24 @@ struct LiDARView: View {
 
                         Spacer()
 
-                        LiDARBottomHUD(viewModel: viewModel)
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 18)
+                        if viewModel.alertState == .caution || viewModel.alertState == .danger {
+                            LiDARObstacleHUD(viewModel: viewModel)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 18)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     }
                 }
+                .animation(.easeOut(duration: 0.16), value: viewModel.alertState)
             } else {
                 ZStack {
                     AppScreenBackground()
 
                     VStack(spacing: 12) {
-                        ContentUnavailableView(LocalizedStringKey("LIDAR_UNAVAILABLE_TITLE"), systemImage: "xmark.octagon")
+                        ContentUnavailableView(
+                            LocalizedStringKey("LIDAR_UNAVAILABLE_TITLE"),
+                            systemImage: "xmark.octagon"
+                        )
 
                         Text(LocalizedStringKey("LIDAR_UNAVAILABLE_MESSAGE"))
                             .font(.footnote)
@@ -129,51 +127,62 @@ struct LiDARView: View {
         .onDisappear { viewModel.stop() }
     }
 
-    private var frameTint: Color {
-        switch viewModel.alertState {
-        case .clear:
-            return LiDARNightStyle.tint(for: viewModel.guidanceState)
-        default:
-            return LiDARNightStyle.tint(for: viewModel.alertState)
+    private var topStatus: (key: String, tint: Color, systemImage: String)? {
+        if viewModel.isFrozen {
+            return ("LIDAR_FROZEN_WARNING", .yellow, "pause.fill")
         }
+        if viewModel.alertState == .signalLost {
+            return ("LIDAR_ALERT_SIGNAL", .orange, "exclamationmark.triangle.fill")
+        }
+        if viewModel.signalQuality == .weak {
+            return ("LIDAR_SIGNAL_WEAK", .orange, "waveform.path.ecg")
+        }
+        return nil
     }
 }
 
-private struct LiDARDepthLayer: View {
+private struct LiDARCameraView: UIViewRepresentable {
     let viewModel: LiDARViewModel
-    let depthImage: CGImage?
-    let normalizedDisplayTransform: CGAffineTransform
+
+    final class Coordinator {
+        let session = ARSession()
+        var renderer: LiDARMetalRenderer?
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> MTKView {
+        let view = MTKView(frame: .zero)
+        view.backgroundColor = .black
+        if let renderer = LiDARMetalRenderer(view: view) {
+            context.coordinator.renderer = renderer
+            viewModel.attach(renderer: renderer)
+        }
+        viewModel.attach(session: context.coordinator.session)
+        return view
+    }
+
+    func updateUIView(_ uiView: MTKView, context: Context) {}
+}
+
+private struct LiDARViewportObserver: View {
+    let viewModel: LiDARViewModel
     @State private var interfaceOrientation: UIInterfaceOrientation = .portrait
 
     var body: some View {
         GeometryReader { proxy in
-            Group {
-                if let depthImage {
-                    Canvas { context, size in
-                        let viewportTransform = LiDARProcessing.viewportTransform(
-                            from: normalizedDisplayTransform,
-                            in: size
-                        )
-                        context.concatenate(viewportTransform)
-                        context.draw(
-                            Image(decorative: depthImage, scale: 1),
-                            in: CGRect(origin: .zero, size: size)
-                        )
-                    }
-                } else {
-                    Color.black
+            Color.clear
+                .onAppear { updateViewport(size: proxy.size) }
+                .onChange(of: proxy.size) { _, newSize in
+                    updateViewport(size: newSize)
                 }
-            }
-            .ignoresSafeArea()
-            .clipped()
-            .onAppear { updateViewport(size: proxy.size) }
-            .onChange(of: proxy.size) { _, newSize in
-                updateViewport(size: newSize)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-                updateViewport(size: proxy.size)
-            }
+                .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+                    updateViewport(size: proxy.size)
+                }
         }
+        .allowsHitTesting(false)
     }
 
     private func updateViewport(size: CGSize) {
@@ -186,26 +195,8 @@ private struct LiDARDepthLayer: View {
         } else {
             interfaceOrientation = .portrait
         }
-
         viewModel.updateViewport(size: size, interfaceOrientation: interfaceOrientation)
     }
-}
-
-private struct LiDARCameraView: UIViewRepresentable {
-    let viewModel: LiDARViewModel
-
-    func makeUIView(context: Context) -> ARSCNView {
-        let view = ARSCNView(frame: .zero)
-        view.scene = SCNScene()
-        view.automaticallyUpdatesLighting = true
-        view.scene.background.contents = UIColor.black
-        view.isOpaque = true
-        view.session.delegate = viewModel
-        viewModel.attach(session: view.session)
-        return view
-    }
-
-    func updateUIView(_ uiView: ARSCNView, context: Context) {}
 }
 
 private struct LiDARTargetFrame: View {
@@ -223,13 +214,12 @@ private struct LiDARTargetFrame: View {
 
             ZStack {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(tint.opacity(0.2), lineWidth: 1)
+                    .stroke(tint.opacity(0.16), lineWidth: 1)
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
 
                 Path { path in
                     let cornerLength = min(rect.width, rect.height) * 0.12
-
                     path.move(to: CGPoint(x: rect.minX, y: rect.minY + cornerLength))
                     path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
                     path.addLine(to: CGPoint(x: rect.minX + cornerLength, y: rect.minY))
@@ -250,12 +240,6 @@ private struct LiDARTargetFrame: View {
                     tint.opacity(0.95),
                     style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round)
                 )
-
-                Circle()
-                    .fill(tint.opacity(0.75))
-                    .frame(width: 6, height: 6)
-                    .position(x: rect.midX, y: rect.midY)
-                    .shadow(color: tint.opacity(0.45), radius: 8)
             }
             .allowsHitTesting(false)
         }
@@ -264,27 +248,25 @@ private struct LiDARTargetFrame: View {
 
 private struct LiDARStatusPill: View {
     let statusKey: String
-    let isRunning: Bool
+    let tint: Color
+    let systemImage: String
 
     var body: some View {
-        let tint = isRunning ? LiDARNightStyle.accent : LiDARNightStyle.accentSoft
-
         HStack(spacing: 8) {
-            Circle()
-                .fill(tint)
-                .frame(width: 8, height: 8)
+            Image(systemName: systemImage)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(tint)
 
             Text(LocalizedStringKey(statusKey))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.92))
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .frame(minHeight: 44)
         .background(.ultraThinMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .stroke(tint.opacity(0.35), lineWidth: 1)
-        )
+        .overlay(Capsule().stroke(tint.opacity(0.55), lineWidth: 1))
     }
 }
 
@@ -297,138 +279,52 @@ private struct LiDARIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(tint)
-                .frame(width: 42, height: 42)
+                .frame(width: 48, height: 48)
                 .background(.ultraThinMaterial, in: Circle())
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                )
+                .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 1))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityTitle)
     }
 }
 
-private struct LiDARBottomHUD: View {
+private struct LiDARObstacleHUD: View {
     @ObservedObject var viewModel: LiDARViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(LocalizedStringKey("LIDAR_DISTANCE_LABEL"))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(LiDARNightStyle.accentSoft)
+        let isDanger = viewModel.alertState == .danger
+        let tint: Color = isDanger ? .red : .yellow
 
-                    Text(viewModel.distanceText)
-                        .font(.system(size: 30, weight: .bold, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundStyle(LiDARNightStyle.accent)
-                }
+        HStack(spacing: 14) {
+            Image(systemName: isDanger ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 30, weight: .bold))
+                .foregroundStyle(tint)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(LocalizedStringKey(isDanger ? "LIDAR_OBSTACLE_IMMEDIATE" : "LIDAR_OBSTACLE_DETECTED"))
+                    .font(.headline.weight(.heavy))
+                    .foregroundStyle(.white)
+
+                Text(viewModel.distanceText)
+                    .font(.system(size: 27, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(tint)
             }
 
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    LiDARMiniIconStat(
-                        systemImage: guidanceSymbol,
-                        tint: LiDARNightStyle.tint(for: viewModel.guidanceState)
-                    )
-
-                    LiDARMiniStat(
-                        systemImage: "waveform.path.ecg",
-                        value: NSLocalizedString(viewModel.signalQuality.titleKey, comment: ""),
-                        tint: LiDARNightStyle.accent
-                    )
-
-                    LiDARMiniStat(
-                        systemImage: "scope",
-                        value: viewModel.alertDistanceText,
-                        tint: .white.opacity(0.92)
-                    )
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        LiDARMiniIconStat(
-                            systemImage: guidanceSymbol,
-                            tint: LiDARNightStyle.tint(for: viewModel.guidanceState)
-                        )
-
-                        LiDARMiniStat(
-                            systemImage: "waveform.path.ecg",
-                            value: NSLocalizedString(viewModel.signalQuality.titleKey, comment: ""),
-                            tint: LiDARNightStyle.accent
-                        )
-                    }
-
-                    LiDARMiniStat(
-                        systemImage: "scope",
-                        value: viewModel.alertDistanceText,
-                        tint: .white.opacity(0.92)
-                    )
-                }
-            }
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(LiDARNightStyle.hudBorder, lineWidth: 1)
+                .stroke(tint.opacity(0.85), lineWidth: isDanger ? 2 : 1)
         )
-    }
-
-    private var guidanceSymbol: String {
-        switch viewModel.guidanceState {
-        case .moveForward:
-            return "arrow.up"
-        case .moveLeft:
-            return "arrow.turn.up.left"
-        case .moveRight:
-            return "arrow.turn.up.right"
-        case .stop:
-            return "hand.raised.fill"
-        case .scanSlowly:
-            return "viewfinder"
-        }
-    }
-}
-
-private struct LiDARMiniStat: View {
-    let systemImage: String
-    let value: String
-    let tint: Color
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(tint)
-
-            Text(value)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.88))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.black.opacity(0.2), in: Capsule())
-    }
-}
-
-private struct LiDARMiniIconStat: View {
-    let systemImage: String
-    let tint: Color
-
-    var body: some View {
-        Image(systemName: systemImage)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(tint)
-            .frame(width: 32, height: 32)
-            .background(Color.black.opacity(0.2), in: Capsule())
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -451,8 +347,7 @@ private struct LiDARControlsSheet: View {
                     )
                 ) {
                     ForEach(LiDARScanProfile.allCases) { profile in
-                        Text(LocalizedStringKey(profile.titleKey))
-                            .tag(profile.rawValue)
+                        Text(LocalizedStringKey(profile.titleKey)).tag(profile.rawValue)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -469,8 +364,7 @@ private struct LiDARControlsSheet: View {
                     )
                 ) {
                     ForEach(LiDARAlertPreset.allCases) { preset in
-                        Text(LocalizedStringKey(preset.titleKey))
-                            .tag(preset.rawValue)
+                        Text(LocalizedStringKey(preset.titleKey)).tag(preset.rawValue)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -487,16 +381,18 @@ private struct LiDARControlsSheet: View {
                     )
                 )
             } footer: {
-                Text(LocalizedStringKey("LIDAR_HINT"))
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(LocalizedStringKey("LIDAR_HINT"))
+                    Text(LocalizedStringKey("LIDAR_SAFETY_NOTE"))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .navigationTitle(LocalizedStringKey("LIDAR_CONTROLS_LABEL"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("COMMON_CLOSE") {
-                    dismiss()
-                }
+                Button("COMMON_CLOSE") { dismiss() }
             }
         }
     }

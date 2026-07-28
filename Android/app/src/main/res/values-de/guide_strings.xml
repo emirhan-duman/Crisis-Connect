@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Notfallratgeber</string>
+    <string name="guide_screen_intro_subtitle">Erreichen Sie kritische Informationen schnell und führen Sie unter Druck kurze Handlungen aus.</string>
+    <string name="guide_screen_filter_all">Alle Kategorien</string>
+    <string name="guide_screen_section_30_seconds">In 30 Sekunden</string>
+    <string name="guide_screen_section_step_by_step">Schritt für Schritt</string>
+    <string name="guide_screen_section_dont">Nicht tun</string>
+    <string name="guide_screen_section_checklist">Checkliste</string>
+    <string name="guide_screen_expand_details">Details anzeigen</string>
+    <string name="guide_screen_collapse_details">Details ausblenden</string>
+    <string name="guide_screen_action_start_checklist">Checkliste starten</string>
+    <string name="guide_screen_action_call_local">%1$s anrufen</string>
+    <string name="guide_screen_action_open_assembly">Sammelplatz öffnen</string>
+    <string name="guide_screen_source_note">Quellenhinweis:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d abgeschlossen</string>
+    <string name="guide_screen_no_dial_app_with_number">Keine App gefunden, um %1$s anzurufen.</string>
+    <string name="guide_screen_no_map_app">Keine App gefunden, um Karten zu öffnen.</string>
+    <string name="guide_screen_assembly_query">Katastrophen-Sammelplatz</string>
+    <string name="guide_screen_search_placeholder">Nach Code, Kategorie oder Thema suchen</string>
+    <string name="guide_screen_clear_search">Suche löschen</string>
+    <string name="guide_screen_clear_filters">Filter löschen</string>
+    <string name="guide_screen_empty_title">Kein Ratgeber gefunden</string>
+    <string name="guide_screen_empty_body">Versuchen Sie, weniger Filter zu verwenden oder mit einem allgemeineren Stichwort zu suchen.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d weitere Schnellaktionen</string>
+    <string name="guide_screen_region_value">Region: %1$s • Notrufnummer: %2$s</string>
+    <string name="guide_screen_results_count">%1$d Ratgeber aufgeführt</string>
+    <string name="guide_screen_read_minutes_format">%1$d Min</string>
+</resources>

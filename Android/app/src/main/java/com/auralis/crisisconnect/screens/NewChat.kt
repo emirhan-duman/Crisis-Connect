@@ -40,6 +40,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.core.graphics.drawable.toBitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
@@ -74,11 +75,24 @@ import androidx.core.content.ContextCompat
 import com.auralis.crisisconnect.R
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.AlertDialog
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.Groups
+import com.auralis.crisisconnect.security.SecurityRepository
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -95,6 +109,27 @@ fun NewChatScreen(navController: NavController) {
     val context = LocalContext.current
     val viewModel: NewChatViewModel = viewModel()
 
+    // "Add from agency" — shown only when signed in (non-anonymous) AND bound to an agency. The picker
+    // itself is now a dedicated screen (AuthorityContactPickerScreen); here we only resolve the slug to
+    // decide whether to show the button.
+    val agencySlug by produceState<String?>(initialValue = null) {
+        value = withContext(Dispatchers.IO) {
+            val user = FirebaseAuth.getInstance().currentUser?.takeUnless { it.isAnonymous }
+                ?: return@withContext null
+            // The users-doc agencySlug is the authoritative "my agency" and is what the roster must
+            // target: a super-admin's device certificate can be scoped to a broader/parent panel
+            // (e.g. "afad"), and since listAuthorityRoster honours a super-admin's requested slug, a
+            // cert-first resolution would list the WRONG panel's members. Prefer the doc; the cert is
+            // only a last-resort fallback (offline / doc unreadable).
+            val fromDoc = runCatching {
+                FirebaseFirestore.getInstance().document("users/${user.uid}").get().await()
+                    .getString("agencySlug")?.trim()?.takeIf { it.isNotBlank() }
+            }.getOrNull()
+            fromDoc ?: runCatching {
+                SecurityRepository(context).getUsableStoredCertificateAgency()
+            }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
 
     DisposableEffect(lifecycleOwner) {
@@ -133,13 +168,13 @@ fun NewChatScreen(navController: NavController) {
         }
     }
 
-    val permissionGranted by viewModel.permissionGranted.collectAsState()
-    val sessionCode by viewModel.sessionCode.collectAsState()
-    val aesKey by viewModel.aesKey.collectAsState()
-    val userName by viewModel.userName.collectAsState()
-    val isDiscoverable by viewModel.isDiscoverable.collectAsState()
-    val qrShareRequested by viewModel.qrShareRequested.collectAsState()
-    val qrShareId by viewModel.qrShareId.collectAsState()
+    val permissionGranted by viewModel.permissionGranted.collectAsStateWithLifecycle()
+    val sessionCode by viewModel.sessionCode.collectAsStateWithLifecycle()
+    val aesKey by viewModel.aesKey.collectAsStateWithLifecycle()
+    val userName by viewModel.userName.collectAsStateWithLifecycle()
+    val isDiscoverable by viewModel.isDiscoverable.collectAsStateWithLifecycle()
+    val qrShareRequested by viewModel.qrShareRequested.collectAsStateWithLifecycle()
+    val qrShareId by viewModel.qrShareId.collectAsStateWithLifecycle()
     val shouldObscureQr = qrShareRequested && (!isDiscoverable || !permissionGranted)
     val qrBlockReason = when {
         !permissionGranted && bluetoothPermissions.isNotEmpty() ->
@@ -185,11 +220,11 @@ fun NewChatScreen(navController: NavController) {
         launcher.launch(intent)
     }
 
-    val manualMac by viewModel.manualMacAddress.collectAsState()
-    val manualName by viewModel.manualRemoteName.collectAsState()
-    val manualSessionCode by viewModel.manualSessionCode.collectAsState()
-    val manualConnectState by viewModel.manualConnectState.collectAsState()
-    val navigateToMain by viewModel.navigateToMain.collectAsState()
+    val manualMac by viewModel.manualMacAddress.collectAsStateWithLifecycle()
+    val manualName by viewModel.manualRemoteName.collectAsStateWithLifecycle()
+    val manualSessionCode by viewModel.manualSessionCode.collectAsStateWithLifecycle()
+    val manualConnectState by viewModel.manualConnectState.collectAsStateWithLifecycle()
+    val navigateToMain by viewModel.navigateToMain.collectAsStateWithLifecycle()
     var showManualDialog by rememberSaveable { mutableStateOf(false) }
     var showInfo by remember { mutableStateOf(false) }
 
@@ -279,31 +314,52 @@ fun NewChatScreen(navController: NavController) {
         }
     ) { innerPadding ->
         val primaryColor = MaterialTheme.colorScheme.primary
-        val qrBitmap = remember(sessionCode, aesKey, userName, primaryColor, context, qrShareId) {
-            val bluetoothName = currentBluetoothName(context)
-            val json = JSONObject().apply {
-                put("v", 1)
-                put("code", sessionCode)
-                put("key", aesKey)
-                put("platform", "android")
-                put("bleFallbackCapable", true)
-                if (userName.isNotBlank()) {
-                    put("name", userName)
-                }
-                if (bluetoothName.isNotBlank()) {
-                    put("bluetoothName", bluetoothName)
-                }
-                if (qrShareId.isNotBlank()) {
-                    put("shareId", qrShareId)
-                }
-            }.toString()
-            val qrText = "dcs://${Uri.encode(json)}"
-            generateQrBitmap(
-                text = qrText,
-                moduleColor = primaryColor.toArgb(),
-                context = context,
-                logoScale = 0.2f
-            )
+        // ZXing encode + bitmap canvas work + keystore/identity reads are far too heavy for the
+        // main thread — generating this synchronously in composition froze the first frame of the
+        // screen. Produce it off the UI thread and show a spinner until it lands.
+        val qrBitmap by produceState<ImageBitmap?>(
+            initialValue = null,
+            sessionCode, aesKey, userName, primaryColor, context, qrShareId
+        ) {
+            value = withContext(Dispatchers.Default) {
+                val bluetoothName = currentBluetoothName(context)
+                val json = JSONObject().apply {
+                    put("v", 1)
+                    put("code", sessionCode)
+                    put("key", aesKey)
+                    put("platform", "android")
+                    put("bleFallbackCapable", true)
+                    if (userName.isNotBlank()) {
+                        put("name", userName)
+                    }
+                    if (bluetoothName.isNotBlank()) {
+                        put("bluetoothName", bluetoothName)
+                    }
+                    if (qrShareId.isNotBlank()) {
+                        put("shareId", qrShareId)
+                    }
+                    // Carry our internet-messaging identity so the scanner can reach us online later.
+                    com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid?.let {
+                        put("peerUid", it)
+                    }
+                    runCatching {
+                        com.auralis.crisisconnect.messaging.MessagingIdentity(context).publicKeyBase64()
+                    }.getOrNull()?.let { put("peerPublicKey", it) }
+                    // Tell the scanner this device is a child profile, so it is never offered
+                    // as an SOS emergency contact on their side.
+                    put(
+                        "isChild",
+                        com.auralis.crisisconnect.security.ChildProfileManager.isEnabled(context)
+                    )
+                }.toString()
+                val qrText = "dcs://${Uri.encode(json)}"
+                generateQrBitmap(
+                    text = qrText,
+                    moduleColor = primaryColor.toArgb(),
+                    context = context,
+                    logoScale = 0.2f
+                )
+            }
         }
 
         Box(
@@ -383,13 +439,23 @@ fun NewChatScreen(navController: NavController) {
                                     )
                                     .padding(12.dp)
                             ) {
-                                Image(
-                                    bitmap = qrBitmap,
-                                    contentDescription = stringResource(R.string.bluetooth_qr_description),
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .then(if (shouldObscureQr) Modifier.blur(32.dp) else Modifier)
-                                )
+                                val readyQrBitmap = qrBitmap
+                                if (readyQrBitmap != null) {
+                                    Image(
+                                        bitmap = readyQrBitmap,
+                                        contentDescription = stringResource(R.string.bluetooth_qr_description),
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .then(if (shouldObscureQr) Modifier.blur(32.dp) else Modifier)
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator()
+                                    }
+                                }
 
                                 if (shouldObscureQr) {
                                     Box(
@@ -527,12 +593,44 @@ fun NewChatScreen(navController: NavController) {
                         contentColor = MaterialTheme.colorScheme.primary
                     )
                 ) {
-                    Icon(Icons.Default.Link, contentDescription = null)
+                    Icon(Icons.Default.Bluetooth, contentDescription = null)
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
                         text = stringResource(R.string.manual_connect_open_button),
                         style = MaterialTheme.typography.titleMedium
                     )
+                }
+
+                Button(
+                    onClick = { navController.navigate("add_from_contacts") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(Icons.Default.Person, contentDescription = null)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = stringResource(R.string.new_chat_add_from_contacts),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+
+                if (agencySlug != null) {
+                    Button(
+                        onClick = { navController.navigate("authority_contact_picker") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.Groups, contentDescription = null)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = stringResource(R.string.new_chat_add_from_agency),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
                 }
             }
         }
@@ -689,7 +787,9 @@ fun generateQrBitmap(
 
     finderPositions.forEach { drawFinder(it) }
 
+    // decodeResource cannot rasterize XML/vector drawables; fall back to drawing them.
     val logoBitmap = BitmapFactory.decodeResource(context.resources, logoResId)
+        ?: androidx.core.content.ContextCompat.getDrawable(context, logoResId)?.toBitmap(512, 512)
     if (logoBitmap != null && logoScale > 0f) {
         val maxLogoSide = (size * logoScale).roundToInt().coerceIn(1, size)
         val (scaledWidth, scaledHeight) = if (logoBitmap.width >= logoBitmap.height && logoBitmap.width != 0) {
@@ -897,3 +997,5 @@ private fun currentBluetoothName(context: Context): String {
         BluetoothAdapter.getDefaultAdapter()?.name?.trim().orEmpty()
     }.getOrDefault("")
 }
+
+/** Which section of the "Kurumdan ekle" picker an entry sits in — mirrors the web messages picker. */

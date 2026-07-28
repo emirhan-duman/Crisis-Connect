@@ -2,8 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.auralis.crisisconnect.crisis-link-refresh</string>
+		<string>com.auralis.crisisconnect.offline-map-download</string>
+		<string>com.auralis.crisisconnect.cert-renewal</string>
+		<string>com.auralis.crisisconnect.sos-followup</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Crisis Connect</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -29,33 +38,58 @@
 				<string>com.googleusercontent.apps.YOUR_GCM_SENDER_ID-YOUR_CLIENT_ID_SUFFIX</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.auralis.crisisconnect.deeplink</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>crisisconnect</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>CRISIS_CONNECT_WEB_URL</key>
+	<string>https://crisis-connect-1.web.app</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>MAPTILER_API_KEY</key>
+	<string>SNhz0zyBetk9IYq2IosD</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Bluetooth is used to find nearby contacts and exchange encrypted messages offline.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_ccvoicechat._tcp</string>
+		<string>_ccvoicechat._udp</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Camera access is required to scan QR codes and power Night Vision obstacle awareness.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Location access is used to center offline maps and share your live position during SOS rescue coordination.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Crisis Connect matches your address book against its directory to find contacts who already use the app. Numbers are hashed for lookup and never stored.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Local network access is required to discover nearby iOS contacts and start encrypted voice calls.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Always-on location access keeps rescue live location updates running as reliably as iOS allows during crisis coordination.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>Always-on location access keeps rescue live location updates running as reliably as iOS allows during crisis coordination.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Location access is used to center offline maps and share your live position during SOS rescue coordination.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Microphone access is required to record and send voice messages and start nearby iOS voice calls.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Local network access is required to discover nearby iOS contacts and start encrypted voice calls.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_ccvoicechat._tcp</string>
-	</array>
-	<key>MAPTILER_API_KEY</key>
-	<string>YOUR_MAPTILER_API_KEY</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Motion data is used to show device sensor readings.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Speech recognition is used to dictate Crisis Sentinel field notes.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INStartCallIntent</string>
+		<string>INStartAudioCallIntent</string>
+		<string>INStartVideoCallIntent</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -63,13 +97,8 @@
 		<key>UISceneConfigurations</key>
 		<dict/>
 	</dict>
-		<key>UIApplicationSupportsIndirectInputEvents</key>
-		<true/>
-		<key>BGTaskSchedulerPermittedIdentifiers</key>
-		<array>
-			<string>com.auralis.crisisconnect.crisis-link-refresh</string>
-			<string>com.auralis.crisisconnect.offline-map-download</string>
-		</array>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
@@ -77,9 +106,10 @@
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 		<string>fetch</string>
-			<string>location</string>
-			<string>processing</string>
-		</array>
+		<string>location</string>
+		<string>processing</string>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

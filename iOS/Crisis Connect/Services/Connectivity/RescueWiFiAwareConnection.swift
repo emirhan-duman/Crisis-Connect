@@ -41,6 +41,7 @@ final class RescueWiFiAwareConnection {
     var onStatusChange: ((RescueConnectionStatus) -> Void)?
     var onBroadcastId: ((String) -> Void)?
     var onPeerName: ((String) -> Void)?
+    var onPeerBattery: ((Int) -> Void)?
     var onSignalLocation: ((SOSSignalLocationPayload?) -> Void)?
 
     private let queue: DispatchQueue
@@ -884,6 +885,9 @@ final class RescueWiFiAwareConnection {
         if !peerName.isEmpty {
             onPeerName?(peerName)
         }
+        if let batteryPercent = identity.batteryPercent {
+            onPeerBattery?(batteryPercent)
+        }
 
         DispatchQueue.main.async {
             SOSChatStore.shared.updateIdentity(
@@ -918,10 +922,16 @@ final class RescueWiFiAwareConnection {
         } else {
             avatarBase64 = nil
         }
+        // Same fix as the BLE path: victims report batteryPct; dropping it starved the rescuer UI.
+        let batteryPercent = numericValue(from: json["batteryPct"]).flatMap { value -> Int? in
+            let rounded = Int(value.rounded())
+            return (0...100).contains(rounded) ? rounded : nil
+        }
         return WiFiAwarePeerIdentity(
             name: name,
             avatarBase64: avatarBase64,
             broadcastId: json["broadcastId"] as? String,
+            batteryPercent: batteryPercent,
             signalLocation: SOSSignalLocationPayload.fromPeerInfoJSON(json["signalLocation"])
                 ?? SOSSignalLocationPayload.fromLegacyLocationJSON(json["location"])
         )
@@ -1311,5 +1321,6 @@ private struct WiFiAwarePeerIdentity {
     let name: String
     let avatarBase64: String?
     let broadcastId: String?
+    let batteryPercent: Int?
     let signalLocation: SOSSignalLocationPayload?
 }

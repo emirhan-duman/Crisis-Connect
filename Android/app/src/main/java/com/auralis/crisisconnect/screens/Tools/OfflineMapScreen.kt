@@ -50,7 +50,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,6 +76,7 @@ import com.auralis.crisisconnect.data.offline.OfflineServiceLocator
 import com.auralis.crisisconnect.domain.offline.StartDownloadUseCase
 import com.auralis.crisisconnect.ui.components.AppBackTopBar
 import com.auralis.crisisconnect.util.createMapViewSafely
+import com.auralis.crisisconnect.util.isMapLibreRuntimeSupported
 import com.auralis.crisisconnect.ui.tools.offline.OfflineRegionEditorSheet
 import com.auralis.crisisconnect.ui.tools.offline.OfflineRegionListScreen
 import kotlinx.coroutines.launch
@@ -87,17 +88,98 @@ import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
+import org.maplibre.android.annotations.MarkerOptions
+import org.maplibre.android.geometry.LatLngBounds
+import org.json.JSONArray
+import com.auralis.crisisconnect.ai.CrisisSentinelMapPoint
+
+/** Parses the `points` nav arg (JSON array of {lat,lng,label,details?}) leniently. */
+private fun parseMapPointsJson(pointsJson: String?): List<CrisisSentinelMapPoint> {
+    if (pointsJson.isNullOrBlank()) return emptyList()
+    return runCatching {
+        val array = JSONArray(pointsJson)
+        buildList {
+            for (index in 0 until array.length()) {
+                val point = array.optJSONObject(index) ?: continue
+                val lat = point.optDouble("lat", Double.NaN)
+                val lng = point.optDouble("lng", Double.NaN)
+                if (lat.isNaN() || lng.isNaN()) continue
+                add(
+                    CrisisSentinelMapPoint(
+                        lat = lat,
+                        lng = lng,
+                        label = point.optString("label"),
+                        details = point.optString("details").takeIf { it.isNotBlank() }
+                    )
+                )
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
+@Composable
+fun OfflineMapScreen(
+    navController: NavController,
+    initialLat: Double? = null,
+    initialLng: Double? = null,
+    initialLabel: String? = null,
+    pointsJson: String? = null
+) {
+    val context = LocalContext.current
+    // The offline-map tool needs the MapLibre GL runtime (OpenGL ES 3.0). On devices without it,
+    // instantiating the ViewModel below builds an OfflineManager and throws a
+    // MapLibreConfigurationException — the crash reported on the J4 Plus. Gate the screen here, BEFORE
+    // the ViewModel is created, so unsupported devices see a graceful message instead of crashing.
+    if (!isMapLibreRuntimeSupported(context)) {
+        OfflineMapUnavailableScreen(navController)
+        return
+    }
+    OfflineMapScreenContent(
+        navController,
+        initialLat = initialLat,
+        initialLng = initialLng,
+        initialLabel = initialLabel,
+        pointsJson = pointsJson
+    )
+}
+
+/** Graceful fallback shown when the device can't run the MapLibre GL offline-map runtime. */
+@Composable
+private fun OfflineMapUnavailableScreen(navController: NavController) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = stringResource(id = R.string.offline_map_render_unavailable),
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = { navController.popBackStack() }) {
+                Text(text = stringResource(id = R.string.back))
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("MissingPermission")
 @Composable
-fun OfflineMapScreen(
+private fun OfflineMapScreenContent(
     navController: NavController,
     viewModel: OfflineMapViewModel = viewModel(factory = OfflineMapViewModel.factory(LocalContext.current)),
+    initialLat: Double? = null,
+    initialLng: Double? = null,
+    initialLabel: String? = null,
+    pointsJson: String? = null
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val mapView = rememberMapViewWithLifecycle()
     val mapRuntimeAvailable = mapView != null
     val styleProvider = remember { OfflineServiceLocator.provideStyleUrlProvider(context) }
@@ -110,6 +192,39 @@ fun OfflineMapScreen(
     }
     val readyCount = managedRegions.count { it.status == OfflineRegionStatus.Complete }
     val downloadedBytes = managedRegions.sumOf { it.bytesDownloaded.coerceAtLeast(0L) }
+
+    LaunchedEffect(mapLibreMapState.value) {
+        val map = mapLibreMapState.value ?: return@LaunchedEffect
+        val points = parseMapPointsJson(pointsJson)
+        if (points.size > 1) {
+            // Multi-point payload (e.g. AI "show on map"): drop all markers, fit the camera.
+            val bounds = LatLngBounds.Builder()
+            points.forEach { point ->
+                val latLng = LatLng(point.lat, point.lng)
+                bounds.include(latLng)
+                map.addMarker(
+                    MarkerOptions()
+                        .position(latLng)
+                        .title(point.label.ifBlank { null })
+                        .snippet(point.details)
+                )
+            }
+            runCatching {
+                map.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), 96))
+            }
+        } else if (initialLat != null && initialLng != null) {
+            val latLng = LatLng(initialLat, initialLng)
+            map.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 6.0))
+            map.addMarker(
+                MarkerOptions()
+                    .position(latLng)
+                    .title(
+                        initialLabel?.takeIf { it.isNotBlank() }
+                            ?: context.getString(R.string.offline_map_marker_disaster_location)
+                    )
+            )
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.updatePixelRatio(context.resources.displayMetrics.density)

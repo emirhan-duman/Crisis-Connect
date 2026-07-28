@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Gabay sa Emergency</string>
+    <string name="guide_screen_intro_subtitle">Mabilis na abutin ang kritikal na impormasyon at sundin ang mga maikling aksyon sa ilalim ng presyon.</string>
+    <string name="guide_screen_filter_all">Lahat ng kategorya</string>
+    <string name="guide_screen_section_30_seconds">Sa loob ng 30 segundo</string>
+    <string name="guide_screen_section_step_by_step">Hakbang-hakbang</string>
+    <string name="guide_screen_section_dont">Huwag gawin</string>
+    <string name="guide_screen_section_checklist">Checklist</string>
+    <string name="guide_screen_expand_details">Ipakita ang mga detalye</string>
+    <string name="guide_screen_collapse_details">Itago ang mga detalye</string>
+    <string name="guide_screen_action_start_checklist">Simulan ang checklist</string>
+    <string name="guide_screen_action_call_local">Tawagan ang %1$s</string>
+    <string name="guide_screen_action_open_assembly">Buksan ang assembly area</string>
+    <string name="guide_screen_source_note">Tala ng pinagmulan:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d ang nakumpleto</string>
+    <string name="guide_screen_no_dial_app_with_number">Walang app na natagpuan upang tawagan ang %1$s.</string>
+    <string name="guide_screen_no_map_app">Walang app na natagpuan upang buksan ang mga mapa.</string>
+    <string name="guide_screen_assembly_query">Assembly area sa sakuna</string>
+    <string name="guide_screen_search_placeholder">Maghanap ayon sa code, kategorya, o paksa</string>
+    <string name="guide_screen_clear_search">I-clear ang paghahanap</string>
+    <string name="guide_screen_clear_filters">I-clear ang mga filter</string>
+    <string name="guide_screen_empty_title">Walang natagpuang gabay</string>
+    <string name="guide_screen_empty_body">Subukang bawasan ang mga filter o maghanap gamit ang mas malawak na keyword.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d pang mabilisang aksyon</string>
+    <string name="guide_screen_region_value">Rehiyon: %1$s • Numero sa emergency: %2$s</string>
+    <string name="guide_screen_results_count">%1$d gabay ang nakalista</string>
+    <string name="guide_screen_read_minutes_format">%1$d min</string>
+</resources>

@@ -35,6 +35,8 @@ final class PrivacySettingsViewModel: ObservableObject {
 
     @Published var shareAnalytics: Bool {
         didSet {
+            // The choice must actually REACH the SDK, or the switch is theater.
+            AppAnalytics.setCollectionEnabled(shareAnalytics && canShareAnalytics)
             PrivacyPreferences.setShareAnalytics(
                 shareAnalytics && canShareAnalytics,
                 userDefaults: userDefaults
@@ -47,7 +49,10 @@ final class PrivacySettingsViewModel: ObservableObject {
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
         self.canShareLiveLocation = RescueSettingsStore.shared.canUseCrisisLink
-        self.canShareAnalytics = false
+        // This was hardcoded false — the toggle rendered permanently off and disabled while
+        // Analytics.logEvent fired unconditionally underneath it. In an open-source app that
+        // advertises an auditable privacy contract, a consent switch that lies is worse than none.
+        self.canShareAnalytics = true
         self.shareLocationInSOS = canShareLiveLocation
             && PrivacyPreferences.isShareLocationInSOSEnabled(userDefaults: userDefaults)
         self.shareProfileDetails = PrivacyPreferences.isShareProfileDetailsEnabled(userDefaults: userDefaults)
@@ -83,7 +88,9 @@ enum PrivacyPreferences {
     }
 
     static func isShareAnalyticsEnabled(userDefaults: UserDefaults = .standard) -> Bool {
-        userDefaults.object(forKey: Keys.shareAnalytics) as? Bool ?? false
+        // Default ON: collection has always run, so on is the truthful default — the change is
+        // that turning it OFF now genuinely stops collection instead of only repainting a switch.
+        userDefaults.object(forKey: Keys.shareAnalytics) as? Bool ?? true
     }
 
     static func setShareAnalytics(_ enabled: Bool, userDefaults: UserDefaults = .standard) {
@@ -146,7 +153,14 @@ enum PrivacyRemoteSync {
                 explicitAgency: explicitAgency
             )
 
-            payload["username"] = fullName.isEmpty ? FieldValue.delete() : fullName
+            // Passive sync: seed username only when the cloud has none, and never delete it just
+            // because this device's local cache is empty — username is cross-platform state (web
+            // Settings and Android write it too). Explicit edits go through ProfileViewModel.
+            let remoteUsername = ((existingSnapshot?.get("username") as? String) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if remoteUsername.isEmpty, !fullName.isEmpty {
+                payload["username"] = fullName
+            }
             payload["email"] = email.isEmpty ? FieldValue.delete() : email
             payload["country"] = country.isEmpty ? FieldValue.delete() : country
 
@@ -172,7 +186,8 @@ enum PrivacyRemoteSync {
                 payload["agencyKey"] = slug.isEmpty ? FieldValue.delete() : slug
             }
         } else {
-            payload["username"] = FieldValue.delete()
+            // Sharing off = stop publishing from this device; it must not purge the account's
+            // cross-platform username (see the matching rule in FirebaseBootstrapper).
             payload["email"] = FieldValue.delete()
             payload["country"] = FieldValue.delete()
             if shouldPreserveAgencyContext {

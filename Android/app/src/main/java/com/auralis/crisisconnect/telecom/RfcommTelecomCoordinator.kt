@@ -53,21 +53,33 @@ object RfcommTelecomCoordinator {
         registerAppIfNeeded()
     }
 
-    fun onIncomingCall(sessionCode: String, callId: String, displayName: String) {
+    fun onIncomingCall(
+        sessionCode: String,
+        callId: String,
+        displayName: String,
+        serviceClass: Class<*> = RfcommForegroundService::class.java
+    ) {
         addCallIfNeeded(
             sessionCode = sessionCode,
             callId = callId,
             displayName = displayName,
-            direction = CallAttributesCompat.DIRECTION_INCOMING
+            direction = CallAttributesCompat.DIRECTION_INCOMING,
+            serviceClass = serviceClass
         )
     }
 
-    fun onOutgoingCall(sessionCode: String, callId: String, displayName: String) {
+    fun onOutgoingCall(
+        sessionCode: String,
+        callId: String,
+        displayName: String,
+        serviceClass: Class<*> = RfcommForegroundService::class.java
+    ) {
         addCallIfNeeded(
             sessionCode = sessionCode,
             callId = callId,
             displayName = displayName,
-            direction = CallAttributesCompat.DIRECTION_OUTGOING
+            direction = CallAttributesCompat.DIRECTION_OUTGOING,
+            serviceClass = serviceClass
         )
     }
 
@@ -184,7 +196,8 @@ object RfcommTelecomCoordinator {
         sessionCode: String,
         callId: String,
         displayName: String,
-        direction: Int
+        direction: Int,
+        serviceClass: Class<*>
     ) {
         if (!isSupported()) {
             return
@@ -201,7 +214,8 @@ object RfcommTelecomCoordinator {
         val managedCall = ManagedCall(
             sessionCode = sessionCode,
             callId = callId,
-            direction = direction
+            direction = direction,
+            serviceClass = serviceClass
         )
         val previous = managedCalls.putIfAbsent(sessionCode, managedCall)
         if (previous != null) {
@@ -231,6 +245,7 @@ object RfcommTelecomCoordinator {
                             sessionCode = sessionCode,
                             callId = callId,
                             action = RfcommForegroundService.ACTION_ACCEPT_CALL,
+                            serviceClass = managedCall.serviceClass,
                             flag = RfcommForegroundService.CALL_ANSWERED_BY_TELECOM_FLAG
                         )
                     },
@@ -272,7 +287,8 @@ object RfcommTelecomCoordinator {
                                     RfcommForegroundService.ACTION_MUTE
                                 } else {
                                     RfcommForegroundService.ACTION_UNMUTE
-                                }
+                                },
+                                serviceClass = managedCall.serviceClass
                             )
                         }
                     }
@@ -324,7 +340,8 @@ object RfcommTelecomCoordinator {
         dispatchServiceIntent(
             sessionCode = managedCall.sessionCode,
             callId = managedCall.callId,
-            action = RfcommForegroundService.ACTION_SYNC_CALL_AUDIO_ROUTE
+            action = RfcommForegroundService.ACTION_SYNC_CALL_AUDIO_ROUTE,
+            serviceClass = managedCall.serviceClass
         ) {
             currentRoute?.let {
                 putExtra(RfcommForegroundService.EXTRA_CALL_AUDIO_ROUTE, it.name)
@@ -419,7 +436,8 @@ object RfcommTelecomCoordinator {
         dispatchServiceIntent(
             sessionCode = managedCall.sessionCode,
             callId = managedCall.callId,
-            action = action
+            action = action,
+            serviceClass = managedCall.serviceClass
         ) {
             putExtra(RfcommForegroundService.EXTRA_CALL_FLAG, disconnectCause.code.toString())
         }
@@ -429,11 +447,12 @@ object RfcommTelecomCoordinator {
         sessionCode: String,
         callId: String,
         action: String,
+        serviceClass: Class<*>,
         flag: String? = null,
         extras: Intent.() -> Unit = {}
     ) {
         val context = appContext ?: return
-        val intent = Intent(context, RfcommForegroundService::class.java).apply {
+        val intent = Intent(context, serviceClass).apply {
             this.action = action
             putExtra(RfcommForegroundService.EXTRA_SESSION_CODE, sessionCode)
             putExtra(RfcommForegroundService.EXTRA_CALL_ID, callId)
@@ -449,6 +468,9 @@ object RfcommTelecomCoordinator {
         val sessionCode: String,
         val callId: String,
         val direction: Int,
+        // Which foreground service owns this call's transport (RFCOMM or GATT P2P); Telecom
+        // UI events (answer/end/mute/route) are dispatched back to it.
+        val serviceClass: Class<*> = RfcommForegroundService::class.java,
         val scope: CompletableDeferred<CallControlScope> = CompletableDeferred(),
         val lifecycle: AtomicReference<TelecomLifecycle> = AtomicReference(TelecomLifecycle.NEW),
         val availableEndpoints: AtomicReference<List<CallEndpointCompat>> = AtomicReference(emptyList()),

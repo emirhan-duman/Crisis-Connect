@@ -125,11 +125,14 @@ class CertificateProvisioningFlow(
         val callable = functions.getHttpsCallable("issueRoleCertificate")
         val result = callable.call(
             mapOf(
+                "platform" to "android",
                 "deviceId" to deviceId,
                 "publicKey" to publicKeyBase64,
                 "attestationChainPem" to attestationChainPem,
                 "integrityToken" to integrityToken,
                 "attestationChallenge" to challengeBase64,
+                "deviceBrand" to android.os.Build.MANUFACTURER,
+                "deviceModel" to android.os.Build.MODEL,
             )
         ).awaitResult()
         val data = result.data as? Map<*, *>

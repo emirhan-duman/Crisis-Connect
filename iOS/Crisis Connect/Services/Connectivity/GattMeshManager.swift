@@ -17,6 +17,7 @@ struct GattMeshConnectedPeer: Identifiable, Equatable {
     let isSendReady: Bool
     let verificationStatus: GattMeshPeerVerificationStatus
     let verifiedRole: String?
+    let verifiedAgency: String?
     let verifiedAtMillis: Int64?
 }
 
@@ -48,6 +49,7 @@ private struct GattMeshPendingOutboundQueueSnapshot: Codable {
 
 private struct GattMeshPeerVerificationState: Equatable {
     let role: String
+    let agency: String
     let verifiedAtMillis: Int64
     let peerIdentityKey: String?
 }
@@ -58,10 +60,63 @@ private struct GattMeshConnectedPeerAccumulator {
     var routeIdentityKeys: Set<String>
 }
 
+/// Reassembly state for one inbound image blob (single-hop, so one directly connected source).
+private final class InboundImageBlob {
+    let sourceRouteKey: String
+    let senderLabel: String
+    let ivBase64: String
+    let keyId: String
+    let mimeType: String?
+    let width: Int?
+    let height: Int?
+    let chunkCount: Int
+    let cipherBytes: Int
+    let kind: String?
+    let durationMillis: Int64?
+    var chunks: [Data?]
+    var receivedCount = 0
+    var receivedBytes = 0
+    var lastActivityAtMillis: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)
+
+    init(
+        sourceRouteKey: String,
+        senderLabel: String,
+        ivBase64: String,
+        keyId: String,
+        mimeType: String?,
+        width: Int?,
+        height: Int?,
+        chunkCount: Int,
+        cipherBytes: Int,
+        kind: String?,
+        durationMillis: Int64?
+    ) {
+        self.sourceRouteKey = sourceRouteKey
+        self.senderLabel = senderLabel
+        self.ivBase64 = ivBase64
+        self.keyId = keyId
+        self.mimeType = mimeType
+        self.width = width
+        self.height = height
+        self.chunkCount = chunkCount
+        self.cipherBytes = cipherBytes
+        self.kind = kind
+        self.durationMillis = durationMillis
+        self.chunks = Array(repeating: nil, count: chunkCount)
+    }
+}
+
 final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate, BlePeripheralHostProfile {
-    static let shared = GattMeshManager()
+    static let shared = GattMeshManager(profile: .publicMesh)
+    /// Second, role-gated authority mesh instance (inert until enabled + provisioned with a key).
+    static let authority = GattMeshManager(profile: .authority)
+
+    let profile: MeshProfile
 
     @Published private(set) var snapshot = GattMeshRuntimeSnapshot()
+
+    /// Telsiz (push-to-talk) session state, published for the telsiz UI. Updated on the main queue.
+    @Published private(set) var telsizState = PttSessionState()
 
     private let queue = BlePeripheralHostCoordinator.shared.queue
     private let queueKey = DispatchSpecificKey<Void>()
@@ -77,6 +132,17 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     private let sosServiceUUID = CBUUID(string: "0000CC00-0000-1000-8000-00805F9B34FB")
     private let securityRepository = SecurityRepository.shared
     private let deviceIdentityStore = DeviceIdentityStore.shared
+
+    /// This device's own verified institution (kurum) from its stored certificate, shown on the self
+    /// row of the connected-users sheet (mirrors Android). Empty/v2 certs yield nil.
+    var localAgency: String? {
+        // `try?` already flattens the function's `DeviceCertificate?` return to a single optional.
+        guard let deviceCertificate = try? securityRepository.getStoredCertificateSync(allowExpired: true) else {
+            return nil
+        }
+        let trimmed = deviceCertificate.roleCertificate.agency.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
     private let roleProofVerifier = RoleProofVerifier()
     private let messageOriginRoleProofVerifier = RoleProofVerifier(
         maxClockSkewMillis: GattMeshProtocol.maxOriginProofAgeMillis,
@@ -85,14 +151,11 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
     private static let persistedPendingQueueVersion = 1
     private static let maxPendingOutboundPackets = 200
-    private static let centralRestoreIdentifier = "com.auralis.crisisconnect.gattmesh.central"
-    private static let persistedPendingQueueURL: URL = {
-        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        return baseURL
-            .appendingPathComponent("CrisisConnect", isDirectory: true)
-            .appendingPathComponent("gatt_mesh_pending_outbound_queue.json", isDirectory: false)
-    }()
+    private static let inboundImageBlobTimeoutMillis: Int64 = 45_000
+    private static let maxConcurrentInboundImageBlobs = 3
+    private static let imageChunkSendSpacingSeconds: TimeInterval = 0.075
+    private let centralRestoreIdentifier: String
+    private let persistedPendingQueueURL: URL
 
     private var cleanupWork: DispatchWorkItem?
     private var pendingOutboundFlushWork: DispatchWorkItem?
@@ -109,6 +172,12 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     private var hostedMessageInCharacteristic: CBMutableCharacteristic?
     private var hostedMessageOutCharacteristic: CBMutableCharacteristic?
 
+    /// Telsiz controller (push-to-talk); created on first join, torn down on leave/shutdown.
+    private var pttController: PttController?
+    /// Stable per-process origin id stamped onto every telsiz packet so peers and the floor lock are
+    /// keyed independently of the BLE hop address (mirrors Android `localPttOriginId`).
+    private lazy var localPttOriginId = String(format: "%08x", UInt32.random(in: UInt32.min...UInt32.max))
+
     private var discoveredPeers: [UUID: DiscoveredPeer] = [:]
     private var outboundPeers: [UUID: OutboundPeer] = [:]
     private var outboundReceivers: [UUID: BleChunkReceiver] = [:]
@@ -124,15 +193,16 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     private var peerVerificationByRouteKey: [String: GattMeshPeerVerificationState] = [:]
     private var pendingPeerVerificationNonces: [String: String] = [:]
     private var pendingPeerVerificationRequestedAtMillis: [String: Int64] = [:]
+    private var inboundImageBlobs: [String: InboundImageBlob] = [:]
     private var cancellables: Set<AnyCancellable> = []
 
-    var hostProfileIdentifier: String { "gattmesh" }
-    var hostPrimaryServiceUUID: CBUUID { GattMeshProtocol.serviceUUID }
+    var hostProfileIdentifier: String { self.profile.id == MeshProfile.publicMesh.id ? "gattmesh" : "gattmesh-\(self.profile.id)" }
+    var hostPrimaryServiceUUID: CBUUID { self.profile.serviceUUID }
     var isPeripheralHostActive: Bool { publicMeshEnabled && PlatformRuntime.supportsBlePeripheralHosting }
     var hostedAdvertisementDescriptor: BleHostedAdvertisementDescriptor? {
         guard isPeripheralHostActive else { return nil }
         return BleHostedAdvertisementDescriptor(
-            serviceUUIDs: [GattMeshProtocol.serviceUUID],
+            serviceUUIDs: [self.profile.serviceUUID],
             localName: nil,
             priority: 50
         )
@@ -142,7 +212,14 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
         BlePeripheralHostCoordinator.shared.currentPeripheralManager
     }
 
-    private override init() {
+    private init(profile: MeshProfile = .publicMesh) {
+        self.profile = profile
+        self.centralRestoreIdentifier = "com.auralis.crisisconnect.gattmesh.\(self.profile.id).central"
+        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        self.persistedPendingQueueURL = baseURL
+            .appendingPathComponent("CrisisConnect", isDirectory: true)
+            .appendingPathComponent("gatt_mesh_pending_outbound_queue_\(self.profile.id).json", isDirectory: false)
         super.init()
         queue.setSpecific(key: queueKey, value: ())
         BlePeripheralHostCoordinator.shared.register(self)
@@ -162,15 +239,27 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
         }
     }
 
+    /// Toggles the authority mesh by writing its persisted preference; the runtime reconcile happens
+    /// in `observeSettings` (which also enforces the group-key requirement). No-op for the public
+    /// mesh, which follows its own toggle.
+    func setMeshEnabled(_ enabled: Bool) {
+        guard self.profile.id == MeshProfile.authority.id else { return }
+        DispatchQueue.main.async {
+            AdvancedSettingsStore.shared.authorityMeshEnabled = enabled
+        }
+    }
+
     func setChatOpen(_ isOpen: Bool) {
         queue.async { [weak self] in
             self?.isChatOpen = isOpen
         }
 
+        let isAuthority = self.profile.id == MeshProfile.authority.id
         Task { @MainActor [weak self] in
-            GattMeshChatStore.shared.setChatOpen(isOpen)
+            let store = isAuthority ? GattMeshChatStore.authority : GattMeshChatStore.shared
+            store.setChatOpen(isOpen)
             guard isOpen else { return }
-            let unreadIds = GattMeshChatStore.shared.markAllRemoteMessagesRead()
+            let unreadIds = store.markAllRemoteMessagesRead()
             guard !unreadIds.isEmpty else { return }
             self?.queue.async { [weak self] in
                 self?.sendReceiptLocked(type: .read, messageIds: unreadIds)
@@ -181,7 +270,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     func sendChatMessage(_ text: String) -> GattMeshSendResult? {
         syncOnQueue {
             guard publicMeshEnabled else { return nil }
-            guard let basePacket = GattMeshProtocol.makeChatPacket(text: text) else { return nil }
+            guard let basePacket = GattMeshProtocol.makeChatPacket(text: text, profile: profile) else { return nil }
             let packet = authenticatedChatPacketLocked(from: basePacket)
             _ = rememberMessageIdLocked(packet.id, timestampMillis: packet.timestampMillis)
 
@@ -193,6 +282,190 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             case .failed:
                 return nil
             }
+        }
+    }
+
+    /// Sends a prepared JPEG into the authority mesh as a single-hop encrypted blob
+    /// (init → paced chunks → done), mirroring Android's mesh image blob v1.
+    /// Returns the blob/message id immediately; the bubble status updates SENDING → SENT/FAILED.
+    func sendImageMessage(jpegData: Data, width: Int?, height: Int?) -> String? {
+        guard profile.id == MeshProfile.authority.id else { return nil }
+        guard !jpegData.isEmpty, jpegData.count <= GattMeshProtocol.meshImageMaxPlainBytes else {
+            return nil
+        }
+        let blobId = UUID().uuidString
+        guard let fileName = MeshImageFileStore.save(data: jpegData, blobId: blobId) else {
+            return nil
+        }
+        guard let encrypted = GattMeshProtocol.encryptImageBlob(
+            blobId: blobId,
+            mimeType: "image/jpeg",
+            data: jpegData,
+            profile: profile
+        ) else {
+            return nil
+        }
+
+        let chunkSize = GattMeshProtocol.meshImageChunkBytes
+        let chunkCount = (encrypted.cipher.count + chunkSize - 1) / chunkSize
+        guard (1...GattMeshProtocol.meshImageMaxChunks).contains(chunkCount) else { return nil }
+
+        let sender = GattMeshProtocol.localSenderLabel()
+        var packets: [GattMeshPacket] = []
+        packets.reserveCapacity(chunkCount + 2)
+        packets.append(
+            GattMeshProtocol.makeImageInitPacket(
+                blobId: blobId,
+                chunkCount: chunkCount,
+                cipherBytes: encrypted.cipher.count,
+                keyId: encrypted.keyId,
+                ivBase64: encrypted.ivBase64,
+                mimeType: "image/jpeg",
+                width: width,
+                height: height,
+                senderLabel: sender
+            )
+        )
+        var offset = 0
+        var index = 0
+        while offset < encrypted.cipher.count {
+            let end = min(offset + chunkSize, encrypted.cipher.count)
+            packets.append(
+                GattMeshProtocol.makeImageChunkPacket(
+                    blobId: blobId,
+                    index: index,
+                    dataBase64: encrypted.cipher.subdata(in: offset..<end).base64EncodedString(),
+                    senderLabel: sender
+                )
+            )
+            offset = end
+            index += 1
+        }
+        packets.append(GattMeshProtocol.makeImageDonePacket(blobId: blobId, senderLabel: sender))
+
+        Task { @MainActor in
+            GattMeshChatStore.authority.appendLocalImageMessage(
+                messageId: blobId,
+                imageFileName: fileName,
+                imageWidth: width,
+                imageHeight: height,
+                status: .sending
+            )
+        }
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard self.publicMeshEnabled else {
+                self.finishOutboundImageBlob(blobId: blobId, success: false)
+                return
+            }
+            self.dispatchOutboundImagePacketsLocked(blobId: blobId, packets: packets, index: 0)
+        }
+        return blobId
+    }
+
+    /// Sends a recorded voice note (AAC/M4A) into the authority mesh as a single-hop encrypted
+    /// blob, reusing the image blob pipeline with kind=voice.
+    func sendVoiceMessage(m4aData: Data, durationMillis: Int64) -> String? {
+        guard profile.id == MeshProfile.authority.id else { return nil }
+        guard !m4aData.isEmpty, m4aData.count <= GattMeshProtocol.meshImageMaxPlainBytes else {
+            return nil
+        }
+        let safeDuration = min(max(durationMillis, 1), GattMeshProtocol.meshVoiceMaxDurationMillis)
+        let blobId = UUID().uuidString
+        guard let fileName = MeshImageFileStore.save(data: m4aData, blobId: blobId, fileExtension: "m4a") else {
+            return nil
+        }
+        guard let encrypted = GattMeshProtocol.encryptImageBlob(
+            blobId: blobId,
+            mimeType: GattMeshProtocol.meshVoiceMime,
+            data: m4aData,
+            profile: profile
+        ) else {
+            return nil
+        }
+
+        let chunkSize = GattMeshProtocol.meshImageChunkBytes
+        let chunkCount = (encrypted.cipher.count + chunkSize - 1) / chunkSize
+        guard (1...GattMeshProtocol.meshImageMaxChunks).contains(chunkCount) else { return nil }
+
+        let sender = GattMeshProtocol.localSenderLabel()
+        var packets: [GattMeshPacket] = []
+        packets.reserveCapacity(chunkCount + 2)
+        packets.append(
+            GattMeshProtocol.makeImageInitPacket(
+                blobId: blobId,
+                chunkCount: chunkCount,
+                cipherBytes: encrypted.cipher.count,
+                keyId: encrypted.keyId,
+                ivBase64: encrypted.ivBase64,
+                mimeType: GattMeshProtocol.meshVoiceMime,
+                width: nil,
+                height: nil,
+                senderLabel: sender,
+                kind: GattMeshProtocol.blobKindVoice,
+                durationMillis: safeDuration
+            )
+        )
+        var offset = 0
+        var index = 0
+        while offset < encrypted.cipher.count {
+            let end = min(offset + chunkSize, encrypted.cipher.count)
+            packets.append(
+                GattMeshProtocol.makeImageChunkPacket(
+                    blobId: blobId,
+                    index: index,
+                    dataBase64: encrypted.cipher.subdata(in: offset..<end).base64EncodedString(),
+                    senderLabel: sender
+                )
+            )
+            offset = end
+            index += 1
+        }
+        packets.append(GattMeshProtocol.makeImageDonePacket(blobId: blobId, senderLabel: sender))
+
+        Task { @MainActor in
+            GattMeshChatStore.authority.appendLocalVoiceMessage(
+                messageId: blobId,
+                voiceFileName: fileName,
+                voiceDurationMillis: safeDuration,
+                status: .sending
+            )
+        }
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard self.publicMeshEnabled else {
+                self.finishOutboundImageBlob(blobId: blobId, success: false)
+                return
+            }
+            self.dispatchOutboundImagePacketsLocked(blobId: blobId, packets: packets, index: 0)
+        }
+        return blobId
+    }
+
+    private func dispatchOutboundImagePacketsLocked(blobId: String, packets: [GattMeshPacket], index: Int) {
+        guard index < packets.count else {
+            finishOutboundImageBlob(blobId: blobId, success: true)
+            return
+        }
+        guard publicMeshEnabled else {
+            finishOutboundImageBlob(blobId: blobId, success: false)
+            return
+        }
+        if sendOrQueuePacketLocked(packets[index], queueWhenFailed: false) == .failed {
+            finishOutboundImageBlob(blobId: blobId, success: false)
+            return
+        }
+        queue.asyncAfter(deadline: .now() + Self.imageChunkSendSpacingSeconds) { [weak self] in
+            self?.dispatchOutboundImagePacketsLocked(blobId: blobId, packets: packets, index: index + 1)
+        }
+    }
+
+    private func finishOutboundImageBlob(blobId: String, success: Bool) {
+        Task { @MainActor in
+            GattMeshChatStore.authority.updateLocalMessageStatus(
+                blobId,
+                status: success ? .sent : .failed
+            )
         }
     }
 
@@ -216,15 +489,15 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     func buildHostedService() -> CBMutableService? {
         guard isPeripheralHostActive else { return nil }
 
-        let service = CBMutableService(type: GattMeshProtocol.serviceUUID, primary: true)
+        let service = CBMutableService(type: self.profile.serviceUUID, primary: true)
         let messageIn = CBMutableCharacteristic(
-            type: GattMeshProtocol.messageInCharacteristicUUID,
+            type: self.profile.messageInCharacteristicUUID,
             properties: [.write, .writeWithoutResponse],
             value: nil,
             permissions: [.writeable]
         )
         let messageOut = CBMutableCharacteristic(
-            type: GattMeshProtocol.messageOutCharacteristicUUID,
+            type: self.profile.messageOutCharacteristicUUID,
             properties: [.read, .notify],
             value: nil,
             permissions: [.readable]
@@ -273,7 +546,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
         performOnQueue {
-            guard request.characteristic.uuid == GattMeshProtocol.messageOutCharacteristicUUID else {
+            guard request.characteristic.uuid == self.profile.messageOutCharacteristicUUID else {
                 peripheral.respond(to: request, withResult: .attributeNotFound)
                 return
             }
@@ -296,7 +569,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
                 let routeKey = self.routeKey(for: request.central)
                 self.upsertInboundPeerLocked(for: request.central, routeKey: routeKey)
 
-                guard request.characteristic.uuid == GattMeshProtocol.messageInCharacteristicUUID,
+                guard request.characteristic.uuid == self.profile.messageInCharacteristicUUID,
                       let value = request.value,
                       !value.isEmpty else {
                     peripheral.respond(to: request, withResult: .requestNotSupported)
@@ -327,7 +600,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
         performOnQueue {
-            guard characteristic.uuid == GattMeshProtocol.messageOutCharacteristicUUID else { return }
+            guard characteristic.uuid == self.profile.messageOutCharacteristicUUID else { return }
             let routeKey = self.routeKey(for: central)
             self.upsertInboundPeerLocked(for: central, routeKey: routeKey, notifyEnabled: true)
             self.publishStateLocked()
@@ -339,7 +612,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
         performOnQueue {
-            guard characteristic.uuid == GattMeshProtocol.messageOutCharacteristicUUID else { return }
+            guard characteristic.uuid == self.profile.messageOutCharacteristicUUID else { return }
             self.inboundPeers[central.identifier]?.notifyEnabled = false
             self.activeInboundNotificationRequests.removeValue(forKey: central.identifier)
             self.inboundNotificationQueues.removeValue(forKey: central.identifier)
@@ -406,7 +679,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
                 self.peerLabels[self.routeKey(for: peripheral)] = self.peerLabels[self.routeKey(for: peripheral)] ?? resolvedName
 
                 if peripheral.state == .connected {
-                    peripheral.discoverServices([GattMeshProtocol.serviceUUID])
+                    peripheral.discoverServices([self.profile.serviceUUID])
                 }
             }
 
@@ -480,7 +753,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             peer.lastSeen = Date()
             peripheral.delegate = self
             self.outboundPeers[peripheral.identifier] = peer
-            peripheral.discoverServices([GattMeshProtocol.serviceUUID])
+            peripheral.discoverServices([self.profile.serviceUUID])
             self.publishStateLocked()
         }
     }
@@ -566,14 +839,14 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
                 self.central?.cancelPeripheralConnection(peripheral)
                 return
             }
-            guard let service = peripheral.services?.first(where: { $0.uuid == GattMeshProtocol.serviceUUID }) else {
+            guard let service = peripheral.services?.first(where: { $0.uuid == self.profile.serviceUUID }) else {
                 self.central?.cancelPeripheralConnection(peripheral)
                 return
             }
             peripheral.discoverCharacteristics(
                 [
-                    GattMeshProtocol.messageInCharacteristicUUID,
-                    GattMeshProtocol.messageOutCharacteristicUUID
+                    self.profile.messageInCharacteristicUUID,
+                    self.profile.messageOutCharacteristicUUID
                 ],
                 for: service
             )
@@ -589,8 +862,8 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             }
             guard let peer = self.outboundPeers[peripheral.identifier] else { return }
 
-            peer.messageIn = service.characteristics?.first(where: { $0.uuid == GattMeshProtocol.messageInCharacteristicUUID })
-            peer.messageOut = service.characteristics?.first(where: { $0.uuid == GattMeshProtocol.messageOutCharacteristicUUID })
+            peer.messageIn = service.characteristics?.first(where: { $0.uuid == self.profile.messageInCharacteristicUUID })
+            peer.messageOut = service.characteristics?.first(where: { $0.uuid == self.profile.messageOutCharacteristicUUID })
             peer.lastSeen = Date()
 
             if let messageOut = peer.messageOut, messageOut.properties.contains(.notify) {
@@ -605,7 +878,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         performOnQueue {
-            guard characteristic.uuid == GattMeshProtocol.messageOutCharacteristicUUID else { return }
+            guard characteristic.uuid == self.profile.messageOutCharacteristicUUID else { return }
             guard let peer = self.outboundPeers[peripheral.identifier] else { return }
 
             peer.notifyEnabled = error == nil && characteristic.isNotifying
@@ -623,7 +896,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         performOnQueue {
-            guard characteristic.uuid == GattMeshProtocol.messageOutCharacteristicUUID else { return }
+            guard characteristic.uuid == self.profile.messageOutCharacteristicUUID else { return }
             guard error == nil, let value = characteristic.value, !value.isEmpty else {
                 self.lastError = error?.localizedDescription
                 return
@@ -648,7 +921,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         performOnQueue {
-            guard characteristic.uuid == GattMeshProtocol.messageInCharacteristicUUID,
+            guard characteristic.uuid == self.profile.messageInCharacteristicUUID,
                   let peer = self.outboundPeers[peripheral.identifier],
                   let activeWrite = peer.activeWrite else {
                 return
@@ -664,8 +937,10 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             if activeWrite.index >= activeWrite.chunks.count {
                 peer.activeWrite = nil
                 if activeWrite.fromQueuedPacket {
+                    let isAuthority = self.profile.id == MeshProfile.authority.id
                     Task { @MainActor in
-                        GattMeshChatStore.shared.updateLocalMessageStatus(activeWrite.packetId, status: .sent)
+                        let store = isAuthority ? GattMeshChatStore.authority : GattMeshChatStore.shared
+                        store.updateLocalMessageStatus(activeWrite.packetId, status: .sent)
                     }
                 }
             }
@@ -674,6 +949,26 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     }
 
     private func observeSettings() {
+        if self.profile.id == MeshProfile.authority.id {
+            // The authority mesh follows its own persisted toggle, gated on the provisioned group key
+            // and peripheral-hosting support. It never follows the public mesh toggle.
+            AdvancedSettingsStore.shared.$authorityMeshEnabled
+                .receive(on: RunLoop.main)
+                .sink { [weak self] isEnabled in
+                    self?.queue.async { [weak self] in
+                        guard let self else { return }
+                        let resolved = isEnabled
+                            && AuthorityMeshKeyStore.hasGroupKey()
+                            && PlatformRuntime.supportsBlePeripheralHosting
+                        self.publicMeshEnabled = resolved
+                        self.lastError = nil
+                        BlePeripheralHostCoordinator.shared.setNeedsRefresh()
+                        self.reconcileRuntimeLocked(clearRoutes: !resolved)
+                    }
+                }
+                .store(in: &cancellables)
+            return
+        }
         AdvancedSettingsStore.shared.$publicMeshEnabled
             .receive(on: RunLoop.main)
             .sink { [weak self] isEnabled in
@@ -818,8 +1113,10 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
                 pendingOutboundRetryStates.removeValue(forKey: packet.id)
                 changed = true
                 if packet.type == .chat {
+                    let isAuthority = self.profile.id == MeshProfile.authority.id
                     Task { @MainActor in
-                        GattMeshChatStore.shared.updateLocalMessageStatus(packet.id, status: .failed)
+                        let store = isAuthority ? GattMeshChatStore.authority : GattMeshChatStore.shared
+                        store.updateLocalMessageStatus(packet.id, status: .failed)
                     }
                 }
                 continue
@@ -835,8 +1132,10 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
                 pendingOutboundRetryStates.removeValue(forKey: packet.id)
                 changed = true
                 if packet.type == .chat {
+                    let isAuthority = self.profile.id == MeshProfile.authority.id
                     Task { @MainActor in
-                        GattMeshChatStore.shared.updateLocalMessageStatus(packet.id, status: .sent)
+                        let store = isAuthority ? GattMeshChatStore.authority : GattMeshChatStore.shared
+                        store.updateLocalMessageStatus(packet.id, status: .sent)
                     }
                 }
             } else {
@@ -1003,8 +1302,10 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
         activeInboundNotificationRequests[centralId] = nil
         if activeRequest.fromQueuedPacket {
+            let isAuthority = self.profile.id == MeshProfile.authority.id
             Task { @MainActor in
-                GattMeshChatStore.shared.updateLocalMessageStatus(activeRequest.packetId, status: .sent)
+                let store = isAuthority ? GattMeshChatStore.authority : GattMeshChatStore.shared
+                store.updateLocalMessageStatus(activeRequest.packetId, status: .sent)
             }
         }
         processInboundNotificationQueueLocked(centralId: centralId)
@@ -1017,7 +1318,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     ) {
         guard
             let payload = GattMeshProtocol.unwrapTransportPacket(transportPacket),
-            let packet = GattMeshProtocol.decodePacket(from: payload)
+            let packet = GattMeshProtocol.decodePacket(from: payload, profile: profile)
         else {
             return
         }
@@ -1031,6 +1332,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             return
         }
 
+        let isAuthority = self.profile.id == MeshProfile.authority.id
         switch packet.type {
         case .chat:
             guard packet.isReadable else {
@@ -1047,7 +1349,8 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             let shouldNotify = notificationsEnabled && !isChatOpen
 
             Task { @MainActor in
-                let inserted = GattMeshChatStore.shared.appendRemoteMessage(
+                let store = isAuthority ? GattMeshChatStore.authority : GattMeshChatStore.shared
+                let inserted = store.appendRemoteMessage(
                     id: packet.id,
                     text: packet.message,
                     senderLabel: senderLabel,
@@ -1057,7 +1360,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
                     timestampMillis: packet.timestampMillis
                 )
                 if !inserted {
-                    _ = GattMeshChatStore.shared.updateRemoteMessageMetadata(
+                    _ = store.updateRemoteMessageMetadata(
                         id: packet.id,
                         senderLabel: senderLabel,
                         sourcePeerId: sourcePeerId,
@@ -1067,7 +1370,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
                 }
                 guard inserted, shouldNotify else { return }
                 SOSNotificationCenter.notifyIncomingMessage(
-                    sessionId: GattMeshChatStore.sessionId,
+                    sessionId: store.sessionId,
                     title: senderLabel,
                     body: packet.message,
                     kind: .generalChat,
@@ -1086,11 +1389,12 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             let recipientLabel = nonEmpty(packet.senderLabel.trimmingCharacters(in: .whitespacesAndNewlines))
 
             Task { @MainActor in
+                let store = isAuthority ? GattMeshChatStore.authority : GattMeshChatStore.shared
                 switch packet.receiptType {
                 case .delivered?:
-                    GattMeshChatStore.shared.markDelivered(messageIds: receiptIds, recipientLabel: recipientLabel)
+                    store.markDelivered(messageIds: receiptIds, recipientLabel: recipientLabel)
                 case .read?:
-                    GattMeshChatStore.shared.markRead(messageIds: receiptIds, recipientLabel: recipientLabel)
+                    store.markRead(messageIds: receiptIds, recipientLabel: recipientLabel)
                 case nil:
                     break
                 }
@@ -1112,9 +1416,148 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
                 )
             }
             return
+
+        case .imageInit:
+            handleInboundImageInitLocked(packet, sourceRouteKey: sourceRouteKey)
+            return
+
+        case .imageChunk:
+            handleInboundImageChunkLocked(packet)
+            return
+
+        case .imageDone:
+            handleInboundImageDoneLocked(packet)
+            return
+
+        case .pttJoin, .pttLeave, .pttFloorClaim, .pttFloorRelease, .pttAudio:
+            handlePttPacketLocked(packet, sourceRouteKey: sourceRouteKey)
+            return
         }
 
         relayIfNeededLocked(packet: packet, sourceRouteKey: sourceRouteKey)
+    }
+
+    // MARK: - Inbound image blobs (single-hop, authority mesh only)
+
+    private func handleInboundImageInitLocked(_ packet: GattMeshPacket, sourceRouteKey: String) {
+        guard profile.id == MeshProfile.authority.id else { return }
+        guard
+            let blobId = packet.blobId,
+            let chunkCount = packet.blobChunkCount,
+            let cipherBytes = packet.blobCipherBytes,
+            let ivBase64 = packet.ivBase64,
+            let keyId = packet.keyId,
+            keyId == profile.payloadKeyId
+        else {
+            return
+        }
+        let nowMillis = Int64(Date().timeIntervalSince1970 * 1_000)
+        inboundImageBlobs = inboundImageBlobs.filter { _, blob in
+            nowMillis - blob.lastActivityAtMillis <= Self.inboundImageBlobTimeoutMillis
+        }
+        if inboundImageBlobs.count >= Self.maxConcurrentInboundImageBlobs,
+           let oldestKey = inboundImageBlobs
+               .min(by: { $0.value.lastActivityAtMillis < $1.value.lastActivityAtMillis })?.key {
+            inboundImageBlobs.removeValue(forKey: oldestKey)
+        }
+        inboundImageBlobs[blobId] = InboundImageBlob(
+            sourceRouteKey: sourceRouteKey,
+            senderLabel: packet.senderLabel,
+            ivBase64: ivBase64,
+            keyId: keyId,
+            mimeType: packet.blobMime,
+            width: packet.blobWidth,
+            height: packet.blobHeight,
+            chunkCount: chunkCount,
+            cipherBytes: cipherBytes,
+            kind: packet.blobKind,
+            durationMillis: packet.blobDurationMillis
+        )
+    }
+
+    private func handleInboundImageChunkLocked(_ packet: GattMeshPacket) {
+        guard
+            let blobId = packet.blobId,
+            let blobIndex = packet.blobIndex,
+            let dataBase64 = packet.blobDataBase64,
+            let bytes = Data(base64Encoded: dataBase64, options: [.ignoreUnknownCharacters]),
+            let state = inboundImageBlobs[blobId],
+            state.chunks.indices.contains(blobIndex)
+        else {
+            return
+        }
+        if state.chunks[blobIndex] == nil {
+            state.chunks[blobIndex] = bytes
+            state.receivedCount += 1
+            state.receivedBytes += bytes.count
+            if state.receivedBytes > state.cipherBytes {
+                inboundImageBlobs.removeValue(forKey: blobId)
+                return
+            }
+        }
+        state.lastActivityAtMillis = Int64(Date().timeIntervalSince1970 * 1_000)
+        if state.receivedCount == state.chunkCount {
+            inboundImageBlobs.removeValue(forKey: blobId)
+            assembleInboundImageBlob(blobId: blobId, state: state)
+        }
+    }
+
+    private func handleInboundImageDoneLocked(_ packet: GattMeshPacket) {
+        guard let blobId = packet.blobId, let state = inboundImageBlobs[blobId] else { return }
+        if state.receivedCount == state.chunkCount {
+            inboundImageBlobs.removeValue(forKey: blobId)
+            assembleInboundImageBlob(blobId: blobId, state: state)
+        }
+    }
+
+    private func assembleInboundImageBlob(blobId: String, state: InboundImageBlob) {
+        var cipher = Data(capacity: state.receivedBytes)
+        for chunk in state.chunks {
+            guard let chunk else { return }
+            cipher.append(chunk)
+        }
+        guard cipher.count == state.cipherBytes else { return }
+        guard let plain = GattMeshProtocol.decryptImageBlob(
+            blobId: blobId,
+            mimeType: state.mimeType,
+            keyId: state.keyId,
+            ivBase64: state.ivBase64,
+            cipher: cipher,
+            profile: profile
+        ) else {
+            return
+        }
+        let senderLabel = state.senderLabel
+        let sourceRouteKey = state.sourceRouteKey
+        if state.kind == GattMeshProtocol.blobKindVoice {
+            guard let fileName = MeshImageFileStore.save(data: plain, blobId: blobId, fileExtension: "m4a") else {
+                return
+            }
+            let durationMillis = state.durationMillis
+            Task { @MainActor in
+                GattMeshChatStore.authority.appendRemoteVoiceMessage(
+                    messageId: blobId,
+                    senderLabel: senderLabel,
+                    sourcePeerId: sourceRouteKey,
+                    voiceFileName: fileName,
+                    voiceDurationMillis: durationMillis
+                )
+            }
+            return
+        }
+        guard let fileName = MeshImageFileStore.save(data: plain, blobId: blobId) else { return }
+        let width = state.width
+        let height = state.height
+        Task { @MainActor in
+            GattMeshChatStore.authority.appendRemoteImageMessage(
+                messageId: blobId,
+                senderLabel: senderLabel,
+                sourcePeerId: sourceRouteKey,
+                imageFileName: fileName,
+                imageWidth: width,
+                imageHeight: height
+            )
+        }
     }
 
     private func relayIfNeededLocked(packet: GattMeshPacket, sourceRouteKey: String) {
@@ -1141,6 +1584,257 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             isReadable: packet.isReadable
         )
         _ = relayPacketLocked(packet: relayedPacket, excludeRouteKey: sourceRouteKey)
+    }
+
+    // MARK: - Telsiz (push-to-talk)
+
+    /// Hop limit for relayed telsiz packets (matches Android `MAX_PTT_HOPS`).
+    private static let maxPttHops = 3
+    /// Throttle counters for telsiz audio TX/RX diagnostics logging.
+    private var pttTxLogTick = 0
+    private var pttRxLogTick = 0
+
+    /// Join the telsiz session on this mesh (announces presence; starts the audio engine).
+    func joinTelsiz() {
+        performOnQueue {
+            if self.pttController == nil {
+                self.pttController = self.makePttControllerLocked()
+            }
+            self.pttController?.join()
+        }
+    }
+
+    /// Leave the telsiz session (releases the floor + audio engine; clears presence).
+    func leaveTelsiz() {
+        performOnQueue { self.pttController?.leave() }
+    }
+
+    /// Press-to-talk down: claim the floor and start transmitting (if free).
+    func pttPressTalk() {
+        performOnQueue { self.pttController?.pressTalk() }
+    }
+
+    /// Press-to-talk up: release the floor.
+    func pttReleaseTalk() {
+        performOnQueue { self.pttController?.releaseTalk() }
+    }
+
+    /// Tear down the telsiz controller entirely (e.g. on mesh shutdown).
+    func shutdownTelsizLocked() {
+        pttController?.shutdown()
+        pttController = nil
+    }
+
+    private func makePttControllerLocked() -> PttController {
+        let controller = PttController(
+            profileId: profile.id,
+            localDisplayName: { GattMeshProtocol.localSenderLabel() },
+            localAgency: { [weak self] in self?.localAgency },
+            onSendControl: { [weak self] kind, claimId in
+                self?.performOnQueue { self?.sendPttControlLocked(kind: kind, claimId: claimId) }
+            },
+            onSendAudio: { [weak self] talkTag, baseSeq, frames in
+                self?.performOnQueue { self?.sendPttAudioLocked(talkTag: talkTag, baseSeq: baseSeq, frames: frames) }
+            },
+            onAudioActiveChanged: { [weak self] active in
+                self?.performOnQueue { self?.setTelsizAudioActiveLocked(active) }
+            }
+        )
+        controller.onStateChanged = { [weak self] state in
+            // Delivered on the main queue by the controller, safe for @Published.
+            self?.telsizState = state
+        }
+        return controller
+    }
+
+    private func sendPttControlLocked(kind: PttControlKind, claimId: Int64?) {
+        let type: GattMeshPacketType
+        switch kind {
+        case .join: type = .pttJoin
+        case .leave: type = .pttLeave
+        case .floorClaim: type = .pttFloorClaim
+        case .floorRelease: type = .pttFloorRelease
+        }
+        let packet = GattMeshProtocol.makePttControlPacket(
+            id: "ptt-\(UUID().uuidString)",
+            type: type,
+            originId: localPttOriginId,
+            senderLabel: GattMeshProtocol.localSenderLabel(),
+            claimId: claimId.map(String.init) ?? "",
+            agency: localAgency
+        )
+        // Remember our own id so a relayed copy looping back is deduped (not re-relayed).
+        _ = rememberMessageIdLocked(packet.id, timestampMillis: packet.timestampMillis)
+        _ = sendOrQueuePacketLocked(packet, queueWhenFailed: false)
+    }
+
+    private func sendPttAudioLocked(talkTag: String, baseSeq: Int, frames: [Data]) {
+        guard !frames.isEmpty else { return }
+        // Pack the bundled Opus frames as [u16 length][bytes]… so the receiver can split them back into
+        // individual per-frame sequence numbers for the jitter buffer (mirrors Android broadcastPttAudio).
+        var payload = Data()
+        for frame in frames {
+            let len = frame.count
+            payload.append(UInt8((len >> 8) & 0xFF))
+            payload.append(UInt8(len & 0xFF))
+            payload.append(frame)
+        }
+        // Audio sender label is cosmetic (the speaker is identified by origin id); trim it so a bundled
+        // (2-frame) packet still fits in one ATT write.
+        let senderLabel = String(GattMeshProtocol.localSenderLabel().prefix(16))
+        let packet = GattMeshProtocol.makePttAudioPacket(
+            id: "pa" + talkTag + String(format: "%06d", baseSeq),
+            originId: localPttOriginId,
+            senderLabel: senderLabel.isEmpty ? "telsiz" : senderLabel,
+            seq: baseSeq,
+            audioBase64: payload.base64EncodedString()
+        )
+        // Remember our own id so a relayed copy looping back is deduped (not re-played/relayed).
+        _ = rememberMessageIdLocked(packet.id, timestampMillis: packet.timestampMillis)
+        sendPttFastLocked(packet: packet, excludeRouteKey: nil)
+    }
+
+    /// Real-time audio fast path: each frame is written once, best-effort, single chunk — no chunk
+    /// queue, ACK waits, retries, or pacing. Frames that don't fit one ATT write are dropped (the
+    /// receiver's jitter buffer conceals loss). Unlike `relayPacketLocked` (the reliable chat path).
+    private func sendPttFastLocked(packet: GattMeshPacket, excludeRouteKey: String?) {
+        guard let transportPacket = GattMeshProtocol.transportPacket(for: packet) else {
+            NSLog("Telsiz TX: transportPacket encode FAILED")
+            return
+        }
+
+        var sent = 0
+        var droppedSize = 0
+        var droppedFlow = 0
+        var minMax = Int.max
+
+        // Outbound links (we are central): WRITE_NO_RESPONSE, honouring CoreBluetooth flow control.
+        for (_, peer) in outboundPeers {
+            guard peer.isConnected, let messageIn = peer.messageIn else { continue }
+            if routeKey(for: peer.peripheral) == excludeRouteKey { continue }
+            let maxLen = max(20, peer.peripheral.maximumWriteValueLength(for: .withoutResponse))
+            minMax = min(minMax, maxLen)
+            guard transportPacket.count <= maxLen else { droppedSize += 1; continue }
+            // Write regardless of `canSendWriteWithoutResponse`: gating on it dropped ~2/3 of audio
+            // frames during a talk burst (it reports "not ready" between BLE connection events).
+            // CoreBluetooth still sends best-effort when there's headroom; the receiver's jitter
+            // buffer conceals the rare genuine overflow. Dropping here just made the peer go silent.
+            if !peer.peripheral.canSendWriteWithoutResponse { droppedFlow += 1 }
+            peer.peripheral.writeValue(transportPacket, for: messageIn, type: .withoutResponse)
+            sent += 1
+        }
+
+        // Inbound links (we are peripheral): single best-effort notification per subscribed central.
+        if let peripheral = peripheralManager, let characteristic = hostedMessageOutCharacteristic {
+            for (_, peer) in inboundPeers {
+                guard peer.notifyEnabled else { continue }
+                if routeKey(for: peer.central) == excludeRouteKey { continue }
+                let maxLen = max(20, peer.central.maximumUpdateValueLength)
+                minMax = min(minMax, maxLen)
+                guard transportPacket.count <= maxLen else { droppedSize += 1; continue }
+                if peripheral.updateValue(transportPacket, for: characteristic, onSubscribedCentrals: [peer.central]) {
+                    sent += 1
+                } else {
+                    droppedFlow += 1
+                }
+            }
+        }
+
+        // Always log a dropped-for-size event (the prime "no audio" suspect); otherwise throttle to ~1/s.
+        pttTxLogTick += 1
+        if packet.type == .pttAudio && (droppedSize > 0 || pttTxLogTick % 25 == 1) {
+            NSLog("Telsiz TX audio: pkt=%dB minMaxWrite=%d sent=%d droppedSize=%d droppedFlow=%d",
+                  transportPacket.count, minMax == Int.max ? -1 : minMax, sent, droppedSize, droppedFlow)
+        }
+    }
+
+    private func setTelsizAudioActiveLocked(_ active: Bool) {
+        // Free the radio for real-time audio: pause the (duplicate-allowing, radio-heavy) discovery scan
+        // while someone is actively transmitting; resume it when the floor goes idle. Mirrors Android's
+        // scan hold tied to active audio, not to the whole joined session.
+        if active {
+            stopScanningLocked()
+        } else {
+            startScanningLocked()
+        }
+    }
+
+    private func handlePttPacketLocked(_ packet: GattMeshPacket, sourceRouteKey: String) {
+        if let controller = pttController {
+            // The origin id (stable, hop-independent) rides in blobId; fall back to the immediate sender.
+            let origin = nonEmpty(packet.blobId) ?? sourceRouteKey
+            let agency = nonEmpty(packet.blobKind)
+            switch packet.type {
+            case .pttJoin:
+                controller.onPeerControl(origin: origin, senderLabel: packet.senderLabel, agency: agency, kind: .join, claimId: nil)
+            case .pttLeave:
+                controller.onPeerControl(origin: origin, senderLabel: packet.senderLabel, agency: agency, kind: .leave, claimId: nil)
+            case .pttFloorClaim:
+                controller.onPeerControl(origin: origin, senderLabel: packet.senderLabel, agency: agency, kind: .floorClaim, claimId: Int64(packet.message))
+            case .pttFloorRelease:
+                controller.onPeerControl(origin: origin, senderLabel: packet.senderLabel, agency: agency, kind: .floorRelease, claimId: nil)
+            case .pttAudio:
+                if let bundleBase64 = packet.blobDataBase64, let bundle = Data(base64Encoded: bundleBase64) {
+                    // Split the [u16 length][bytes]… bundle back into per-frame seqs (baseSeq, +1, …).
+                    let bytes = [UInt8](bundle)
+                    var offset = 0
+                    var seq = packet.blobIndex ?? 0
+                    var frameCount = 0
+                    while offset + 2 <= bytes.count {
+                        let len = (Int(bytes[offset]) << 8) | Int(bytes[offset + 1])
+                        offset += 2
+                        if len <= 0 || offset + len > bytes.count { break }
+                        let frame = bundle.subdata(in: offset..<(offset + len))
+                        controller.onPeerAudio(origin: origin, senderLabel: packet.senderLabel, seq: seq, opus: frame)
+                        offset += len
+                        seq += 1
+                        frameCount += 1
+                    }
+                    pttRxLogTick += 1
+                    if pttRxLogTick % 25 == 1 {
+                        NSLog("Telsiz RX audio: origin=%@ bundle=%dB frames=%d seq0=%d", origin, bundle.count, frameCount, packet.blobIndex ?? -1)
+                    }
+                } else {
+                    NSLog("Telsiz RX audio: bundle base64 decode FAILED (blobData nil=%d)", packet.blobDataBase64 == nil ? 1 : 0)
+                }
+            default:
+                break
+            }
+        } else {
+            if packet.type == .pttAudio { NSLog("Telsiz RX audio: dropped — pttController is nil (not joined)") }
+        }
+        // Multi-hop: forward to this node's other peers (never back to the sender), bounded by hops.
+        relayPttFastLocked(packet, sourceRouteKey: sourceRouteKey)
+    }
+
+    private func relayPttFastLocked(_ packet: GattMeshPacket, sourceRouteKey: String) {
+        guard packet.hop < Self.maxPttHops else { return }
+        // Forward an identical copy (same id/timestamp for dedup) with the hop counter bumped.
+        let relayed = GattMeshPacket(
+            id: packet.id,
+            senderLabel: packet.senderLabel,
+            timestampMillis: packet.timestampMillis,
+            message: packet.message,
+            type: packet.type,
+            receiptType: nil,
+            receiptMessageIds: [],
+            authNonce: nil,
+            authProofJSON: nil,
+            hop: packet.hop + 1,
+            protocol: packet.protocol,
+            encrypted: false,
+            keyId: nil,
+            ivBase64: nil,
+            cipherBase64: nil,
+            originProofJSON: nil,
+            originSignatureBase64: nil,
+            isReadable: true,
+            blobId: packet.blobId,
+            blobIndex: packet.blobIndex,
+            blobDataBase64: packet.blobDataBase64,
+            blobKind: packet.blobKind
+        )
+        sendPttFastLocked(packet: relayed, excludeRouteKey: sourceRouteKey)
     }
 
     private func enqueuePendingOutboundPacketLocked(_ packet: GattMeshPacket) {
@@ -1216,7 +1910,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     }
 
     private func persistPendingOutboundQueueLocked() {
-        let destination = Self.persistedPendingQueueURL
+        let destination = persistedPendingQueueURL
         guard !pendingOutboundPackets.isEmpty else {
             try? FileManager.default.removeItem(at: destination)
             return
@@ -1232,7 +1926,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     }
 
     private func loadPersistedPendingOutboundQueueLocked() {
-        guard let payload = try? LocalEncryptedFileStore.read(from: Self.persistedPendingQueueURL) else {
+        guard let payload = try? LocalEncryptedFileStore.read(from: persistedPendingQueueURL) else {
             pendingOutboundPackets = []
             pendingOutboundRetryStates = [:]
             return
@@ -1242,7 +1936,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
               snapshot.version == Self.persistedPendingQueueVersion else {
             pendingOutboundPackets = []
             pendingOutboundRetryStates = [:]
-            try? FileManager.default.removeItem(at: Self.persistedPendingQueueURL)
+            try? FileManager.default.removeItem(at: persistedPendingQueueURL)
             return
         }
 
@@ -1391,6 +2085,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
         let verifiedAtMillis = Int64(Date().timeIntervalSince1970 * 1_000)
         let nextState = GattMeshPeerVerificationState(
             role: verifiedRole,
+            agency: GattMeshProtocol.resolveVerifiedAgency(verifiedProof),
             verifiedAtMillis: verifiedAtMillis,
             peerIdentityKey: stablePeerIdentityKey(for: proofPayload)
         )
@@ -1425,6 +2120,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
         return GattMeshPeerVerificationState(
             role: verifiedRole,
+            agency: GattMeshProtocol.resolveVerifiedAgency(verifiedProof),
             verifiedAtMillis: Int64(Date().timeIntervalSince1970 * 1_000),
             peerIdentityKey: stablePeerIdentityKey(for: proofPayload)
         )
@@ -1450,8 +2146,10 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
         verifiedRole: String,
         verifiedAtMillis: Int64
     ) {
+        let isAuthority = self.profile.id == MeshProfile.authority.id
         Task { @MainActor in
-            _ = GattMeshChatStore.shared.backfillOriginVerification(
+            let store = isAuthority ? GattMeshChatStore.authority : GattMeshChatStore.shared
+            _ = store.backfillOriginVerification(
                 for: sourceRouteKey,
                 originVerifiedRole: verifiedRole,
                 originVerifiedAtMillis: verifiedAtMillis
@@ -1651,6 +2349,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             isSendReady: isSendReady,
             verificationStatus: verification == nil ? .unverified : .verified,
             verifiedRole: verification?.role,
+            verifiedAgency: verification?.agency,
             verifiedAtMillis: verification?.verifiedAtMillis
         )
         let peerIdentityKey = verification?.peerIdentityKey
@@ -1715,6 +2414,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
                     ? .verified
                     : .unverified,
                 verifiedRole: preferredVerificationPeer.verifiedRole,
+                verifiedAgency: preferredVerificationPeer.verifiedAgency,
                 verifiedAtMillis: mergedVerifiedAtMillis > 0 ? mergedVerifiedAtMillis : nil
             ),
             peerIdentityKey: peerIdentityKey ?? existing.peerIdentityKey,
@@ -1818,7 +2518,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
     private func matchesMeshAdvertisement(_ advertisementData: [String: Any]) -> Bool {
         let serviceUUIDs = advertisedServiceUUIDs(from: advertisementData)
-        if serviceUUIDs.contains(GattMeshProtocol.serviceUUID) || serviceUUIDs.contains(sosServiceUUID) {
+        if serviceUUIDs.contains(self.profile.serviceUUID) || serviceUUIDs.contains(sosServiceUUID) {
             return true
         }
 
@@ -1875,7 +2575,8 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             delegate: self,
             queue: queue,
             options: [
-                CBCentralManagerOptionRestoreIdentifierKey: Self.centralRestoreIdentifier
+                CBCentralManagerOptionRestoreIdentifierKey: centralRestoreIdentifier,
+                CBCentralManagerOptionShowPowerAlertKey: false
             ]
         )
     }

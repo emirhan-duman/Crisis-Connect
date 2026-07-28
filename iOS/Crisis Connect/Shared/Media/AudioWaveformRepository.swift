@@ -48,12 +48,16 @@ actor AudioWaveformRepository {
     }
 
     private nonisolated static func extractWaveform(for fileName: String, barCount: Int) -> [CGFloat] {
-        guard let data = SOSChatStore.loadVoiceData(fileName: fileName), !data.isEmpty else {
+        guard let stored = SOSChatStore.loadVoiceData(fileName: fileName), !stored.isEmpty else {
             return placeholder(barCount: barCount)
         }
+        // Ogg/Opus clips from Android can't be opened by AVAudioFile — reuse the playback
+        // transcoder (and its encrypted m4a cache); non-Ogg data passes through untouched.
+        let data = OggOpusTranscoder.playableAudioData(for: stored, cacheKey: fileName)
+        let isTranscoded = data != stored
 
         let pathExtension = URL(fileURLWithPath: fileName).pathExtension
-        let fileExtension = pathExtension.isEmpty ? "m4a" : pathExtension
+        let fileExtension = isTranscoded ? "m4a" : (pathExtension.isEmpty ? "m4a" : pathExtension)
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("cc-waveform-\(UUID().uuidString.lowercased())")
             .appendingPathExtension(fileExtension)

@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
+import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -27,6 +28,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -39,6 +41,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
@@ -57,12 +60,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
@@ -95,9 +102,10 @@ import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -134,6 +142,8 @@ import com.auralis.crisisconnect.data.MessageType
 import com.auralis.crisisconnect.data.local.ContactAvatarStorage
 import com.auralis.crisisconnect.navigation.ChatSharedElements
 import com.auralis.crisisconnect.service.BlePeerIdentityUtils
+import com.auralis.crisisconnect.service.CallState
+import com.auralis.crisisconnect.service.CallUiState
 import com.auralis.crisisconnect.service.client.BleClientManager
 import com.auralis.crisisconnect.service.media.ImageTransferDirection
 import com.auralis.crisisconnect.service.media.ImageTransferProgress
@@ -168,10 +178,10 @@ fun BleChatScreen(
 ) {
     val context = LocalContext.current
     val viewModel: BleChatViewModel = viewModel()
-    val messages by viewModel.messages.collectAsState()
-    val contactName by viewModel.contactName.collectAsState()
+    val messages by viewModel.messages.collectAsStateWithLifecycle()
+    val contactName by viewModel.contactName.collectAsStateWithLifecycle()
     val contactAvatarVersion by ContactAvatarStorage.observeAvatarVersion(sessionCode)
-        .collectAsState(initial = 0L)
+        .collectAsStateWithLifecycle(initialValue = 0L)
     val contactProfileBitmap by produceState<Bitmap?>(
         initialValue = null,
         key1 = sessionCode,
@@ -181,21 +191,23 @@ fun BleChatScreen(
             ContactAvatarStorage.loadContactAvatar(context, sessionCode)
         }
     }
-    val draft by viewModel.messageDraft.collectAsState()
+    val draft by viewModel.messageDraft.collectAsStateWithLifecycle()
     val density = LocalDensity.current
     val isImeVisible = WindowInsets.ime.getBottom(density) > 0
-    val connectionState by viewModel.connectionState.collectAsState()
-    val serverReady by viewModel.serverReady.collectAsState()
-    val isRescueUser by viewModel.isRescueUser.collectAsState()
-    val isRecording by viewModel.isRecording.collectAsState()
-    val recordingFilePath by viewModel.recordingFilePath.collectAsState()
-    val recordingDuration by viewModel.recordingDuration.collectAsState()
-    val isSendingVoice by viewModel.isSendingVoice.collectAsState()
-    val voiceTransfers by viewModel.voiceTransfers.collectAsState()
-    val isSendingImage by viewModel.isSendingImage.collectAsState()
-    val imageTransfers by viewModel.imageTransfers.collectAsState()
-    val isSendingDocument by viewModel.isSendingDocument.collectAsState()
-    val isContactVerified by viewModel.isContactVerified.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
+    val peerLastSeenMillis by viewModel.peerLastSeenMillis.collectAsStateWithLifecycle()
+    val rescueCall by viewModel.rescueCall.collectAsStateWithLifecycle()
+    val serverReady by viewModel.serverReady.collectAsStateWithLifecycle()
+    val isRescueUser by viewModel.isRescueUser.collectAsStateWithLifecycle()
+    val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
+    val recordingFilePath by viewModel.recordingFilePath.collectAsStateWithLifecycle()
+    val recordingDuration by viewModel.recordingDuration.collectAsStateWithLifecycle()
+    val isSendingVoice by viewModel.isSendingVoice.collectAsStateWithLifecycle()
+    val voiceTransfers by viewModel.voiceTransfers.collectAsStateWithLifecycle()
+    val isSendingImage by viewModel.isSendingImage.collectAsStateWithLifecycle()
+    val imageTransfers by viewModel.imageTransfers.collectAsStateWithLifecycle()
+    val isSendingDocument by viewModel.isSendingDocument.collectAsStateWithLifecycle()
+    val isContactVerified by viewModel.isContactVerified.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -210,26 +222,37 @@ fun BleChatScreen(
             preferredDisplayName = preferredDisplayName
         )
     }
-    val isTransportReady = connectionState?.status == BleClientManager.ConnectionStatus.Ready || serverReady
+    // connectionState re-emits with only peerBatteryPercent changed on every peer_info packet;
+    // derivedStateOf keeps those battery-only pulses from invalidating the whole screen.
+    val isTransportReady by remember {
+        derivedStateOf {
+            connectionState?.status == BleClientManager.ConnectionStatus.Ready || serverReady
+        }
+    }
     val counterpartyIsFieldTeam = BlePeerIdentityUtils.isRescuerDisplayName(displayName)
     val showsVerifiedIdentity = !isRescueUser &&
         counterpartyIsFieldTeam &&
         (isTransportReady || isContactVerified)
     val securityNoticeInList = isTransportReady && messages.isNotEmpty()
     val listTailIndex = messages.lastIndex + if (securityNoticeInList) 1 else 0
-    val hasRecordedVoice = !recordingFilePath.isNullOrBlank()
+    val hasRecordedVoice by remember { derivedStateOf { !recordingFilePath.isNullOrBlank() } }
     var infoTargetMessageId by remember { mutableStateOf<String?>(null) }
     val infoTargetMessage = remember(messages, infoTargetMessageId) {
         messages.firstOrNull { it.id == infoTargetMessageId }
     }
     val messageInfoSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val activeIncomingVoiceTransfer = remember(voiceTransfers) {
-        voiceTransfers.values
-            .filter { transfer ->
-                transfer.direction == VoiceTransferDirection.Download &&
-                    transfer.state != VoiceTransferState.Completed
-            }
-            .maxByOrNull { transfer -> transfer.confirmedChunks }
+    // voiceTransfers republishes as a new map per received chunk; a plain remember(voiceTransfers)
+    // key recomposed the entire screen many times per second during a transfer. derivedStateOf
+    // confines that to wherever this value is actually read (the bottom-bar banner).
+    val activeIncomingVoiceTransfer by remember {
+        derivedStateOf {
+            voiceTransfers.values
+                .filter { transfer ->
+                    transfer.direction == VoiceTransferDirection.Download &&
+                        transfer.state != VoiceTransferState.Completed
+                }
+                .maxByOrNull { transfer -> transfer.confirmedChunks }
+        }
     }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val titleSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
@@ -554,25 +577,22 @@ fun BleChatScreen(
         }
     }
 
-    LaunchedEffect(
-        isRecording,
-        hasRecordedVoice,
-        isSendingVoice,
-        pendingImage,
-        isSendingImage,
-        isSendingDocument,
-        isSharingLocation
-    ) {
-        if (
+    // snapshotFlow instead of effect keys: the flags were read at screen-root purely to close the
+    // attachment menu, so every toggle recomposed the whole screen. snapshotFlow reads happen
+    // outside composition.
+    LaunchedEffect(Unit) {
+        snapshotFlow {
             isRecording ||
-            hasRecordedVoice ||
-            isSendingVoice ||
-            pendingImage != null ||
-            isSendingImage ||
-            isSendingDocument ||
-            isSharingLocation
-        ) {
-            showAttachmentMenu = false
+                hasRecordedVoice ||
+                isSendingVoice ||
+                pendingImage != null ||
+                isSendingImage ||
+                isSendingDocument ||
+                isSharingLocation
+        }.collect { busy ->
+            if (busy) {
+                showAttachmentMenu = false
+            }
         }
     }
 
@@ -625,6 +645,22 @@ fun BleChatScreen(
                                     state = connectionState,
                                     showForCurrentRole = isRescueUser
                                 )
+                                val linkAlive = isTransportReady ||
+                                    connectionState?.status == BleClientManager.ConnectionStatus.Connected
+                                if (!linkAlive) {
+                                    peerLastSeenMillis?.let { lastSeenMillis ->
+                                        Text(
+                                            text = stringResource(
+                                                R.string.chat_presence_last_seen,
+                                                DateUtils.getRelativeTimeSpanString(lastSeenMillis).toString()
+                                            ),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -634,7 +670,26 @@ fun BleChatScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = null)
                     }
                 },
-                actions = {},
+                actions = {
+                    if (isTransportReady && rescueCall == null) {
+                        IconButton(onClick = {
+                            val micGranted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (!micGranted) {
+                                recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            } else {
+                                viewModel.startRescueCall()
+                            }
+                        }) {
+                            Icon(
+                                Icons.Default.Call,
+                                contentDescription = stringResource(R.string.ble_call_start)
+                            )
+                        }
+                    }
+                },
                 scrollBehavior = scrollBehavior,
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
@@ -711,7 +766,7 @@ fun BleChatScreen(
                         isRecording = isRecording,
                         hasRecordedVoice = hasRecordedVoice,
                         isSendingVoice = isSendingVoice,
-                        recordingDurationMillis = recordingDuration,
+                        recordingDurationMillis = { recordingDuration },
                         canRecordVoice = isTransportReady,
                         onAttachmentClick = {
                             if (!showAttachmentMenu) {
@@ -803,15 +858,22 @@ fun BleChatScreen(
                         key = BleChatMessage::id,
                         contentType = { "ble_message" }
                     ) { message ->
-                        val imageProgress = if (message.messageType == MessageType.IMAGE) {
-                            val direction = if (message.isLocal) {
-                                ImageTransferDirection.Upload
-                            } else {
-                                ImageTransferDirection.Download
+                        // imageTransfers is republished as a new map on every progress chunk;
+                        // a raw read here recomposed every visible bubble per tick. derivedStateOf
+                        // keeps the invalidation scoped to the bubble whose entry changed.
+                        val imageProgress by remember(message.id, message.messageType, message.isLocal) {
+                            derivedStateOf {
+                                if (message.messageType == MessageType.IMAGE) {
+                                    val direction = if (message.isLocal) {
+                                        ImageTransferDirection.Upload
+                                    } else {
+                                        ImageTransferDirection.Download
+                                    }
+                                    imageTransfers["${direction.name}:${message.id}"]
+                                } else {
+                                    null
+                                }
                             }
-                            imageTransfers["${direction.name}:${message.id}"]
-                        } else {
-                            null
                         }
                         BleChatBubble(
                             message = message,
@@ -925,6 +987,197 @@ fun BleChatScreen(
                 onDismiss = { infoTargetMessageId = null }
             )
         }
+    }
+
+    rescueCall?.let { call ->
+        RescueCallOverlay(
+            call = call,
+            displayName = displayName,
+            onAccept = {
+                val micGranted = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+                if (micGranted) {
+                    viewModel.acceptRescueCall(call.callId)
+                } else {
+                    recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            },
+            onReject = { viewModel.rejectRescueCall(call.callId) },
+            onEnd = { viewModel.endRescueCall() },
+            onToggleMute = { viewModel.setRescueCallMuted(!call.muted) },
+            onToggleSpeaker = { viewModel.toggleRescueCallSpeaker() }
+        )
+    }
+}
+
+@Composable
+private fun RescueCallOverlay(
+    call: CallUiState,
+    displayName: String,
+    onAccept: () -> Unit,
+    onReject: () -> Unit,
+    onEnd: () -> Unit,
+    onToggleMute: () -> Unit,
+    onToggleSpeaker: () -> Unit
+) {
+    var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(call.callId, call.connectedAt) {
+        while (true) {
+            nowMillis = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1_000)
+        }
+    }
+    val stateLabel = when {
+        call.state == CallState.InCall -> {
+            val connectedAt = call.connectedAt
+            if (connectedAt != null) {
+                val totalSeconds = ((nowMillis - connectedAt) / 1_000L).coerceAtLeast(0L)
+                "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+            } else {
+                stringResource(R.string.ble_call_connecting)
+            }
+        }
+        call.state == CallState.Ringing && !call.isOutgoing ->
+            stringResource(R.string.ble_call_incoming)
+        call.state == CallState.Ringing -> stringResource(R.string.ble_call_ringing)
+        else -> stringResource(R.string.ble_call_connecting)
+    }
+    val incomingRinging = call.state == CallState.Ringing && !call.isOutgoing
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(
+                modifier = Modifier.padding(top = 72.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = displayName,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = stateLabel,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = stringResource(R.string.ble_call_via_bluetooth),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (incomingRinging) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 48.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    RescueCallActionButton(
+                        icon = Icons.Default.CallEnd,
+                        label = stringResource(R.string.ble_call_reject),
+                        container = MaterialTheme.colorScheme.error,
+                        content = MaterialTheme.colorScheme.onError,
+                        onClick = onReject
+                    )
+                    RescueCallActionButton(
+                        icon = Icons.Default.Call,
+                        label = stringResource(R.string.ble_call_accept),
+                        container = MaterialTheme.colorScheme.primary,
+                        content = MaterialTheme.colorScheme.onPrimary,
+                        onClick = onAccept
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 48.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RescueCallActionButton(
+                        icon = if (call.muted) Icons.Default.MicOff else Icons.Default.Mic,
+                        label = stringResource(
+                            if (call.muted) R.string.ble_call_unmute else R.string.ble_call_mute
+                        ),
+                        container = if (call.muted) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        content = MaterialTheme.colorScheme.onSurface,
+                        onClick = onToggleMute
+                    )
+                    RescueCallActionButton(
+                        icon = Icons.AutoMirrored.Filled.VolumeUp,
+                        label = stringResource(R.string.ble_call_speaker),
+                        container = if (call.speakerEnabled) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        content = MaterialTheme.colorScheme.onSurface,
+                        onClick = onToggleSpeaker
+                    )
+                    RescueCallActionButton(
+                        icon = Icons.Default.CallEnd,
+                        label = stringResource(R.string.ble_call_end),
+                        container = MaterialTheme.colorScheme.error,
+                        content = MaterialTheme.colorScheme.onError,
+                        onClick = onEnd
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RescueCallActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    container: androidx.compose.ui.graphics.Color,
+    content: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            modifier = Modifier
+                .size(68.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClick),
+            shape = CircleShape,
+            color = container
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                modifier = Modifier
+                    .padding(18.dp)
+                    .size(32.dp),
+                tint = content
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -1228,6 +1481,7 @@ private fun BleChatBubble(
                             )
                         }
 
+                        MessageType.SOS_ALERT,
                         MessageType.TEXT -> {
                             Text(
                                 text = displayText,

@@ -12,8 +12,13 @@ import com.google.firebase.functions.FirebaseFunctions
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import java.security.KeyPair
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
@@ -173,6 +178,34 @@ class SecurityRepository(private val context: Context) {
     }
 
     /**
+     * Forces a fresh provision from the backend and PERSISTS it locally, returning the new
+     * certificate. Use this for the manual "get certificate" / "renew" button: unlike
+     * [getOrFetchCertificate] it never short-circuits to a cached cert, and unlike calling
+     * [CertificateProvisioningFlow] directly it actually stores the result — otherwise the profile
+     * card cannot see the new certificate until the app is restarted.
+     */
+    suspend fun provisionAndStoreCertificate(deviceId: String): RoleCertificate =
+        withContext(Dispatchers.IO) {
+            val currentUid = resolveCurrentUid()
+            require(currentUid.isNotEmpty()) {
+                "Authenticated user is required to provision a rescue certificate"
+            }
+            val flow = CertificateProvisioningFlow(context.applicationContext, functions)
+            val result = flow.provisionCertificate(deviceId)
+            require(result.certificate.isOwnedBy(currentUid)) {
+                "Provisioned certificate owner does not match authenticated user."
+            }
+            val certificateBytes = result.certificate.toStorageBytes()
+            persistCertificate(
+                publicKeyBase64 = result.keyMaterial.publicKeyBase64,
+                certificateBytes = certificateBytes,
+                ownerUid = result.certificate.ownerUid
+            )
+            Log.i(TAG, "Provisioned + stored device-bound certificate (role=${result.certificate.role})")
+            result.certificate
+        }
+
+    /**
      * Returns true if a cert exists for the current user/device. Pass
      * [allowExpired]=true for UI gating (e.g. "should we show the rescue
      * button at all"); pass false to require a strictly-valid cert.
@@ -209,16 +242,56 @@ class SecurityRepository(private val context: Context) {
     }
 
     /**
+     * Verified agency (e.g. AFAD/FEMA) bound into this device's own stored certificate.
+     * Mirrors what peers see for us, so the connected-users sheet can label our own row
+     * with the same institution. Empty for legacy v2 certificates (no agency).
+     */
+    suspend fun getUsableStoredCertificateAgency(allowExpired: Boolean = true): String? = withContext(Dispatchers.IO) {
+        val currentUid = resolveCurrentUid()
+        if (currentUid.isEmpty()) return@withContext null
+        val keyPair = AttestedKeyStore.loadExistingAttestedKey() ?: return@withContext null
+        val publicKeyBase64 = Base64.encodeToString(keyPair.public.encoded, Base64.NO_WRAP)
+        val certificateBytes = loadUsableStoredCertificate(
+            currentUid = currentUid,
+            publicKeyBase64 = publicKeyBase64,
+            skipExpiryCheck = allowExpired
+        ) ?: return@withContext null
+        RoleCertificate.fromStorageBytes(certificateBytes)?.agency
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
      * Best-effort warm-up used after successful rescue verification while online.
      * Also runs a server-side revocation check on the existing cert.
      */
-    suspend fun warmUpCertificate(): Boolean = runCatching {
+    suspend fun warmUpCertificate(): Boolean = try {
         revalidateAgainstServer()
         getOrFetchCertificate()
         true
-    }.onFailure { throwable ->
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (throwable: Throwable) {
         Log.w(TAG, "Rescue certificate warm-up failed", throwable)
-    }.getOrDefault(false)
+        false
+    }
+
+    /**
+     * Runs [warmUpCertificate] on an app-lifetime scope so it survives UI
+     * lifecycles. Provisioning takes several seconds (Play Integrity + key
+     * attestation + backend call); a composition-scoped caller would cancel
+     * it as soon as the screen is left. Concurrent requests are de-duplicated
+     * because [getOrFetchCertificate] has no internal locking.
+     */
+    fun warmUpCertificateInBackground() {
+        val appContext = context.applicationContext
+        synchronized(WARM_UP_LOCK) {
+            if (backgroundWarmUpJob?.isActive == true) return
+            backgroundWarmUpJob = warmUpScope.launch {
+                SecurityRepository(appContext).warmUpCertificate()
+            }
+        }
+    }
 
     /**
      * Calls the backend to confirm the cached certificate is still active.
@@ -377,6 +450,10 @@ class SecurityRepository(private val context: Context) {
         private val CERTIFICATE_KEY = stringPreferencesKey("device_certificate")
         private val PUBLIC_KEY_KEY = stringPreferencesKey("device_public_key")
         private val CERTIFICATE_OWNER_UID_KEY = stringPreferencesKey("device_certificate_owner_uid")
+
+        private val warmUpScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val WARM_UP_LOCK = Any()
+        private var backgroundWarmUpJob: Job? = null
     }
 }
 

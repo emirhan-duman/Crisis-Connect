@@ -42,6 +42,14 @@ object P2pBleProtocol {
     const val CHAT_KIND_FILE_DONE = "file_done"
     const val CHAT_KIND_FILE_ABORT = "file_abort"
     const val CHAT_KIND_DECRYPT_FAIL = "decrypt_fail"
+    const val CHAT_KIND_CALL_OFFER = "call_offer"
+    const val CHAT_KIND_CALL_RING = "call_ring"
+    const val CHAT_KIND_CALL_ACCEPT = "call_accept"
+    const val CHAT_KIND_CALL_REJECT = "call_reject"
+    const val CHAT_KIND_CALL_BUSY = "call_busy"
+    const val CHAT_KIND_CALL_END = "call_end"
+    const val CHAT_KIND_CALL_CFG = "call_cfg"
+    const val CHAT_KIND_CALL_CFG_ACK = "call_cfg_ack"
 
     const val VOICE_CHUNK_SIZE_BYTES = 1_536
     const val VOICE_MAX_TOTAL_BYTES = 524_288
@@ -130,6 +138,32 @@ object P2pBleProtocol {
 
     fun buildCanonicalProofPayload(vararg parts: Pair<String, String>): ByteArray {
         return buildProofPayloadInternal(parts, trailingNewline = false)
+    }
+
+    /**
+     * Proof payload for the scanner's internet identity carried in the client-hello. A SEPARATE
+     * HMAC from the main handshake proof so it stays fully backward-compatible: peers that omit the
+     * identity keep pairing unchanged, and a peer that supplies it binds it to this session's
+     * nonces so a BLE MITM (who lacks the shared key) can't inject a forged identity.
+     *
+     * Always the CANONICAL (trailing-newline-free) form regardless of peer platform, so it is
+     * byte-identical with iOS's `buildClientIdentityProofPayload`.
+     */
+    fun buildClientIdentityProofPayload(
+        shareId: String,
+        serverNonce: String,
+        clientNonce: String,
+        peerUid: String,
+        peerPublicKey: String
+    ): ByteArray {
+        return buildCanonicalProofPayload(
+            "type" to "client_identity",
+            "shareId" to shareId,
+            "serverNonce" to serverNonce,
+            "clientNonce" to clientNonce,
+            "clientPeerUid" to peerUid,
+            "clientPeerPublicKey" to peerPublicKey
+        )
     }
 
     fun hmacBase64(keyBytes: ByteArray, payload: ByteArray): String? {

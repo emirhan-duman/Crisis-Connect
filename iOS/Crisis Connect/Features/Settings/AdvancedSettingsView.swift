@@ -36,6 +36,14 @@ struct AdvancedSettingsView: View {
                 )
 
                 AdvancedToggleCard(
+                    titleKey: "ADVANCED_SETTING_SHARE_LAST_SEEN_TITLE",
+                    descriptionKey: "ADVANCED_SETTING_SHARE_LAST_SEEN_DESCRIPTION",
+                    iconName: "eye.fill",
+                    tint: .appPrimary,
+                    isOn: $settings.shareLastSeenEnabled
+                )
+
+                AdvancedToggleCard(
                     titleKey: "ADVANCED_SETTING_DIAGNOSTICS_UPLOAD_TITLE",
                     descriptionKey: "ADVANCED_SETTING_DIAGNOSTICS_UPLOAD_DESCRIPTION",
                     iconName: "exclamationmark.triangle.fill",

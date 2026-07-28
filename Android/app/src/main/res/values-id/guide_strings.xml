@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Panduan Darurat</string>
+    <string name="guide_screen_intro_subtitle">Akses informasi penting dengan cepat dan ikuti tindakan singkat di bawah tekanan.</string>
+    <string name="guide_screen_filter_all">Semua kategori</string>
+    <string name="guide_screen_section_30_seconds">Dalam 30 detik</string>
+    <string name="guide_screen_section_step_by_step">Langkah demi langkah</string>
+    <string name="guide_screen_section_dont">Jangan lakukan</string>
+    <string name="guide_screen_section_checklist">Daftar periksa</string>
+    <string name="guide_screen_expand_details">Tampilkan detail</string>
+    <string name="guide_screen_collapse_details">Sembunyikan detail</string>
+    <string name="guide_screen_action_start_checklist">Mulai daftar periksa</string>
+    <string name="guide_screen_action_call_local">Panggil %1$s</string>
+    <string name="guide_screen_action_open_assembly">Buka titik kumpul</string>
+    <string name="guide_screen_source_note">Catatan sumber:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d selesai</string>
+    <string name="guide_screen_no_dial_app_with_number">Tidak ada aplikasi untuk memanggil %1$s.</string>
+    <string name="guide_screen_no_map_app">Tidak ada aplikasi untuk membuka peta.</string>
+    <string name="guide_screen_assembly_query">Titik kumpul bencana</string>
+    <string name="guide_screen_search_placeholder">Cari berdasarkan kode, kategori, atau topik</string>
+    <string name="guide_screen_clear_search">Hapus pencarian</string>
+    <string name="guide_screen_clear_filters">Hapus filter</string>
+    <string name="guide_screen_empty_title">Tidak ada panduan yang ditemukan</string>
+    <string name="guide_screen_empty_body">Coba kurangi filter atau cari dengan kata kunci yang lebih luas.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d tindakan cepat lainnya</string>
+    <string name="guide_screen_region_value">Wilayah: %1$s • Nomor darurat: %2$s</string>
+    <string name="guide_screen_results_count">%1$d panduan terdaftar</string>
+    <string name="guide_screen_read_minutes_format">%1$d mnt</string>
+</resources>

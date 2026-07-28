@@ -97,6 +97,7 @@ internal fun replyPreviewText(
         }
         MessageType.AUDIO -> textPortion ?: voiceLabel
         MessageType.IMAGE -> textPortion ?: imageLabel
+        MessageType.SOS_ALERT -> textPortion
     }
     return typeLabel?.trim()?.takeIf { it.isNotEmpty() } ?: unknownLabel
 }
@@ -120,6 +121,7 @@ internal fun buildReplyFormattedMessage(
         }
         MessageType.AUDIO -> context.getString(R.string.chat_reply_audio_placeholder)
         MessageType.IMAGE -> context.getString(R.string.chat_reply_image_placeholder)
+        MessageType.SOS_ALERT -> target.text
     }
     val safePreview = preview?.trim()?.takeIf { it.isNotEmpty() }
         ?: context.getString(R.string.chat_reply_unknown_placeholder)

@@ -27,6 +27,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.analytics.Analytics
 import com.auralis.crisisconnect.data.ChatMessage
 import com.auralis.crisisconnect.data.Contact
 import com.auralis.crisisconnect.data.MessageDeliveryStatus
@@ -34,10 +35,12 @@ import com.auralis.crisisconnect.data.MessageType
 import com.auralis.crisisconnect.data.PREFERRED_TRANSPORT_BLE_GATT
 import com.auralis.crisisconnect.data.REMOTE_PLATFORM_IOS
 import com.auralis.crisisconnect.data.buildStoreForwardMessageUuid
+import com.auralis.crisisconnect.data.resolveSharedDocumentLocalCopy
 import com.auralis.crisisconnect.data.markMessagesAsRead
 import com.auralis.crisisconnect.data.normalizeMacAddress
 import com.auralis.crisisconnect.data.normalizePreferredTransport
 import com.auralis.crisisconnect.data.normalizeRemotePlatform
+import com.auralis.crisisconnect.data.acknowledgePeerKeyChange
 import com.auralis.crisisconnect.data.observeContact
 import com.auralis.crisisconnect.data.observeMessages
 import com.auralis.crisisconnect.data.updateContactAesKey
@@ -56,7 +59,22 @@ import com.auralis.crisisconnect.service.CallAudioRoute
 import com.auralis.crisisconnect.service.RfcommForegroundService
 import com.auralis.crisisconnect.service.SosServerServiceBinding
 import com.auralis.crisisconnect.service.gattmesh.GattMeshForegroundService
+import android.net.ConnectivityManager
+import android.net.Network
+import com.auralis.crisisconnect.messaging.E2eEnvelope
+import com.auralis.crisisconnect.messaging.InternetChatTransport
+import com.auralis.crisisconnect.messaging.call.InternetCallManager
+import com.auralis.crisisconnect.nearby.NearbyAutoLink
+import com.auralis.crisisconnect.messaging.MessagingIdentity
+import com.auralis.crisisconnect.messaging.SafetyNumber
+import com.auralis.crisisconnect.messaging.signal.SignalSessionGate
+import com.auralis.crisisconnect.messaging.TypingIndicatorBus
+import com.auralis.crisisconnect.data.local.ContactLastSeenStore
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.auralis.crisisconnect.service.p2p.P2pGattChatManager
+import com.auralis.crisisconnect.service.p2p.call.P2pCallController
 import com.auralis.crisisconnect.service.p2p.P2pGattChatStatus
 import com.auralis.crisisconnect.service.p2p.P2pGattServerService
 import com.auralis.crisisconnect.service.CallState
@@ -104,6 +122,16 @@ enum class ChatConnectionState {
     Error
 }
 
+/**
+ * Which physical transport is currently carrying the conversation. Today all chat traffic is
+ * Bluetooth (RFCOMM primary, BLE/GATT fallback); internet delivery flips this to [Internet]
+ * once the online transport lands. The connection-status badge shows a matching icon.
+ */
+enum class ChatTransport {
+    Bluetooth,
+    Internet
+}
+
 data class SignalStrengthInfo(
     val rssi: Int,
     val level: Int,
@@ -149,11 +177,30 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     private val _contactName = MutableStateFlow<String?>(null)
     val contactName: StateFlow<String?> = _contactName.asStateFlow()
 
+    private val _contactPhotoUrl = MutableStateFlow<String?>(null)
+    val contactPhotoUrl: StateFlow<String?> = _contactPhotoUrl.asStateFlow()
+
+    private val _safetyNumber = MutableStateFlow<String?>(null)
+    val safetyNumber: StateFlow<String?> = _safetyNumber.asStateFlow()
+
+    // True when the shown safety number is the forward-secret (v3 Signal) fingerprint rather than
+    // the interim v2 one — the UI shows a "forward secrecy" badge so a v2→v3 number change reads as
+    // a security upgrade, not a MITM.
+    private val _safetyNumberForwardSecret = MutableStateFlow(false)
+    val safetyNumberForwardSecret: StateFlow<Boolean> = _safetyNumberForwardSecret.asStateFlow()
+
+    // True when the peer's published identity key changed from what we last stored (TOFU warning).
+    private val _peerKeyChanged = MutableStateFlow(false)
+    val peerKeyChanged: StateFlow<Boolean> = _peerKeyChanged.asStateFlow()
+
     private val _contactAddressState = MutableStateFlow<String?>(null)
     val contactAddressState: StateFlow<String?> = _contactAddressState.asStateFlow()
 
     private val _connectionState = MutableStateFlow(ChatConnectionState.Idle)
     val connectionState: StateFlow<ChatConnectionState> = _connectionState.asStateFlow()
+
+    private val _transport = MutableStateFlow(ChatTransport.Bluetooth)
+    val transport: StateFlow<ChatTransport> = _transport.asStateFlow()
 
     private val _signalInfo = MutableStateFlow<SignalStrengthInfo?>(null)
     val signalInfo: StateFlow<SignalStrengthInfo?> = _signalInfo.asStateFlow()
@@ -215,6 +262,21 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     private val _activeCall = MutableStateFlow<CallUiState?>(null)
     val activeCall: StateFlow<CallUiState?> = _activeCall.asStateFlow()
 
+    /**
+     * The active internet (WebRTC) call, if any — a separate lightweight state from the Bluetooth
+     * [activeCall] (which is Opus/RFCOMM-specific). Web-compatible: signals ride the E2E relay in the
+     * same CallSignal wire the web dashboard uses, so this call can be with an Android or web peer.
+     */
+    val internetCall: StateFlow<InternetCallManager.CallInfo?> = InternetCallManager.call
+
+    // Call state arrives from two transports; the last snapshot of each is merged so one
+    // transport clearing its state never wipes an active call on the other.
+    @Volatile
+    private var rfcommCallUiState: CallUiState? = null
+
+    @Volatile
+    private var gattCallsSnapshot: Map<String, CallUiState> = emptyMap()
+
     private var sessionCode: String? = null
     private var messageJob: Job? = null
     private var contactJob: Job? = null
@@ -235,6 +297,9 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     private val pendingOperations = ArrayDeque<(RfcommForegroundService) -> Unit>()
     private val sosServiceBinding = SosServerServiceBinding(context)
     private val p2pGattChatManager = P2pGattChatManager.shared(context)
+    private val internetChatTransport = InternetChatTransport(context)
+    private val connectivityManager = context.getSystemService(ConnectivityManager::class.java)
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var sosBindingJob: Job? = null
     private var bleClientStateJob: Job? = null
     private var p2pGattStatusJob: Job? = null
@@ -247,9 +312,36 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     private var temporaryBleFallbackExpiryJob: Job? = null
     private var contactAddress: String? = null
     private var activeContact: Contact? = null
+    // One background attempt per chat session to auto-bootstrap an offline Bluetooth link for an
+    // internet-added contact (SPAKE2 using the peer's stored number). Guarded so it doesn't re-run
+    // on every contact emission; reset when a new session is initialized.
+    private var autoLinkAttemptedForSession: String? = null
+    private var autoLinkJob: Job? = null
     private var lastBleFallbackConnectAddress: String? = null
+    // ANR guards for BT failure storms: the BLE client re-emits (address,status) many times per
+    // second while GATT is flapping, and each pass used to re-kick a connect from the collector —
+    // a main-thread feedback loop that starved input dispatch (see 2026-07-03 S21 ANRs).
+    private var lastObservedBleClientStateKey: String? = null
+    private var lastBleFallbackConnectAttemptAddress: String? = null
+    private var lastBleFallbackConnectAttemptAtMs: Long = 0L
+    // One-shot guard so a Bluetooth-down episode (with no internet fallback) warns the user once,
+    // not on every reconnect attempt. Reset on a successful link or once we switch to the internet.
+    private var bluetoothLostWarningShown = false
+    // True while the chat is shown as "connected over the internet" AND a Bluetooth attempt is still
+    // running in the background. Suppresses the transient "Connecting" a background BT attempt emits
+    // so the badge stays "internet connected" until Bluetooth actually links up (then it takes over).
+    private var internetActiveConnected = false
+    // Hysteresis for the internet→Bluetooth badge handover: a marginal BT link bounces up and down,
+    // and flipping the badge on every link-up would ping-pong it (bluetooth → connecting → internet →
+    // bluetooth …). While the internet carries the chat, a fresh BT link must stay up for
+    // BLUETOOTH_TAKEOVER_STABILITY_MS before it takes the badge; message routing does NOT wait.
+    private var bluetoothTakeoverJob: Job? = null
     private val pendingP2pReadReceiptIds = linkedSetOf<String>()
     private var isFlushingPendingP2pReadReceipts = false
+    // Read receipts routed over the internet that haven't been accepted by the relay yet; merged
+    // into the next attempt (receipts are idempotent on the peer, so re-sends are harmless).
+    // Guarded by synchronized(pendingInternetReadReceiptIds): filled on Main, drained on IO.
+    private val pendingInternetReadReceiptIds = linkedSetOf<String>()
 
     /**
      * When true, the ViewModel has been bootstrapped with the scripted
@@ -310,8 +402,8 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
             callStateJob = viewModelScope.launch(exceptionHandler) {
                 boundService.calls.collect { calls ->
                     val currentSession = sessionCode
-                    val state = currentSession?.let { calls[it] }
-                    handleCallStateChange(state)
+                    rfcommCallUiState = currentSession?.let { calls[it] }
+                    recomputeActiveCall()
                 }
             }
             observeActiveSessions(boundService)
@@ -332,6 +424,12 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
             val key = LocalKeyStorage.getOrCreateAesKey(context)
             _sessionAesKey.value = key
+        }
+        viewModelScope.launch(exceptionHandler) {
+            P2pCallController.shared(context).calls.collect { calls ->
+                gattCallsSnapshot = calls
+                recomputeActiveCall()
+            }
         }
         observeSosBinding()
         observeP2pGattStatus()
@@ -372,10 +470,12 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                 }
                 when (status) {
                     P2pGattChatStatus.Ready -> {
+                        // Bluetooth (GATT) linked up — take over from the internet background
+                        // (the badge waits out the stability window when the internet is active).
                         hasConnectedAtLeastOnce = true
                         connectionInProgress = false
                         pendingConnection = false
-                        updateConnectionState(ChatConnectionState.Connected)
+                        onBluetoothLinkUp()
                         flushQueuedTextMessages()
                         flushPendingP2pReadReceipts()
                     }
@@ -388,11 +488,19 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                     P2pGattChatStatus.Failed -> {
                         connectionInProgress = false
                         pendingConnection = false
-                        updateConnectionState(ChatConnectionState.Error)
+                        cancelBluetoothTakeover()
+                        if (!internetActiveConnected && switchToInternetIfAvailable()) {
+                            // Peer reachable online — the internet carries the chat while GATT retries.
+                        } else {
+                            updateConnectionState(ChatConnectionState.Error)
+                        }
                     }
 
                     P2pGattChatStatus.Disconnected -> {
-                        if (pendingConnection || connectionInProgress) {
+                        cancelBluetoothTakeover()
+                        if (!internetActiveConnected && switchToInternetIfAvailable()) {
+                            // Peer reachable online — no dead end while GATT reconnects.
+                        } else if (pendingConnection || connectionInProgress) {
                             updateConnectionState(ChatConnectionState.Connecting)
                         } else {
                             updateConnectionState(ChatConnectionState.Error)
@@ -414,12 +522,20 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         // Reset in case a previous session was in demo mode and the same
         // ViewModel instance is being reused for a real session.
         isInScreenshotDemoMode = false
+        registerConnectivityFlushIfNeeded()
         val previousSessionCode = this.sessionCode
         val previousAddress = contactAddress
         if (!previousSessionCode.isNullOrBlank() && previousSessionCode != sessionCode && !previousAddress.isNullOrBlank()) {
             disconnectBleFallbackClient(previousAddress)
         }
         p2pGattChatManager.stopNow()
+        autoLinkJob?.cancel()
+        autoLinkJob = null
+        autoLinkAttemptedForSession = null
+        // Transport badge state must not leak across sessions: drop any pending Bluetooth-takeover
+        // hold and the previous chat's internet suppression flag before the new one connects.
+        cancelBluetoothTakeover()
+        internetActiveConnected = false
         activeContact = null
         contactAddress = null
         _contactAddressState.value = null
@@ -431,6 +547,7 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         hasConnectedAtLeastOnce = false
         pendingP2pReadReceiptIds.clear()
         isFlushingPendingP2pReadReceipts = false
+        synchronized(pendingInternetReadReceiptIds) { pendingInternetReadReceiptIds.clear() }
         this.sessionCode = sessionCode
         if (isBleFallbackAllowed(sessionCode)) {
             requestBleFallbackBootstrap()
@@ -477,7 +594,12 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         contactJob = viewModelScope.launch(exceptionHandler) {
             observeContact(context, sessionCode).collect { contact ->
                 _contactName.value = contact?.name
+                _contactPhotoUrl.value = contact?.peerPhotoUrl?.takeIf { it.isNotBlank() }
+                updateSafetyNumber(contact)
+                _peerKeyChanged.value = contact?.peerKeyChanged == true
                 activeContact = contact
+                attachPresenceListener(contact)
+                maybeAutoLinkBluetooth(contact, sessionCode)
                 p2pGattChatManager.updateContact(contact)
                 val storedKey = contact?.aesKey?.takeIf { it.isNotBlank() }
                 _isSessionEncrypted.value = storedKey != null
@@ -604,6 +726,7 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                 return@launch
             }
             onResult(true)
+            Analytics.messageSent(kind = "text", transport = _transport.value.name.lowercase())
             if (!isTextTransportReady(code)) {
                 requestConnection(code)
                 requestBleFallbackBootstrap()
@@ -615,6 +738,14 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     fun shareOfflineMapBundleForLocation(latitude: Double, longitude: Double) {
         val code = sessionCode ?: return
         if (!latitude.isFinite() || !longitude.isFinite()) {
+            return
+        }
+        // The offline-map bundle rides the Bluetooth (RFCOMM) link only — it lets an OFFLINE peer view
+        // the shared pin without downloading tiles. Over an internet-only chat there's no BT link to
+        // send it on (and the peer has internet to load the map anyway), so skip the futile transfer
+        // instead of bouncing off a disconnected service. A peer that's BOTH nearby and online still
+        // gets it over Bluetooth.
+        if (!isRfcommTransportReady()) {
             return
         }
         val now = System.currentTimeMillis()
@@ -788,6 +919,55 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         val duration = _recordingDuration.value.takeIf { it > 0L }
         val uuid = UUID.randomUUID().toString()
         _isSendingVoice.value = true
+        Analytics.messageSent(kind = "voice", transport = _transport.value.name.lowercase())
+
+        // Internet transport: when Bluetooth is NOT linked but we hold the peer's identity and the
+        // internet is reachable, send the voice clip over the E2E relay (chunked) instead of BT.
+        val voiceCode = sessionCode ?: activeContact?.sessionCode
+        val internetVoiceContact = activeContact
+        if (internetVoiceContact != null &&
+            internetVoiceContact.supportsInternet &&
+            internetChatTransport.isAvailable() &&
+            (voiceCode == null || !isBluetoothLinkReady(voiceCode))
+        ) {
+            viewModelScope.launch(exceptionHandler) {
+                val fileBytes = try {
+                    withContext(Dispatchers.IO) {
+                        val destination = voiceMessageFile(context, voiceMessageFileName(uuid, mimeType))
+                        file.copyTo(destination, overwrite = true)
+                        val bytes = destination.readBytes()
+                        saveLocalAudioMessage(
+                            context,
+                            internetVoiceContact.sessionCode,
+                            uuid,
+                            destination.name,
+                            duration,
+                            deliveryStatus = MessageDeliveryStatus.SENDING
+                        )
+                        bytes
+                    }
+                } catch (_: IOException) {
+                    _errorMessage.value = context.getString(R.string.chat_voice_file_missing)
+                    cleanupRecording(deleteFile = true)
+                    _isSendingVoice.value = false
+                    onResult(false)
+                    return@launch
+                }
+                val sent = internetChatTransport.sendAttachment(
+                    transferId = uuid,
+                    kind = E2eEnvelope.ATTACHMENT_KIND_AUDIO,
+                    mime = mimeType ?: "audio/ogg",
+                    name = voiceMessageFileName(uuid, mimeType),
+                    durationMs = (duration ?: 0L).toInt(),
+                    data = fileBytes,
+                    createdAtMs = System.currentTimeMillis(),
+                    contact = internetVoiceContact
+                )
+                if (sent) markInternetCarrying()
+                handleVoiceSendResult(uuid, sent, onResult)
+            }
+            return
+        }
 
         if (isPreferredP2pGattContact()) {
             val contact = activeContact
@@ -891,6 +1071,7 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
         _isSendingImage.value = true
+        Analytics.messageSent(kind = "image", transport = _transport.value.name.lowercase())
         val uuid = UUID.randomUUID().toString()
         viewModelScope.launch(exceptionHandler) {
             val preparation = withContext(Dispatchers.IO) {
@@ -918,6 +1099,28 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                 _isSendingImage.value = false
                 _errorMessage.value = context.getString(R.string.chat_image_file_missing)
                 onResult(false)
+                return@launch
+            }
+            // Internet transport: send the image over the E2E relay (chunked) when Bluetooth is not
+            // linked but the peer's identity is known and the internet is reachable.
+            val imageInternetContact = activeContact
+            if (imageInternetContact != null &&
+                imageInternetContact.supportsInternet &&
+                internetChatTransport.isAvailable() &&
+                !isBluetoothLinkReady(code)
+            ) {
+                val sent = internetChatTransport.sendAttachment(
+                    transferId = uuid,
+                    kind = E2eEnvelope.ATTACHMENT_KIND_IMAGE,
+                    mime = preparation.mimeType,
+                    name = preparation.fileName,
+                    durationMs = 0,
+                    data = preparation.bytes,
+                    createdAtMs = System.currentTimeMillis(),
+                    contact = imageInternetContact
+                )
+                if (sent) markInternetCarrying()
+                handleImageSendResult(uuid, sent, onResult)
                 return@launch
             }
             if (isPreferredP2pGattContact()) {
@@ -995,6 +1198,65 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                 _isSendingDocument.value = false
                 _errorMessage.value = context.getString(R.string.chat_document_file_invalid)
                 onResult(false)
+                return@launch
+            }
+            // Internet transport: no BT link but the peer's identity is known → ship the ORIGINAL
+            // bytes chunked over the E2E relay (the wire attachment carries no compression flag, so
+            // the uncompressed copy keeps the receiver simple), plus the same CC_FILE metadata text
+            // that renders the file bubble.
+            val docInternetContact = activeContact
+            if (docInternetContact != null &&
+                docInternetContact.supportsInternet &&
+                internetChatTransport.isAvailable() &&
+                !isBluetoothLinkReady(code)
+            ) {
+                // prepareDocumentAttachment persisted the original bytes locally under this uuid.
+                val originalBytes = withContext(Dispatchers.IO) {
+                    runCatching {
+                        resolveSharedDocumentLocalCopy(context, uuid)?.readBytes()
+                    }.getOrNull()
+                }
+                if (originalBytes == null || originalBytes.isEmpty()) {
+                    _isSendingDocument.value = false
+                    _errorMessage.value = context.getString(R.string.chat_document_send_failed)
+                    onResult(false)
+                    return@launch
+                }
+                val internetPrepared = prepared.copy(
+                    transferSizeBytes = originalBytes.size,
+                    compression = FILE_COMPRESSION_NONE,
+                    payloadBytes = originalBytes
+                )
+                val sent = internetChatTransport.sendAttachment(
+                    transferId = uuid,
+                    kind = E2eEnvelope.ATTACHMENT_KIND_FILE,
+                    mime = internetPrepared.mimeType ?: "application/octet-stream",
+                    name = internetPrepared.displayName,
+                    durationMs = 0,
+                    data = originalBytes,
+                    createdAtMs = System.currentTimeMillis(),
+                    contact = docInternetContact
+                )
+                if (!sent) {
+                    _isSendingDocument.value = false
+                    _errorMessage.value = context.getString(R.string.chat_document_send_failed)
+                    onResult(false)
+                    return@launch
+                }
+                val previewQueued = queueOutgoingTextMessage(
+                    sessionCode = code,
+                    uuid = uuid,
+                    text = buildSharedFileMessage(internetPrepared)
+                )
+                _isSendingDocument.value = false
+                if (!previewQueued) {
+                    _errorMessage.value = context.getString(R.string.chat_document_send_failed)
+                    onResult(false)
+                    return@launch
+                }
+                markInternetCarrying()
+                flushQueuedTextMessages()
+                onResult(true)
                 return@launch
             }
             if (isPreferredP2pGattContact()) {
@@ -1082,6 +1344,118 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         _errorMessage.value = context.getString(R.string.chat_image_file_missing)
     }
 
+    // ---- "peer is typing" indicator (internet transport only) ----
+
+    private val _isPeerTyping = MutableStateFlow(false)
+    val isPeerTyping: StateFlow<Boolean> = _isPeerTyping.asStateFlow()
+    private var typingExpiryJob: Job? = null
+    private var lastTypingSignalAt = 0L
+
+    init {
+        viewModelScope.launch {
+            TypingIndicatorBus.typing.collect { refreshPeerTyping(it) }
+        }
+        // Feed the local (Bluetooth-side) last-seen record: a live BT link or any incoming message
+        // proves the peer was just alive, no server needed.
+        viewModelScope.launch {
+            connectionState.collect { state ->
+                if (state == ChatConnectionState.Connected) {
+                    sessionCode?.let { ContactLastSeenStore.record(context, it) }
+                    refreshPeerPresence()
+                }
+            }
+        }
+        viewModelScope.launch {
+            timelineItems.collect { items ->
+                val lastRemote = items.lastOrNull { it is ChatTimelineItem.Msg && !it.message.isLocal }
+                if (lastRemote != null) {
+                    sessionCode?.let {
+                        ContactLastSeenStore.record(context, it, lastRemote.timestampMillis)
+                    }
+                    refreshPeerPresence()
+                }
+            }
+        }
+    }
+
+    // ---- peer presence: "çevrimiçi" / son görülme (internet heartbeat + local BT observations) ----
+
+    data class PeerPresence(val online: Boolean = false, val lastSeenMillis: Long? = null)
+
+    private val _peerPresence = MutableStateFlow(PeerPresence())
+    val peerPresence: StateFlow<PeerPresence> = _peerPresence.asStateFlow()
+    private var presenceRegistration: ListenerRegistration? = null
+    private var presenceWatchedUid: String? = null
+    private var presenceRefreshJob: Job? = null
+    @Volatile private var remotePresenceMillis: Long? = null
+
+    /** Live-watch the peer's presence doc (internet-identified contacts only). */
+    private fun attachPresenceListener(contact: Contact?) {
+        val uid = contact?.peerUid?.trim()?.takeIf { it.isNotBlank() }
+        if (uid == null || presenceWatchedUid == uid) {
+            refreshPeerPresence()
+            return
+        }
+        presenceRegistration?.remove()
+        presenceWatchedUid = uid
+        presenceRegistration = runCatching {
+            FirebaseFirestore.getInstance()
+                .collection("presence")
+                .document(uid)
+                .addSnapshotListener { snapshot, _ ->
+                    remotePresenceMillis = snapshot?.getLong("lastActiveAt")
+                    refreshPeerPresence()
+                }
+        }.getOrNull()
+    }
+
+    private fun refreshPeerPresence() {
+        val local = sessionCode?.let { ContactLastSeenStore.get(context, it) } ?: 0L
+        val remote = remotePresenceMillis ?: 0L
+        val last = maxOf(local, remote).takeIf { it > 0L }
+        val now = System.currentTimeMillis()
+        // Fresh within the heartbeat window (60s pulse + slack) counts as online.
+        val online = last != null && now - last < 90_000L
+        _peerPresence.value = PeerPresence(online = online, lastSeenMillis = last)
+        presenceRefreshJob?.cancel()
+        if (online) {
+            // Re-evaluate the moment this stamp would age out of the online window.
+            presenceRefreshJob = viewModelScope.launch {
+                delay((last!! + 90_000L - now).coerceAtLeast(250L))
+                refreshPeerPresence()
+            }
+        }
+    }
+
+    private fun refreshPeerTyping(map: Map<String, Long>) {
+        val expiresAt = sessionCode?.let { map[it] }
+        val now = System.currentTimeMillis()
+        val active = expiresAt != null && expiresAt > now
+        _isPeerTyping.value = active
+        typingExpiryJob?.cancel()
+        if (active) {
+            // Re-evaluate when this pulse would expire (a fresh pulse just reschedules us).
+            typingExpiryJob = viewModelScope.launch {
+                delay((expiresAt!! - now).coerceAtLeast(50L))
+                refreshPeerTyping(TypingIndicatorBus.typing.value)
+            }
+        }
+    }
+
+    /** Composer keystrokes → a throttled, sealed "typing" pulse to the peer (internet contacts only). */
+    fun onComposerTyping(text: String) {
+        if (text.isBlank()) return
+        val contact = activeContact ?: return
+        if (!contact.supportsInternet) return
+        val now = System.currentTimeMillis()
+        if (now - lastTypingSignalAt < 4_000L) return // one pulse per 4s while typing keeps writes cheap
+        lastTypingSignalAt = now
+        if (!internetChatTransport.isAvailable()) return
+        viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
+            runCatching { internetChatTransport.sendTypingSignal(contact) }
+        }
+    }
+
     fun onCameraPermissionDenied() {
         _errorMessage.value = context.getString(R.string.chat_camera_permission_required)
     }
@@ -1095,19 +1469,37 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
             _errorMessage.value = context.getString(R.string.chat_call_failed)
             return
         }
-        if (isPreferredP2pGattContact()) {
-            _errorMessage.value = context.getString(R.string.chat_call_failed)
-            return
-        }
         val code = sessionCode ?: return
         if (!hasAudioPermission()) {
             onRecordingPermissionDenied()
             return
         }
+        if (isPreferredP2pGattContact() && p2pGattChatManager.isReady()) {
+            Analytics.callStarted("p2p_gatt")
+            viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
+                val started = P2pCallController.shared(context).startCall(code)
+                if (!started) {
+                    _errorMessage.value = context.getString(R.string.chat_call_failed)
+                }
+            }
+            return
+        }
+        // Online internet contact with no live Bluetooth link → place a WebRTC call over the E2E relay
+        // (web-compatible signalling). Bluetooth calls above take precedence when a link is available.
+        val internetContact = activeContact
+        if (internetContact?.supportsInternet == true &&
+            internetChatTransport.isAvailable() &&
+            !isBluetoothLinkReady(code)
+        ) {
+            Analytics.callStarted("internet")
+            InternetCallManager.startCall(internetContact)
+            return
+        }
+        Analytics.callStarted("bluetooth")
         val operation: (RfcommForegroundService) -> Unit = { srv ->
             srv.startVoipCall(code) { success ->
                 if (!success) {
-                    _errorMessage.value = context.getString(R.string.chat_call_failed)
+                    attemptGattCallFallback(code)
                 }
             }
         }
@@ -1120,14 +1512,36 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun acceptCall(callId: String) {
-        if (isPreferredP2pGattContact()) {
+    /**
+     * RFCOMM-first fallback: when the classic Bluetooth call cannot be set up but this
+     * contact's P2P GATT link happens to be ready, retry the call over GATT — mirroring how
+     * messaging falls back to the same link.
+     */
+    private fun attemptGattCallFallback(code: String) {
+        if (!p2pGattChatManager.isReady()) {
             _errorMessage.value = context.getString(R.string.chat_call_failed)
             return
         }
+        viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
+            val started = P2pCallController.shared(context).startCall(code)
+            if (!started) {
+                _errorMessage.value = context.getString(R.string.chat_call_failed)
+            }
+        }
+    }
+
+    fun acceptCall(callId: String) {
         val code = sessionCode ?: return
         if (!hasAudioPermission()) {
             onRecordingPermissionDenied()
+            return
+        }
+        if (isPreferredP2pGattContact()) {
+            viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
+                if (!P2pCallController.shared(context).acceptCall(code, callId)) {
+                    _errorMessage.value = context.getString(R.string.chat_call_failed)
+                }
+            }
             return
         }
         val operation: (RfcommForegroundService) -> Unit = { srv ->
@@ -1147,11 +1561,13 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun rejectCall(callId: String) {
+        val code = sessionCode ?: return
         if (isPreferredP2pGattContact()) {
-            _errorMessage.value = context.getString(R.string.chat_call_failed)
+            viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
+                P2pCallController.shared(context).rejectCall(code, callId)
+            }
             return
         }
-        val code = sessionCode ?: return
         val operation: (RfcommForegroundService) -> Unit = { srv ->
             srv.rejectIncomingCall(code, callId)
         }
@@ -1165,11 +1581,13 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun hangupCall(callId: String) {
+        val code = sessionCode ?: return
         if (isPreferredP2pGattContact()) {
-            _errorMessage.value = context.getString(R.string.chat_call_failed)
+            viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
+                P2pCallController.shared(context).endCall(code)
+            }
             return
         }
-        val code = sessionCode ?: return
         val operation: (RfcommForegroundService) -> Unit = { srv ->
             srv.endVoipCall(code, callId)
         }
@@ -1180,6 +1598,29 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         } else {
             operation(currentService)
         }
+    }
+
+    // ---- Internet (WebRTC) call controls — driven by the internet-call overlay, not the Bluetooth
+    // call UI. They act on [InternetCallManager] whose state is exposed via [internetCall]. ----
+
+    fun acceptInternetCall() {
+        if (!hasAudioPermission()) {
+            onRecordingPermissionDenied()
+            return
+        }
+        InternetCallManager.accept()
+    }
+
+    fun rejectInternetCall() {
+        InternetCallManager.reject()
+    }
+
+    fun endInternetCall() {
+        InternetCallManager.end()
+    }
+
+    fun setInternetCallMuted(muted: Boolean) {
+        InternetCallManager.setMuted(muted)
     }
 
     fun setSpeakerEnabled(enabled: Boolean) {
@@ -1193,10 +1634,6 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setAudioRoute(route: CallAudioRoute) {
-        if (isPreferredP2pGattContact()) {
-            _errorMessage.value = context.getString(R.string.chat_call_failed)
-            return
-        }
         val code = sessionCode ?: return
         val call = _activeCall.value ?: return
         if (route !in call.availableRoutes) {
@@ -1206,6 +1643,11 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
             speakerEnabled = route == CallAudioRoute.Speaker,
             currentRoute = route
         )
+        if (isPreferredP2pGattContact()) {
+            P2pCallController.shared(context)
+                .setSpeakerEnabled(code, route == CallAudioRoute.Speaker)
+            return
+        }
         val operation: (RfcommForegroundService) -> Unit = { srv ->
             srv.setCallAudioRoute(code, route)
         }
@@ -1219,12 +1661,12 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setMicMuted(muted: Boolean) {
-        if (isPreferredP2pGattContact()) {
-            _errorMessage.value = context.getString(R.string.chat_call_failed)
-            return
-        }
         val code = sessionCode ?: return
         _activeCall.value = _activeCall.value?.copy(muted = muted)
+        if (isPreferredP2pGattContact()) {
+            P2pCallController.shared(context).setMuted(code, muted)
+            return
+        }
         val operation: (RfcommForegroundService) -> Unit = { srv ->
             srv.setCallMicMuted(code, muted)
         }
@@ -1271,6 +1713,17 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
             }
             return
         }
+        // No Bluetooth link but the peer is reachable over the internet → E2E read receipt via the
+        // relay (same transport preference as outgoing messages: Bluetooth first, then internet).
+        val internetReceiptContact = activeContact
+        if (internetReceiptContact != null &&
+            internetReceiptContact.supportsInternet &&
+            !isBluetoothLinkReady(code) &&
+            internetChatTransport.isAvailable()
+        ) {
+            sendInternetReadReceipts(internetReceiptContact, messageUuids)
+            return
+        }
         val address = activeBleFallbackAddress()
         if (isBleFallbackAllowed(code) && !address.isNullOrBlank()) {
             val normalizedAddress = normalizeBleAddress(address)
@@ -1310,6 +1763,38 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
         operation(currentService)
+    }
+
+    /**
+     * Sends "read" for [messageUuids] (plus any earlier ids the relay hasn't accepted yet) over the
+     * internet transport. Failed batches stay pending and are merged into the next visible-message
+     * event, so a flaky connection re-tries instead of silently dropping the receipt.
+     */
+    private fun sendInternetReadReceipts(contact: Contact, messageUuids: Collection<String>) {
+        val batch: List<String>
+        synchronized(pendingInternetReadReceiptIds) {
+            messageUuids.forEach { uuid ->
+                uuid.trim().takeIf { it.isNotEmpty() }?.let(pendingInternetReadReceiptIds::add)
+            }
+            batch = pendingInternetReadReceiptIds.toList()
+        }
+        if (batch.isEmpty()) {
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
+            val sent = runCatching {
+                internetChatTransport.sendReceipt(
+                    contact = contact,
+                    templateCode = InternetChatTransport.READ_RECEIPT_TEMPLATE,
+                    messageIds = batch
+                )
+            }.getOrDefault(false)
+            if (sent) {
+                synchronized(pendingInternetReadReceiptIds) {
+                    pendingInternetReadReceiptIds.removeAll(batch.toSet())
+                }
+            }
+        }
     }
 
     private suspend fun sendReadReceiptViaBleFallback(
@@ -1434,6 +1919,75 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                 schedulePendingTextRetry()
                 return@launch
             }
+            // Bluetooth is the preferred transport: when the BT link is up, send over Bluetooth ONLY.
+            // Use the internet only when Bluetooth is NOT connected. If NEITHER is available the
+            // message stays queued (store-and-forward) and drains when a transport comes back.
+            val bluetoothReady = isBluetoothLinkReady(code)
+            val internetContact = activeContact
+            // Empty here so the Bluetooth-branch "keep SENT if internet delivered it" guards below are
+            // safe no-ops (the internet pass returns before reaching them).
+            val internetDelivered = emptySet<String>()
+            if (internetContact != null &&
+                internetContact.supportsInternet &&
+                internetChatTransport.isAvailable() &&
+                !bluetoothReady
+            ) {
+                var anyInternetSent = false
+                for (message in queuedMessages) {
+                    val attempt = (message.retryCount + 1).coerceAtLeast(1)
+                    val lastAttemptAt = System.currentTimeMillis()
+                    updateOutgoingTextState(
+                        uuid = message.messageUuid,
+                        status = MessageDeliveryStatus.SENDING,
+                        retryCount = message.retryCount,
+                        nextRetryAtMillis = null,
+                        lastAttemptAtMillis = lastAttemptAt,
+                        lastError = null,
+                        outboundRoute = OUTBOUND_ROUTE_INTERNET
+                    )
+                    val sent = internetChatTransport.sendText(
+                        messageId = message.messageUuid,
+                        text = message.text,
+                        createdAtMs = message.timestampMillis,
+                        contact = internetContact
+                    )
+                    if (sent) {
+                        anyInternetSent = true
+                        updateOutgoingTextState(
+                            uuid = message.messageUuid,
+                            status = MessageDeliveryStatus.SENT,
+                            retryCount = attempt,
+                            nextRetryAtMillis = null,
+                            lastAttemptAtMillis = lastAttemptAt,
+                            lastError = null,
+                            outboundRoute = OUTBOUND_ROUTE_INTERNET
+                        )
+                    } else {
+                        val exhausted = attempt >= MAX_TEXT_SEND_ATTEMPTS
+                        val nextRetryAt = if (exhausted) null else computeNextRetryAtMillis(attempt)
+                        updateOutgoingTextState(
+                            uuid = message.messageUuid,
+                            status = if (exhausted) MessageDeliveryStatus.FAILED else MessageDeliveryStatus.QUEUED,
+                            retryCount = attempt,
+                            nextRetryAtMillis = nextRetryAt,
+                            lastAttemptAtMillis = lastAttemptAt,
+                            lastError = TEXT_ERROR_SEND_FAILED,
+                            outboundRoute = OUTBOUND_ROUTE_INTERNET
+                        )
+                    }
+                }
+                if (anyInternetSent) {
+                    markInternetCarrying()
+                }
+                schedulePendingTextRetry()
+                return@launch
+            }
+            // Bluetooth-carried pass; reflect that on the badge — but only when Bluetooth is actually
+            // up (this pass is also reached when NEITHER transport is available and messages just
+            // stay queued; flipping the badge to Bluetooth there was a flicker source).
+            if (bluetoothReady) {
+                markBluetoothCarrying()
+            }
             if (isPreferredP2pGattContact()) {
                 val contact = activeContact
                 if (contact == null) {
@@ -1442,16 +1996,19 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                 }
                 for (message in queuedMessages) {
                     if (!p2pGattChatManager.isReady()) {
-                        val retryAt = System.currentTimeMillis() + TEXT_TRANSPORT_WAIT_RETRY_DELAY_MS
-                        updateOutgoingTextState(
-                            uuid = message.messageUuid,
-                            status = MessageDeliveryStatus.QUEUED,
-                            retryCount = message.retryCount,
-                            nextRetryAtMillis = retryAt,
-                            lastAttemptAtMillis = null,
-                            lastError = TEXT_ERROR_TRANSPORT_UNAVAILABLE,
-                            outboundRoute = OUTBOUND_ROUTE_P2P_BLE_GATT
-                        )
+                        // GATT not ready — keep internet-delivered messages SENT; only re-queue the rest.
+                        if (!internetDelivered.contains(message.messageUuid)) {
+                            val retryAt = System.currentTimeMillis() + TEXT_TRANSPORT_WAIT_RETRY_DELAY_MS
+                            updateOutgoingTextState(
+                                uuid = message.messageUuid,
+                                status = MessageDeliveryStatus.QUEUED,
+                                retryCount = message.retryCount,
+                                nextRetryAtMillis = retryAt,
+                                lastAttemptAtMillis = null,
+                                lastError = TEXT_ERROR_TRANSPORT_UNAVAILABLE,
+                                outboundRoute = OUTBOUND_ROUTE_P2P_BLE_GATT
+                            )
+                        }
                         requestConnection(code)
                         break
                     }
@@ -1478,6 +2035,10 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                             outboundRoute = OUTBOUND_ROUTE_P2P_BLE_GATT
                         )
                         updateConnectionState(ChatConnectionState.Connected)
+                        continue
+                    }
+                    // Bluetooth (GATT) failed — but if the internet already carried it, keep it SENT.
+                    if (internetDelivered.contains(message.messageUuid)) {
                         continue
                     }
                     val exhausted = attempt >= MAX_TEXT_SEND_ATTEMPTS
@@ -1510,15 +2071,18 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                 if (!rfcommReady && !bleFallbackReady) {
                     val retryAt = System.currentTimeMillis() + TEXT_TRANSPORT_WAIT_RETRY_DELAY_MS
                     queuedMessages.forEach { queued ->
-                        updateOutgoingTextState(
-                            uuid = queued.messageUuid,
-                            status = MessageDeliveryStatus.QUEUED,
-                            retryCount = queued.retryCount,
-                            nextRetryAtMillis = retryAt,
-                            lastAttemptAtMillis = null,
-                            lastError = TEXT_ERROR_TRANSPORT_UNAVAILABLE,
-                            outboundRoute = queued.outboundRoute
-                        )
+                        // Keep internet-delivered messages SENT; only re-queue what needs Bluetooth.
+                        if (!internetDelivered.contains(queued.messageUuid)) {
+                            updateOutgoingTextState(
+                                uuid = queued.messageUuid,
+                                status = MessageDeliveryStatus.QUEUED,
+                                retryCount = queued.retryCount,
+                                nextRetryAtMillis = retryAt,
+                                lastAttemptAtMillis = null,
+                                lastError = TEXT_ERROR_TRANSPORT_UNAVAILABLE,
+                                outboundRoute = queued.outboundRoute
+                            )
+                        }
                     }
                     requestConnection(code)
                     requestBleFallbackBootstrap()
@@ -1575,6 +2139,10 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                     refreshBleFallbackRouteState()
                     continue
                 }
+                // Bluetooth (RFCOMM/BLE fallback) failed — keep it SENT if the internet carried it.
+                if (internetDelivered.contains(message.messageUuid)) {
+                    continue
+                }
                 val exhausted = attempt >= MAX_TEXT_SEND_ATTEMPTS
                 val nextRetryAt = if (exhausted) null else computeNextRetryAtMillis(attempt)
                 updateOutgoingTextState(
@@ -1592,6 +2160,109 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
             schedulePendingTextRetry()
+        }
+    }
+
+    /**
+     * Store-and-forward promptness: when the OS reports a network became available, immediately
+     * retry any queued text messages instead of waiting out the exponential-backoff timer. This
+     * is what lets a message queued while offline go out over the internet the moment it returns.
+     */
+    private fun registerConnectivityFlushIfNeeded() {
+        if (networkCallback != null) return
+        val cm = connectivityManager ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                viewModelScope.launch(exceptionHandler) {
+                    resetQueuedRetryScheduleNow()
+                    flushQueuedTextMessages()
+                }
+            }
+        }
+        val registered = runCatching { cm.registerDefaultNetworkCallback(callback) }.isSuccess
+        if (registered) {
+            networkCallback = callback
+        }
+    }
+
+    private fun unregisterConnectivityFlush() {
+        val cm = connectivityManager
+        val callback = networkCallback
+        if (cm != null && callback != null) {
+            runCatching { cm.unregisterNetworkCallback(callback) }
+        }
+        networkCallback = null
+    }
+
+    /** Clears the backoff timer on queued messages so the next flush attempts them right away. */
+    private suspend fun resetQueuedRetryScheduleNow() {
+        val code = sessionCode ?: return
+        val queued = _messages.value.filter { message ->
+            message.sessionCode == code &&
+                message.isLocal &&
+                message.messageType == MessageType.TEXT &&
+                message.text.isNotBlank() &&
+                message.deliveryStatus == MessageDeliveryStatus.QUEUED &&
+                message.nextRetryAtMillis != null
+        }
+        for (message in queued) {
+            updateOutgoingTextState(
+                uuid = message.messageUuid,
+                status = MessageDeliveryStatus.QUEUED,
+                retryCount = message.retryCount,
+                nextRetryAtMillis = null,
+                lastAttemptAtMillis = message.lastAttemptAtMillis,
+                lastError = message.lastError,
+                outboundRoute = message.outboundRoute
+            )
+        }
+    }
+
+    /**
+     * Compute the safety number off the main thread (the v3 fingerprint opens the DB + runs a
+     * 5200-iteration hash) and publish it + whether it's the forward-secret (v3) one. Prefers the
+     * v3 Signal fingerprint once a session identity exists, else the interim v2 P-256 number.
+     */
+    private fun updateSafetyNumber(contact: Contact?) {
+        if (contact == null || !contact.supportsInternet) {
+            _safetyNumber.value = null
+            _safetyNumberForwardSecret.value = false
+            return
+        }
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid
+        if (myUid == null) {
+            _safetyNumber.value = null
+            _safetyNumberForwardSecret.value = false
+            return
+        }
+        viewModelScope.launch(exceptionHandler) {
+            val result = withContext(Dispatchers.IO) {
+                // v3 (forward-secret) fingerprint first; null means no Signal session identity yet.
+                runCatching {
+                    SignalSessionGate.create(context).safetyNumber(myUid, contact.peerUid)
+                }.getOrNull()?.let { return@withContext it to true }
+                runCatching {
+                    SafetyNumber.compute(
+                        localPublicKeyB64 = MessagingIdentity(context).publicKeyBase64(),
+                        remotePublicKeyB64 = contact.peerPublicKey,
+                        localUid = myUid,
+                        remoteUid = contact.peerUid
+                    )
+                }.getOrNull()?.let { it to false }
+            }
+            _safetyNumber.value = result?.first
+            _safetyNumberForwardSecret.value = result?.second == true
+        }
+    }
+
+    /** User re-confirmed the peer after a key change — clear the TOFU warning. */
+    fun acknowledgePeerKeyChange() {
+        val code = sessionCode ?: return
+        _peerKeyChanged.value = false
+        viewModelScope.launch(exceptionHandler) {
+            withContext(Dispatchers.IO) {
+                acknowledgePeerKeyChange(context, code)
+            }
         }
     }
 
@@ -1789,6 +2460,13 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         bleClientStateJob?.cancel()
         bleClientStateJob = viewModelScope.launch(exceptionHandler) {
             boundService.bleFallbackConnectionStates.collect { state ->
+                // Consecutive duplicates carry no new information; dropping them keeps a GATT
+                // failure storm from monopolising the main thread.
+                val stateKey = "${normalizeBleAddress(state.address)}|${state.status}"
+                if (stateKey == lastObservedBleClientStateKey) {
+                    return@collect
+                }
+                lastObservedBleClientStateKey = stateKey
                 if (isPreferredP2pGattContact() || shouldAwaitBleContactResolution()) {
                     refreshBleFallbackRouteState()
                     return@collect
@@ -1820,10 +2498,12 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
 
                 when (status) {
                     com.auralis.crisisconnect.service.client.BleClientManager.ConnectionStatus.Ready -> {
+                        // Bluetooth (BLE fallback) linked up — take over from the internet background
+                        // (the badge waits out the stability window when the internet is active).
                         hasConnectedAtLeastOnce = true
                         connectionInProgress = false
                         pendingConnection = false
-                        updateConnectionState(ChatConnectionState.Connected)
+                        onBluetoothLinkUp()
                         reconnectJob?.cancel()
                         reconnectJob = null
                         flushQueuedTextMessages()
@@ -1851,10 +2531,15 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                             connectionInProgress = false
                             pendingConnection = false
                             updateConnectionState(ChatConnectionState.Connected)
-                        } else if (connectionInProgress || pendingConnection) {
-                            updateConnectionState(ChatConnectionState.Connecting)
                         } else {
-                            updateConnectionState(ChatConnectionState.Error)
+                            cancelBluetoothTakeover()
+                            if (!internetActiveConnected && switchToInternetIfAvailable()) {
+                                // Peer reachable online — the internet carries the chat while BT retries.
+                            } else if (connectionInProgress || pendingConnection) {
+                                updateConnectionState(ChatConnectionState.Connecting)
+                            } else {
+                                updateConnectionState(ChatConnectionState.Error)
+                            }
                         }
                     }
                 }
@@ -1913,6 +2598,18 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
             ?.let { code ->
                 currentService.registerBleFallbackSessionAlias(normalizedAddress, code)
             }
+        // Rate-limit VM-initiated connect kicks: BleClientManager already retries with its own
+        // backoff, so hammering connectBleFallback from every state emission only feeds the
+        // emit → refresh → connect → emit loop that froze the main thread.
+        val now = System.currentTimeMillis()
+        if (
+            normalizedAddress == lastBleFallbackConnectAttemptAddress &&
+            now - lastBleFallbackConnectAttemptAtMs < BLE_FALLBACK_CONNECT_COOLDOWN_MS
+        ) {
+            return
+        }
+        lastBleFallbackConnectAttemptAddress = normalizedAddress
+        lastBleFallbackConnectAttemptAtMs = now
         if (lastBleFallbackConnectAddress != normalizedAddress) {
             lastBleFallbackConnectAddress = normalizedAddress
         }
@@ -2083,44 +2780,53 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         return service?.isSessionActive(normalizedSessionCode) == true
     }
 
-    private fun supportsVoiceMessaging(): Boolean {
-        return if (isPreferredP2pGattContact()) {
+    /**
+     * Voice / attachments / location lane: the ready Bluetooth link first, else the E2E internet
+     * transport — the SAME precedence the send paths themselves use (they all carry internet
+     * branches). Gating on BT alone left the mic + attach buttons dead in internet-only chats.
+     */
+    private fun supportsMediaTransport(): Boolean {
+        val bluetoothReady = if (isPreferredP2pGattContact()) {
             p2pGattChatManager.isReady()
         } else {
             isRfcommTransportReady()
         }
+        if (bluetoothReady) {
+            return true
+        }
+        return activeContact?.supportsInternet == true && internetChatTransport.isAvailable()
     }
 
-    private fun supportsAttachmentTransport(): Boolean {
-        return if (isPreferredP2pGattContact()) {
-            p2pGattChatManager.isReady()
-        } else {
-            isRfcommTransportReady()
-        }
-    }
+    private fun supportsVoiceMessaging(): Boolean = supportsMediaTransport()
 
-    private fun supportsLocationSharing(): Boolean {
-        return if (isPreferredP2pGattContact()) {
-            p2pGattChatManager.isReady()
-        } else {
-            isRfcommTransportReady()
-        }
-    }
+    private fun supportsAttachmentTransport(): Boolean = supportsMediaTransport()
+
+    private fun supportsLocationSharing(): Boolean = supportsMediaTransport()
 
     private fun supportsCallTransport(): Boolean {
-        return !isPreferredP2pGattContact() && isRfcommTransportReady()
+        // GATT calls ride the same P2P link as GATT messaging (works cross-platform) — but ONLY while
+        // that link is live. With no live GATT link we must NOT stop here (returning its readiness
+        // greyed the call button out): fall through so an internet call is still offered, mirroring iOS
+        // which falls back to WebRTC when the peer is reachable online.
+        if (isPreferredP2pGattContact() && p2pGattChatManager.isReady()) {
+            return true
+        }
+        if (isRfcommTransportReady()) {
+            return true
+        }
+        // No Bluetooth link, but an online internet contact can be called over WebRTC (web-compatible).
+        return activeContact?.supportsInternet == true && internetChatTransport.isAvailable()
     }
 
     private fun shouldShowCallActionForCurrentContact(): Boolean {
-        val contact = activeContact ?: return sessionCode
+        if (activeContact != null) {
+            return true
+        }
+        return sessionCode
             ?.trim()
             ?.startsWith("ble:", ignoreCase = true)
             ?.not()
             ?: true
-        val isBleGattContact =
-            normalizePreferredTransport(contact.preferredTransport) == PREFERRED_TRANSPORT_BLE_GATT
-        val isIosPeer = normalizeRemotePlatform(contact.remotePlatform) == REMOTE_PLATFORM_IOS
-        return !(isBleGattContact && isIosPeer)
     }
 
     private fun refreshTransportCapabilities() {
@@ -2160,16 +2866,24 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         _isBleFallbackActive.value = isBleFallbackAllowed(code) && !rfcommReady && bleReady
     }
 
-    private fun isTextTransportReady(sessionCode: String): Boolean {
+    /** True when the Bluetooth link (P2P GATT, RFCOMM, or BLE fallback) is up for this session. */
+    private fun isBluetoothLinkReady(sessionCode: String, registerAlias: Boolean = true): Boolean {
         if (isPreferredP2pGattContact()) {
             return p2pGattChatManager.isReady()
         }
-        val currentService = service
-        if (currentService?.isSessionActive(sessionCode) == true) {
+        if (service?.isSessionActive(sessionCode) == true) {
             return true
         }
         val address = activeBleFallbackAddress() ?: return false
-        return isBleFallbackTransportReady(address, registerAlias = true)
+        return isBleFallbackTransportReady(address, registerAlias = registerAlias)
+    }
+
+    private fun isTextTransportReady(sessionCode: String): Boolean {
+        // Bluetooth first (preferred when the peers are linked); internet only as a fallback.
+        if (isBluetoothLinkReady(sessionCode)) {
+            return true
+        }
+        return activeContact?.supportsInternet == true && internetChatTransport.isAvailable()
     }
 
     private fun computeNextRetryAtMillis(attempt: Int): Long {
@@ -2574,7 +3288,52 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
+    /**
+     * When we open a chat with a contact that was added by number over the internet but has no
+     * offline Bluetooth link yet, try once (in the background) to establish one via SPAKE2 if the
+     * peer is nearby — so future messages can ride Bluetooth automatically. Best-effort: the internet
+     * transport keeps carrying the chat meanwhile, and the peer confirms the pairing once.
+     */
+    private fun maybeAutoLinkBluetooth(contact: Contact?, code: String) {
+        if (autoLinkAttemptedForSession == code) return
+        if (!NearbyAutoLink.isEligible(contact) || contact == null) return
+        autoLinkAttemptedForSession = code
+        autoLinkJob?.cancel()
+        autoLinkJob = viewModelScope.launch(exceptionHandler) {
+            val linked = withContext(Dispatchers.IO) {
+                runCatching { NearbyAutoLink.tryEstablish(context, contact) }.getOrDefault(false)
+            }
+            // The paired contact now holds a BT key + address at the same sessionCode (the contact
+            // flow also re-emits); kick a connect so Bluetooth takes over while we're still here.
+            if (linked && sessionCode == code) {
+                requestConnection(code)
+            }
+        }
+    }
+
     private fun requestConnection(code: String) {
+        Log.d(
+            TAG,
+            "requestConnection code=$code supportsInternet=${activeContact?.supportsInternet} " +
+                "peerUidSet=${activeContact?.peerUid?.isNotBlank()} " +
+                "internetAvailable=${internetChatTransport.isAvailable()}"
+        )
+        // Re-evaluate fresh each pass; the internet path below re-sets it when it applies.
+        internetActiveConnected = false
+        // If we're NOT on Bluetooth yet but the internet is available, connect over the internet
+        // IMMEDIATELY (show "internet connected", drain the queue) — no waiting on a Bluetooth link
+        // that may hang. Bluetooth still keeps trying in the background below, and takes over the
+        // moment it links up (the internet "Connecting" suppression above keeps the badge steady).
+        if (!isBluetoothLinkReady(code) &&
+            activeContact?.supportsInternet == true &&
+            internetChatTransport.isAvailable()
+        ) {
+            markInternetCarrying()
+            flushQueuedTextMessages()
+            // fall through to still kick off Bluetooth attempts in the background
+        }
+        // Bluetooth attempts (they run in the background when the internet is already connected;
+        // their transient "Connecting" is suppressed so the badge stays "internet connected").
         if (isPreferredP2pGattContact()) {
             pendingConnection = true
             connectionInProgress = true
@@ -2624,18 +3383,120 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /** The internet is now carrying the chat: badge, BT-noise suppression flag, and warning reset. */
+    private fun markInternetCarrying() {
+        cancelBluetoothTakeover()
+        internetActiveConnected = true
+        bluetoothLostWarningShown = false
+        _transport.value = ChatTransport.Internet
+        updateConnectionState(ChatConnectionState.Connected)
+    }
+
+    /** Bluetooth is now carrying the chat: badge flip + drop the internet suppression flag. */
+    private fun markBluetoothCarrying() {
+        cancelBluetoothTakeover()
+        internetActiveConnected = false
+        bluetoothLostWarningShown = false
+        _transport.value = ChatTransport.Bluetooth
+        updateConnectionState(ChatConnectionState.Connected)
+    }
+
+    private fun cancelBluetoothTakeover() {
+        bluetoothTakeoverJob?.cancel()
+        bluetoothTakeoverJob = null
+    }
+
+    /**
+     * A Bluetooth link just came up. If the internet isn't carrying the chat, take the badge over
+     * right away. Otherwise hold the "internet connected" badge until the link stays up for
+     * [BLUETOOTH_TAKEOVER_STABILITY_MS] — marginal links bounce, and flipping on every link-up would
+     * ping-pong the badge. Only the badge waits: sends route over Bluetooth as soon as it's ready.
+     */
+    private fun onBluetoothLinkUp() {
+        if (!internetActiveConnected) {
+            markBluetoothCarrying()
+            return
+        }
+        if (bluetoothTakeoverJob?.isActive == true) {
+            return
+        }
+        bluetoothTakeoverJob = viewModelScope.launch(exceptionHandler) {
+            delay(BLUETOOTH_TAKEOVER_STABILITY_MS)
+            bluetoothTakeoverJob = null
+            val code = sessionCode
+            if (code != null && isBluetoothLinkReady(code)) {
+                markBluetoothCarrying()
+                flushQueuedTextMessages()
+            }
+        }
+    }
+
+    /**
+     * The Bluetooth link couldn't be (re)established. If this contact is reachable over the internet
+     * and we're online, switch to the internet transport seamlessly (no error, drain the queue).
+     * Returns true when it switched; false means the caller should warn the user to enable Bluetooth.
+     */
+    private fun switchToInternetIfAvailable(): Boolean {
+        val code = sessionCode
+        if (code != null && isBluetoothLinkReady(code)) {
+            // Another Bluetooth route (e.g. the BLE fallback) still carries the chat — keep it.
+            markBluetoothCarrying()
+            return true
+        }
+        val contactSupportsInternet = activeContact?.supportsInternet == true
+        val internetAvailable = internetChatTransport.isAvailable()
+        Log.d(
+            TAG,
+            "BT link down: contactSupportsInternet=$contactSupportsInternet " +
+                "internetAvailable=$internetAvailable peerUid=${activeContact?.peerUid?.isNotBlank()}"
+        )
+        if (contactSupportsInternet && internetAvailable) {
+            markInternetCarrying()
+            flushQueuedTextMessages()
+            return true
+        }
+        return false
+    }
+
     private fun handleConnectionResult(success: Boolean) {
         val activeSessionCode = sessionCode
         if (!success) {
+            if (switchToInternetIfAvailable()) {
+                // Reachable online — stay connected over the internet and keep retrying Bluetooth
+                // quietly in the background so we prefer it once it comes back. Never RESTART a
+                // running retry loop from its own failure callback — that resets the exponential
+                // backoff to its floor and turns it into a tight forever-loop.
+                if (reconnectJob?.isActive != true) {
+                    activeSessionCode?.let { scheduleAutoReconnect(it) }
+                }
+                return
+            }
             updateConnectionState(ChatConnectionState.Error)
-            _errorMessage.value = context.getString(R.string.chat_connection_failed)
+            if (!bluetoothLostWarningShown) {
+                // Only claim "no internet" when internet is genuinely the missing piece (contact IS
+                // internet-capable but we're offline). For a Bluetooth-only contact, internet status
+                // is irrelevant — just prompt to turn Bluetooth on.
+                val internetWasTheMissingPiece =
+                    activeContact?.supportsInternet == true && !internetChatTransport.isAvailable()
+                _errorMessage.value = context.getString(
+                    if (internetWasTheMissingPiece) R.string.chat_bluetooth_lost_enable
+                    else R.string.chat_bluetooth_lost_simple
+                )
+                bluetoothLostWarningShown = true
+            }
             activeSessionCode?.let(::armTemporaryBleFallbackWindow)
             requestBleFallbackBootstrap()
-            activeSessionCode?.let { scheduleAutoReconnect(it) }
+            // Same backoff guard as above: a failure fired by the retry loop's own attempt must not
+            // cancel-and-restart that loop at the minimum delay.
+            if (reconnectJob?.isActive != true) {
+                activeSessionCode?.let { scheduleAutoReconnect(it) }
+            }
         } else {
+            // Bluetooth linked up — it takes over from the background (the badge waits out the
+            // stability window when the internet is already carrying the chat).
             clearTemporaryBleFallbackWindow(activeSessionCode)
             hasConnectedAtLeastOnce = true
-            updateConnectionState(ChatConnectionState.Connected)
+            onBluetoothLinkUp()
             activeBleFallbackAddress()?.let { disconnectBleFallbackClient(it) }
             reconnectJob?.cancel()
             reconnectJob = null
@@ -2686,7 +3547,9 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                     }
                     connectionInProgress = false
                     pendingConnection = false
-                    updateConnectionState(ChatConnectionState.Connected)
+                    // RFCOMM link is up — Bluetooth takes the badge (held briefly for stability
+                    // when the internet is already carrying the chat).
+                    onBluetoothLinkUp()
                     reconnectJob?.cancel()
                     reconnectJob = null
                     flushQueuedTextMessages()
@@ -2704,7 +3567,7 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                     hasConnectedAtLeastOnce = true
                     connectionInProgress = false
                     pendingConnection = false
-                    updateConnectionState(ChatConnectionState.Connected)
+                    onBluetoothLinkUp()
                     reconnectJob?.cancel()
                     reconnectJob = null
                     flushQueuedTextMessages()
@@ -2718,7 +3581,11 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                     false
                 }
 
-                if (connectionInProgress || pendingConnection || bleInProgress) {
+                cancelBluetoothTakeover()
+                if (!internetActiveConnected && switchToInternetIfAvailable()) {
+                    // BT session dropped but the peer is reachable online — the internet takes the
+                    // badge (no dead end) while Bluetooth keeps retrying in the background.
+                } else if (connectionInProgress || pendingConnection || bleInProgress) {
                     updateConnectionState(ChatConnectionState.Connecting)
                 } else {
                     updateConnectionState(ChatConnectionState.Error)
@@ -2743,6 +3610,19 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
             // they realize there's no peer.
             return
         }
+        // The internet is already carrying the chat while Bluetooth connects in the background — don't
+        // downgrade to "Connecting" (or "Error") for those background BT attempts; the chat is usable.
+        if (internetActiveConnected &&
+            (state == ChatConnectionState.Connecting || state == ChatConnectionState.Error)
+        ) {
+            return
+        }
+        // Once "connection lost" is showing, background retries must not strobe the badge back to
+        // "Connecting" on every silent attempt (each failure would flip it right back ~200ms later).
+        // Error only clears on an attempt that actually SUCCEEDS (Connected / a transport mark).
+        if (_connectionState.value == ChatConnectionState.Error && state == ChatConnectionState.Connecting) {
+            return
+        }
         if (_connectionState.value == state) {
             refreshSignalMonitoring()
             refreshBleFallbackRouteState()
@@ -2757,6 +3637,12 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         _connectionState.value = state
         refreshSignalMonitoring()
         refreshBleFallbackRouteState()
+    }
+
+    private fun recomputeActiveCall() {
+        val currentSession = sessionCode
+        val gattState = currentSession?.let { gattCallsSnapshot[it] }
+        handleCallStateChange(rfcommCallUiState ?: gattState)
     }
 
     private fun handleCallStateChange(state: CallUiState?) {
@@ -2860,6 +3746,11 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     override fun onCleared() {
         super.onCleared()
+        unregisterConnectivityFlush()
+        presenceRegistration?.remove()
+        presenceRegistration = null
+        presenceRefreshJob?.cancel()
+        typingExpiryJob?.cancel()
         messageJob?.cancel()
         contactJob?.cancel()
         sessionMonitorJob?.cancel()
@@ -2965,7 +3856,7 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
             demo.callEvents.forEach { add(ChatTimelineItem.Call(it)) }
         }.sortedBy { it.timestampMillis }
         _timelineItems.value = timeline
-        _contactName.value = ChatScreenshotDemoScenario.DEMO_CONTACT_NAME
+        _contactName.value = ChatScreenshotDemoScenario.demoContactName(context)
         _isSessionEncrypted.value = true
         _isBleFallbackActive.value = false
         _signalPermissionMissing.value = false
@@ -2994,6 +3885,7 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         private val HIGH_RANGE_MODE_ENABLED_KEY = booleanPreferencesKey("advanced_high_range_mode_enabled")
         private const val SCAN_INTERVAL_MS = 12_000L
         private const val CONNECTION_BOOTSTRAP_DELAY_MS = 260L
+        private const val BLUETOOTH_TAKEOVER_STABILITY_MS = 2_500L
         private const val VOICE_MIME_AAC = "audio/mp4"
         private const val VOICE_MIME_OPUS = "audio/ogg"
         private const val IMAGE_MIME_JPEG = "image/jpeg"
@@ -3013,11 +3905,13 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         private const val TEXT_RETRY_MIN_JITTER_MS = 250L
         private const val TEXT_RETRY_MAX_EXPONENT = 6
         private const val TEXT_TRANSPORT_WAIT_RETRY_DELAY_MS = 2_500L
+        private const val BLE_FALLBACK_CONNECT_COOLDOWN_MS = 4_000L
         private const val TEXT_RETRY_SCHEDULE_TOLERANCE_MS = 200L
         private const val TEXT_MESSAGE_TTL_MS = 86_400_000L
         private const val AUTO_BLE_FALLBACK_WINDOW_MS = 20 * 60 * 1000L
         private const val OUTBOUND_ROUTE_RFCOMM = "rfcomm"
         private const val OUTBOUND_ROUTE_BLE_GATT = "ble_gatt_fallback"
+        private const val OUTBOUND_ROUTE_INTERNET = "internet"
         private const val OUTBOUND_ROUTE_P2P_BLE_GATT = "p2p_ble_gatt"
         private const val TEXT_ERROR_TRANSPORT_UNAVAILABLE = "TRANSPORT_UNAVAILABLE"
         private const val TEXT_ERROR_SEND_FAILED = "SEND_FAILED"

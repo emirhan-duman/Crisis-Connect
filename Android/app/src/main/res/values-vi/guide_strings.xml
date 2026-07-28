@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Hướng dẫn khẩn cấp</string>
+    <string name="guide_screen_intro_subtitle">Tiếp cận nhanh thông tin quan trọng và làm theo các hành động ngắn gọn dưới áp lực.</string>
+    <string name="guide_screen_filter_all">Tất cả danh mục</string>
+    <string name="guide_screen_section_30_seconds">Trong 30 giây</string>
+    <string name="guide_screen_section_step_by_step">Từng bước</string>
+    <string name="guide_screen_section_dont">Không nên làm</string>
+    <string name="guide_screen_section_checklist">Danh sách kiểm tra</string>
+    <string name="guide_screen_expand_details">Hiện chi tiết</string>
+    <string name="guide_screen_collapse_details">Ẩn chi tiết</string>
+    <string name="guide_screen_action_start_checklist">Bắt đầu danh sách kiểm tra</string>
+    <string name="guide_screen_action_call_local">Gọi %1$s</string>
+    <string name="guide_screen_action_open_assembly">Mở khu vực tập trung</string>
+    <string name="guide_screen_source_note">Ghi chú nguồn:</string>
+    <string name="guide_screen_checklist_progress">Đã hoàn thành %1$d/%2$d</string>
+    <string name="guide_screen_no_dial_app_with_number">Không tìm thấy ứng dụng nào để gọi %1$s.</string>
+    <string name="guide_screen_no_map_app">Không tìm thấy ứng dụng nào để mở bản đồ.</string>
+    <string name="guide_screen_assembly_query">Khu vực tập trung khi thảm họa</string>
+    <string name="guide_screen_search_placeholder">Tìm theo mã, danh mục hoặc chủ đề</string>
+    <string name="guide_screen_clear_search">Xóa tìm kiếm</string>
+    <string name="guide_screen_clear_filters">Xóa bộ lọc</string>
+    <string name="guide_screen_empty_title">Không tìm thấy hướng dẫn nào</string>
+    <string name="guide_screen_empty_body">Hãy thử giảm bớt bộ lọc hoặc tìm bằng từ khóa rộng hơn.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d hành động nhanh nữa</string>
+    <string name="guide_screen_region_value">Khu vực: %1$s • Số khẩn cấp: %2$s</string>
+    <string name="guide_screen_results_count">Đã liệt kê %1$d hướng dẫn</string>
+    <string name="guide_screen_read_minutes_format">%1$d phút</string>
+</resources>

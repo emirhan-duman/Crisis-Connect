@@ -17,7 +17,13 @@ data class CrisisSentinelChatMessage(
     val timestampMillis: Long,
     val source: CrisisSentinelResponseSource? = null,
     val confidence: Double? = null,
-    val generationDurationMillis: Long? = null
+    val generationDurationMillis: Long? = null,
+    val modelName: String? = null,
+    /** The online engine's `_card` payload verbatim (JSON object string). */
+    val cardJson: String? = null,
+    val mapPoints: List<CrisisSentinelMapPoint> = emptyList(),
+    /** Transient UX notice for a tool the app can't render — never persisted. */
+    val unsupportedToolName: String? = null
 )
 
 data class CrisisSentinelConversation(
@@ -36,7 +42,9 @@ data class CrisisSentinelConversationSummary(
     val mode: CrisisSentinelUserMode,
     val updatedAtMillis: Long,
     val lastMessagePreview: String?,
-    val isDraft: Boolean = false
+    val isDraft: Boolean = false,
+    /** True when the conversation lives in Firestore (synced with the web dashboard). */
+    val isCloud: Boolean = false
 )
 
 class CrisisSentinelConversationStore(context: Context) {
@@ -158,7 +166,11 @@ class CrisisSentinelConversationStore(context: Context) {
     fun appendAssistantResponse(
         id: String,
         response: CrisisSentinelResponse,
-        generationDurationMillis: Long? = null
+        generationDurationMillis: Long? = null,
+        modelName: String? = null,
+        cardJson: String? = null,
+        mapPoints: List<CrisisSentinelMapPoint> = emptyList(),
+        unsupportedToolName: String? = null
     ): CrisisSentinelConversation? {
         return mutate(id) { conversation ->
             val now = System.currentTimeMillis()
@@ -169,11 +181,27 @@ class CrisisSentinelConversationStore(context: Context) {
                 timestampMillis = now,
                 source = response.source,
                 confidence = response.confidence.toDouble(),
-                generationDurationMillis = generationDurationMillis
+                generationDurationMillis = generationDurationMillis,
+                modelName = modelName,
+                cardJson = cardJson,
+                mapPoints = mapPoints,
+                unsupportedToolName = unsupportedToolName
             )
             conversation.copy(
                 updatedAtMillis = now,
                 messages = conversation.messages + assistantMessage
+            )
+        }
+    }
+
+    /** Renames a conversation (long-press menu); blank titles are ignored. */
+    fun rename(id: String, title: String): CrisisSentinelConversation? {
+        val clean = title.trim()
+        if (clean.isBlank()) return load(id)
+        return mutate(id) { conversation ->
+            conversation.copy(
+                title = clean.take(TITLE_LIMIT),
+                updatedAtMillis = System.currentTimeMillis()
             )
         }
     }
@@ -201,6 +229,53 @@ class CrisisSentinelConversationStore(context: Context) {
 
     fun saveDefaultMode(mode: CrisisSentinelUserMode) {
         prefs.edit().putString(KEY_DEFAULT_MODE, mode.name).apply()
+    }
+
+    /** Last engine the user explicitly picked, or null if they never chose one. */
+    fun preferredEngine(): CrisisSentinelEngine? {
+        return when (prefs.getString(KEY_PREFERRED_ENGINE, null)) {
+            CrisisSentinelEngine.Online.name -> CrisisSentinelEngine.Online
+            CrisisSentinelEngine.Edge.name -> CrisisSentinelEngine.Edge
+            else -> null
+        }
+    }
+
+    fun savePreferredEngine(engine: CrisisSentinelEngine) {
+        prefs.edit().putString(KEY_PREFERRED_ENGINE, engine.name).apply()
+    }
+
+    /** The user's pinned online provider/model; null = server default (Android analog of the
+     *  web picker's localStorage entry). */
+    fun preferredOnlineModel(): CrisisSentinelOnlineModelChoice? {
+        val raw = prefs.getString(KEY_PREFERRED_ONLINE_MODEL, null) ?: return null
+        return runCatching {
+            val json = JSONObject(raw)
+            val providerId = json.optString("providerId").takeIf { it.isNotBlank() }
+                ?: return null
+            val modelId = json.optString("modelId").takeIf { it.isNotBlank() } ?: return null
+            CrisisSentinelOnlineModelChoice(
+                providerId = providerId,
+                modelId = modelId,
+                modelLabel = json.optString("modelLabel").ifBlank { modelId }
+            )
+        }.getOrNull()
+    }
+
+    fun savePreferredOnlineModel(choice: CrisisSentinelOnlineModelChoice?) {
+        prefs.edit().apply {
+            if (choice == null) {
+                remove(KEY_PREFERRED_ONLINE_MODEL)
+            } else {
+                putString(
+                    KEY_PREFERRED_ONLINE_MODEL,
+                    JSONObject()
+                        .put("providerId", choice.providerId)
+                        .put("modelId", choice.modelId)
+                        .put("modelLabel", choice.modelLabel)
+                        .toString()
+                )
+            }
+        }.apply()
     }
 
     private fun mutate(
@@ -280,6 +355,7 @@ class CrisisSentinelConversationStore(context: Context) {
         val source = when (json.optString("source")) {
             CrisisSentinelResponseSource.LocalModel.name -> CrisisSentinelResponseSource.LocalModel
             CrisisSentinelResponseSource.OfflineRules.name -> CrisisSentinelResponseSource.OfflineRules
+            CrisisSentinelResponseSource.OnlineModel.name -> CrisisSentinelResponseSource.OnlineModel
             else -> null
         }
         return CrisisSentinelChatMessage(
@@ -293,8 +369,32 @@ class CrisisSentinelConversationStore(context: Context) {
                 json.optLong("generationDurationMillis")
             } else {
                 null
-            }
+            },
+            modelName = json.optString("modelName").takeIf { it.isNotBlank() },
+            cardJson = json.optString("cardJson").takeIf { it.isNotBlank() },
+            mapPoints = parseMapPoints(json.optJSONArray("mapPoints"))
         )
+    }
+
+    private fun parseMapPoints(array: JSONArray?): List<CrisisSentinelMapPoint> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val point = array.optJSONObject(index) ?: continue
+                val lat = point.optDouble("lat", Double.NaN)
+                val lng = point.optDouble("lng", Double.NaN)
+                if (lat.isNaN() || lng.isNaN()) continue
+                add(
+                    CrisisSentinelMapPoint(
+                        lat = lat,
+                        lng = lng,
+                        label = point.optString("label"),
+                        details = point.optString("details").takeIf { it.isNotBlank() },
+                        type = point.optString("type").takeIf { it.isNotBlank() }
+                    )
+                )
+            }
+        }
     }
 
     private fun CrisisSentinelConversation.toJson(): JSONObject {
@@ -323,6 +423,28 @@ class CrisisSentinelConversationStore(context: Context) {
                 source?.let { put("source", it.name) }
                 confidence?.let { put("confidence", it) }
                 generationDurationMillis?.let { put("generationDurationMillis", it) }
+                modelName?.let { put("modelName", it) }
+                cardJson?.let { put("cardJson", it) }
+                if (mapPoints.isNotEmpty()) {
+                    put(
+                        "mapPoints",
+                        JSONArray().also { array ->
+                            mapPoints.forEach { point ->
+                                array.put(
+                                    JSONObject()
+                                        .put("lat", point.lat)
+                                        .put("lng", point.lng)
+                                        .put("label", point.label)
+                                        .apply {
+                                            point.details?.let { put("details", it) }
+                                            point.type?.let { put("type", it) }
+                                        }
+                                )
+                            }
+                        }
+                    )
+                }
+                // unsupportedToolName is intentionally NOT serialized (transient notice).
             }
     }
 
@@ -353,6 +475,8 @@ class CrisisSentinelConversationStore(context: Context) {
         private const val PREFS_NAME = "crisis_sentinel_conversations"
         private const val KEY_CONVERSATIONS = "conversations"
         private const val KEY_DEFAULT_MODE = "default_mode"
+        private const val KEY_PREFERRED_ENGINE = "preferred_engine"
+        private const val KEY_PREFERRED_ONLINE_MODEL = "preferred_online_model"
         private const val TITLE_LIMIT = 48
     }
 }

@@ -40,7 +40,8 @@ object BleMessageNotifier {
         sessionCode: String,
         contactName: String?,
         body: String,
-        timestamp: Long = System.currentTimeMillis()
+        timestamp: Long = System.currentTimeMillis(),
+        contentIntent: PendingIntent? = null
     ) {
         if (ActiveChatTracker.isSessionActive(sessionCode)) return
         if (!hasPostNotificationsPermission(context)) return
@@ -72,7 +73,7 @@ object BleMessageNotifier {
             putExtra(MainActivity.EXTRA_NAVIGATE_TO_SESSION, sessionCode)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
-        val pendingIntent = PendingIntent.getActivity(
+        val pendingIntent = contentIntent ?: PendingIntent.getActivity(
             context,
             sessionCode.hashCode(),
             launchIntent,
@@ -183,6 +184,8 @@ object BleMessageNotifier {
             }
             MessageType.AUDIO -> context.getString(R.string.notification_voice_message_body)
             MessageType.IMAGE -> context.getString(R.string.notification_photo_message_body)
+            MessageType.SOS_ALERT ->
+                normalizedBody ?: context.getString(R.string.conversation_preview_sos)
         }
     }
 

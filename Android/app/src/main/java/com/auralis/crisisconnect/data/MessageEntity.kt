@@ -9,7 +9,10 @@ import org.json.JSONArray
 enum class MessageType {
     TEXT,
     AUDIO,
-    IMAGE
+    IMAGE,
+
+    /** An SOS emergency alert — rendered as a distinct high-visibility bubble, never plain text. */
+    SOS_ALERT
 }
 
 enum class MessageDeliveryStatus {

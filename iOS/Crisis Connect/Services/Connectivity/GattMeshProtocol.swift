@@ -32,6 +32,15 @@ enum GattMeshPacketType: String, Codable {
     case receipt
     case authChallenge = "auth_challenge"
     case authProof = "auth_proof"
+    case imageInit = "image_init"
+    case imageChunk = "image_chunk"
+    case imageDone = "image_done"
+    // Telsiz (push-to-talk) — single-hop-origin'd, multi-hop relayed. Wire values must match Android.
+    case pttJoin = "ptt_join"
+    case pttLeave = "ptt_leave"
+    case pttFloorClaim = "ptt_floor_claim"
+    case pttFloorRelease = "ptt_floor_release"
+    case pttAudio = "ptt_audio"
 }
 
 struct GattMeshPacket: Codable, Equatable {
@@ -53,6 +62,17 @@ struct GattMeshPacket: Codable, Equatable {
     let originProofJSON: String?
     let originSignatureBase64: String?
     let isReadable: Bool
+    // Image-blob fields (dcs-gattmesh-v5); optional with defaults so old persisted queues decode.
+    var blobId: String? = nil
+    var blobIndex: Int? = nil
+    var blobChunkCount: Int? = nil
+    var blobCipherBytes: Int? = nil
+    var blobDataBase64: String? = nil
+    var blobMime: String? = nil
+    var blobWidth: Int? = nil
+    var blobHeight: Int? = nil
+    var blobKind: String? = nil
+    var blobDurationMillis: Int64? = nil
 }
 
 enum GattMeshProtocol {
@@ -72,6 +92,11 @@ enum GattMeshProtocol {
     private static let protocolReceiptV2 = "dcs-gattmesh-v2"
     private static let protocolChatV3 = "dcs-gattmesh-v3"
     private static let protocolControlV4 = "dcs-gattmesh-v4"
+    private static let protocolImageV5 = "dcs-gattmesh-v5"
+    private static let imagePlaceholderMessage = "mesh-image"
+    static let meshImageMaxPlainBytes = 400_000
+    static let meshImageChunkBytes = 2_800
+    static let meshImageMaxChunks = 160
     private static let encryptedPlaceholderMessage = "mesh-secure"
     private static let receiptPlaceholderMessage = "mesh-receipt"
     private static let authChallengePlaceholderMessage = "c"
@@ -104,6 +129,20 @@ enum GattMeshProtocol {
     private static let fieldKeyId = "kid"
     private static let fieldIV = "iv"
     private static let fieldCipher = "cipher"
+    private static let fieldBlobId = "blobId"
+    private static let fieldBlobIndex = "blobIdx"
+    private static let fieldBlobCount = "blobCnt"
+    private static let fieldBlobBytes = "blobLen"
+    private static let fieldBlobData = "blobData"
+    private static let fieldBlobMime = "blobMime"
+    private static let fieldBlobWidth = "blobW"
+    private static let fieldBlobHeight = "blobH"
+    private static let fieldBlobKind = "blobKind"
+    private static let fieldBlobDuration = "blobDur"
+    static let blobKindImage = "image"
+    static let blobKindVoice = "voice"
+    static let meshVoiceMime = "audio/mp4"
+    static let meshVoiceMaxDurationMillis: Int64 = 90_000
 
     private static let roleProofPublicKeyField = "devicePublicKey"
     private static let roleProofCertificateField = "certificate"
@@ -118,7 +157,7 @@ enum GattMeshProtocol {
     private static let compactRoleProofNonceField = "n"
     private static let compactRoleProofAllowExpiredField = "g"
 
-    static func makeChatPacket(text: String, messageId: String? = nil, senderLabel: String? = nil) -> GattMeshPacket? {
+    static func makeChatPacket(text: String, messageId: String? = nil, senderLabel: String? = nil, profile: MeshProfile = .publicMesh) -> GattMeshPacket? {
         let resolvedText = sanitizeMessage(text)
         guard !resolvedText.isEmpty else { return nil }
 
@@ -130,7 +169,8 @@ enum GattMeshProtocol {
             messageId: resolvedMessageId,
             senderLabel: resolvedSender,
             timestampMillis: timestampMillis,
-            message: resolvedText
+            message: resolvedText,
+            profile: profile
         ) else {
             return nil
         }
@@ -285,6 +325,239 @@ enum GattMeshProtocol {
         )
     }
 
+    // MARK: - Image blobs (dcs-gattmesh-v5, wire-compatible with Android)
+
+    /// Encrypts a whole image once with the profile payload key (group key on the authority mesh).
+    /// AAD binds blobId + mime, mirroring Android's `buildImageBlobAad`.
+    static func encryptImageBlob(
+        blobId: String,
+        mimeType: String,
+        data: Data,
+        profile: MeshProfile
+    ) -> (keyId: String, ivBase64: String, cipher: Data)? {
+        guard data.count <= meshImageMaxPlainBytes, let key = payloadKey(for: profile) else {
+            return nil
+        }
+        let aad = Data("blob|\(blobId)|\(mimeType)".utf8)
+        let nonce = AES.GCM.Nonce()
+        guard let sealedBox = try? AES.GCM.seal(data, using: key, nonce: nonce, authenticating: aad) else {
+            return nil
+        }
+        let nonceData = sealedBox.nonce.withUnsafeBytes { Data($0) }
+        return (
+            keyId: profile.payloadKeyId,
+            ivBase64: nonceData.base64EncodedString(),
+            cipher: sealedBox.ciphertext + sealedBox.tag
+        )
+    }
+
+    static func decryptImageBlob(
+        blobId: String,
+        mimeType: String?,
+        keyId: String,
+        ivBase64: String,
+        cipher: Data,
+        profile: MeshProfile
+    ) -> Data? {
+        guard keyId == profile.payloadKeyId, let key = payloadKey(for: profile) else {
+            return nil
+        }
+        guard
+            let nonceData = Data(base64Encoded: ivBase64, options: [.ignoreUnknownCharacters]),
+            nonceData.count == aesGcmNonceBytes,
+            cipher.count > aesGcmTagBytes,
+            let nonce = try? AES.GCM.Nonce(data: nonceData)
+        else {
+            return nil
+        }
+        let ciphertext = cipher.prefix(cipher.count - aesGcmTagBytes)
+        let tag = cipher.suffix(aesGcmTagBytes)
+        guard let sealedBox = try? AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag) else {
+            return nil
+        }
+        let aad = Data("blob|\(blobId)|\(mimeType ?? "")".utf8)
+        guard let plain = try? AES.GCM.open(sealedBox, using: key, authenticating: aad),
+              !plain.isEmpty,
+              plain.count <= meshImageMaxPlainBytes
+        else {
+            return nil
+        }
+        return plain
+    }
+
+    static func makeImageInitPacket(
+        blobId: String,
+        chunkCount: Int,
+        cipherBytes: Int,
+        keyId: String,
+        ivBase64: String,
+        mimeType: String,
+        width: Int?,
+        height: Int?,
+        senderLabel: String? = nil,
+        kind: String? = nil,
+        durationMillis: Int64? = nil
+    ) -> GattMeshPacket {
+        GattMeshPacket(
+            id: blobId,
+            senderLabel: sanitizeSenderLabel(senderLabel ?? localSenderLabel()),
+            timestampMillis: Int64(Date().timeIntervalSince1970 * 1_000),
+            message: imagePlaceholderMessage,
+            type: .imageInit,
+            receiptType: nil,
+            receiptMessageIds: [],
+            authNonce: nil,
+            authProofJSON: nil,
+            hop: 0,
+            protocol: protocolImageV5,
+            encrypted: true,
+            keyId: keyId,
+            ivBase64: ivBase64,
+            cipherBase64: nil,
+            originProofJSON: nil,
+            originSignatureBase64: nil,
+            isReadable: true,
+            blobId: blobId,
+            blobChunkCount: chunkCount,
+            blobCipherBytes: cipherBytes,
+            blobMime: mimeType,
+            blobWidth: width,
+            blobHeight: height,
+            blobKind: kind,
+            blobDurationMillis: durationMillis
+        )
+    }
+
+    static func makeImageChunkPacket(
+        blobId: String,
+        index: Int,
+        dataBase64: String,
+        senderLabel: String? = nil
+    ) -> GattMeshPacket {
+        GattMeshPacket(
+            id: "\(blobId)-c\(index)",
+            senderLabel: sanitizeSenderLabel(senderLabel ?? localSenderLabel()),
+            timestampMillis: Int64(Date().timeIntervalSince1970 * 1_000),
+            message: imagePlaceholderMessage,
+            type: .imageChunk,
+            receiptType: nil,
+            receiptMessageIds: [],
+            authNonce: nil,
+            authProofJSON: nil,
+            hop: 0,
+            protocol: protocolImageV5,
+            encrypted: false,
+            keyId: nil,
+            ivBase64: nil,
+            cipherBase64: nil,
+            originProofJSON: nil,
+            originSignatureBase64: nil,
+            isReadable: true,
+            blobId: blobId,
+            blobIndex: index,
+            blobDataBase64: dataBase64
+        )
+    }
+
+    static func makeImageDonePacket(
+        blobId: String,
+        senderLabel: String? = nil
+    ) -> GattMeshPacket {
+        GattMeshPacket(
+            id: "\(blobId)-done",
+            senderLabel: sanitizeSenderLabel(senderLabel ?? localSenderLabel()),
+            timestampMillis: Int64(Date().timeIntervalSince1970 * 1_000),
+            message: imagePlaceholderMessage,
+            type: .imageDone,
+            receiptType: nil,
+            receiptMessageIds: [],
+            authNonce: nil,
+            authProofJSON: nil,
+            hop: 0,
+            protocol: protocolImageV5,
+            encrypted: false,
+            keyId: nil,
+            ivBase64: nil,
+            cipherBase64: nil,
+            originProofJSON: nil,
+            originSignatureBase64: nil,
+            isReadable: true,
+            blobId: blobId
+        )
+    }
+
+    // MARK: - Telsiz (push-to-talk) builders
+
+    /// Build a PTT control packet (join/leave/floor claim/floor release). `hop` is non-zero only when
+    /// relaying a packet that originated elsewhere. Wire format mirrors Android `broadcastPttControl`.
+    static func makePttControlPacket(
+        id: String,
+        type: GattMeshPacketType,
+        originId: String,
+        senderLabel: String,
+        claimId: String,
+        agency: String?,
+        hop: Int = 0
+    ) -> GattMeshPacket {
+        GattMeshPacket(
+            id: id,
+            senderLabel: sanitizeSenderLabel(senderLabel),
+            timestampMillis: Int64(Date().timeIntervalSince1970 * 1_000),
+            message: claimId,
+            type: type,
+            receiptType: nil,
+            receiptMessageIds: [],
+            authNonce: nil,
+            authProofJSON: nil,
+            hop: hop,
+            protocol: protocolImageV5,
+            encrypted: false,
+            keyId: nil,
+            ivBase64: nil,
+            cipherBase64: nil,
+            originProofJSON: nil,
+            originSignatureBase64: nil,
+            isReadable: true,
+            blobId: originId,
+            blobKind: nonEmpty(agency)
+        )
+    }
+
+    /// Build a PTT audio packet carrying a single Opus frame (seq in blobIdx, base64 audio in blobData).
+    /// Wire format mirrors Android `broadcastPttAudio`.
+    static func makePttAudioPacket(
+        id: String,
+        originId: String,
+        senderLabel: String,
+        seq: Int,
+        audioBase64: String,
+        hop: Int = 0
+    ) -> GattMeshPacket {
+        GattMeshPacket(
+            id: id,
+            senderLabel: sanitizeSenderLabel(senderLabel),
+            timestampMillis: Int64(Date().timeIntervalSince1970 * 1_000),
+            message: "",
+            type: .pttAudio,
+            receiptType: nil,
+            receiptMessageIds: [],
+            authNonce: nil,
+            authProofJSON: nil,
+            hop: hop,
+            protocol: protocolImageV5,
+            encrypted: false,
+            keyId: nil,
+            ivBase64: nil,
+            cipherBase64: nil,
+            originProofJSON: nil,
+            originSignatureBase64: nil,
+            isReadable: true,
+            blobId: originId,
+            blobIndex: seq,
+            blobDataBase64: audioBase64
+        )
+    }
+
     static func encodePacket(_ packet: GattMeshPacket) -> Data? {
         let object = packetJSONObject(packet)
         return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
@@ -301,7 +574,7 @@ enum GattMeshProtocol {
         return try? BleAesGcm.unwrapTransportPacket(packet, maxPacketSize: maxPacketBytes)
     }
 
-    static func decodePacket(from payload: Data) -> GattMeshPacket? {
+    static func decodePacket(from payload: Data, profile: MeshProfile = .publicMesh) -> GattMeshPacket? {
         guard let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else {
             return nil
         }
@@ -335,7 +608,7 @@ enum GattMeshProtocol {
         case .chat:
             let encrypted = (object[fieldEncrypted] as? Bool) == true || protocolValue == protocolChatV3
             if encrypted {
-                let keyId = nonEmpty(trimmedStringValue(object[fieldKeyId])) ?? defaultKeyId
+                let keyId = nonEmpty(trimmedStringValue(object[fieldKeyId])) ?? profile.payloadKeyId
                 guard
                     let ivBase64 = nonEmpty(trimmedStringValue(object[fieldIV])),
                     let cipherBase64 = nonEmpty(trimmedStringValue(object[fieldCipher]))
@@ -349,7 +622,8 @@ enum GattMeshProtocol {
                     timestampMillis: timestamp.int64Value,
                     keyId: keyId,
                     ivBase64: ivBase64,
-                    cipherBase64: cipherBase64
+                    cipherBase64: cipherBase64,
+                    profile: profile
                 )
 
                 return GattMeshPacket(
@@ -498,6 +772,184 @@ enum GattMeshProtocol {
                 originSignatureBase64: nil,
                 isReadable: true
             )
+
+        case .imageInit:
+            guard
+                protocolValue == protocolImageV5,
+                let blobId = normalizeMessageId(trimmedStringValue(object[fieldBlobId])),
+                let chunkCount = (object[fieldBlobCount] as? NSNumber)?.intValue,
+                (1...meshImageMaxChunks).contains(chunkCount),
+                let cipherBytes = (object[fieldBlobBytes] as? NSNumber)?.intValue,
+                cipherBytes >= 1,
+                cipherBytes <= meshImageMaxPlainBytes + 64,
+                let ivBase64 = nonEmpty(trimmedStringValue(object[fieldIV])),
+                ivBase64.count <= 4_096
+            else {
+                return nil
+            }
+            let keyId = nonEmpty(trimmedStringValue(object[fieldKeyId])) ?? profile.payloadKeyId
+            return GattMeshPacket(
+                id: id,
+                senderLabel: senderLabel,
+                timestampMillis: timestamp.int64Value,
+                message: imagePlaceholderMessage,
+                type: .imageInit,
+                receiptType: nil,
+                receiptMessageIds: [],
+                authNonce: nil,
+                authProofJSON: nil,
+                hop: hop,
+                protocol: protocolValue,
+                encrypted: true,
+                keyId: keyId,
+                ivBase64: ivBase64,
+                cipherBase64: nil,
+                originProofJSON: nil,
+                originSignatureBase64: nil,
+                isReadable: true,
+                blobId: blobId,
+                blobChunkCount: chunkCount,
+                blobCipherBytes: cipherBytes,
+                blobMime: nonEmpty(trimmedStringValue(object[fieldBlobMime])).map { String($0.prefix(64)) },
+                blobWidth: ((object[fieldBlobWidth] as? NSNumber)?.intValue)
+                    .flatMap { $0 > 0 ? $0 : nil },
+                blobHeight: ((object[fieldBlobHeight] as? NSNumber)?.intValue)
+                    .flatMap { $0 > 0 ? $0 : nil },
+                blobKind: nonEmpty(trimmedStringValue(object[fieldBlobKind])).map { String($0.prefix(16)) },
+                blobDurationMillis: ((object[fieldBlobDuration] as? NSNumber)?.int64Value)
+                    .flatMap { (1...meshVoiceMaxDurationMillis).contains($0) ? $0 : nil }
+            )
+
+        case .imageChunk:
+            guard
+                protocolValue == protocolImageV5,
+                let blobId = normalizeMessageId(trimmedStringValue(object[fieldBlobId])),
+                let blobIndex = (object[fieldBlobIndex] as? NSNumber)?.intValue,
+                (0..<meshImageMaxChunks).contains(blobIndex),
+                let dataBase64 = nonEmpty(trimmedStringValue(object[fieldBlobData])),
+                dataBase64.count <= 4_096
+            else {
+                return nil
+            }
+            return GattMeshPacket(
+                id: id,
+                senderLabel: senderLabel,
+                timestampMillis: timestamp.int64Value,
+                message: imagePlaceholderMessage,
+                type: .imageChunk,
+                receiptType: nil,
+                receiptMessageIds: [],
+                authNonce: nil,
+                authProofJSON: nil,
+                hop: hop,
+                protocol: protocolValue,
+                encrypted: false,
+                keyId: nil,
+                ivBase64: nil,
+                cipherBase64: nil,
+                originProofJSON: nil,
+                originSignatureBase64: nil,
+                isReadable: true,
+                blobId: blobId,
+                blobIndex: blobIndex,
+                blobDataBase64: dataBase64
+            )
+
+        case .imageDone:
+            guard
+                protocolValue == protocolImageV5,
+                let blobId = normalizeMessageId(trimmedStringValue(object[fieldBlobId]))
+            else {
+                return nil
+            }
+            return GattMeshPacket(
+                id: id,
+                senderLabel: senderLabel,
+                timestampMillis: timestamp.int64Value,
+                message: imagePlaceholderMessage,
+                type: .imageDone,
+                receiptType: nil,
+                receiptMessageIds: [],
+                authNonce: nil,
+                authProofJSON: nil,
+                hop: hop,
+                protocol: protocolValue,
+                encrypted: false,
+                keyId: nil,
+                ivBase64: nil,
+                cipherBase64: nil,
+                originProofJSON: nil,
+                originSignatureBase64: nil,
+                isReadable: true,
+                blobId: blobId
+            )
+
+        case .pttAudio, .pttJoin, .pttLeave, .pttFloorClaim, .pttFloorRelease:
+            // Telsiz: origin id is carried in blobId, seq in blobIdx, Opus audio in blobData,
+            // claimId in message, sender's verified agency in blobKind. Mirrors Android wire format.
+            guard
+                protocolValue == protocolImageV5,
+                let originRaw = nonEmpty(trimmedStringValue(object[fieldBlobId]))
+            else {
+                return nil
+            }
+            let pttOrigin = String(originRaw.prefix(64))
+            if typeValue == .pttAudio {
+                guard
+                    let seq = (object[fieldBlobIndex] as? NSNumber)?.intValue, seq >= 0,
+                    let audioBase64 = nonEmpty(trimmedStringValue(object[fieldBlobData])),
+                    audioBase64.count <= 4_096
+                else {
+                    return nil
+                }
+                return GattMeshPacket(
+                    id: id,
+                    senderLabel: senderLabel,
+                    timestampMillis: timestamp.int64Value,
+                    message: "",
+                    type: .pttAudio,
+                    receiptType: nil,
+                    receiptMessageIds: [],
+                    authNonce: nil,
+                    authProofJSON: nil,
+                    hop: hop,
+                    protocol: protocolValue,
+                    encrypted: false,
+                    keyId: nil,
+                    ivBase64: nil,
+                    cipherBase64: nil,
+                    originProofJSON: nil,
+                    originSignatureBase64: nil,
+                    isReadable: true,
+                    blobId: pttOrigin,
+                    blobIndex: seq,
+                    blobDataBase64: audioBase64
+                )
+            }
+            let claimIdMessage = nonEmpty(trimmedStringValue(object[fieldMessage])).map { String($0.prefix(32)) } ?? ""
+            let agency = nonEmpty(trimmedStringValue(object[fieldBlobKind])).map { String($0.prefix(64)) }
+            return GattMeshPacket(
+                id: id,
+                senderLabel: senderLabel,
+                timestampMillis: timestamp.int64Value,
+                message: claimIdMessage,
+                type: typeValue,
+                receiptType: nil,
+                receiptMessageIds: [],
+                authNonce: nil,
+                authProofJSON: nil,
+                hop: hop,
+                protocol: protocolValue,
+                encrypted: false,
+                keyId: nil,
+                ivBase64: nil,
+                cipherBase64: nil,
+                originProofJSON: nil,
+                originSignatureBase64: nil,
+                isReadable: true,
+                blobId: pttOrigin,
+                blobKind: agency
+            )
         }
     }
 
@@ -641,11 +1093,19 @@ enum GattMeshProtocol {
     }
 
     static func resolveVerifiedRole(_ proof: RoleProofPayload) -> String? {
+        resolveVerifiedCertificate(proof)?.role
+    }
+
+    static func resolveVerifiedAgency(_ proof: RoleProofPayload) -> String {
+        resolveVerifiedCertificate(proof)?.agency ?? ""
+    }
+
+    private static func resolveVerifiedCertificate(_ proof: RoleProofPayload) -> RoleCertificate? {
         guard let certificateBytes = Data(base64Encoded: proof.certificate, options: [.ignoreUnknownCharacters]),
               let certificate = RoleCertificate.fromStorageBytes(certificateBytes) else {
             return nil
         }
-        return certificate.role
+        return certificate
     }
 
     static func verifyOriginSignature(packet: GattMeshPacket, proof: RoleProofPayload) -> Bool {
@@ -700,6 +1160,22 @@ enum GattMeshProtocol {
             return .authChallenge
         case GattMeshPacketType.authProof.rawValue where protocolValue == protocolControlV4:
             return .authProof
+        case GattMeshPacketType.imageInit.rawValue where protocolValue == protocolImageV5:
+            return .imageInit
+        case GattMeshPacketType.imageChunk.rawValue where protocolValue == protocolImageV5:
+            return .imageChunk
+        case GattMeshPacketType.imageDone.rawValue where protocolValue == protocolImageV5:
+            return .imageDone
+        case GattMeshPacketType.pttJoin.rawValue where protocolValue == protocolImageV5:
+            return .pttJoin
+        case GattMeshPacketType.pttLeave.rawValue where protocolValue == protocolImageV5:
+            return .pttLeave
+        case GattMeshPacketType.pttFloorClaim.rawValue where protocolValue == protocolImageV5:
+            return .pttFloorClaim
+        case GattMeshPacketType.pttFloorRelease.rawValue where protocolValue == protocolImageV5:
+            return .pttFloorRelease
+        case GattMeshPacketType.pttAudio.rawValue where protocolValue == protocolImageV5:
+            return .pttAudio
         case GattMeshPacketType.chat.rawValue, "":
             return (protocolValue == protocolChatV1 || protocolValue == protocolChatV3 || protocolValue == protocolControlV4) ? .chat : nil
         default:
@@ -750,6 +1226,51 @@ enum GattMeshProtocol {
             object[fieldMessage] = packet.message
             object[fieldAuthNonce] = packet.authNonce
             object[fieldAuthProof] = packet.authProofJSON
+
+        case .imageInit:
+            object[fieldMessage] = packet.message
+            object[fieldBlobId] = packet.blobId
+            object[fieldBlobCount] = packet.blobChunkCount
+            object[fieldBlobBytes] = packet.blobCipherBytes
+            object[fieldKeyId] = packet.keyId
+            object[fieldIV] = packet.ivBase64
+            if let blobMime = packet.blobMime, !blobMime.isEmpty {
+                object[fieldBlobMime] = blobMime
+            }
+            if let blobWidth = packet.blobWidth {
+                object[fieldBlobWidth] = blobWidth
+            }
+            if let blobHeight = packet.blobHeight {
+                object[fieldBlobHeight] = blobHeight
+            }
+            if let blobKind = packet.blobKind, !blobKind.isEmpty {
+                object[fieldBlobKind] = blobKind
+            }
+            if let blobDurationMillis = packet.blobDurationMillis, blobDurationMillis > 0 {
+                object[fieldBlobDuration] = blobDurationMillis
+            }
+
+        case .imageChunk:
+            object[fieldMessage] = packet.message
+            object[fieldBlobId] = packet.blobId
+            object[fieldBlobIndex] = packet.blobIndex
+            object[fieldBlobData] = packet.blobDataBase64
+
+        case .imageDone:
+            object[fieldMessage] = packet.message
+            object[fieldBlobId] = packet.blobId
+
+        case .pttAudio:
+            // origin id → blobId, seq → blobIdx, Opus audio → blobData.
+            if let blobId = packet.blobId { object[fieldBlobId] = blobId }
+            if let blobIndex = packet.blobIndex { object[fieldBlobIndex] = blobIndex }
+            if let blobData = packet.blobDataBase64 { object[fieldBlobData] = blobData }
+
+        case .pttJoin, .pttLeave, .pttFloorClaim, .pttFloorRelease:
+            // claimId → message, origin id → blobId, verified agency → blobKind.
+            object[fieldMessage] = packet.message
+            if let blobId = packet.blobId { object[fieldBlobId] = blobId }
+            if let blobKind = packet.blobKind, !blobKind.isEmpty { object[fieldBlobKind] = blobKind }
         }
 
         return object
@@ -759,19 +1280,21 @@ enum GattMeshProtocol {
         messageId: String,
         senderLabel: String,
         timestampMillis: Int64,
-        message: String
+        message: String,
+        profile: MeshProfile
     ) -> (keyId: String, ivBase64: String, cipherBase64: String)? {
+        guard let key = payloadKey(for: profile) else { return nil }
         let aad = buildChatAAD(
             messageId: messageId,
             senderLabel: senderLabel,
             timestampMillis: timestampMillis,
-            keyId: defaultKeyId
+            keyId: profile.payloadKeyId
         )
 
         let nonce = AES.GCM.Nonce()
         guard let sealedBox = try? AES.GCM.seal(
             Data(message.utf8),
-            using: payloadKey(),
+            using: key,
             nonce: nonce,
             authenticating: aad
         ) else {
@@ -782,7 +1305,7 @@ enum GattMeshProtocol {
         let cipherData = sealedBox.ciphertext + sealedBox.tag
 
         return (
-            keyId: defaultKeyId,
+            keyId: profile.payloadKeyId,
             ivBase64: nonceData.base64EncodedString(),
             cipherBase64: cipherData.base64EncodedString()
         )
@@ -794,9 +1317,10 @@ enum GattMeshProtocol {
         timestampMillis: Int64,
         keyId: String,
         ivBase64: String,
-        cipherBase64: String
+        cipherBase64: String,
+        profile: MeshProfile
     ) -> String? {
-        guard keyId == defaultKeyId else { return nil }
+        guard keyId == profile.payloadKeyId, let key = payloadKey(for: profile) else { return nil }
         guard
             let nonceData = Data(base64Encoded: ivBase64, options: [.ignoreUnknownCharacters]),
             nonceData.count == aesGcmNonceBytes,
@@ -819,7 +1343,7 @@ enum GattMeshProtocol {
         guard let sealedBox = try? AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag) else {
             return nil
         }
-        guard let plaintext = try? AES.GCM.open(sealedBox, using: payloadKey(), authenticating: aad) else {
+        guard let plaintext = try? AES.GCM.open(sealedBox, using: key, authenticating: aad) else {
             return nil
         }
 
@@ -838,7 +1362,12 @@ enum GattMeshProtocol {
         return Data(payload.utf8)
     }
 
-    private static func payloadKey() -> SymmetricKey {
+    private static func payloadKey(for profile: MeshProfile) -> SymmetricKey? {
+        if profile.id == MeshProfile.authority.id {
+            // Authority mesh uses the provisioned shared group key; nil ⇒ cannot encrypt/decrypt.
+            guard let keyData = AuthorityMeshKeyStore.loadGroupKey() else { return nil }
+            return SymmetricKey(data: keyData)
+        }
         let bundleIdentifier = nonEmpty(Bundle.main.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines))
             ?? "com.auralis.crisisconnect"
         let material = Data("\(meshPayloadKeySeed)|\(bundleIdentifier)".utf8)

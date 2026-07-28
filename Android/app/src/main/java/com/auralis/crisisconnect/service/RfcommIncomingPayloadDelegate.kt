@@ -9,6 +9,7 @@ import com.auralis.crisisconnect.data.MessageDeliveryStatus
 import com.auralis.crisisconnect.data.MessageType
 import com.auralis.crisisconnect.data.updateContactAesKey
 import com.auralis.crisisconnect.data.updateContactName
+import com.auralis.crisisconnect.data.updateContactPeerIdentity
 import com.auralis.crisisconnect.data.updateLocalMessageDeliveryState
 import com.auralis.crisisconnect.data.extractStoreForwardCreatedAtMillis
 import com.auralis.crisisconnect.data.getContact
@@ -147,6 +148,23 @@ internal class RfcommIncomingPayloadDelegate(
                 onSessionActive(sessionCode)
             }
 
+            payload.startsWith("PEER_IDENTITY|") -> {
+                // Peer announced its internet identity over the Bluetooth link. Stamp uid + public
+                // key onto this contact so it becomes internet-capable (supportsInternet) and can
+                // reach the peer when Bluetooth drops — no QR re-scan, self-heals a changed uid.
+                val parts = payload.trim().split('|', limit = 3)
+                if (parts.size >= 3) {
+                    val remoteUid = parts[1].trim()
+                    val remoteKey = parts[2].trim()
+                    if (remoteUid.isNotBlank() && remoteKey.isNotBlank()) {
+                        serviceScope.launch {
+                            updateContactPeerIdentity(appContext, sessionCode, remoteUid, remoteKey)
+                        }
+                    }
+                }
+                onSessionActive(sessionCode)
+            }
+
             payload.startsWith("DECRYPT_FAIL|") -> {
                 val uuid = payload.substringAfter('|').takeIf { it.isNotBlank() } ?: return
                 Log.w(TAG, "Remote peer failed to decrypt message $uuid for $sessionCode — clearing AES key to fall back to plaintext")
@@ -273,6 +291,7 @@ internal class RfcommIncomingPayloadDelegate(
             payload.startsWith("DECRYPT_FAIL|") ||
             payload.startsWith("ACK|") ||
             payload.startsWith("PEER_NAME|") ||
+            payload.startsWith("PEER_IDENTITY|") ||
             payload.startsWith("HSK_REQ|") ||
             payload.startsWith("HSK_ACK|") ||
             payload.startsWith("CONTACT_INFO|")

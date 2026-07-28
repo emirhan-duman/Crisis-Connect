@@ -11,9 +11,25 @@
 		1EE2249D2F05A2C9001F755A /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE2249C2F05A2C9001F755A /* FirebaseCore */; };
 		1EE2249F2F05A2C9001F755A /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE2249E2F05A2C9001F755A /* FirebaseFirestore */; };
 		1EE224A12F05A2C9001F755A /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE224A02F05A2C9001F755A /* FirebaseFunctions */; };
+		1EE224B12F05A2C9001F755A /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE224B02F05A2C9001F755A /* FirebaseMessaging */; };
+		1EE224C22F05A2C9001F755A /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE224C12F05A2C9001F755A /* WebRTC */; };
+		1EE224D12F05A2C9001F755A /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE224D02F05A2C9001F755A /* FirebaseStorage */; };
+		1EE224E12F05A2C9001F755A /* OrangeMlsWorker.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1EE224E02F05A2C9001F755A /* OrangeMlsWorker.xcframework */; };
 		2A1F5F3A8F7C4B1282C0D001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 2A1F5F3A8F7C4B1282C0D002 /* GoogleSignIn */; };
 		2A1F5F3A8F7C4B1282C0D005 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 2A1F5F3A8F7C4B1282C0D004 /* FirebaseAppCheck */; };
 		2A1F5F3A8F7C4B1282C0D009 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 2A1F5F3A8F7C4B1282C0D008 /* FirebaseCrashlytics */; };
+		2A1F5F3A8F7C4B1282C0D00A /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 2A1F5F3A8F7C4B1282C0D00B /* FirebaseAnalytics */; };
+		3C6B57232F12A10100C5E4A1 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; productRef = 3C6B57222F12A10100C5E4A1 /* LiteRTLM */; };
+		4D7C68332F12A10100D6F5B3 /* LibSignalClient in Frameworks */ = {isa = PBXBuildFile; productRef = 4D7C68322F12A10100D6F5B2 /* LibSignalClient */; };
+		5BCE3716C9D3048E664CBA45 /* SampleHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57A7C58256810A58F1EF8775 /* SampleHandler.swift */; };
+		7437E9CF701C5044CB6616A3 /* CrisisConnectBroadcast.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 7DA889A167865590463323F1 /* CrisisConnectBroadcast.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		80AEDB3EF45F4512201D9689 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7885A0E5520CE50FE31759D9 /* Foundation.framework */; };
+		9BE6AB9CEB0DC5A075D70A02 /* BroadcastFrameClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5BCA632D59FFA8F0AD03276 /* BroadcastFrameClient.swift */; };
+		CC71D6E7000000000000000A /* CrisisConnectWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = CC71D6E70000000000000001 /* CrisisConnectWidgets.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		CC71D6E7000000000000000F /* DisasterModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC71D6E7000000000000000D /* DisasterModels.swift */; };
+		CC71D6E70000000000000010 /* DisasterRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC71D6E7000000000000000E /* DisasterRepository.swift */; };
+		CC71D6E70000000000000013 /* WidgetSharedState.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC71D6E70000000000000012 /* WidgetSharedState.swift */; };
+		CC71D6E70000000000000015 /* SosActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC71D6E70000000000000014 /* SosActivityAttributes.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,12 +47,52 @@
 			remoteGlobalIDString = 1E7EE2272EAD5A1500C66134;
 			remoteInfo = "Crisis Connect";
 		};
+		A934E556258F7744A24452E5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1E7EE2202EAD5A1500C66134 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2CE81A77B61D30067385668F;
+			remoteInfo = CrisisConnectBroadcast;
+		};
+		CC71D6E7000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1E7EE2202EAD5A1500C66134 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CC71D6E70000000000000002;
+			remoteInfo = CrisisConnectWidgets;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		EDE21CF5F516D16D4D102E2E /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				7437E9CF701C5044CB6616A3 /* CrisisConnectBroadcast.appex in Embed App Extensions */,
+				CC71D6E7000000000000000A /* CrisisConnectWidgets.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		1E7EE2282EAD5A1500C66134 /* Crisis Connect.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Crisis Connect.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1E7EE2372EAD5A1700C66134 /* Crisis ConnectTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Crisis ConnectTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1E7EE2412EAD5A1700C66134 /* Crisis ConnectUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Crisis ConnectUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1EE224E02F05A2C9001F755A /* OrangeMlsWorker.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = OrangeMlsWorker.xcframework; path = Frameworks/OrangeMlsWorker.xcframework; sourceTree = "<group>"; };
+		57A7C58256810A58F1EF8775 /* SampleHandler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
+		7885A0E5520CE50FE31759D9 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		7DA889A167865590463323F1 /* CrisisConnectBroadcast.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CrisisConnectBroadcast.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD4E06720EC68CE37BDFA922 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CC71D6E70000000000000001 /* CrisisConnectWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CrisisConnectWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		CC71D6E7000000000000000D /* DisasterModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DisasterModels.swift; path = "Crisis Connect/Features/RecentDisasters/DisasterModels.swift"; sourceTree = "<group>"; };
+		CC71D6E7000000000000000E /* DisasterRepository.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DisasterRepository.swift; path = "Crisis Connect/Features/RecentDisasters/DisasterRepository.swift"; sourceTree = "<group>"; };
+		CC71D6E70000000000000012 /* WidgetSharedState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WidgetSharedState.swift; path = "Crisis Connect/Shared/Utilities/WidgetSharedState.swift"; sourceTree = "<group>"; };
+		CC71D6E70000000000000014 /* SosActivityAttributes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SosActivityAttributes.swift; path = "Crisis Connect/Shared/Utilities/SosActivityAttributes.swift"; sourceTree = "<group>"; };
+		F5BCA632D59FFA8F0AD03276 /* BroadcastFrameClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BroadcastFrameClient.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -55,6 +111,11 @@
 			path = "Crisis ConnectUITests";
 			sourceTree = "<group>";
 		};
+		CC71D6E70000000000000009 /* WidgetExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = WidgetExtension;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -64,11 +125,18 @@
 			files = (
 				2A1F5F3A8F7C4B1282C0D005 /* FirebaseAppCheck in Frameworks */,
 				2A1F5F3A8F7C4B1282C0D009 /* FirebaseCrashlytics in Frameworks */,
+				2A1F5F3A8F7C4B1282C0D00A /* FirebaseAnalytics in Frameworks */,
 				1EE2249D2F05A2C9001F755A /* FirebaseCore in Frameworks */,
 				1EE2249B2F05A2C9001F755A /* FirebaseAuth in Frameworks */,
 				1EE2249F2F05A2C9001F755A /* FirebaseFirestore in Frameworks */,
 				1EE224A12F05A2C9001F755A /* FirebaseFunctions in Frameworks */,
+				1EE224B12F05A2C9001F755A /* FirebaseMessaging in Frameworks */,
+				1EE224D12F05A2C9001F755A /* FirebaseStorage in Frameworks */,
+				1EE224E12F05A2C9001F755A /* OrangeMlsWorker.xcframework in Frameworks */,
+				1EE224C22F05A2C9001F755A /* WebRTC in Frameworks */,
 				2A1F5F3A8F7C4B1282C0D001 /* GoogleSignIn in Frameworks */,
+				3C6B57232F12A10100C5E4A1 /* LiteRTLM in Frameworks */,
+				4D7C68332F12A10100D6F5B3 /* LibSignalClient in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -86,16 +154,36 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CA2271B82E737EAF200A98CD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				80AEDB3EF45F4512201D9689 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CC71D6E70000000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		1E7EE21F2EAD5A1500C66134 = {
 			isa = PBXGroup;
 			children = (
+				1EE224E02F05A2C9001F755A /* OrangeMlsWorker.xcframework */,
 				1E7EE22A2EAD5A1500C66134 /* Crisis Connect */,
 				1E7EE23A2EAD5A1700C66134 /* Crisis ConnectTests */,
 				1E7EE2442EAD5A1700C66134 /* Crisis ConnectUITests */,
 				1E7EE2292EAD5A1500C66134 /* Products */,
+				442789967E4F79E384AD4824 /* Frameworks */,
+				E4CC3C59DABD6F169DBF3BB7 /* CrisisConnectBroadcast */,
+				CC71D6E70000000000000009 /* WidgetExtension */,
+				CC71D6E70000000000000011 /* WidgetShared */,
 			);
 			sourceTree = "<group>";
 		};
@@ -105,8 +193,48 @@
 				1E7EE2282EAD5A1500C66134 /* Crisis Connect.app */,
 				1E7EE2372EAD5A1700C66134 /* Crisis ConnectTests.xctest */,
 				1E7EE2412EAD5A1700C66134 /* Crisis ConnectUITests.xctest */,
+				7DA889A167865590463323F1 /* CrisisConnectBroadcast.appex */,
+				CC71D6E70000000000000001 /* CrisisConnectWidgets.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		442789967E4F79E384AD4824 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				45205945768F1577C65D23F2 /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		45205945768F1577C65D23F2 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				7885A0E5520CE50FE31759D9 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		CC71D6E70000000000000011 /* WidgetShared */ = {
+			isa = PBXGroup;
+			children = (
+				CC71D6E7000000000000000D /* DisasterModels.swift */,
+				CC71D6E7000000000000000E /* DisasterRepository.swift */,
+				CC71D6E70000000000000012 /* WidgetSharedState.swift */,
+				CC71D6E70000000000000014 /* SosActivityAttributes.swift */,
+			);
+			name = WidgetShared;
+			sourceTree = "<group>";
+		};
+		E4CC3C59DABD6F169DBF3BB7 /* CrisisConnectBroadcast */ = {
+			isa = PBXGroup;
+			children = (
+				57A7C58256810A58F1EF8775 /* SampleHandler.swift */,
+				F5BCA632D59FFA8F0AD03276 /* BroadcastFrameClient.swift */,
+				AD4E06720EC68CE37BDFA922 /* Info.plist */,
+			);
+			name = CrisisConnectBroadcast;
+			path = BroadcastExtension;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -119,10 +247,13 @@
 				1E7EE2242EAD5A1500C66134 /* Sources */,
 				1E7EE2252EAD5A1500C66134 /* Frameworks */,
 				1E7EE2262EAD5A1500C66134 /* Resources */,
+				EDE21CF5F516D16D4D102E2E /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3BD01FDA62DCE15A3F8FDF27 /* PBXTargetDependency */,
+				CC71D6E7000000000000000C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				1E7EE22A2EAD5A1500C66134 /* Crisis Connect */,
@@ -131,11 +262,17 @@
 			packageProductDependencies = (
 				2A1F5F3A8F7C4B1282C0D004 /* FirebaseAppCheck */,
 				2A1F5F3A8F7C4B1282C0D008 /* FirebaseCrashlytics */,
+				2A1F5F3A8F7C4B1282C0D00B /* FirebaseAnalytics */,
 				1EE2249A2F05A2C9001F755A /* FirebaseAuth */,
 				1EE2249C2F05A2C9001F755A /* FirebaseCore */,
 				1EE2249E2F05A2C9001F755A /* FirebaseFirestore */,
 				1EE224A02F05A2C9001F755A /* FirebaseFunctions */,
+				1EE224B02F05A2C9001F755A /* FirebaseMessaging */,
+				1EE224D02F05A2C9001F755A /* FirebaseStorage */,
+				1EE224C12F05A2C9001F755A /* WebRTC */,
 				2A1F5F3A8F7C4B1282C0D002 /* GoogleSignIn */,
+				3C6B57222F12A10100C5E4A1 /* LiteRTLM */,
+				4D7C68322F12A10100D6F5B2 /* LibSignalClient */,
 			);
 			productName = "Crisis Connect";
 			productReference = 1E7EE2282EAD5A1500C66134 /* Crisis Connect.app */;
@@ -158,8 +295,6 @@
 				1E7EE23A2EAD5A1700C66134 /* Crisis ConnectTests */,
 			);
 			name = "Crisis ConnectTests";
-			packageProductDependencies = (
-			);
 			productName = "Crisis ConnectTests";
 			productReference = 1E7EE2372EAD5A1700C66134 /* Crisis ConnectTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -181,11 +316,46 @@
 				1E7EE2442EAD5A1700C66134 /* Crisis ConnectUITests */,
 			);
 			name = "Crisis ConnectUITests";
-			packageProductDependencies = (
-			);
 			productName = "Crisis ConnectUITests";
 			productReference = 1E7EE2412EAD5A1700C66134 /* Crisis ConnectUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		2CE81A77B61D30067385668F /* CrisisConnectBroadcast */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DED627AAA3CF79EDC83E69AC /* Build configuration list for PBXNativeTarget "CrisisConnectBroadcast" */;
+			buildPhases = (
+				535912E78F1EFFC34E944F93 /* Sources */,
+				CA2271B82E737EAF200A98CD /* Frameworks */,
+				9ABA6252AE4513A23E1422AC /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CrisisConnectBroadcast;
+			productName = CrisisConnectBroadcast;
+			productReference = 7DA889A167865590463323F1 /* CrisisConnectBroadcast.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		CC71D6E70000000000000002 /* CrisisConnectWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CC71D6E70000000000000005 /* Build configuration list for PBXNativeTarget "CrisisConnectWidgets" */;
+			buildPhases = (
+				CC71D6E70000000000000006 /* Sources */,
+				CC71D6E70000000000000007 /* Frameworks */,
+				CC71D6E70000000000000008 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CC71D6E70000000000000009 /* WidgetExtension */,
+			);
+			name = CrisisConnectWidgets;
+			productName = CrisisConnectWidgets;
+			productReference = CC71D6E70000000000000001 /* CrisisConnectWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -216,13 +386,33 @@
 			knownRegions = (
 				en,
 				tr,
+				ja,
 				Base,
+				ar,
+				bn,
+				de,
+				es,
+				fa,
+				fil,
+				fr,
+				hi,
+				id,
+				ku,
+				pt,
+				ru,
+				ur,
+				uk,
+				zh,
+				vi,
 			);
 			mainGroup = 1E7EE21F2EAD5A1500C66134;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				1EE224C02F05A2C9001F755A /* XCRemoteSwiftPackageReference "WebRTC" */,
 				2A1F5F3A8F7C4B1282C0D003 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				3C6B57212F12A10100C5E4A1 /* XCLocalSwiftPackageReference "Packages/LiteRT-LM" */,
+				4D7C68312F12A10100D6F5B1 /* XCLocalSwiftPackageReference "Packages/LibSignalClient" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 1E7EE2292EAD5A1500C66134 /* Products */;
@@ -232,6 +422,8 @@
 				1E7EE2272EAD5A1500C66134 /* Crisis Connect */,
 				1E7EE2362EAD5A1700C66134 /* Crisis ConnectTests */,
 				1E7EE2402EAD5A1700C66134 /* Crisis ConnectUITests */,
+				2CE81A77B61D30067385668F /* CrisisConnectBroadcast */,
+				CC71D6E70000000000000002 /* CrisisConnectWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -252,6 +444,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		1E7EE23F2EAD5A1700C66134 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9ABA6252AE4513A23E1422AC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CC71D6E70000000000000008 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -282,6 +488,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		535912E78F1EFFC34E944F93 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5BCE3716C9D3048E664CBA45 /* SampleHandler.swift in Sources */,
+				9BE6AB9CEB0DC5A075D70A02 /* BroadcastFrameClient.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CC71D6E70000000000000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CC71D6E7000000000000000F /* DisasterModels.swift in Sources */,
+				CC71D6E70000000000000010 /* DisasterRepository.swift in Sources */,
+				CC71D6E70000000000000013 /* WidgetSharedState.swift in Sources */,
+				CC71D6E70000000000000015 /* SosActivityAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -294,6 +520,18 @@
 			isa = PBXTargetDependency;
 			target = 1E7EE2272EAD5A1500C66134 /* Crisis Connect */;
 			targetProxy = 1E7EE2422EAD5A1700C66134 /* PBXContainerItemProxy */;
+		};
+		3BD01FDA62DCE15A3F8FDF27 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = CrisisConnectBroadcast;
+			target = 2CE81A77B61D30067385668F /* CrisisConnectBroadcast */;
+			targetProxy = A934E556258F7744A24452E5 /* PBXContainerItemProxy */;
+		};
+		CC71D6E7000000000000000C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = CrisisConnectWidgets;
+			target = CC71D6E70000000000000002 /* CrisisConnectWidgets */;
+			targetProxy = CC71D6E7000000000000000B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -429,7 +667,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Config/CrisisConnect.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_PREVIEWS = YES;
@@ -439,15 +677,14 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Config/CrisisConnect-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -462,7 +699,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Config/CrisisConnect.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -471,15 +708,14 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Config/CrisisConnect-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -495,7 +731,7 @@
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnectTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -517,7 +753,7 @@
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnectTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -537,10 +773,14 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnectUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -557,16 +797,130 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnectUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = "Crisis Connect";
+			};
+			name = Release;
+		};
+		416847645DA18E81DF5FDDBB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				ENABLE_BITCODE = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BroadcastExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.broadcast;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		8293E2AC11FE0B0F6647CA85 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				ENABLE_BITCODE = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BroadcastExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.broadcast;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CC71D6E70000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/CrisisConnectWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 28;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Config/CrisisConnectWidgetsInfo.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CC71D6E70000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/CrisisConnectWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 28;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Config/CrisisConnectWidgetsInfo.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
@@ -609,7 +963,36 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		CC71D6E70000000000000005 /* Build configuration list for PBXNativeTarget "CrisisConnectWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CC71D6E70000000000000003 /* Debug */,
+				CC71D6E70000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DED627AAA3CF79EDC83E69AC /* Build configuration list for PBXNativeTarget "CrisisConnectBroadcast" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				416847645DA18E81DF5FDDBB /* Release */,
+				8293E2AC11FE0B0F6647CA85 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		3C6B57212F12A10100C5E4A1 /* XCLocalSwiftPackageReference "Packages/LiteRT-LM" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "Packages/LiteRT-LM";
+		};
+		4D7C68312F12A10100D6F5B1 /* XCLocalSwiftPackageReference "Packages/LibSignalClient" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/LibSignalClient;
+		};
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
 		1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
@@ -618,6 +1001,14 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 12.7.0;
+			};
+		};
+		1EE224C02F05A2C9001F755A /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 149.0.0;
 			};
 		};
 		2A1F5F3A8F7C4B1282C0D003 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
@@ -651,6 +1042,21 @@
 			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseFunctions;
 		};
+		1EE224B02F05A2C9001F755A /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
+		};
+		1EE224C12F05A2C9001F755A /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1EE224C02F05A2C9001F755A /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
+		};
+		1EE224D02F05A2C9001F755A /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
+		};
 		2A1F5F3A8F7C4B1282C0D002 /* GoogleSignIn */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 2A1F5F3A8F7C4B1282C0D003 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
@@ -665,6 +1071,21 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseCrashlytics;
+		};
+		2A1F5F3A8F7C4B1282C0D00B /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1EE224992F05A2C9001F755A /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		3C6B57222F12A10100C5E4A1 /* LiteRTLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3C6B57212F12A10100C5E4A1 /* XCLocalSwiftPackageReference "Packages/LiteRT-LM" */;
+			productName = LiteRTLM;
+		};
+		4D7C68322F12A10100D6F5B2 /* LibSignalClient */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D7C68312F12A10100D6F5B1 /* XCLocalSwiftPackageReference "Packages/LibSignalClient" */;
+			productName = LibSignalClient;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

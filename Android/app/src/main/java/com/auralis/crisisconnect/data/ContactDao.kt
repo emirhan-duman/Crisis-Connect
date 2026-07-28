@@ -27,6 +27,9 @@ interface ContactDao {
     @Query("SELECT * FROM contacts WHERE remoteDeviceId = :remoteDeviceId LIMIT 1")
     fun getContactByRemoteDeviceId(remoteDeviceId: String): ContactEntity?
 
+    @Query("SELECT * FROM contacts WHERE peerUid = :peerUid LIMIT 1")
+    fun getContactByPeerUid(peerUid: String): ContactEntity?
+
     @Query("SELECT EXISTS(SELECT 1 FROM contacts WHERE preferredTransport = 'BLE_GATT')")
     fun hasAnyBleGattContacts(): Boolean
 

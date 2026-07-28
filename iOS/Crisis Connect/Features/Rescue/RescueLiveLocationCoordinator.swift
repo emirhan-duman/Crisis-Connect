@@ -404,6 +404,29 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
         backgroundTaskIdentifier = .invalid
     }
 
+    /// Queues a victim sighting whose Firestore write failed, so it survives suspension and ships
+    /// on the next drain (reconnect/foreground). Android has always queued these; iOS lost them.
+    func enqueueSignalObservation(
+        signalId: String,
+        signalLocation: SOSSignalLocationPayload?,
+        reporterLocation: CrisisLinkDashboardSyncService.LocationPayload?
+    ) {
+        let operation = PendingDashboardSyncOperation(
+            kind: .signalObservation,
+            payload: nil,
+            attemptCount: 0,
+            nextRetryAt: Date(),
+            createdAt: Date(),
+            lastError: nil,
+            signalId: signalId,
+            signalLocation: signalLocation,
+            signalReporterLocation: reporterLocation
+        )
+        pendingSyncOperations.append(operation)
+        persistPendingSyncOperations()
+        flushPendingSyncOperations()
+    }
+
     private func enqueueLiveLocationSync(_ payload: CrisisLinkDashboardSyncService.LocationPayload) {
         pendingSyncOperations.removeAll { $0.kind == .liveLocation }
         pendingSyncOperations.append(
@@ -508,6 +531,16 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
                 success = await dashboardSyncService.syncLiveLocation(payload: payload)
             case .responderInactive:
                 success = await dashboardSyncService.markResponderInactive()
+            case .signalObservation:
+                guard let signalId = operation.signalId else {
+                    removePendingSyncOperation(operation.id)
+                    continue
+                }
+                success = await dashboardSyncService.syncSignalLocation(
+                    signalId: signalId,
+                    signalLocation: operation.signalLocation,
+                    reporterLocation: operation.signalReporterLocation
+                )
             }
 
             if success {

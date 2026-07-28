@@ -206,6 +206,9 @@ class CompassViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun handleNewHeading(rawHeading: Float, force: Boolean = false) {
+        // Degenerate accelerometer/magnetometer vectors can yield a non-finite heading; letting it
+        // propagate makes roundToInt() below throw "Cannot round NaN value" and crash the screen.
+        if (!rawHeading.isFinite()) return
         lastMagneticHeading = normalizeDegrees(rawHeading)
         hasHeading = true
         val adjustedHeading = if (_trueNorth.value) {

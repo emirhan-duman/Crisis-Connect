@@ -260,7 +260,7 @@ enum OfflineMapShareCoordinator {
 
     private static func uniqueRegionName(preferred: String, existing: [String]) -> String {
         let base = preferred.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Imported Offline Map"
+            ? NSLocalizedString("Imported Offline Map", comment: "")
             : preferred.trimmingCharacters(in: .whitespacesAndNewlines)
         let existingLowercased = Set(existing.map { $0.lowercased() })
         if !existingLowercased.contains(base.lowercased()) {
@@ -311,13 +311,13 @@ enum OfflineMapShareCoordinator {
         var errorDescription: String? {
             switch self {
             case .noOfflineMapsAvailable:
-                return "No offline map region is available to share."
+                return NSLocalizedString("No offline map region is available to share.", comment: "")
             case .bundleTooLarge:
-                return "The selected offline map is too large to send."
+                return NSLocalizedString("The selected offline map is too large to send.", comment: "")
             case .persistFailed:
-                return "The offline map bundle could not be prepared."
+                return NSLocalizedString("The offline map bundle could not be prepared.", comment: "")
             case .invalidBundle:
-                return "The shared offline map bundle is invalid."
+                return NSLocalizedString("The shared offline map bundle is invalid.", comment: "")
             }
         }
     }

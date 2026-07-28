@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">জরুরি নির্দেশিকা</string>
+    <string name="guide_screen_intro_subtitle">দ্রুত গুরুত্বপূর্ণ তথ্যে পৌঁছান এবং চাপের মধ্যে সংক্ষিপ্ত পদক্ষেপ অনুসরণ করুন।</string>
+    <string name="guide_screen_filter_all">সব বিভাগ</string>
+    <string name="guide_screen_section_30_seconds">৩০ সেকেন্ডে</string>
+    <string name="guide_screen_section_step_by_step">ধাপে ধাপে</string>
+    <string name="guide_screen_section_dont">করবেন না</string>
+    <string name="guide_screen_section_checklist">চেকলিস্ট</string>
+    <string name="guide_screen_expand_details">বিবরণ দেখান</string>
+    <string name="guide_screen_collapse_details">বিবরণ লুকান</string>
+    <string name="guide_screen_action_start_checklist">চেকলিস্ট শুরু করুন</string>
+    <string name="guide_screen_action_call_local">%1$s-কে কল করুন</string>
+    <string name="guide_screen_action_open_assembly">সমাবেশ এলাকা খুলুন</string>
+    <string name="guide_screen_source_note">উৎস নোট:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d সম্পূর্ণ</string>
+    <string name="guide_screen_no_dial_app_with_number">%1$s-কে কল করার জন্য কোনো অ্যাপ পাওয়া যায়নি।</string>
+    <string name="guide_screen_no_map_app">মানচিত্র খোলার জন্য কোনো অ্যাপ পাওয়া যায়নি।</string>
+    <string name="guide_screen_assembly_query">দুর্যোগ সমাবেশ এলাকা</string>
+    <string name="guide_screen_search_placeholder">কোড, বিভাগ বা বিষয় দিয়ে অনুসন্ধান করুন</string>
+    <string name="guide_screen_clear_search">অনুসন্ধান মুছুন</string>
+    <string name="guide_screen_clear_filters">ফিল্টার মুছুন</string>
+    <string name="guide_screen_empty_title">কোনো নির্দেশিকা পাওয়া যায়নি</string>
+    <string name="guide_screen_empty_body">ফিল্টার কমানোর চেষ্টা করুন বা আরও বিস্তৃত কীওয়ার্ড দিয়ে অনুসন্ধান করুন।</string>
+    <string name="guide_screen_more_quick_steps">+%1$d আরও দ্রুত পদক্ষেপ</string>
+    <string name="guide_screen_region_value">অঞ্চল: %1$s • জরুরি নম্বর: %2$s</string>
+    <string name="guide_screen_results_count">%1$d নির্দেশিকা তালিকাভুক্ত</string>
+    <string name="guide_screen_read_minutes_format">%1$d মিন</string>
+</resources>

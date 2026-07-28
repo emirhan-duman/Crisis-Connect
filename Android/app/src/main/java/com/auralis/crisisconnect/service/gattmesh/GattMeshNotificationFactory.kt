@@ -14,19 +14,23 @@ import com.auralis.crisisconnect.R
 internal object GattMeshNotificationFactory {
     fun build(
         context: Context,
+        profile: MeshProfile,
         connectedCount: Int,
-        notificationChannelId: String,
         requestCode: Int,
-        sessionCode: String
+        sessionCode: String,
+        // When a telsiz call is active these override the body and add inline controls so the user can
+        // toggle talk / leave from the lock screen without opening the app.
+        telsizText: String? = null,
+        actions: List<NotificationCompat.Action> = emptyList()
     ): Notification {
         val meshDeviceCount = (connectedCount + 1).coerceAtLeast(1)
-        val contentText = if (connectedCount > 0) {
+        val contentText = telsizText ?: if (connectedCount > 0) {
             context.getString(
-                R.string.gatt_mesh_notification_text_connected,
+                profile.notificationTextConnectedRes,
                 meshDeviceCount
             )
         } else {
-            context.getString(R.string.gatt_mesh_notification_text_waiting, meshDeviceCount)
+            context.getString(profile.notificationTextWaitingRes, meshDeviceCount)
         }
         val openGeneralChatIntent = MainActivity.createTrustedLaunchIntent(context).apply {
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -38,8 +42,8 @@ internal object GattMeshNotificationFactory {
             openGeneralChatIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return NotificationCompat.Builder(context, notificationChannelId)
-            .setContentTitle(context.getString(R.string.gatt_mesh_notification_title))
+        val builder = NotificationCompat.Builder(context, profile.notificationChannelId)
+            .setContentTitle(context.getString(profile.notificationTitleRes))
             .setContentText(contentText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
             .setSmallIcon(R.drawable.ic_notification)
@@ -48,23 +52,24 @@ internal object GattMeshNotificationFactory {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setContentIntent(pendingIntent)
             .setOnlyAlertOnce(true)
-            .build()
+        actions.forEach { builder.addAction(it) }
+        return builder.build()
     }
 
     fun ensureChannel(
         context: Context,
-        notificationChannelId: String
+        profile: MeshProfile
     ) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return
         }
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         val channel = NotificationChannel(
-            notificationChannelId,
-            context.getString(R.string.gatt_mesh_channel_name),
+            profile.notificationChannelId,
+            context.getString(profile.channelNameRes),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = context.getString(R.string.gatt_mesh_channel_description)
+            description = context.getString(profile.channelDescriptionRes)
         }
         manager.createNotificationChannel(channel)
     }

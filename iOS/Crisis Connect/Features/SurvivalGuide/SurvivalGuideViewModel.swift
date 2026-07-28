@@ -106,6 +106,9 @@ final class SurvivalGuideViewModel: ObservableObject {
     }
 
     func readDurationLabel(locale: Locale, minutes: Int) -> String {
+        if isJapanese(locale: locale) {
+            return "\(minutes) 分"
+        }
         if isTurkish(locale: locale) {
             return "\(minutes) dk"
         }
@@ -116,6 +119,9 @@ final class SurvivalGuideViewModel: ObservableObject {
         let languageCode = localeLanguageCode(locale)
         if languageCode.hasPrefix("tr") {
             return "112"
+        }
+        if languageCode.hasPrefix("ja") {
+            return "119"
         }
         if languageCode.hasPrefix("en") {
             return "911"
@@ -192,6 +198,11 @@ final class SurvivalGuideViewModel: ObservableObject {
     private func isTurkish(locale: Locale) -> Bool {
         let languageCode = localeLanguageCode(locale)
         return languageCode.hasPrefix("tr")
+    }
+
+    private func isJapanese(locale: Locale) -> Bool {
+        let languageCode = localeLanguageCode(locale)
+        return languageCode.hasPrefix("ja")
     }
 
     private func localeLanguageCode(_ locale: Locale) -> String {

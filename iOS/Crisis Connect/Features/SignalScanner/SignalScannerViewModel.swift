@@ -26,7 +26,7 @@ final class SignalScannerViewModel: NSObject, ObservableObject, CBCentralManager
 
     override init() {
         super.init()
-        central = CBCentralManager(delegate: self, queue: queue)
+        central = CBCentralManager(delegate: self, queue: queue, options: [CBCentralManagerOptionShowPowerAlertKey: false])
     }
 
     var scanTitleKey: LocalizedStringKey { isScanning ? "Stop Scan" : "Start Scan" }

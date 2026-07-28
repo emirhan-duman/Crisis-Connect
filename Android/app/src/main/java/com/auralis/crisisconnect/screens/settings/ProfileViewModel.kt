@@ -8,6 +8,7 @@ import android.net.Uri
 import android.util.Log
 import com.auralis.crisisconnect.BuildConfig
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.database.AgencyRouter
@@ -15,7 +16,8 @@ import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.data.local.ProfileImageStorage
 import com.auralis.crisisconnect.data.profile.ProfilePhotoUploadWorker
 import com.auralis.crisisconnect.getSavedUserName
-import com.auralis.crisisconnect.security.CertificateProvisioningFlow
+import com.auralis.crisisconnect.messaging.ContactDirectoryCache
+import com.auralis.crisisconnect.security.CertificateProvisioningNotifier
 import com.auralis.crisisconnect.security.FirebaseAppCheckFailures
 import com.auralis.crisisconnect.security.RescueDeviceRegistry
 import com.auralis.crisisconnect.security.RoleCertificate
@@ -23,6 +25,7 @@ import com.auralis.crisisconnect.security.SecurityRepository
 import com.auralis.crisisconnect.sync.MobileSyncClient
 import com.google.android.gms.tasks.Task
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.FirebaseException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
@@ -111,7 +114,10 @@ data class CertificateUiState(
     val errorMessage: String? = null,
 )
 
-class ProfileViewModel(application: Application) : AndroidViewModel(application) {
+class ProfileViewModel(
+    application: Application,
+    private val savedState: SavedStateHandle
+) : AndroidViewModel(application) {
 
     private val appContext = getApplication<Application>()
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
@@ -136,7 +142,33 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val eventChannel = Channel<ProfileEvent>(Channel.BUFFERED)
     val events = eventChannel.receiveAsFlow()
     private var syncedAuthUid: String? = null
-    private var pendingPhoneVerificationId: String? = null
+
+    // Kept in SavedStateHandle because the reCAPTCHA browser trip often gets the app
+    // process killed in the background; with a plain field the restored UI would still
+    // show the code entry, but a correct code would fail with "session missing".
+    private var pendingPhoneVerificationId: String?
+        get() = savedState[KEY_PHONE_VERIFICATION_ID]
+        set(value) {
+            savedState[KEY_PHONE_VERIFICATION_ID] = value
+        }
+
+    // The E.164 number the pending verification belongs to, so confirm-time callers that
+    // don't pass the number (e.g. the profile screen) still get the "already linked to
+    // this same number" success treatment.
+    private var pendingPhoneVerificationNumber: String?
+        get() = savedState[KEY_PHONE_VERIFICATION_NUMBER]
+        set(value) {
+            savedState[KEY_PHONE_VERIFICATION_NUMBER] = value
+        }
+
+    // Non-null while the pending code came from the server-side (Twilio) OTP flow — the
+    // PRIMARY verification path — rather than Firebase Phone Auth. confirmPhoneSignInCode
+    // must then check the code through the backend instead of a Firebase session.
+    private var pendingServerOtpPhone: String?
+        get() = savedState[KEY_OTP_FALLBACK_PHONE]
+        set(value) {
+            savedState[KEY_OTP_FALLBACK_PHONE] = value
+        }
     private val authStateListener = FirebaseAuth.AuthStateListener { firebaseAuth ->
         val user = firebaseAuth.currentUser?.takeUnless { it.isAnonymous }
         if (user == null) {
@@ -179,6 +211,33 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         loadProfile()
         observeLocalName()
         observeEnterpriseSsoBridge()
+        observeCertificateProvisioning()
+    }
+
+    /**
+     * Keeps the certificate card in sync with the **background** auto-provisioner
+     * ([com.auralis.crisisconnect.CrisisConnectApp] `attachCertificateAutoProvisioner`). The card
+     * loads its state only once on entry, so a certificate issued right after sign-in used to stay in
+     * the "Missing" (tap-to-provision) state until a full app restart re-read it. Reacting to the
+     * provisioning events refreshes the card live instead.
+     */
+    private fun observeCertificateProvisioning() {
+        viewModelScope.launch(exceptionHandler) {
+            CertificateProvisioningNotifier.events.collect { event ->
+                when (event) {
+                    CertificateProvisioningNotifier.Event.InProgress ->
+                        _certificateState.update { it.copy(provisioning = true, errorMessage = null) }
+
+                    CertificateProvisioningNotifier.Event.Success -> {
+                        _certificateState.update { it.copy(provisioning = false) }
+                        refreshCertificate()
+                    }
+
+                    is CertificateProvisioningNotifier.Event.Failure ->
+                        _certificateState.update { it.copy(provisioning = false) }
+                }
+            }
+        }
     }
 
     private fun observeLocalName() {
@@ -492,6 +551,8 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         auth.signOut()
         LocalKeyStorage.clearUid(appContext)
         LocalKeyStorage.clearRole(appContext)
+        // Cached directory matches belong to the account that scanned for them.
+        ContactDirectoryCache.clear(appContext)
         _uiState.update {
             it.copy(
                 username = "",
@@ -580,7 +641,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     // Dashboard origin: gradle secret override, else the deployed default so SSO works out of the box.
     private fun enterpriseSsoWebBase(): String =
         BuildConfig.MOBILE_SYNC_BASE_URL.trim().trimEnd('/')
-            .ifBlank { "https://crisis-connect-1.web.app" }
+            .ifBlank { "https://crisisconnect.network" }
 
     private fun completeEnterpriseSsoWithCode(code: String) {
         val base = enterpriseSsoWebBase()
@@ -644,76 +705,334 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         activity: Activity,
         phoneNumber: String,
         onCodeSent: () -> Unit,
-        onResult: (Boolean) -> Unit = {}
+        onResult: (Boolean) -> Unit = {},
+        // Callers that render their own error UI (e.g. the welcome step, which doesn't
+        // collect this ViewModel's snackbar channel) receive the failure text here too.
+        onError: (String) -> Unit = {}
     ) {
         val normalizedPhoneNumber = phoneNumber.trim()
         if (!isLikelyE164PhoneNumber(normalizedPhoneNumber)) {
-            notifyMessage(appContext.getString(R.string.profile_phone_invalid))
+            val message = appContext.getString(R.string.profile_phone_invalid)
+            notifyMessage(message)
+            onError(message)
             onResult(false)
             return
         }
 
         _uiState.update { it.copy(isLoading = true, emailSignInError = null) }
         pendingPhoneVerificationId = null
+        pendingPhoneVerificationNumber = normalizedPhoneNumber
+        pendingServerOtpPhone = null
 
-        val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
-            override fun onVerificationCompleted(credential: PhoneAuthCredential) {
-                pendingPhoneVerificationId = null
-                signInWithPhoneCredential(credential, onResult)
+
+        // PRIMARY: server-side Twilio OTP. Deterministic on every device and install
+        // source — no Play Integrity verdicts, no reCAPTCHA, no browser round-trip (the
+        // 2026-07 "Error code:39" incident: Google's attestation stack rejected sends
+        // opaquely and differently per device). Firebase Phone Auth remains below as the
+        // free fallback so a backend/Twilio outage cannot take phone sign-in down.
+        requestServerOtp(
+            phoneE164 = normalizedPhoneNumber,
+            onCodeSent = onCodeSent,
+            onError = onError,
+            onResult = onResult,
+            onFallbackToFirebase = {
+                startFirebasePhoneVerification(
+                    activity = activity,
+                    normalizedPhoneNumber = normalizedPhoneNumber,
+                    onCodeSent = onCodeSent,
+                    onResult = onResult,
+                    onError = onError
+                )
             }
+        )
+    }
 
-            override fun onVerificationFailed(error: FirebaseException) {
-                _uiState.update { it.copy(isLoading = false) }
-                notifyMessage(
-                    appContext.getString(
+    /**
+     * FALLBACK phone verification through Firebase Phone Auth (Play Integrity →
+     * reCAPTCHA). Only used when the server-side OTP backend is unreachable.
+     */
+    private fun startFirebasePhoneVerification(
+        activity: Activity,
+        normalizedPhoneNumber: String,
+        onCodeSent: () -> Unit,
+        onResult: (Boolean) -> Unit,
+        onError: (String) -> Unit
+    ) {
+
+        // If the silent Play Integrity check fails and the reCAPTCHA fallback opens a
+        // browser, open it on the branded domain (hosted on Firebase Hosting, so it serves
+        // the auth handler) instead of *.firebaseapp.com. Scoped to phone auth only —
+        // OAuth flows restore the default handler (see signInWithOAuthProvider) because
+        // their redirect URIs are registered with the identity providers.
+        runCatching { auth.setCustomAuthDomain(PHONE_AUTH_BRANDED_DOMAIN) }
+        // Localize the verification SMS (and any reCAPTCHA page) to the app's language
+        // instead of Firebase's default English template.
+        runCatching { auth.useAppLanguage() }
+
+        // Play-recognized builds can hit a backend rejection of the SILENT Play Integrity
+        // send ("Error code:39" / status 17499) and the SDK does NOT fall back to the web
+        // reCAPTCHA flow on its own — it only does that when no Integrity token could be
+        // produced at all. Verified server-side (Cloud Logging, 2026-07-07): the very same
+        // send succeeds once it carries a reCAPTCHA token (sideloaded builds recover
+        // exactly this way). So on the first 39 we force the reCAPTCHA flow and retry
+        // once; silent verification stays the default wherever it works.
+        fun attemptVerification(forcedRecaptcha: Boolean) {
+            val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
+                override fun onVerificationCompleted(credential: PhoneAuthCredential) {
+                    if (forcedRecaptcha) {
+                        runCatching { auth.firebaseAuthSettings.forceRecaptchaFlowForTesting(false) }
+                    }
+                    // Don't clear pendingPhoneVerificationId here: if this automatic attempt
+                    // fails, the user must still be able to confirm the code manually.
+                    signInWithPhoneCredential(
+                        credential,
+                        onResult,
+                        onError,
+                        verifiedNumberE164 = normalizedPhoneNumber
+                    )
+                }
+
+                override fun onVerificationFailed(error: FirebaseException) {
+                    val silentPathRejected = (error.message ?: "").contains("Error code:39")
+                    if (!forcedRecaptcha && silentPathRejected) {
+                        runCatching { auth.firebaseAuthSettings.forceRecaptchaFlowForTesting(true) }
+                        attemptVerification(forcedRecaptcha = true)
+                        return
+                    }
+                    if (forcedRecaptcha) {
+                        runCatching { auth.firebaseAuthSettings.forceRecaptchaFlowForTesting(false) }
+                    }
+                    _uiState.update { it.copy(isLoading = false) }
+                    val message = appContext.getString(
                         R.string.profile_phone_sign_in_error_with_reason,
                         error.localizedMessage ?: appContext.getString(R.string.unknown_error)
                     )
-                )
-                onResult(false)
+                    notifyMessage(message)
+                    onError(message)
+                    onResult(false)
+                }
+
+                override fun onCodeSent(
+                    verificationId: String,
+                    token: PhoneAuthProvider.ForceResendingToken
+                ) {
+                    if (forcedRecaptcha) {
+                        runCatching { auth.firebaseAuthSettings.forceRecaptchaFlowForTesting(false) }
+                    }
+                    pendingPhoneVerificationId = verificationId
+                    _uiState.update { it.copy(isLoading = false) }
+                    notifyMessage(appContext.getString(R.string.profile_phone_code_sent))
+                    onCodeSent()
+                }
             }
 
-            override fun onCodeSent(
-                verificationId: String,
-                token: PhoneAuthProvider.ForceResendingToken
-            ) {
-                pendingPhoneVerificationId = verificationId
+            val options = PhoneAuthOptions.newBuilder(auth)
+                .setPhoneNumber(normalizedPhoneNumber)
+                .setTimeout(60L, TimeUnit.SECONDS)
+                .setActivity(activity)
+                .setCallbacks(callbacks)
+                .build()
+
+            PhoneAuthProvider.verifyPhoneNumber(options)
+        }
+
+        attemptVerification(forcedRecaptcha = false)
+    }
+
+    /**
+     * PRIMARY phone verification: send the OTP via the Twilio-backed callable — no
+     * captcha, no attestation, identical behavior on every device and install source.
+     *
+     * Failure routing: infrastructure-type errors (backend unreachable, not configured,
+     * internal) fall back to Firebase Phone Auth so an outage never blocks sign-in.
+     * Policy errors do NOT fall back: rate limiting must not be bypassable by hopping
+     * providers, and a number Twilio rejects as invalid won't fare better on Firebase.
+     */
+    private fun requestServerOtp(
+        phoneE164: String,
+        onCodeSent: () -> Unit,
+        onError: (String) -> Unit,
+        onResult: (Boolean) -> Unit,
+        onFallbackToFirebase: () -> Unit
+    ) {
+        functions.getHttpsCallable("requestPhoneOtp")
+            .call(
+                mapOf(
+                    "phone" to phoneE164,
+                    // Localizes the SMS to the device language (Twilio otherwise falls
+                    // back to the phone number's country default).
+                    "locale" to Locale.getDefault().language
+                )
+            )
+            .addOnSuccessListener {
+                pendingServerOtpPhone = phoneE164
                 _uiState.update { it.copy(isLoading = false) }
                 notifyMessage(appContext.getString(R.string.profile_phone_code_sent))
                 onCodeSent()
             }
-        }
+            .addOnFailureListener { error ->
+                val code = (error as? FirebaseFunctionsException)?.code
+                val isPolicyRejection =
+                    code == FirebaseFunctionsException.Code.RESOURCE_EXHAUSTED ||
+                        code == FirebaseFunctionsException.Code.INVALID_ARGUMENT ||
+                        code == FirebaseFunctionsException.Code.PERMISSION_DENIED
+                if (isPolicyRejection) {
+                    reportServerOtpError(error, onError, onResult)
+                } else {
+                    onFallbackToFirebase()
+                }
+            }
+    }
 
-        val options = PhoneAuthOptions.newBuilder(auth)
-            .setPhoneNumber(normalizedPhoneNumber)
-            .setTimeout(60L, TimeUnit.SECONDS)
-            .setActivity(activity)
-            .setCallbacks(callbacks)
-            .build()
+    private fun verifyServerOtp(
+        phoneE164: String,
+        code: String,
+        onError: (String) -> Unit,
+        onResult: (Boolean) -> Unit
+    ) {
+        functions.getHttpsCallable("verifyPhoneOtp")
+            .call(mapOf("phone" to phoneE164, "code" to code))
+            .addOnSuccessListener { result ->
+                @Suppress("UNCHECKED_CAST")
+                val data = result.data as? Map<String, Any?> ?: emptyMap<String, Any?>()
+                val outcome = data["outcome"] as? String
+                val customToken = data["customToken"] as? String
+                when {
+                    // Number was attached to the caller's existing account server-side.
+                    outcome == "linked" -> {
+                        pendingServerOtpPhone = null
+                        val user = auth.currentUser
+                        if (user == null) {
+                            _uiState.update { it.copy(isLoading = false) }
+                            onResult(true)
+                            return@addOnSuccessListener
+                        }
+                        user.reload().addOnCompleteListener {
+                            val refreshed = auth.currentUser ?: user
+                            LocalKeyStorage.saveUid(appContext, refreshed.uid)
+                            // Force a fresh ID token so the server-attached phone number
+                            // lands in its claims — backend directory discovery treats a
+                            // phone-bearing token as a full (non-anonymous) account.
+                            refreshed.getIdToken(true).addOnCompleteListener {
+                                saveProviderAccount(
+                                    firebaseUser = refreshed,
+                                    platform = "phone",
+                                    successMessageRes = R.string.profile_phone_sign_in_success,
+                                    onResult = onResult
+                                )
+                            }
+                        }
+                    }
+                    // The number already belongs to another account: sign into it, matching
+                    // Firebase phone-auth semantics (possession of the number = that account).
+                    outcome == "signin" && !customToken.isNullOrBlank() -> {
+                        auth.signInWithCustomToken(customToken)
+                            .addOnSuccessListener { signIn ->
+                                pendingServerOtpPhone = null
+                                val firebaseUser = signIn.user
+                                if (firebaseUser == null) {
+                                    _uiState.update { it.copy(isLoading = false) }
+                                    onResult(true)
+                                    return@addOnSuccessListener
+                                }
+                                LocalKeyStorage.saveUid(appContext, firebaseUser.uid)
+                                saveProviderAccount(
+                                    firebaseUser = firebaseUser,
+                                    platform = "phone",
+                                    successMessageRes = R.string.profile_phone_sign_in_success,
+                                    onResult = onResult
+                                )
+                            }
+                            .addOnFailureListener { error ->
+                                reportServerOtpError(error, onError, onResult)
+                            }
+                    }
+                    else -> reportServerOtpError(
+                        IllegalStateException("unexpected verifyPhoneOtp outcome: $outcome"),
+                        onError,
+                        onResult
+                    )
+                }
+            }
+            .addOnFailureListener { error ->
+                // Most likely a wrong/expired code; keep pendingServerOtpPhone so the
+                // user can correct the code and retry against the same verification.
+                _uiState.update { it.copy(isLoading = false) }
+                val message = appContext.getString(R.string.profile_phone_code_invalid)
+                notifyMessage(message)
+                onError(message)
+                onResult(false)
+            }
+    }
 
-        PhoneAuthProvider.verifyPhoneNumber(options)
+    private fun reportServerOtpError(
+        error: Throwable,
+        onError: (String) -> Unit,
+        onResult: (Boolean) -> Unit
+    ) {
+        _uiState.update { it.copy(isLoading = false) }
+        val message = appContext.getString(
+            R.string.profile_phone_sign_in_error_with_reason,
+            error.localizedMessage ?: appContext.getString(R.string.unknown_error)
+        )
+        notifyMessage(message)
+        onError(message)
+        onResult(false)
     }
 
     fun confirmPhoneSignInCode(
         code: String,
+        // The E.164 number this code belongs to; lets an "already linked" outcome for the
+        // same number be recognized as success instead of an error.
+        verifiedNumberE164: String? = null,
+        // Callers that render their own error UI (e.g. the welcome step) receive the real
+        // failure reason here — a missing/expired session is not the same as a wrong code.
+        // Declared before onResult so existing trailing-lambda call sites keep binding it.
+        onError: (String) -> Unit = {},
         onResult: (Boolean) -> Unit = {}
     ) {
+        // Server-side (Twilio) OTP session — the PRIMARY path: the code lives in the
+        // backend, not in a Firebase verification session; check it through the callable.
+        val serverOtpPhone = pendingServerOtpPhone
+        if (!serverOtpPhone.isNullOrBlank()) {
+            val normalizedOtp = code.trim()
+            if (normalizedOtp.length < MIN_SMS_CODE_LENGTH) {
+                val message = appContext.getString(R.string.profile_phone_code_invalid)
+                notifyMessage(message)
+                onError(message)
+                onResult(false)
+                return
+            }
+            _uiState.update { it.copy(isLoading = true, emailSignInError = null) }
+            verifyServerOtp(serverOtpPhone, normalizedOtp, onError, onResult)
+            return
+        }
+
         val verificationId = pendingPhoneVerificationId
         if (verificationId.isNullOrBlank()) {
-            notifyMessage(appContext.getString(R.string.profile_phone_code_missing))
+            val message = appContext.getString(R.string.profile_phone_code_missing)
+            notifyMessage(message)
+            onError(message)
             onResult(false)
             return
         }
         val normalizedCode = code.trim()
         if (normalizedCode.length < MIN_SMS_CODE_LENGTH) {
-            notifyMessage(appContext.getString(R.string.profile_phone_code_invalid))
+            val message = appContext.getString(R.string.profile_phone_code_invalid)
+            notifyMessage(message)
+            onError(message)
             onResult(false)
             return
         }
 
         _uiState.update { it.copy(isLoading = true, emailSignInError = null) }
         val credential = PhoneAuthProvider.getCredential(verificationId, normalizedCode)
-        signInWithPhoneCredential(credential, onResult)
+        signInWithPhoneCredential(
+            credential,
+            onResult,
+            onError,
+            verifiedNumberE164 ?: pendingPhoneVerificationNumber
+        )
     }
 
     private fun notifyMessage(message: String) {
@@ -731,6 +1050,13 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         scopes: List<String> = emptyList(),
         customParameters: Map<String, String> = emptyMap()
     ) {
+        // Phone auth may have pointed the auth domain at the branded host; OAuth redirect
+        // URIs are registered against the default *.firebaseapp.com handler, so restore it
+        // before opening the provider's browser flow.
+        auth.app.options.projectId?.let { projectId ->
+            runCatching { auth.setCustomAuthDomain("$projectId.firebaseapp.com") }
+        }
+
         val provider = buildOAuthProvider(providerId, scopes, customParameters)
         _uiState.update { it.copy(isLoading = true, emailSignInError = null) }
 
@@ -826,7 +1152,9 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     private fun signInWithPhoneCredential(
         credential: PhoneAuthCredential,
-        onResult: (Boolean) -> Unit
+        onResult: (Boolean) -> Unit,
+        onError: (String) -> Unit = {},
+        verifiedNumberE164: String? = null
     ) {
         val currentUser = auth.currentUser?.takeUnless { it.isAnonymous }
         val authTask = if (currentUser == null) {
@@ -844,6 +1172,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                         appContext.getString(R.string.profile_phone_provider_label),
                         IllegalStateException(appContext.getString(R.string.profile_provider_user_missing))
                     )
+                    onError(appContext.getString(R.string.profile_provider_user_missing))
                     onResult(false)
                     return@addOnSuccessListener
                 }
@@ -856,21 +1185,63 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 )
             }
             .addOnFailureListener { error ->
+                // Re-verifying a number the signed-in account already owns (e.g. running
+                // onboarding again) fails the link with "provider already linked" — but the
+                // user just proved possession of that same number, so treat it as success.
+                // Matched by error code AND message because the SDK does not always wrap
+                // this in FirebaseAuthException. Checked before the collision branch: it is
+                // the more specific case, and AsPrimary would burn the already-used code.
+                val isAlreadyLinked =
+                    (error as? FirebaseAuthException)?.errorCode == "ERROR_PROVIDER_ALREADY_LINKED" ||
+                        error.message?.contains("already been linked", ignoreCase = true) == true
+                if (currentUser != null && isAlreadyLinked) {
+                    val linkedNumber = currentUser.phoneNumber
+                        ?: currentUser.providerData
+                            .firstOrNull { it.providerId == PhoneAuthProvider.PROVIDER_ID }
+                            ?.phoneNumber
+                    if (samePhoneNumber(linkedNumber, verifiedNumberE164)) {
+                        pendingPhoneVerificationId = null
+                        LocalKeyStorage.saveUid(appContext, currentUser.uid)
+                        saveProviderAccount(
+                            firebaseUser = currentUser,
+                            platform = "phone",
+                            successMessageRes = R.string.profile_phone_sign_in_success,
+                            onResult = onResult
+                        )
+                        return@addOnFailureListener
+                    }
+                    Log.w(
+                        TAG,
+                        "Phone provider already linked but numbers differ " +
+                            "(error=${error.javaClass.simpleName})"
+                    )
+                }
                 if (currentUser != null && error is FirebaseAuthUserCollisionException) {
-                    signInWithPhoneCredentialAsPrimary(credential, onResult)
+                    signInWithPhoneCredentialAsPrimary(credential, onResult, onError)
                     return@addOnFailureListener
                 }
                 handleProviderSignInFailure(
                     appContext.getString(R.string.profile_phone_provider_label),
                     error
                 )
+                onError(
+                    error.localizedMessage ?: appContext.getString(R.string.unknown_error)
+                )
                 onResult(false)
             }
     }
 
+    /** Digits-only comparison so "+90 544..." and "+90544..." match. */
+    private fun samePhoneNumber(a: String?, b: String?): Boolean {
+        val left = a?.filter { it.isDigit() } ?: return false
+        val right = b?.filter { it.isDigit() } ?: return false
+        return left.isNotBlank() && left == right
+    }
+
     private fun signInWithPhoneCredentialAsPrimary(
         credential: PhoneAuthCredential,
-        onResult: (Boolean) -> Unit
+        onResult: (Boolean) -> Unit,
+        onError: (String) -> Unit = {}
     ) {
         auth.signInWithCredential(credential)
             .addOnSuccessListener { result ->
@@ -881,6 +1252,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                         appContext.getString(R.string.profile_phone_provider_label),
                         IllegalStateException(appContext.getString(R.string.profile_provider_user_missing))
                     )
+                    onError(appContext.getString(R.string.profile_provider_user_missing))
                     onResult(false)
                     return@addOnSuccessListener
                 }
@@ -896,6 +1268,9 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 handleProviderSignInFailure(
                     appContext.getString(R.string.profile_phone_provider_label),
                     error
+                )
+                onError(
+                    error.localizedMessage ?: appContext.getString(R.string.unknown_error)
                 )
                 onResult(false)
             }
@@ -1172,10 +1547,14 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             val snapshot = snapshotTask.result ?: throw snapshotTask.exception
                 ?: IllegalStateException("Unable to load profile before persisting linked account")
             val userData = hashMapOf<String, Any>(
-                "username" to resolvedDisplayName,
                 "platform" to platform,
                 "lastLinked" to FieldValue.serverTimestamp()
             )
+            // A blank display name must not blank the cloud username — it may have been set on
+            // the web panel or iOS; explicit renames go through updateUsername() instead.
+            if (resolvedDisplayName.isNotBlank()) {
+                userData["username"] = resolvedDisplayName
+            }
             if (resolvedEmail.isNotBlank()) {
                 userData["email"] = resolvedEmail
             }
@@ -1332,17 +1711,35 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 require(uid.isNotEmpty()) {
                     appContext.getString(R.string.profile_cert_signin_required_message)
                 }
-                val deviceId = runCatching {
+                // Register the device-ownership doc (rescueDevices/{deviceId}) that the
+                // backend's requestAttestationChallenge requires. Capture — but don't yet
+                // surface — any failure: the doc may already exist from a prior session, so
+                // we still attempt provisioning with the known local id.
+                val registration = runCatching {
                     RescueDeviceRegistry.registerLocalDevice(
                         firestore = firestore,
                         context = appContext,
                         uid = uid,
                     )
-                }.getOrElse {
+                }
+                val deviceId = registration.getOrElse {
                     LocalKeyStorage.getOrCreateRescueDeviceId(appContext)
                 }
-                val flow = CertificateProvisioningFlow(appContext, functions)
-                flow.provisionCertificate(deviceId)
+                // Provision AND persist; the raw CertificateProvisioningFlow does not store the cert,
+                // so the card stayed on "Missing" until an app restart re-read storage.
+                runCatching {
+                    securityRepository.provisionAndStoreCertificate(deviceId)
+                }.getOrElse { provisionError ->
+                    // If we never managed to register the device, that is almost certainly
+                    // the real cause: the backend rejects the challenge with
+                    // failed-precondition when rescueDevices/{deviceId} is missing. Surface
+                    // the registration failure instead of the opaque challenge error.
+                    val registrationError = registration.exceptionOrNull()
+                    if (registrationError != null) {
+                        throw DeviceRegistrationFailed(registrationError)
+                    }
+                    throw provisionError
+                }
             }.onSuccess {
                 _certificateState.update {
                     it.copy(
@@ -1390,6 +1787,15 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Raised when the `rescueDevices/{deviceId}` ownership document could not be
+     * written. The backend requires that document before it will issue an
+     * attestation challenge, so this is usually the real reason a provisioning
+     * attempt fails with the otherwise-opaque "challenge request" error.
+     */
+    private class DeviceRegistrationFailed(cause: Throwable) :
+        IllegalStateException("Rescue device registration failed.", cause)
+
     private fun certificateOperationErrorMessage(throwable: Throwable): String {
         if (FirebaseAppCheckFailures.isLikelyAppCheckFailure(
                 throwable = throwable,
@@ -1397,6 +1803,15 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             )
         ) {
             return appContext.getString(R.string.app_check_install_play_store_message)
+        }
+        if (throwable is DeviceRegistrationFailed) {
+            val reason = (throwable.cause?.message ?: throwable.cause?.javaClass?.simpleName)
+                ?.take(160)
+                ?: throwable.javaClass.simpleName
+            return appContext.getString(
+                R.string.profile_cert_device_registration_failed_message,
+                reason
+            )
         }
         return throwable.message?.take(180) ?: throwable::class.java.simpleName
     }
@@ -1556,9 +1971,17 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         private const val FUNCTIONS_REGION = "us-central1"
         private const val MICROSOFT_PROVIDER_ID = "microsoft.com"
         private const val APPLE_PROVIDER_ID = "apple.com"
+        private const val KEY_PHONE_VERIFICATION_ID = "pending_phone_verification_id"
+        private const val KEY_PHONE_VERIFICATION_NUMBER = "pending_phone_verification_number"
+        private const val KEY_OTP_FALLBACK_PHONE = "pending_otp_fallback_phone"
         private const val MIN_SMS_CODE_LENGTH = 4
         private const val MIN_PHONE_NUMBER_LENGTH = 8
         private const val MAX_PHONE_NUMBER_LENGTH = 16
+
+        // Branded auth domain for the phone-auth reCAPTCHA fallback. Must stay a Firebase
+        // Hosting custom domain of this project (it serves /__/auth/handler) and be listed
+        // under Authentication → Authorized domains.
+        private const val PHONE_AUTH_BRANDED_DOMAIN = "crisisconnect.network"
         private val APPROVER_ROLES = setOf("admin", "fieldteam")
     }
 }

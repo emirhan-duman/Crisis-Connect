@@ -19,9 +19,11 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
 rootProject.name = "Disaster Communication System"
 include(":app")
 include(":feature_rescue")
+include(":baselineprofile")

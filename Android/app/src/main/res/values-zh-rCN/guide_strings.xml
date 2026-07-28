@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">应急指南</string>
+    <string name="guide_screen_intro_subtitle">快速获取关键信息，并在压力下执行简短的操作。</string>
+    <string name="guide_screen_filter_all">所有类别</string>
+    <string name="guide_screen_section_30_seconds">30 秒内</string>
+    <string name="guide_screen_section_step_by_step">逐步进行</string>
+    <string name="guide_screen_section_dont">切勿这样做</string>
+    <string name="guide_screen_section_checklist">检查清单</string>
+    <string name="guide_screen_expand_details">显示详情</string>
+    <string name="guide_screen_collapse_details">隐藏详情</string>
+    <string name="guide_screen_action_start_checklist">开始检查清单</string>
+    <string name="guide_screen_action_call_local">呼叫 %1$s</string>
+    <string name="guide_screen_action_open_assembly">打开集合区域</string>
+    <string name="guide_screen_source_note">来源说明：</string>
+    <string name="guide_screen_checklist_progress">已完成 %1$d/%2$d</string>
+    <string name="guide_screen_no_dial_app_with_number">未找到可呼叫 %1$s 的应用。</string>
+    <string name="guide_screen_no_map_app">未找到可打开地图的应用。</string>
+    <string name="guide_screen_assembly_query">灾害集合区域</string>
+    <string name="guide_screen_search_placeholder">按代码、类别或主题搜索</string>
+    <string name="guide_screen_clear_search">清除搜索</string>
+    <string name="guide_screen_clear_filters">清除筛选</string>
+    <string name="guide_screen_empty_title">未找到指南</string>
+    <string name="guide_screen_empty_body">请尝试减少筛选条件或使用更宽泛的关键词搜索。</string>
+    <string name="guide_screen_more_quick_steps">另有 %1$d 项快速操作</string>
+    <string name="guide_screen_region_value">地区：%1$s • 紧急号码：%2$s</string>
+    <string name="guide_screen_results_count">列出了 %1$d 项指南</string>
+    <string name="guide_screen_read_minutes_format">%1$d 分钟</string>
+</resources>

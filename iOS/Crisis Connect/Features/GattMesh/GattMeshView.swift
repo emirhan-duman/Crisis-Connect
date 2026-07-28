@@ -5,22 +5,42 @@
 //  Created by Codex on 29.03.2026.
 //
 
+import AVFoundation
+import PhotosUI
 import SwiftUI
+import UIKit
+
+/// Reports the top of the chat content in the scroll's coordinate space, so an over-pull at the top
+/// (positive minY) can drive the "pull down to open the telsiz" reveal.
+private struct TelsizPullOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
 
 struct GattMeshView: View {
     private static let replyPreviewLimit = 72
+    private let telsizPullThreshold: CGFloat = 72
 
     private enum ActiveSheet: String, Identifiable {
         case connectedPeers
         case intro
+        case telsiz
 
         var id: String { rawValue }
     }
 
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var manager = GattMeshManager.shared
-    @ObservedObject private var store = GattMeshChatStore.shared
+    let profile: MeshProfile
+    @ObservedObject private var manager: GattMeshManager
+    @ObservedObject private var store: GattMeshChatStore
     @ObservedObject private var settings = AdvancedSettingsStore.shared
+
+    init(profile: MeshProfile = .publicMesh) {
+        self.profile = profile
+        let isAuthority = profile.id == MeshProfile.authority.id
+        _manager = ObservedObject(wrappedValue: isAuthority ? GattMeshManager.authority : GattMeshManager.shared)
+        _store = ObservedObject(wrappedValue: isAuthority ? GattMeshChatStore.authority : GattMeshChatStore.shared)
+    }
 
     @AppStorage("advanced.generalChatIntroDismissed") private var didDismissIntroForever = false
     @State private var draft = ""
@@ -29,6 +49,11 @@ struct GattMeshView: View {
     @State private var didDismissIntroThisSession = false
     @State private var replyTargetMessageId: String?
     @State private var pendingScrollTargetMessageId: String?
+    @StateObject private var voiceRecorder = MeshVoiceRecorder()
+    @State private var photoPickerItem: PhotosPickerItem?
+    @State private var telsizPermissionDenied = false
+    @State private var telsizPull: CGFloat = 0
+    @State private var telsizPullArmed = false
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -36,21 +61,48 @@ struct GattMeshView: View {
             chatBackground
 
             VStack(spacing: 14) {
+                if showTelsizBanner {
+                    TelsizActiveBanner(state: manager.telsizState, onTap: { activeSheet = .telsiz })
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
-                            if store.messages.isEmpty {
-                                statusCard
-                                emptyStateCard
-                            } else {
-                                messagesList
+                        ZStack(alignment: .top) {
+                            GeometryReader { geo in
+                                Color.clear.preference(
+                                    key: TelsizPullOffsetKey.self,
+                                    value: geo.frame(in: .named("telsizScroll")).minY
+                                )
                             }
+                            .frame(height: 0)
+
+                            VStack(alignment: .leading, spacing: 16) {
+                                if store.messages.isEmpty {
+                                    statusCard
+                                    emptyStateCard
+                                } else {
+                                    messagesList
+                                }
+                            }
+                            .padding(.horizontal, AppTheme.screenPadding)
+                            .padding(.vertical, 16)
                         }
-                        .padding(.horizontal, AppTheme.screenPadding)
-                        .padding(.vertical, 16)
                     }
+                    .coordinateSpace(name: "telsizScroll")
                     .scrollIndicators(.hidden)
+                    // Bounce even when the chat is short, otherwise there is no over-pull to detect.
+                    .scrollBounceBehavior(.always, axes: .vertical)
                     .scrollDismissesKeyboard(.interactively)
+                    .onPreferenceChange(TelsizPullOffsetKey.self) { handleTelsizPull($0) }
+                    .overlay(alignment: .top) {
+                        if showTelsizPull {
+                            TelsizPullIndicator(progress: telsizPull / telsizPullThreshold)
+                                .opacity(Double(min(1, telsizPull / telsizPullThreshold)))
+                                .padding(.top, 10)
+                                .allowsHitTesting(false)
+                        }
+                    }
                     .onChange(of: store.messages.count) { _, _ in
                         guard pendingScrollTargetMessageId == nil else { return }
                         guard let lastId = store.messages.last?.id else { return }
@@ -71,6 +123,7 @@ struct GattMeshView: View {
                     .padding(.horizontal, AppTheme.screenPadding)
                     .padding(.bottom, 12)
             }
+            .animation(.easeInOut(duration: 0.25), value: telsizActive)
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -86,10 +139,22 @@ struct GattMeshView: View {
             }
             ToolbarItem(placement: .principal) {
                 GattMeshNavigationTitleView(
-                    title: localized("GENERAL_CHAT_NAV_TITLE"),
+                    title: localized(profile.id == MeshProfile.authority.id ? "AUTHORITY_CHAT_NAV_TITLE" : "GENERAL_CHAT_NAV_TITLE"),
                     subtitle: navigationSubtitle,
-                    isEnabled: settings.publicMeshEnabled
+                    isEnabled: isMeshEnabled
                 )
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                if profile.id == MeshProfile.authority.id {
+                    Button {
+                        openTelsiz()
+                    } label: {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(manager.telsizState.joined ? Color.appPrimary : Color.appTextSecondary)
+                    }
+                    .accessibilityLabel(Text("TELSIZ_TOOLBAR"))
+                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -131,7 +196,21 @@ struct GattMeshView: View {
                 .presentationBackgroundInteraction(.disabled)
                 .interactiveDismissDisabled()
                 .presentationCornerRadius(28)
+            case .telsiz:
+                TelsizView(manager: manager)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
+        }
+        .alert("TELSIZ_PERMISSION_TITLE", isPresented: $telsizPermissionDenied) {
+            Button("TELSIZ_PERMISSION_SETTINGS") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("TELSIZ_PERMISSION_CANCEL", role: .cancel) {}
+        } message: {
+            Text("TELSIZ_PERMISSION_MESSAGE")
         }
         .onChange(of: activeSheet) { oldValue, newValue in
             guard oldValue == .intro, newValue == nil else { return }
@@ -140,12 +219,15 @@ struct GattMeshView: View {
         }
         .onAppear {
             manager.setChatOpen(true)
-            presentIntroIfNeeded()
+            if profile.id != MeshProfile.authority.id {
+                presentIntroIfNeeded()
+            }
         }
         .onDisappear {
             manager.setChatOpen(false)
             replyTargetMessageId = nil
             pendingScrollTargetMessageId = nil
+            voiceRecorder.cancel()
         }
     }
 
@@ -180,7 +262,7 @@ struct GattMeshView: View {
 
     private var emptyStateCard: some View {
         VStack(spacing: 14) {
-            if settings.publicMeshEnabled {
+            if isMeshEnabled {
                 GeneralChatGroupAvatarView(size: 56)
             } else {
                 AppIconBadge(
@@ -219,9 +301,13 @@ struct GattMeshView: View {
                 )
             }
 
-            if !settings.publicMeshEnabled {
+            if !isMeshEnabled {
                 Button {
-                    settings.publicMeshEnabled = true
+                    if profile.id == MeshProfile.authority.id {
+                        manager.setMeshEnabled(true)
+                    } else {
+                        settings.publicMeshEnabled = true
+                    }
                 } label: {
                     Text("GENERAL_CHAT_JOIN_ACTION")
                         .frame(maxWidth: .infinity)
@@ -230,6 +316,17 @@ struct GattMeshView: View {
             }
 
             HStack(spacing: 12) {
+                if profile.id == MeshProfile.authority.id {
+                    PhotosPicker(selection: $photoPickerItem, matching: .images) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(isMeshEnabled ? Color.appPrimary : Color.appTextSecondary)
+                            .frame(width: 40, height: 40)
+                    }
+                    .disabled(!isMeshEnabled)
+                    .accessibilityLabel(Text("MESH_CHAT_ATTACH_IMAGE"))
+                }
+
                 TextField(LocalizedStringKey("GENERAL_CHAT_COMPOSER_PLACEHOLDER"), text: $draft, axis: .vertical)
                     .lineLimit(1...4)
                     .textFieldStyle(.plain)
@@ -244,25 +341,71 @@ struct GattMeshView: View {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .stroke(Color.whatsAppInputBorder, lineWidth: 1)
                     )
-                    .disabled(!settings.publicMeshEnabled)
+                    .disabled(!isMeshEnabled)
 
-                Button(action: sendDraft) {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(sendButtonDisabled ? Color.appTextSecondary : Color.white)
-                        .frame(width: 44, height: 44)
-                        .background(
-                            Circle()
-                                .fill(sendButtonDisabled ? Color.whatsAppAccent.opacity(0.35) : Color.whatsAppAccent)
-                        )
+                if profile.id == MeshProfile.authority.id,
+                   draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button {
+                        if voiceRecorder.isRecording {
+                            if let collected = voiceRecorder.stopAndCollect() {
+                                _ = manager.sendVoiceMessage(
+                                    m4aData: collected.data,
+                                    durationMillis: collected.durationMillis
+                                )
+                            }
+                        } else {
+                            Task { await voiceRecorder.start() }
+                        }
+                    } label: {
+                        Image(systemName: voiceRecorder.isRecording ? "stop.fill" : "mic.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Color.white)
+                            .frame(width: 44, height: 44)
+                            .background(
+                                Circle()
+                                    .fill(voiceRecorder.isRecording ? Color.red : Color.whatsAppAccent)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!isMeshEnabled)
+                    .accessibilityLabel(Text("MESH_CHAT_VOICE_RECORD"))
+                } else {
+                    Button(action: sendDraft) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(sendButtonDisabled ? Color.appTextSecondary : Color.white)
+                            .frame(width: 44, height: 44)
+                            .background(
+                                Circle()
+                                    .fill(sendButtonDisabled ? Color.whatsAppAccent.opacity(0.35) : Color.whatsAppAccent)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(sendButtonDisabled)
                 }
-                .buttonStyle(.plain)
-                .disabled(sendButtonDisabled)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(Color.whatsAppBarBackground)
+        .onChange(of: photoPickerItem) { _, item in
+            guard let item else { return }
+            photoPickerItem = nil
+            Task {
+                guard
+                    let data = try? await item.loadTransferable(type: Data.self),
+                    let image = UIImage(data: data),
+                    let prepared = MeshImageFileStore.prepareForTransfer(image)
+                else {
+                    return
+                }
+                _ = manager.sendImageMessage(
+                    jpegData: prepared.data,
+                    width: prepared.width,
+                    height: prepared.height
+                )
+            }
+        }
     }
 
     private func messageBubble(_ message: GattMeshChatMessage) -> some View {
@@ -317,7 +460,10 @@ struct GattMeshView: View {
         let originVerifiedRoleLabel = resolveGattMeshVerifiedRoleLabel(message.originVerifiedRole)
         let directPeerVerifiedRoleLabel: String?
         if let directPeer, directPeer.verificationStatus == .verified {
-            directPeerVerifiedRoleLabel = resolveGattMeshVerifiedRoleLabel(directPeer.verifiedRole)
+            directPeerVerifiedRoleLabel = resolveGattMeshVerifiedAffiliationLabel(
+                agency: directPeer.verifiedAgency,
+                role: directPeer.verifiedRole
+            )
         } else {
             directPeerVerifiedRoleLabel = nil
         }
@@ -353,6 +499,18 @@ struct GattMeshView: View {
                 )
             }
 
+            if let imageFileName = message.imageFileName {
+                MeshImageBubbleView(fileName: imageFileName)
+            }
+
+            if let voiceFileName = message.voiceFileName {
+                MeshVoiceBubbleView(
+                    fileName: voiceFileName,
+                    durationMillis: message.voiceDurationMillis,
+                    tint: message.isLocal ? Color.white : Color.primary
+                )
+            }
+
             if !message.visibleBodyText.isEmpty {
                 Text(message.visibleBodyText)
                     .font(.body)
@@ -382,7 +540,7 @@ struct GattMeshView: View {
     }
 
     private func sendDraft() {
-        guard settings.publicMeshEnabled else { return }
+        guard isMeshEnabled else { return }
 
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -394,7 +552,7 @@ struct GattMeshView: View {
         )
         guard let result = manager.sendChatMessage(outgoingText) else { return }
 
-        GattMeshChatStore.shared.appendLocalMessage(
+        store.appendLocalMessage(
             text: outgoingText,
             messageId: result.messageId,
             status: result.disposition == .sent ? .sent : .queued
@@ -429,7 +587,7 @@ struct GattMeshView: View {
     }
 
     private var navigationSubtitle: String {
-        if !settings.publicMeshEnabled {
+        if !isMeshEnabled {
             return localized("GENERAL_CHAT_NAV_SUBTITLE_OFF")
         }
         return localizedFormat("GENERAL_CHAT_CONNECTED_USERS_COUNT", meshDeviceCount)
@@ -437,14 +595,14 @@ struct GattMeshView: View {
 
     private var meshDeviceCount: Int {
         let connectedCount = max(manager.snapshot.connectedPeerCount, manager.snapshot.connectedPeers.count)
-        if settings.publicMeshEnabled && (manager.snapshot.isEnabled || connectedCount > 0) {
+        if isMeshEnabled && (manager.snapshot.isEnabled || connectedCount > 0) {
             return connectedCount + 1
         }
         return 0
     }
 
     private var statusNoticeText: String {
-        if !settings.publicMeshEnabled {
+        if !isMeshEnabled {
             return localized("GENERAL_CHAT_STATUS_OFF_NOTICE")
         }
         if let lastError = nonEmpty(manager.snapshot.lastError) {
@@ -457,14 +615,21 @@ struct GattMeshView: View {
     }
 
     private var emptyStateText: String {
-        if settings.publicMeshEnabled {
+        if isMeshEnabled {
             return localized("GENERAL_CHAT_EMPTY_ENABLED")
         }
         return localized("GENERAL_CHAT_EMPTY_DISABLED")
     }
 
+    private var isMeshEnabled: Bool {
+        if profile.id == MeshProfile.authority.id {
+            return manager.snapshot.isEnabled
+        }
+        return settings.publicMeshEnabled
+    }
+
     private var sendButtonDisabled: Bool {
-        !settings.publicMeshEnabled || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !isMeshEnabled || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var replyTargetMessage: GattMeshChatMessage? {
@@ -475,7 +640,7 @@ struct GattMeshView: View {
     private var connectedPeerItems: [GattMeshConnectedPeerSheetItem] {
         var items: [GattMeshConnectedPeerSheetItem] = []
 
-        if settings.publicMeshEnabled && manager.snapshot.isEnabled {
+        if isMeshEnabled && manager.snapshot.isEnabled {
             items.append(
                 GattMeshConnectedPeerSheetItem(
                     id: "self",
@@ -484,7 +649,8 @@ struct GattMeshView: View {
                     isSelf: true,
                     isReady: true,
                     verificationStatus: .unverified,
-                    verifiedRole: nil
+                    verifiedRole: nil,
+                    verifiedAgency: manager.localAgency
                 )
             )
         }
@@ -498,7 +664,8 @@ struct GattMeshView: View {
                     isSelf: false,
                     isReady: peer.isSendReady,
                     verificationStatus: peer.verificationStatus,
-                    verifiedRole: peer.verifiedRole
+                    verifiedRole: peer.verifiedRole,
+                    verifiedAgency: peer.verifiedAgency
                 )
             }
         )
@@ -509,6 +676,74 @@ struct GattMeshView: View {
     private func nonEmpty(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    // MARK: - Telsiz entry (banner + pull-down-to-open, mirrors Android MeshChatScreen)
+
+    private var isAuthorityProfile: Bool { profile.id == MeshProfile.authority.id }
+
+    /// The telsiz is "active" once joined or while any participant is present — then a banner pins to
+    /// the top of the chat (instead of the pull-to-open affordance).
+    private var telsizActive: Bool {
+        manager.telsizState.joined || !manager.telsizState.participants.isEmpty
+    }
+
+    private var showTelsizBanner: Bool { isAuthorityProfile && telsizActive }
+    private var showTelsizPull: Bool { isAuthorityProfile && !telsizActive && telsizPull > 2 }
+
+    /// Drives the "pull the chat down to open the telsiz" reveal. `rawMinY` is the chat content's top
+    /// in the scroll's coordinate space — positive while the user over-pulls at the top. Arm past the
+    /// threshold, then fire when the bounce settles back (i.e. on release), mirroring Android's
+    /// onPreFling reveal.
+    private func handleTelsizPull(_ rawMinY: CGFloat) {
+        guard isAuthorityProfile, !telsizActive else {
+            if telsizPull != 0 { telsizPull = 0 }
+            telsizPullArmed = false
+            return
+        }
+        let overscroll = max(0, rawMinY)
+        if overscroll > 1 {
+            NSLog("Telsiz pull: rawMinY=%.1f overscroll=%.1f fired=%d thr=%.0f", rawMinY, overscroll, telsizPullArmed ? 1 : 0, telsizPullThreshold)
+        }
+        if abs(overscroll - telsizPull) > 0.5 { telsizPull = overscroll }
+        // Fire as soon as the pull crosses the threshold (don't depend on detecting the release/settle,
+        // which was unreliable). `telsizPullArmed` is a one-shot latch reset when the pull relaxes.
+        if overscroll < 6 { telsizPullArmed = false }
+        if overscroll >= telsizPullThreshold && !telsizPullArmed {
+            telsizPullArmed = true
+            telsizPull = 0
+            NSLog("Telsiz pull: FIRED -> openTelsiz (overscroll=%.1f)", overscroll)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            openTelsiz()
+        }
+    }
+
+    /// Request mic permission, then join the telsiz session and present the screen. On denial, surface
+    /// the settings alert (the telsiz needs the mic to transmit).
+    private func openTelsiz() {
+        Task {
+            let granted = await requestMicPermission()
+            await MainActor.run {
+                if granted {
+                    manager.joinTelsiz()
+                    activeSheet = .telsiz
+                } else {
+                    telsizPermissionDenied = true
+                }
+            }
+        }
+    }
+
+    private func requestMicPermission() async -> Bool {
+        if #available(iOS 17.0, *) {
+            return await AVAudioApplication.requestRecordPermission()
+        } else {
+            return await withCheckedContinuation { continuation in
+                AVAudioSession.sharedInstance().requestRecordPermission { allowed in
+                    continuation.resume(returning: allowed)
+                }
+            }
+        }
     }
 
     private func presentIntroIfNeeded() {
@@ -546,6 +781,87 @@ struct GattMeshView: View {
     }
 }
 
+private final class MeshVoicePlayerDelegateProxy: NSObject, AVAudioPlayerDelegate {
+    var onFinish: (() -> Void)?
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        onFinish?()
+    }
+}
+
+private struct MeshVoiceBubbleView: View {
+    let fileName: String
+    let durationMillis: Int64?
+    let tint: Color
+
+    @State private var player: AVAudioPlayer?
+    @State private var isPlaying = false
+    @State private var delegateProxy = MeshVoicePlayerDelegateProxy()
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button {
+                togglePlayback()
+            } label: {
+                Image(systemName: isPlaying ? "stop.fill" : "play.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+
+            Text(formattedDuration)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint)
+        }
+        .onDisappear {
+            player?.stop()
+            player = nil
+            isPlaying = false
+        }
+    }
+
+    private var formattedDuration: String {
+        let totalSeconds = max(0, (durationMillis ?? 0) / 1_000)
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+    }
+
+    private func togglePlayback() {
+        if isPlaying {
+            player?.stop()
+            isPlaying = false
+            return
+        }
+        let url = MeshImageFileStore.url(for: fileName)
+        guard let newPlayer = try? AVAudioPlayer(contentsOf: url) else { return }
+        delegateProxy.onFinish = {
+            isPlaying = false
+        }
+        newPlayer.delegate = delegateProxy
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        guard newPlayer.play() else { return }
+        player = newPlayer
+        isPlaying = true
+    }
+}
+
+private struct MeshImageBubbleView: View {
+    let fileName: String
+
+    var body: some View {
+        if let image = MeshImageFileStore.loadImage(fileName: fileName) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: 220, maxHeight: 260)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else {
+            Text("🖼️")
+                .font(.largeTitle)
+        }
+    }
+}
+
 private struct GattMeshNavigationTitleView: View {
     let title: String
     let subtitle: String
@@ -576,6 +892,7 @@ private struct GattMeshConnectedPeerSheetItem: Identifiable {
     let isReady: Bool
     let verificationStatus: GattMeshPeerVerificationStatus
     let verifiedRole: String?
+    let verifiedAgency: String?
 }
 
 private struct GattMeshConnectedPeersSheet: View {
@@ -644,8 +961,16 @@ private struct GattMeshConnectedPeersSheet: View {
                                         if !peer.isSelf,
                                            peer.verificationStatus == .verified {
                                             GattMeshVerifiedPeerBadge(
-                                                verifiedRoleLabel: resolveGattMeshVerifiedRoleLabel(peer.verifiedRole)
+                                                verifiedRoleLabel: resolveGattMeshVerifiedAffiliationLabel(
+                                                    agency: peer.verifiedAgency,
+                                                    role: peer.verifiedRole
+                                                )
                                             )
+                                        } else if peer.isSelf,
+                                                  let agency = peer.verifiedAgency?
+                                                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                                                  !agency.isEmpty {
+                                            GattMeshAgencyBadge(agency: agency)
                                         }
                                         Text(peer.subtitle)
                                             .font(.caption)
@@ -677,6 +1002,24 @@ private struct GattMeshConnectedPeersSheet: View {
     private func localizedFormat(_ key: String, _ arguments: CVarArg...) -> String {
         let format = NSLocalizedString(key, comment: "")
         return String(format: format, locale: Locale.current, arguments: arguments)
+    }
+}
+
+/// Neutral institution (kurum) capsule — used for the self row, which carries its own certificate
+/// agency but isn't peer-"verified". Mirrors the Android neutral agency badge.
+private struct GattMeshAgencyBadge: View {
+    let agency: String
+
+    var body: some View {
+        Text(agency)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(Color.appTextSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.appSurfaceElevated)
+            )
     }
 }
 
@@ -713,6 +1056,16 @@ private func resolveGattMeshVerifiedRoleLabel(_ verifiedRole: String?) -> String
     default:
         return nil
     }
+}
+
+/// Prefers the verified agency (e.g. AFAD/FEMA) for the badge; falls back to the
+/// localized role label when the certificate carries no agency (legacy v2).
+private func resolveGattMeshVerifiedAffiliationLabel(agency: String?, role: String?) -> String? {
+    let trimmedAgency = agency?.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let trimmedAgency, !trimmedAgency.isEmpty {
+        return trimmedAgency
+    }
+    return resolveGattMeshVerifiedRoleLabel(role)
 }
 
 private struct GeneralChatIntroSheet: View {

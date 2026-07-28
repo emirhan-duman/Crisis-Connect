@@ -34,6 +34,9 @@ object MainActivityRouteLauncher {
     private val SUPPORTED_ROUTES = setOf(
         "main",
         "tools_main",
-        "guide_main"
+        "guide_main",
+        "sos_countdown",
+        "recent_disasters",
+        "sos_status"
     )
 }

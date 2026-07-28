@@ -42,38 +42,70 @@ final class LiDARProcessingTests: XCTestCase {
         )
     }
 
+    func testObstacleEscalationIsImmediate() {
+        let transition = LiDARProcessing.stabilizedAlertState(
+            current: .clear,
+            proposed: .danger,
+            distanceMeters: 0.52,
+            alertPreset: .balanced,
+            saferFrameStreak: 0
+        )
+
+        XCTAssertEqual(transition.state, .danger)
+        XCTAssertEqual(transition.saferFrameStreak, 0)
+    }
+
+    func testDangerNeedsThreeSaferFramesBeforeClearing() {
+        let first = LiDARProcessing.stabilizedAlertState(
+            current: .danger,
+            proposed: .clear,
+            distanceMeters: 2.0,
+            alertPreset: .balanced,
+            saferFrameStreak: 0
+        )
+        let second = LiDARProcessing.stabilizedAlertState(
+            current: first.state,
+            proposed: .clear,
+            distanceMeters: 2.0,
+            alertPreset: .balanced,
+            saferFrameStreak: first.saferFrameStreak
+        )
+        let third = LiDARProcessing.stabilizedAlertState(
+            current: second.state,
+            proposed: .clear,
+            distanceMeters: 2.0,
+            alertPreset: .balanced,
+            saferFrameStreak: second.saferFrameStreak
+        )
+
+        XCTAssertEqual(first.state, .danger)
+        XCTAssertEqual(second.state, .danger)
+        XCTAssertEqual(third.state, .clear)
+    }
+
+    func testDangerDoesNotReleaseInsideHysteresisBand() {
+        let transition = LiDARProcessing.stabilizedAlertState(
+            current: .danger,
+            proposed: .caution,
+            distanceMeters: 0.9,
+            alertPreset: .balanced,
+            saferFrameStreak: 2
+        )
+
+        XCTAssertEqual(transition.state, .danger)
+        XCTAssertEqual(transition.saferFrameStreak, 0)
+    }
+
     func testClampMaxDepthKeepsConfiguredBounds() {
         XCTAssertEqual(LiDARProcessing.clampMaxDepth(0.2), 1.0, accuracy: 0.001)
         XCTAssertEqual(LiDARProcessing.clampMaxDepth(4.5), 4.5, accuracy: 0.001)
-        XCTAssertEqual(LiDARProcessing.clampMaxDepth(12.0), 8.0, accuracy: 0.001)
+        XCTAssertEqual(LiDARProcessing.clampMaxDepth(12.0), 5.0, accuracy: 0.001)
     }
 
-    func testGuidancePrefersClearerRightLaneWhenCenterIsBlocked() {
-        let snapshot = LiDARLaneSnapshot(left: 0.95, center: 0.82, right: 2.1)
-
-        let guidance = LiDARProcessing.guidance(
-            for: snapshot,
-            forwardDistance: 0.8,
-            signalQuality: .strong,
-            isRunning: true,
-            isFrozen: false
-        )
-
-        XCTAssertEqual(guidance, .moveRight)
-    }
-
-    func testGuidanceFallsBackToScanSlowlyWhenSignalIsWeak() {
-        let snapshot = LiDARLaneSnapshot(left: 1.8, center: 1.7, right: 1.9)
-
-        let guidance = LiDARProcessing.guidance(
-            for: snapshot,
-            forwardDistance: 1.6,
-            signalQuality: .weak,
-            isRunning: true,
-            isFrozen: false
-        )
-
-        XCTAssertEqual(guidance, .scanSlowly)
+    func testSignalQualityUsesMeasuredCoverage() {
+        XCTAssertEqual(LiDARProcessing.signalQuality(for: 0.12), .weak)
+        XCTAssertEqual(LiDARProcessing.signalQuality(for: 0.3), .medium)
+        XCTAssertEqual(LiDARProcessing.signalQuality(for: 0.62), .strong)
     }
 
     func testRecommendedMaxDepthTracksSceneWithoutBreakingBounds() {
@@ -82,7 +114,7 @@ final class LiDARProcessingTests: XCTestCase {
         let maxDepth = LiDARProcessing.recommendedMaxDepth(from: samples, focusDistance: 1.4)
 
         XCTAssertGreaterThanOrEqual(maxDepth, 3.0)
-        XCTAssertLessThanOrEqual(maxDepth, 8.0)
+        XCTAssertLessThanOrEqual(maxDepth, 5.0)
     }
 
     func testViewportTransformScalesNormalizedTranslationIntoViewportSpace() {

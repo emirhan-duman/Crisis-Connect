@@ -7,6 +7,7 @@ data class GattMeshConnectedPeer(
     val displayName: String,
     val verificationStatus: GattMeshPeerVerificationStatus = GattMeshPeerVerificationStatus.UNVERIFIED,
     val verifiedRole: String? = null,
+    val verifiedAgency: String? = null,
     val verifiedAtMillis: Long? = null,
 )
 

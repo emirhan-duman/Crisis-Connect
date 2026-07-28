@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Экстренное руководство</string>
+    <string name="guide_screen_intro_subtitle">Быстро находите критически важную информацию и выполняйте короткие действия под давлением.</string>
+    <string name="guide_screen_filter_all">Все категории</string>
+    <string name="guide_screen_section_30_seconds">За 30 секунд</string>
+    <string name="guide_screen_section_step_by_step">Шаг за шагом</string>
+    <string name="guide_screen_section_dont">Чего не делать</string>
+    <string name="guide_screen_section_checklist">Контрольный список</string>
+    <string name="guide_screen_expand_details">Показать подробности</string>
+    <string name="guide_screen_collapse_details">Скрыть подробности</string>
+    <string name="guide_screen_action_start_checklist">Начать контрольный список</string>
+    <string name="guide_screen_action_call_local">Позвонить %1$s</string>
+    <string name="guide_screen_action_open_assembly">Открыть зону сбора</string>
+    <string name="guide_screen_source_note">Примечание об источнике:</string>
+    <string name="guide_screen_checklist_progress">Выполнено %1$d/%2$d</string>
+    <string name="guide_screen_no_dial_app_with_number">Не найдено приложение для звонка %1$s.</string>
+    <string name="guide_screen_no_map_app">Не найдено приложение для открытия карт.</string>
+    <string name="guide_screen_assembly_query">Зона сбора при бедствии</string>
+    <string name="guide_screen_search_placeholder">Поиск по коду, категории или теме</string>
+    <string name="guide_screen_clear_search">Очистить поиск</string>
+    <string name="guide_screen_clear_filters">Очистить фильтры</string>
+    <string name="guide_screen_empty_title">Руководство не найдено</string>
+    <string name="guide_screen_empty_body">Попробуйте уменьшить число фильтров или искать по более общему ключевому слову.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d ещё быстрых действий</string>
+    <string name="guide_screen_region_value">Регион: %1$s • Экстренный номер: %2$s</string>
+    <string name="guide_screen_results_count">Показано руководств: %1$d</string>
+    <string name="guide_screen_read_minutes_format">%1$d мин</string>
+</resources>

@@ -9,6 +9,17 @@ import Foundation
 import CoreLocation
 import Darwin
 
+/// A labeled marker dropped on the offline map from outside (e.g. Crisis Sentinel results).
+struct OfflineMapPin: Identifiable, Equatable {
+    let id = UUID()
+    let lat: Double
+    let lng: Double
+    let label: String
+    var details: String? = nil
+
+    var coordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: lat, longitude: lng) }
+}
+
 struct MapBounds: Codable, Equatable, Sendable {
     var north: Double
     var south: Double
@@ -41,15 +52,15 @@ enum OfflineRegionStatus: String, Codable, Sendable {
     var label: String {
         switch self {
         case .idle:
-            return "Idle"
+            return NSLocalizedString("Idle", comment: "")
         case .downloading:
-            return "Downloading"
+            return NSLocalizedString("Downloading", comment: "")
         case .paused:
-            return "Paused"
+            return NSLocalizedString("Paused", comment: "")
         case .complete:
-            return "Complete"
+            return NSLocalizedString("Complete", comment: "")
         case .failed:
-            return "Failed"
+            return NSLocalizedString("Failed", comment: "")
         }
     }
 }

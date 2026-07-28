@@ -7,6 +7,7 @@
 
 import Foundation
 import CoreBluetooth
+import FirebaseAuth
 import Combine
 import CryptoKit
 import UIKit
@@ -29,6 +30,12 @@ private struct P2pPendingHandshake {
     let clientNonce: String
     let clientPlatform: String
     let serverHelloProof: String
+    // The scanning peer's internet-messaging identity, carried in the client-hello so THIS (the
+    // QR-displaying) side can reach them online too — the reverse of what the QR already gives the
+    // scanner. Nil when the peer didn't supply it (older build / not registered). Authenticated by
+    // a separate HMAC (clientIdentityProof) so it stays backward-compatible with peers that omit it.
+    let clientPeerUid: String?
+    let clientPeerPublicKey: String?
 }
 
 private struct P2pPendingShareCompletion {
@@ -642,6 +649,12 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             self?.bluetoothState = peripheral.state
         }
         guard peripheral.state == .poweredOn else {
+            // Bluetooth is gone — every subscribed central is dead. Without this flush,
+            // isSessionConnected stayed true and message/call routing kept picking the dead
+            // peripheral link instead of falling back to the internet transport.
+            centralSessionIds.removeAll()
+            subscribedMessageOutCentrals.removeAll()
+            publishConnectedSessions()
             DispatchQueue.main.async { [weak self] in
                 self?.isAdvertising = false
             }
@@ -840,7 +853,10 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         )
         let messageInCharacteristic = CBMutableCharacteristic(
             type: P2pBleProtocol.messageInCharacteristicUUID,
-            properties: [.write],
+            // writeWithoutResponse is the voice-call audio fast path — without it the ATT server
+            // rejects a central's Write Commands and call audio never arrives (mirror of the
+            // Android host's PROPERTY_WRITE_NO_RESPONSE fix).
+            properties: [.write, .writeWithoutResponse],
             value: nil,
             permissions: [.writeable]
         )
@@ -955,6 +971,38 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             return
         }
 
+        // Optional: the scanner's internet identity, so we (the displayer) can reach them online.
+        // Accepted ONLY when its separate HMAC verifies against the shared key + this session's
+        // nonces; a missing or bad proof simply drops the identity (pairing still succeeds over BLE),
+        // keeping older peers compatible and a BLE MITM unable to inject a forged identity.
+        var clientPeerUid: String?
+        var clientPeerPublicKey: String?
+        let offeredPeerUid = ((frame["clientPeerUid"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let offeredPeerKey = ((frame["clientPeerPublicKey"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let identityProof = ((frame["clientIdentityProof"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !offeredPeerUid.isEmpty, !offeredPeerKey.isEmpty, !identityProof.isEmpty {
+            let expectedIdentityProof = P2pBleProtocol.hmacBase64(
+                key: key,
+                payload: P2pBleProtocol.buildClientIdentityProofPayload(
+                    shareId: session.shareId,
+                    serverNonce: session.serverNonce,
+                    clientNonce: clientNonce,
+                    peerUid: offeredPeerUid,
+                    peerPublicKey: offeredPeerKey
+                )
+            )
+            if P2pBleProtocol.secureEqualsBase64(expectedIdentityProof, identityProof) {
+                clientPeerUid = offeredPeerUid
+                clientPeerPublicKey = offeredPeerKey
+                MessagingDiagLog.log("pairing(host): scanner identity ACCEPTED peer=\(offeredPeerUid.prefix(8)) — reciprocal contact will be internet-capable")
+            } else {
+                NSLog("ContactBroadcastManager: client identity proof mismatch; ignoring internet identity")
+                MessagingDiagLog.log("pairing(host): scanner identity PROOF MISMATCH — reciprocal contact stays BLE-only")
+            }
+        } else {
+            MessagingDiagLog.log("pairing(host): scanner sent NO internet identity (offeredUid=\(!offeredPeerUid.isEmpty) key=\(!offeredPeerKey.isEmpty) proof=\(!identityProof.isEmpty)) — reciprocal contact stays BLE-only")
+        }
+
         guard let serverHelloProof = P2pBleProtocol.hmacBase64(
             key: key,
             payload: P2pBleProtocol.buildProofPayload([
@@ -983,7 +1031,9 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             clientDeviceId: clientDeviceId,
             clientNonce: clientNonce,
             clientPlatform: clientPlatform,
-            serverHelloProof: serverHelloProof
+            serverHelloProof: serverHelloProof,
+            clientPeerUid: clientPeerUid,
+            clientPeerPublicKey: clientPeerPublicKey
         )
 
         setDeviceResponse(
@@ -1070,6 +1120,12 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             }
             messageReceivers.removeValue(forKey: identifier)
             let envelopeData = try BleAesGcm.unwrapTransportPacket(packet, maxPacketSize: maxEnvelopePacketBytes)
+            if P2pCallProtocol.isCallAudioFrame(envelopeData) {
+                // Binary voice-call audio fast path (peer is the central and wrote it to us);
+                // must never reach the chat envelope parser.
+                ChatPeerVoiceCallCoordinator.shared.handleGattCallAudio(envelopeData)
+                return .success
+            }
             guard let envelope = parseIncomingEnvelope(from: envelopeData) else {
                 return .success
             }
@@ -1098,6 +1154,21 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         let address = central.identifier.uuidString.uppercased()
         ContactStore.shared.updateBleAddress(sessionId: record.id, address: address)
         bindCentral(central.identifier, to: record)
+
+        // Voice-call signaling from a central peer. Route it BEFORE the chat-kind switch —
+        // these kinds used to fall into `default: break`, silently eating every incoming
+        // call offer whenever the peer had dialed the link (they rang out "unreachable").
+        // Replies must ride this peripheral link: the central-side manager has no connection.
+        if P2pCallProtocol.isCallSignalKind(payload.kind) {
+            if let rawPayload = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] {
+                ChatPeerVoiceCallCoordinator.shared.handleGattCallSignal(
+                    sessionId: record.id,
+                    payload: rawPayload,
+                    link: callLink(for: record.id)
+                )
+            }
+            return
+        }
 
         switch payload.kind {
         case P2pBleProtocol.chatKindText:
@@ -1150,7 +1221,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
                     sessionId: record.id,
                     title: notificationTitle,
                     body: P2pSharedTransferSupport.previewText(for: trimmedText),
-                    kind: .contactUpdate
+                    kind: .chatMessage
                 )
             }
             sendChatEvent(
@@ -1323,6 +1394,88 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             return nil
         }
 
+        return BleAesGcm.wrapTransportPacket(outerData)
+    }
+
+    // MARK: - Voice-call link (peripheral role)
+
+    // The peer dialed our hosted chat service, so call replies (ring/accept/end) and outbound
+    // audio must ride MESSAGE_OUT notifications to that central — the central-side chat manager
+    // has no connection in this topology. One adapter per session keeps `GattCallLink` identity
+    // stable across a call.
+    private var peripheralCallLinks: [UUID: P2pPeripheralGattCallLink] = [:]
+
+    /// The `GattCallLink` riding this hosted (peripheral-role) session — outgoing calls must
+    /// use it when the peer dialed us, instead of tearing the link down with a central dial.
+    func callLink(for sessionId: UUID) -> GattCallLink {
+        if let existing = peripheralCallLinks[sessionId] { return existing }
+        let link = P2pPeripheralGattCallLink(sessionId: sessionId)
+        peripheralCallLinks[sessionId] = link
+        return link
+    }
+
+    fileprivate func sendCallSignal(sessionId: UUID, payload: [String: Any]) -> Bool {
+        syncOnQueue {
+            guard let peripheral = peripheralManager,
+                  let characteristic = messageOutCharacteristic,
+                  let central = connectedCentral(for: sessionId),
+                  let record = ContactStore.shared.contact(for: sessionId),
+                  let packet = makeCallEnvelope(payload, record: record) else {
+                return false
+            }
+            queueNotification(packet, for: characteristic, to: central, peripheral: peripheral)
+            return true
+        }
+    }
+
+    /// Single-notification audio fast path; false when the link cannot take the packet right
+    /// now so the caller can count the drop (mirrors the central manager's write path).
+    fileprivate func sendCallAudioFrame(sessionId: UUID, packet: Data) -> Bool {
+        syncOnQueue {
+            guard let peripheral = peripheralManager,
+                  let characteristic = messageOutCharacteristic,
+                  let central = connectedCentral(for: sessionId) else {
+                return false
+            }
+            // Never interleave into a partially-notified chunked packet — that would corrupt
+            // the central's reassembly stream. Drop the frame instead; audio tolerates loss.
+            let key = P2pPendingNotificationKey(
+                centralId: central.identifier,
+                characteristicId: characteristic.uuid
+            )
+            guard pendingNotifications[key] == nil else { return false }
+            let wrapped = BleAesGcm.wrapTransportPacket(packet)
+            guard wrapped.count <= max(1, central.maximumUpdateValueLength) else { return false }
+            return peripheral.updateValue(wrapped, for: characteristic, onSubscribedCentrals: [central])
+        }
+    }
+
+    fileprivate func setCallHold(sessionId: UUID, active: Bool) {
+        // The central manager's hold pins ITS dialed connection open; in the peripheral role
+        // the peer owns the connection and our hosted service stays up while the app runs,
+        // so there is nothing to pin. Kept for GattCallLink parity.
+        _ = (sessionId, active)
+    }
+
+    private func makeCallEnvelope(_ innerPayload: [String: Any], record: ContactRecord) -> Data? {
+        guard let key = ContactStore.shared.aesKey(for: record),
+              let innerData = try? JSONSerialization.data(withJSONObject: innerPayload, options: []),
+              let encryptedPacket = BleAesGcm.encryptPacket(
+                key: key,
+                plaintext: innerData,
+                maxPacketSize: maxEncryptedChatPacketBytes
+              ).nilIfEmptyData else {
+            return nil
+        }
+        let outerPayload: [String: Any] = [
+            "type": P2pBleProtocol.typeChatEnvelope,
+            "fromDeviceId": localDeviceId(),
+            "payload": encryptedPacket.base64EncodedString()
+        ]
+        guard let outerData = try? JSONSerialization.data(withJSONObject: outerPayload, options: []),
+              outerData.count <= maxEnvelopePacketBytes else {
+            return nil
+        }
         return BleAesGcm.wrapTransportPacket(outerData)
     }
 
@@ -1589,7 +1742,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
                 sessionId: record.id,
                 title: senderName?.nilIfEmpty ?? record.name,
                 body: NSLocalizedString("Voice message", comment: ""),
-                kind: .contactUpdate
+                kind: .chatMessage
             )
         }
         sendChatEvent(
@@ -1716,7 +1869,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
                 sessionId: record.id,
                 title: senderName?.nilIfEmpty ?? record.name,
                 body: SOSChatStore.imagePreviewText(),
-                kind: .contactUpdate
+                kind: .chatMessage
             )
         }
         sendChatEvent(
@@ -1820,6 +1973,35 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         pending: P2pPendingHandshake
     ) {
         let address = centralId.uuidString.uppercased()
+
+        // Self-identity guard — the mirror of the Android host-side one. Two failures, two answers:
+        //  * same DEVICE (our own device id or session code echoed back) is a loopback; there is no
+        //    peer, so anything we insert is a contact that is really us. Hard reject.
+        //  * same ACCOUNT on a genuinely different device (one responder with a phone AND a tablet)
+        //    is legitimate, so keep the Bluetooth link — but drop the internet identity, because a
+        //    contact whose peerUid is our own uid routes every internet send back into our own inbox.
+        //    An SOS addressed to yourself helps nobody.
+        // Non-blank gated throughout: a signed-out device supplies no uid, and "" == "" would reject
+        // every offline pairing — the exact case this transport exists for.
+        let localDeviceId = session.deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let incomingDeviceId = (pending.clientDeviceId ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let localSessionCode = session.sessionCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        let incomingSessionCode = pending.clientSessionCode
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if (!incomingDeviceId.isEmpty
+                && incomingDeviceId.caseInsensitiveCompare(localDeviceId) == .orderedSame)
+            || (!incomingSessionCode.isEmpty
+                && incomingSessionCode.caseInsensitiveCompare(localSessionCode) == .orderedSame) {
+            MessagingDiagLog.log("pairing rejected: the peer identity is this device")
+            return
+        }
+        let localUid = (Auth.auth().currentUser?.uid ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let incomingUid = (pending.clientPeerUid ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sameAccount = !localUid.isEmpty && !incomingUid.isEmpty && localUid == incomingUid
+
         let peerSessionCode = canonicalBleSessionCode(
             deviceId: pending.clientDeviceId,
             fallbackSessionCode: pending.clientSessionCode,
@@ -1836,7 +2018,14 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             remotePlatform: ContactRemotePlatform.normalize(pending.clientPlatform),
             bleShareId: nil,
             lastKnownBleAddress: address,
-            remoteDeviceId: pending.clientDeviceId
+            remoteDeviceId: pending.clientDeviceId,
+            // Reciprocal internet identity from the authenticated client-hello, so this side can
+            // fall back to the E2E internet transport when Bluetooth is off (the whole point of the
+            // fix). Nil for peers that didn't supply it — those stay BLE-only as before.
+            peerUid: sameAccount ? nil : pending.clientPeerUid,
+            peerPublicKey: sameAccount ? nil : pending.clientPeerPublicKey,
+            analyticsSource: "ble_gatt_peer",
+            analyticsReceived: true
         )
         bindCentral(centralId, to: record)
         DispatchQueue.main.async {
@@ -2043,4 +2232,29 @@ private extension String {
 
 extension Notification.Name {
     static let p2pShareDidAddContact = Notification.Name("p2pShareDidAddContact")
+}
+
+/// `GattCallLink` over the hosted (peripheral-role) chat service: replies and audio go out as
+/// MESSAGE_OUT notifications to the central bound to this session. Counterpart of
+/// `P2pGattChatManager`'s conformance for links this device dialed itself.
+final class P2pPeripheralGattCallLink: GattCallLink {
+    private let sessionId: UUID
+
+    fileprivate init(sessionId: UUID) {
+        self.sessionId = sessionId
+    }
+
+    @discardableResult
+    func sendCallSignal(_ payload: [String: Any]) -> Bool {
+        ContactBroadcastManager.shared.sendCallSignal(sessionId: sessionId, payload: payload)
+    }
+
+    @discardableResult
+    func sendCallAudioFrame(_ packet: Data) -> Bool {
+        ContactBroadcastManager.shared.sendCallAudioFrame(sessionId: sessionId, packet: packet)
+    }
+
+    func setCallHold(_ active: Bool) {
+        ContactBroadcastManager.shared.setCallHold(sessionId: sessionId, active: active)
+    }
 }

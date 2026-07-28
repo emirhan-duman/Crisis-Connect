@@ -29,6 +29,66 @@ object NotificationLocalization {
                 Locale("es", "ES")
             }
 
+            normalizedLanguage.startsWith("hi") -> {
+                Locale("hi", "IN")
+            }
+
+            normalizedLanguage.startsWith("fr") -> {
+                Locale("fr", "FR")
+            }
+
+            normalizedLanguage.startsWith("ar") -> {
+                Locale("ar")
+            }
+
+            normalizedLanguage.startsWith("ku") -> {
+                Locale("ku")
+            }
+
+            normalizedLanguage.startsWith("fa") -> {
+                Locale("fa")
+            }
+
+            normalizedLanguage.startsWith("id") -> {
+                Locale("id")
+            }
+
+            normalizedLanguage.startsWith("bn") -> {
+                Locale("bn")
+            }
+
+            normalizedLanguage.startsWith("ru") -> {
+                Locale("ru")
+            }
+
+            normalizedLanguage.startsWith("de") -> {
+                Locale("de", "DE")
+            }
+
+            normalizedLanguage.startsWith("ur") -> {
+                Locale("ur")
+            }
+
+            normalizedLanguage.startsWith("zh") -> {
+                Locale("zh", "CN")
+            }
+
+            normalizedLanguage.startsWith("uk") -> {
+                Locale("uk")
+            }
+
+            normalizedLanguage.startsWith("pt") -> {
+                Locale("pt")
+            }
+
+            normalizedLanguage.startsWith("fil") -> {
+                Locale("fil")
+            }
+
+            normalizedLanguage.startsWith("vi") -> {
+                Locale("vi")
+            }
+
             else -> Locale("en", "US")
         }
         val config = Configuration(baseContext.resources.configuration)

@@ -7,7 +7,9 @@ It combines Bluetooth-based communication, offline map support, role-aware rescu
 ## Highlights
 
 - Nearby messaging over BLE and GATT-based peer-to-peer / mesh flows
-- RFCOMM-backed call handling and low-connectivity voice transport
+- Cross-platform Android ↔ iOS Bluetooth voice calls over the GATT audio link (0xCD00), plus RFCOMM transport
+- End-to-end encrypted internet messaging over the Signal Protocol (libsignal, PQXDH), with 1:1 WebRTC voice and video calls
+- Crisis Sentinel: an on-device offline assistant (Google AI Edge LiteRT-LM) with an optional cloud engine
 - Reliable image, voice, and file transfer with chunking, acknowledgements, and receipt tracking
 - SOS broadcasting and rescue-side discovery workflows
 - On-demand `feature_rescue` delivery for rescue operations
@@ -22,7 +24,8 @@ It combines Bluetooth-based communication, offline map support, role-aware rescu
 | --- | --- |
 | `app` | Main Android application: Compose UI, local storage, messaging, calls, media transfer, maps, tools, settings, and shared chat flows |
 | `feature_rescue` | Android dynamic feature module for rescue coordination, rescue mesh, scanning, and Crisis Link sync |
-| `functions` | Firebase Cloud Functions codebase that issues signed rescue role certificates |
+| `baselineprofile` | Baseline profile generator module for startup and scroll performance |
+| `functions` | Firebase Cloud Functions: role certificates, Play Integrity / App Attest verification, the encrypted messaging relay and prekey pool, VoIP push, SOS signal reporting, TURN credentials |
 | `dashboard` | Lightweight single-page summary surface for presenting the system at a high level |
 | `.github/workflows` | CI pipeline definitions for Android lint and unit-test validation |
 | `scripts` | Helper scripts such as Firebase config preparation |
@@ -49,7 +52,7 @@ It combines Bluetooth-based communication, offline map support, role-aware rescu
 - Offline map region download, storage, and import/export support
 - Location sharing and map-based chat context
 - Compass, whistle, signal finder, sensor tool, and metal detector style utilities
-- English, Turkish, Japanese, and Spanish resource support in the Android app
+- 19 localizations: Arabic, Bengali, Chinese (Simplified), English, Filipino, French, German, Hindi, Indonesian, Japanese, Kurdish, Persian, Portuguese, Russian, Spanish, Turkish, Ukrainian, Urdu, Vietnamese
 
 ## Architecture Overview
 
@@ -63,7 +66,7 @@ Firebase is used for identity, authorization-adjacent metadata, rescue telemetry
 | --- | --- |
 | Android UI | Kotlin, Jetpack Compose, Material 3 |
 | Modules | `app` + `feature_rescue` dynamic feature |
-| Android SDK | `minSdk 24`, `compileSdk 35`, `targetSdk 35` |
+| Android SDK | `minSdk 24`, `compileSdk 36`, `targetSdk 36` |
 | Local storage | Room, SQLCipher, DataStore, encrypted preferences |
 | Connectivity | BLE, GATT, RFCOMM, foreground services |
 | Maps | MapLibre with offline region support |
@@ -75,7 +78,7 @@ Firebase is used for identity, authorization-adjacent metadata, rescue telemetry
 
 Before building locally, make sure the following are available:
 
-- Android Studio with Android SDK 35
+- Android Studio with Android SDK 36
 - JDK 17 for Gradle / Android tooling compatibility
 - Node.js 22 if you will build or deploy Firebase Functions
 - A Firebase project if you want live authentication, Firestore, App Check, or certificate issuance
@@ -86,8 +89,8 @@ Before building locally, make sure the following are available:
 ### 1. Clone and open the project
 
 ```bash
-git clone <your-repo-url>
-cd DisasterCommunicationSystem
+git clone https://github.com/emirhan-duman/Crisis-Connect.git
+cd Crisis-Connect/Android
 ```
 
 Open the project in Android Studio after syncing Gradle.
@@ -116,7 +119,13 @@ Targets written by the script:
 
 Set the required values in `local.properties` or export them as environment variables:
 
+A ready-to-copy template is provided — `cp local.properties.example local.properties` and fill it in
+(keep the `sdk.dir` line Android Studio generates).
+
 ```properties
+# Backend messaging / calls / sync (see notes — MOBILE_SYNC_BASE_URL is easy to miss):
+MOBILE_SYNC_BASE_URL=https://crisisconnect.network
+MOBILE_SYNC_PANEL_ID=your-panel-id
 GOOGLE_WEB_CLIENT_ID=your-google-web-client-id
 MAPLIBRE_API_KEY=your-maplibre-api-key
 APP_CHECK_DEBUG_TOKEN=your-firebase-app-check-debug-token
@@ -125,10 +134,28 @@ RESCUE_NODE_ID_HEX_LENGTH=12
 
 Notes:
 
+- **`MOBILE_SYNC_BASE_URL` — base URL of the deployed Crisis Connect web app (the Next.js APIs). Without
+  it, cross-panel (hierarchy) + agency messaging AND authority calls fail silently**
+  (`HierarchyMessagingClient.requireBaseUrl()` throws "MOBILE_SYNC_BASE_URL is not configured" and the
+  authority channel list shows "Couldn't load channels"). Use `https://crisisconnect.network` (or
+  `https://crisis-connect-1.web.app`); no custom host is certificate-pinned, so either works.
+- `MOBILE_SYNC_PANEL_ID` scopes this device's mobile sync to a panel.
 - `GOOGLE_WEB_CLIENT_ID` is used for Google Sign-In.
 - `MAPLIBRE_API_KEY` is required for hosted style requests and map features.
 - `APP_CHECK_DEBUG_TOKEN` is useful for debug and internal builds.
-- `RESCUE_NODE_ID_HEX_LENGTH` is optional and defaults to `12`.
+- `RESCUE_NODE_ID_HEX_LENGTH` is optional and defaults to `12`; `ENTERPRISE_SSO_PROVIDER_ID` defaults to `oidc.crisisconnect-sso`.
+
+TURN relay for internet calls is server-side. Before deploying functions/hosting for production,
+configure Cloudflare Realtime TURN credentials:
+
+```bash
+firebase functions:secrets:set CLOUDFLARE_TURN_KEY_ID
+firebase functions:secrets:set CLOUDFLARE_TURN_API_TOKEN
+firebase deploy --only functions
+```
+
+The mobile app calls `MOBILE_SYNC_BASE_URL/api/turn-credentials` and falls back to STUN-only if this
+endpoint is not deployed or configured. The web app repo owns the public Hosting route.
 
 ### 4. Configure signing for `internal` / `release` builds
 
@@ -158,11 +185,11 @@ You can also provide the same values via environment variables:
 
 ### 5. Configure Firebase Functions secrets if deploying backend services
 
-The callable function in `functions/` signs rescue role certificates and expects the Firebase secret:
+The callable function that signs rescue role certificates expects the Firebase secret:
 
 - `MASTER_PRIVATE_KEY_PEM`
 
-Without that secret, certificate issuance will fail.
+Without that secret, certificate issuance will fail. The messaging, push and TURN functions have their own secrets — see the section above for the Cloudflare TURN pair.
 
 ## Build and Verification
 

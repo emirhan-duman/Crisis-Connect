@@ -36,6 +36,14 @@ enum P2pBleProtocol {
     static let chatKindFileDone = "file_done"
     static let chatKindFileAbort = "file_abort"
     static let chatKindDecryptFail = "decrypt_fail"
+    static let chatKindCallOffer = "call_offer"
+    static let chatKindCallRing = "call_ring"
+    static let chatKindCallAccept = "call_accept"
+    static let chatKindCallReject = "call_reject"
+    static let chatKindCallBusy = "call_busy"
+    static let chatKindCallEnd = "call_end"
+    static let chatKindCallCfg = "call_cfg"
+    static let chatKindCallCfgAck = "call_cfg_ack"
 
     static let voiceChunkSizeBytes = 1536
     static let voiceMaxTotalBytes = 524_288
@@ -90,6 +98,32 @@ enum P2pBleProtocol {
         return nil
     }
 
+    static func isPotentialContactShareAdvertisement(
+        expectedShareId: String,
+        advertisementData: [String: Any],
+        peripheralName: String? = nil
+    ) -> Bool {
+        let normalizedExpected = normalizeShareId(expectedShareId)
+        guard !normalizedExpected.isEmpty else { return false }
+
+        if let advertisedShareId = advertisedShareId(from: advertisementData) {
+            return normalizeShareId(advertisedShareId) == normalizedExpected
+        }
+        if let peripheralNameShareId = advertisedShareId(from: [:], peripheralName: peripheralName),
+           normalizeShareId(peripheralNameShareId) == normalizedExpected {
+            return true
+        }
+
+        return advertisesService(serviceUUID, in: advertisementData)
+    }
+
+    static func advertisesService(_ serviceUUID: CBUUID, in advertisementData: [String: Any]) -> Bool {
+        containsServiceUUID(serviceUUID, in: advertisementData[CBAdvertisementDataServiceUUIDsKey]) ||
+            containsServiceUUID(serviceUUID, in: advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey]) ||
+            containsServiceUUID(serviceUUID, in: advertisementData[CBAdvertisementDataSolicitedServiceUUIDsKey]) ||
+            serviceDataContains(serviceUUID, in: advertisementData[CBAdvertisementDataServiceDataKey])
+    }
+
     static func randomNonceBase64(length: Int = 16) -> String {
         guard let data = randomBytes(count: length) else { return "" }
         return data.base64EncodedString()
@@ -113,6 +147,28 @@ enum P2pBleProtocol {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return Data(base64Encoded: trimmed, options: [.ignoreUnknownCharacters])
+    }
+
+    /// Proof payload for the scanner's internet identity carried in the client-hello. A SEPARATE
+    /// HMAC from the main handshake proof so it's fully backward-compatible: peers that omit the
+    /// identity keep pairing unchanged, and a peer that supplies it binds it to this session's
+    /// nonces so it can't be replayed or tampered by a BLE MITM (who lacks the shared key).
+    /// MUST stay byte-identical with Android's equivalent.
+    static func buildClientIdentityProofPayload(
+        shareId: String,
+        serverNonce: String,
+        clientNonce: String,
+        peerUid: String,
+        peerPublicKey: String
+    ) -> Data {
+        buildProofPayload([
+            ("type", "client_identity"),
+            ("shareId", shareId),
+            ("serverNonce", serverNonce),
+            ("clientNonce", clientNonce),
+            ("clientPeerUid", peerUid),
+            ("clientPeerPublicKey", peerPublicKey)
+        ])
     }
 
     static func buildProofPayload(_ parts: [(String, String)]) -> Data {
@@ -180,6 +236,68 @@ enum P2pBleProtocol {
         guard let payload else { return nil }
         return String(data: payload, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func containsServiceUUID(_ serviceUUID: CBUUID, in value: Any?) -> Bool {
+        serviceUUIDs(from: value).contains { candidate in
+            serviceUUIDMatches(candidate, serviceUUID)
+        }
+    }
+
+    private static func serviceUUIDs(from value: Any?) -> [CBUUID] {
+        if let uuid = value as? CBUUID {
+            return [uuid]
+        }
+        if let uuids = value as? [CBUUID] {
+            return uuids
+        }
+        if let values = value as? [Any] {
+            return values.compactMap { item in
+                if let uuid = item as? CBUUID {
+                    return uuid
+                }
+                if let string = item as? String {
+                    return CBUUID(string: string.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                return nil
+            }
+        }
+        return []
+    }
+
+    private static func serviceDataContains(_ serviceUUID: CBUUID, in serviceData: Any?) -> Bool {
+        if let typed = serviceData as? [CBUUID: Data] {
+            return typed.keys.contains { serviceUUIDMatches($0, serviceUUID) }
+        }
+        if let typed = serviceData as? [String: Data] {
+            return typed.keys.contains { serviceUUIDStringMatches($0, serviceUUID) }
+        }
+        if let typed = serviceData as? [AnyHashable: Data] {
+            return typed.keys.contains { key in
+                if let uuid = key as? CBUUID {
+                    return serviceUUIDMatches(uuid, serviceUUID)
+                }
+                if let string = key as? String {
+                    return serviceUUIDStringMatches(string, serviceUUID)
+                }
+                return false
+            }
+        }
+        return false
+    }
+
+    private static func serviceUUIDMatches(_ candidate: CBUUID, _ expected: CBUUID) -> Bool {
+        candidate == expected ||
+            candidate.uuidString.caseInsensitiveCompare(expected.uuidString) == .orderedSame
+    }
+
+    private static func serviceUUIDStringMatches(_ candidate: String, _ expected: CBUUID) -> Bool {
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.caseInsensitiveCompare(expected.uuidString) == .orderedSame {
+            return true
+        }
+        return serviceUUIDMatches(CBUUID(string: trimmed), expected)
     }
 
     private static func looksLikeShareId(_ value: String) -> Bool {

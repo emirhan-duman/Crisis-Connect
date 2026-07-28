@@ -1,0 +1,92 @@
+# Codemagic CI/CD Configuration for Crisis Connect iOS
+# For documentation, visit: https://docs.codemagic.io/yaml/building-a-native-ios-app/
+
+workflows:
+  ios-release:
+    name: iOS Release Build
+    integrations:
+      # Reference the App Store Connect API Key connected in your Codemagic Team Integrations
+      app_store_connect: "VHKGQR6239"
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    environment:
+      groups:
+        - apple_credentials
+      vars:
+        XCODE_PROJECT: "Crisis Connect.xcodeproj"
+        XCODE_SCHEME: "Crisis Connect"
+        BUNDLE_ID: "com.auralis.crisisconnect"
+      xcode: latest
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: 'main'
+          include: true
+          source: true
+    scripts:
+      - name: Fetch git-lfs assets (OrangeMlsWorker.xcframework)
+        script: |
+          # The Rust MLS static libs (Frameworks/OrangeMlsWorker.xcframework/**/*.a) are stored in
+          # git-lfs. Codemagic's clone doesn't always materialize LFS objects, which would leave
+          # them as pointer files and fail the link with missing mls_ios_* symbols. Force-pull them.
+          git lfs install --local
+          git lfs pull
+      - name: Initialize keychain
+        script: |
+          keychain initialize
+      - name: Fetch Apple signing certificates and profiles
+        script: |
+          # Codemagic will use the integrated "Crisis Connect codemagic.io" API Key for authentication.
+          # Every embedded target needs its own App Store provisioning profile — fetching only the
+          # app id left the Broadcast/Widget extensions profileless and the archive failed with
+          # '"CrisisConnectBroadcast" requires a provisioning profile'.
+          for id in "$BUNDLE_ID" "$BUNDLE_ID.broadcast" "$BUNDLE_ID.widgets"; do
+            app-store-connect fetch-signing-files "$id" \
+              --type IOS_APP_STORE \
+              --create
+          done
+      - name: Add certificates to keychain
+        script: |
+          keychain add-certificates
+      - name: Set up code signing settings on Xcode project
+        script: |
+          xcode-project use-profiles
+      - name: Resolve Package Dependencies
+        script: |
+          # Force resolution of Swift Packages first so they are available to patch
+          xcodebuild -resolvePackageDependencies -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME"
+      - name: Apply Firebase Async Let Patch
+        script: |
+          # Run the Firebase patch script to prevent release builds from crashing on iOS 16 / Xcode 16
+          chmod +x Scripts/patch-firebase-async-let.sh
+          ./Scripts/patch-firebase-async-let.sh
+      - name: Download Metal Toolchain
+        script: |
+          # Xcode 26 ships the Metal compiler as a separate download; the CI image lacks it and
+          # LiDARNightVisionShaders.metal fails the archive with "cannot execute tool 'metal'".
+          xcodebuild -downloadComponent MetalToolchain
+      - name: Increment build number
+        script: |
+          # Start from build number 28 and automatically increment (Next build on Codemagic is #10, so 18 + 10 = 28)
+          BUILD_NUMBER_OFFSET=$((18 + BUILD_NUMBER))
+          agvtool new-version -all "$BUILD_NUMBER_OFFSET"
+      - name: Build and Archive (IPA)
+        script: |
+          # Build the signed IPA using Codemagic CLI tools
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+      email:
+        recipients:
+          - emirhanduman2009@gmail.com
+        notify:
+          success: true
+          failure: true

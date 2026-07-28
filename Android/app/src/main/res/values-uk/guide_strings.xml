@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Екстрений посібник</string>
+    <string name="guide_screen_intro_subtitle">Швидко знаходьте критично важливу інформацію та виконуйте короткі дії під тиском.</string>
+    <string name="guide_screen_filter_all">Усі категорії</string>
+    <string name="guide_screen_section_30_seconds">За 30 секунд</string>
+    <string name="guide_screen_section_step_by_step">Крок за кроком</string>
+    <string name="guide_screen_section_dont">Чого не робити</string>
+    <string name="guide_screen_section_checklist">Контрольний список</string>
+    <string name="guide_screen_expand_details">Показати подробиці</string>
+    <string name="guide_screen_collapse_details">Приховати подробиці</string>
+    <string name="guide_screen_action_start_checklist">Почати контрольний список</string>
+    <string name="guide_screen_action_call_local">Подзвонити %1$s</string>
+    <string name="guide_screen_action_open_assembly">Відкрити зону збору</string>
+    <string name="guide_screen_source_note">Примітка про джерело:</string>
+    <string name="guide_screen_checklist_progress">Виконано %1$d/%2$d</string>
+    <string name="guide_screen_no_dial_app_with_number">Не знайдено застосунку для дзвінка %1$s.</string>
+    <string name="guide_screen_no_map_app">Не знайдено застосунку для відкриття карт.</string>
+    <string name="guide_screen_assembly_query">Зона збору під час катастрофи</string>
+    <string name="guide_screen_search_placeholder">Пошук за кодом, категорією або темою</string>
+    <string name="guide_screen_clear_search">Очистити пошук</string>
+    <string name="guide_screen_clear_filters">Очистити фільтри</string>
+    <string name="guide_screen_empty_title">Посібник не знайдено</string>
+    <string name="guide_screen_empty_body">Спробуйте зменшити кількість фільтрів або шукати за загальнішим ключовим словом.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d ще швидких дій</string>
+    <string name="guide_screen_region_value">Регіон: %1$s • Екстрений номер: %2$s</string>
+    <string name="guide_screen_results_count">Показано посібників: %1$d</string>
+    <string name="guide_screen_read_minutes_format">%1$d хв</string>
+</resources>

@@ -9,7 +9,9 @@ import AVFoundation
 import AudioToolbox
 import CallKit
 import Combine
+import CoreBluetooth
 import CoreImage
+import CryptoKit
 import Foundation
 import MediaPlayer
 import MultipeerConnectivity
@@ -172,7 +174,9 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
     static let shared = ChatPeerVoiceSystemCallBridge()
 
     private let syncQueue = DispatchQueue(label: "chat.peer.voice.system-call")
-    private let provider: CXProvider
+    // Shared app-wide provider (see SharedCallProvider) — CallKit needs a single provider or it
+    // misroutes answer/end actions. We make ourselves its delegate when we report a call.
+    private let provider = SharedCallProvider.shared.provider
     private let callController = CXCallController()
 
     private weak var coordinator: ChatPeerVoiceCallCoordinator?
@@ -181,17 +185,7 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
     private var callUUIDBySessionId: [UUID: UUID] = [:]
 
     private override init() {
-        let appName = (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let configuration = CXProviderConfiguration(localizedName: (appName?.isEmpty == false) ? appName! : "Crisis Connect")
-        configuration.supportedHandleTypes = [.generic]
-        configuration.supportsVideo = true
-        configuration.maximumCallsPerCallGroup = 1
-        configuration.maximumCallGroups = 1
-        configuration.includesCallsInRecents = false
-        provider = CXProvider(configuration: configuration)
         super.init()
-        provider.setDelegate(self, queue: nil)
     }
 
     func bind(coordinator: ChatPeerVoiceCallCoordinator) {
@@ -230,8 +224,16 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
 
         let transaction = CXTransaction(action: CXEndCallAction(call: callUUID))
         callController.request(transaction) { [weak self] error in
-            guard error != nil else { return }
-            self?.coordinator?.performEndCall()
+            if let error {
+                MessagingDiagLog.log("systemCall CXEndCallAction FAILED (\(error)) — ending in-app")
+                self?.coordinator?.performEndCall()
+                // The transaction failed, so CallKit will never fire our perform-handler: the
+                // system call would stay on screen forever. Report it ended directly instead.
+                self?.provider.reportCall(with: callUUID, endedAt: Date(), reason: .remoteEnded)
+                _ = self?.removeRecord(for: callUUID)
+            } else {
+                MessagingDiagLog.log("systemCall CXEndCallAction requested ok")
+            }
         }
         return true
     }
@@ -265,6 +267,7 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
         update.supportsHolding = false
         update.supportsUngrouping = false
 
+        SharedCallProvider.shared.makeActive(self)
         provider.reportNewIncomingCall(with: callUUID, update: update) { [weak self] error in
             guard let self else {
                 completion(false)
@@ -292,10 +295,15 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
     }
 
     func reportEndedIfNeeded(callId: String?, reason: CXCallEndedReason) {
-        guard let callId,
-              let record = record(forCallId: callId) else {
+        guard let callId else {
+            MessagingDiagLog.log("systemCall reportEnded SKIPPED: nil callId")
             return
         }
+        guard let record = record(forCallId: callId) else {
+            MessagingDiagLog.log("systemCall reportEnded SKIPPED: no record for \(callId.prefix(8))")
+            return
+        }
+        MessagingDiagLog.log("systemCall reportEnded uuid=\(record.callUUID.uuidString.prefix(8)) reason=\(reason.rawValue)")
         provider.reportCall(with: record.callUUID, endedAt: Date(), reason: reason)
         _ = removeRecord(for: record.callUUID)
     }
@@ -308,6 +316,15 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
     ) {
         guard let callUUID = UUID(uuidString: callId) else {
             return
+        }
+
+        // A stale record for this session (an earlier attempt whose failure report never
+        // landed) blocks every later dial and pins the system call UI open — end it first.
+        let staleUUID = syncQueue.sync { callUUIDBySessionId[sessionId] }
+        if let staleUUID, staleUUID != callUUID {
+            MessagingDiagLog.log("gatt-call ending stale system-call record before new dial")
+            provider.reportCall(with: staleUUID, endedAt: Date(), reason: .failed)
+            _ = removeRecord(for: staleUUID)
         }
 
         let shouldStart = syncQueue.sync {
@@ -325,6 +342,7 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
         }
         guard shouldStart else { return }
 
+        SharedCallProvider.shared.makeActive(self)
         let action = CXStartCallAction(
             call: callUUID,
             handle: CXHandle(type: .generic, value: contactName)
@@ -375,9 +393,23 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
             action.fulfill()
             return
         }
+        MessagingDiagLog.log("systemCall perform CXEndCallAction uuid=\(action.callUUID.uuidString.prefix(8))")
         coordinator?.performEndCall()
         _ = removeRecord(for: action.callUUID)
         action.fulfill()
+    }
+
+    // CallKit owns the AVAudioSession lifecycle whenever it's coordinating the call.
+    // These two callbacks let us know when the system has actually taken over (so route
+    // changes etc. play nicely with AirPods/Bluetooth) and — more importantly — when the
+    // system tears the session down (e.g. another VoIP/PSTN call interrupts ours), so we
+    // can stop pushing audio into a session that's no longer ours.
+    func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        coordinator?.handleSystemAudioSessionActivated()
+    }
+
+    func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        coordinator?.handleSystemAudioSessionDeactivated()
     }
 
     private func record(forCallId callId: String) -> ChatPeerVoiceSystemCallRecord? {
@@ -468,9 +500,27 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
     private var isRemoteVideoAvailable = false
     private var remoteVideoStaleWorkItem: DispatchWorkItem?
     private var hasPersistedCurrentCallEvent = false
+    // Voice calls to Android contacts ride the P2P GATT link instead of MultipeerConnectivity.
+    // The transport is chosen per call; all shared state/phase/UI plumbing stays identical.
+    private var callTransport: ChatPeerCallTransport = .multipeer
+    private var gattRuntime: ChatPeerVoiceGattCallRuntime?
+    // Cached UIApplication state, updated by the lifecycle notifications below. Reading
+    // UIApplication.applicationState from a background thread requires hopping to main,
+    // which we want to avoid in audio/transport paths (see isApplicationActive).
+    private var cachedApplicationActive: Bool = true
 
     private override init() {
         super.init()
+        // Seed the cache so the first read before any lifecycle notification is correct.
+        if Thread.isMainThread {
+            cachedApplicationActive = UIApplication.shared.applicationState == .active
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let active = UIApplication.shared.applicationState == .active
+                self.transportQueue.async { self.cachedApplicationActive = active }
+            }
+        }
         systemCallBridge.bind(coordinator: self)
         audioPipeline.onEncodedPacket = { [weak self] payload in
             self?.sendAudioPacket(payload)
@@ -522,8 +572,14 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
 
     func placeCall(sessionId: UUID, contact: ContactRecord?, kind: ChatPeerCallKind = .audio) {
         guard let contact else {
+            MessagingDiagLog.log("placeCall: no contact — ignored")
             return
         }
+        MessagingDiagLog.log(
+            "placeCall: transport=\(contact.preferredTransport) platform=\(String(describing: contact.remotePlatform)) " +
+                "supportsInternet=\(contact.supportsInternet) gattEligible=\(Self.isGattCallEligibleContact(contact)) " +
+                "iosEligible=\(Self.isEligibleContact(contact))"
+        )
         if AppStoreScreenshotSupport.isAnySceneEnabled {
             guard kind == .audio else {
                 transitionToFailure(message: localizedStatusMessage(for: .unavailable, kind: kind))
@@ -532,8 +588,35 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
             placeScreenshotCall(sessionId: sessionId, contact: contact)
             return
         }
+        if Self.isGattCallEligibleContact(contact) {
+            // With the Bluetooth radio off a GATT dial can never come up — it just sat on
+            // "Searching for the nearby contact…" for the whole window. If the peer is
+            // internet-reachable, place the WebRTC call instead (Android-parity dual transport).
+            Task { @MainActor [weak self] in
+                if ContactBroadcastManager.shared.bluetoothState != .poweredOn,
+                   contact.supportsInternet,
+                   InternetChatTransport.shared.isAvailable() {
+                    MessagingDiagLog.log("call reroute: Bluetooth off → internet (WebRTC) call")
+                    AppAnalytics.callStarted(transport: "internet")
+                    InternetCallManager.shared.startCall(contact: contact)
+                } else {
+                    AppAnalytics.callStarted(transport: "p2p_gatt")
+                    self?.placeGattCall(sessionId: sessionId, contact: contact, kind: kind)
+                }
+            }
+            return
+        }
+        AppAnalytics.callStarted(transport: "p2p_gatt")
         guard Self.isFeatureSupported,
               Self.isEligibleContact(contact) else {
+            // Not a nearby-call contact at all. If reachable over the internet, place a WebRTC
+            // call instead of silently doing nothing (the "tapped call, nothing happened" case).
+            if contact.supportsInternet {
+                MessagingDiagLog.log("placeCall: not nearby-eligible → internet (WebRTC) call")
+                Task { @MainActor in InternetCallManager.shared.startCall(contact: contact) }
+            } else {
+                MessagingDiagLog.log("placeCall: not eligible and no internet — nothing to do")
+            }
             return
         }
         guard let targetSessionCode = Self.targetSessionCode(for: contact) else {
@@ -657,11 +740,29 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
 
     func handleIncomingCallNotificationAnswer(sessionId: UUID) {
         requestOpenSession(sessionId)
-        answerCall(sessionId: sessionId)
+        // The fallback ring for an internet (WebRTC) call posts the same notification category
+        // (see InternetCallManager's reportNewIncomingCall failure path) — route to whichever
+        // engine actually holds the incoming call for this session. The internet manager is
+        // @MainActor, so the decision hops there instead of assuming the delegate's thread.
+        Task { @MainActor [weak self] in
+            let call = InternetCallManager.shared.call
+            if call?.sessionId == sessionId, call?.state == .incoming {
+                InternetCallManager.shared.accept()
+            } else {
+                self?.answerCall(sessionId: sessionId)
+            }
+        }
     }
 
     func handleIncomingCallNotificationReject(sessionId: UUID) {
-        rejectIncomingCall(sessionId: sessionId)
+        Task { @MainActor [weak self] in
+            let call = InternetCallManager.shared.call
+            if call?.sessionId == sessionId, call?.state == .incoming {
+                InternetCallManager.shared.reject()
+            } else {
+                self?.rejectIncomingCall(sessionId: sessionId)
+            }
+        }
     }
 
     func consumeRequestedOpenSession() {
@@ -672,37 +773,47 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
 
     fileprivate func performAnswerCall(sessionId: UUID) {
         SOSNotificationCenter.clearIncomingCallNotification(sessionId: sessionId)
-        let kind = transportQueue.sync { callSessionId == sessionId ? (callKind ?? .audio) : .audio }
-        requestPermissions(for: kind) { [weak self] granted in
+        // Read callKind on the transport queue rather than blocking the caller (often the
+        // main thread, e.g. from CXAnswerCallAction handler). transportQueue.sync from main
+        // can freeze the UI for as long as the transport queue is busy with audio work.
+        transportQueue.async { [weak self] in
             guard let self else { return }
-            guard granted else {
-                self.rejectIncomingCall(sessionId: sessionId, reason: "permissions_required")
-                self.transitionToFailure(message: self.localizedPermissionRequiredMessage(for: kind))
-                return
-            }
+            let kind = (self.callSessionId == sessionId) ? (self.callKind ?? .audio) : .audio
+            self.requestPermissions(for: kind) { [weak self] granted in
+                guard let self else { return }
+                guard granted else {
+                    self.rejectIncomingCall(sessionId: sessionId, reason: "permissions_required")
+                    self.transitionToFailure(message: self.localizedPermissionRequiredMessage(for: kind))
+                    return
+                }
 
-            self.transportQueue.async {
-                guard self.callSessionId == sessionId else { return }
-                guard case .incoming? = self.callDirection else { return }
-                guard case .ringing = self.callPhase else { return }
-                guard let callId = self.callId else { return }
-                let kind = self.callKind ?? .audio
+                self.transportQueue.async {
+                    guard self.callSessionId == sessionId else { return }
+                    guard case .incoming? = self.callDirection else { return }
+                    guard case .ringing = self.callPhase else { return }
+                    guard let callId = self.callId else { return }
+                    let kind = self.callKind ?? .audio
 
-                self.stopRinging()
-                do {
-                    self.isMuted = false
-                    self.audioPipeline.isMuted = false
-                    self.audioPipeline.setSpeakerEnabled(self.isSpeakerEnabled)
-                    try self.audioPipeline.start()
-                    try self.startVideoIfNeeded()
-                    self.callConnectedAt = Date()
-                    self.setPhase(.active, message: self.localizedStatusMessage(for: .active, kind: kind))
-                    self.cancelUnansweredTimeout()
-                    self.sendControl(.accept, callId: callId, reason: nil)
-                    self.publishSnapshot()
-                } catch {
-                    self.sendControl(.reject, callId: callId, reason: "audio_error")
-                    self.handleAudioFailure(self.localizedStatusMessage(for: .unavailable, kind: kind))
+                    self.stopRinging()
+                    do {
+                        self.isMuted = false
+                        if self.callTransport == .gattP2p {
+                            try self.startGattTransportAudio()
+                        } else {
+                            self.audioPipeline.isMuted = false
+                            self.audioPipeline.setSpeakerEnabled(self.isSpeakerEnabled)
+                            try self.audioPipeline.start()
+                            try self.startVideoIfNeeded()
+                        }
+                        self.callConnectedAt = Date()
+                        self.setPhase(.active, message: self.localizedStatusMessage(for: .active, kind: kind))
+                        self.cancelUnansweredTimeout()
+                        self.sendControl(.accept, callId: callId, reason: nil)
+                        self.publishSnapshot()
+                    } catch {
+                        self.sendControl(.reject, callId: callId, reason: "audio_error")
+                        self.handleAudioFailure(self.localizedStatusMessage(for: .unavailable, kind: kind))
+                    }
                 }
             }
         }
@@ -765,7 +876,11 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         transportQueue.async {
             guard case .active = self.callPhase else { return }
             self.isMuted.toggle()
-            self.audioPipeline.isMuted = self.isMuted
+            if self.callTransport == .gattP2p {
+                self.gattRuntime?.audioEngine.muted = self.isMuted
+            } else {
+                self.audioPipeline.isMuted = self.isMuted
+            }
             self.publishSnapshot()
         }
     }
@@ -774,8 +889,12 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         transportQueue.async {
             guard case .active = self.callPhase else { return }
             self.isSpeakerEnabled.toggle()
-            self.audioPipeline.setSpeakerEnabled(self.isSpeakerEnabled)
-            self.screenshotKeepAlivePlayer.setSpeakerEnabled(self.isSpeakerEnabled)
+            if self.callTransport == .gattP2p {
+                self.gattRuntime?.audioEngine.setSpeakerEnabled(self.isSpeakerEnabled)
+            } else {
+                self.audioPipeline.setSpeakerEnabled(self.isSpeakerEnabled)
+                self.screenshotKeepAlivePlayer.setSpeakerEnabled(self.isSpeakerEnabled)
+            }
             self.publishSnapshot()
         }
     }
@@ -814,6 +933,31 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         }
     }
 
+    fileprivate func handleSystemAudioSessionActivated() {
+        // CallKit has activated the audio session on our behalf. The multipeer pipeline
+        // self-configures in audioPipeline.start(); the GATT engine however may have started
+        // capture BEFORE this activation, leaving its input tap on a dead pre-activation route
+        // (packets flowed, but they carried encoded silence). Reinstall the tap on the live route.
+        transportQueue.async { [weak self] in
+            guard let self, self.callTransport == .gattP2p, let runtime = self.gattRuntime else { return }
+            MessagingDiagLog.log("gatt-call refreshing input after CallKit session activation")
+            runtime.audioEngine.refreshInputAfterSessionActivation()
+        }
+    }
+
+    fileprivate func handleSystemAudioSessionDeactivated() {
+        // The system has reclaimed the audio session — typically because a higher-priority
+        // call (cellular, FaceTime) interrupted ours. Tear the audio pipeline down so it
+        // doesn't keep trying to push samples into a session it no longer owns. We don't
+        // forcibly end the call here — CallKit will deliver a CXEndCallAction shortly if
+        // the call is truly over.
+        transportQueue.async {
+            guard self.callId != nil else { return }
+            self.audioPipeline.stop()
+            self.videoPipeline.stop()
+        }
+    }
+
     func dismissTerminalState(for sessionId: UUID) {
         transportQueue.async {
             guard self.callSessionId == sessionId else { return }
@@ -842,6 +986,19 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
             return false
         }
         return contact.preferredTransport == .bleGatt && contact.remotePlatform == .ios
+    }
+
+    /// Android peers cannot join MultipeerConnectivity; their calls ride the P2P GATT link.
+    nonisolated static func isGattCallEligibleContact(_ contact: ContactRecord?) -> Bool {
+        guard isFeatureSupported,
+              let contact else {
+            return false
+        }
+        return contact.preferredTransport == .bleGatt && contact.remotePlatform == .android
+    }
+
+    nonisolated static func isCallEligibleContact(_ contact: ContactRecord?) -> Bool {
+        isEligibleContact(contact) || isGattCallEligibleContact(contact)
     }
 
     nonisolated static func targetSessionCode(for contact: ContactRecord) -> String? {
@@ -875,11 +1032,37 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         transportQueue.async {
             self.eligibleContactsBySessionId = bySessionId
             self.eligibleContactsByRemoteSessionCode = byRemoteSessionCode
-            if let sessionId = self.callSessionId,
-               let updatedContact = bySessionId[sessionId] {
-                self.callContact = updatedContact
-                self.callDisplayName = Self.displayName(for: updatedContact)
-                self.publishSnapshot()
+            if let sessionId = self.callSessionId {
+                // Judge the active call's contact with the call-wide eligibility (multipeer
+                // iOS peers OR GATT Android peers) — `bySessionId` is the multipeer-only map,
+                // so an Android GATT call would be killed with "contact_removed" by the very
+                // first contact-store mutation mid-call (even our own updateBleAddress).
+                let liveContact = contacts.first {
+                    $0.id == sessionId && Self.isCallEligibleContact($0)
+                }
+                if let updatedContact = liveContact {
+                    self.callContact = updatedContact
+                    self.callDisplayName = Self.displayName(for: updatedContact)
+                    self.publishSnapshot()
+                } else if self.callId != nil {
+                    // The contact backing the active call vanished (deleted or no longer
+                    // eligible). End the call gracefully rather than continuing to use a
+                    // stale ContactRecord — calling code (status messages, persistence,
+                    // peer routing) all rely on callContact being live.
+                    let kind = self.callKind ?? .audio
+                    NSLog(
+                        "[ChatPeerVoice] Ending call %@ — contact %@ no longer call-eligible",
+                        self.callId ?? "?", sessionId.uuidString
+                    )
+                    if let callId = self.callId {
+                        self.sendControl(.end, callId: callId, reason: "contact_removed")
+                    }
+                    self.transitionToFailure(
+                        message: self.localizedStatusMessage(for: .unavailable, kind: kind),
+                        resultOverride: .canceled
+                    )
+                    self.disconnectAndReset()
+                }
             }
             if bySessionId.isEmpty, self.callId == nil {
                 self.stopServices()
@@ -891,6 +1074,7 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
 
     private func handleApplicationDidBecomeActive() {
         transportQueue.async {
+            self.cachedApplicationActive = true
             if self.callKind == .video,
                self.isLocalVideoEnabled,
                case .active = self.callPhase {
@@ -908,6 +1092,7 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
 
     private func handleApplicationDidEnterBackground() {
         transportQueue.async {
+            self.cachedApplicationActive = false
             if self.callKind == .video {
                 self.videoPipeline.stop()
             }
@@ -1048,7 +1233,11 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
             callerDisplayName: localDisplayName,
             callKind: callKind
         )
-        guard let payload = try? encoder.encode(context) else {
+        let payload: Data
+        do {
+            payload = try encoder.encode(context)
+        } catch {
+            NSLog("[ChatPeerVoice] Failed to encode invite context: %@", String(describing: error))
             transitionToFailure(message: localizedStatusMessage(for: .unavailable, kind: callKind))
             return
         }
@@ -1128,9 +1317,19 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         contextData: Data?,
         invitationHandler: @escaping (Bool, MCSession?) -> Void
     ) {
-        guard let contextData,
-              let invite = try? decoder.decode(ChatPeerVoiceInviteContext.self, from: contextData),
-              invite.calleeSessionCode == localSessionCode,
+        guard let contextData else {
+            invitationHandler(false, nil)
+            return
+        }
+        let invite: ChatPeerVoiceInviteContext
+        do {
+            invite = try decoder.decode(ChatPeerVoiceInviteContext.self, from: contextData)
+        } catch {
+            NSLog("[ChatPeerVoice] Failed to decode invite context from peer: %@", String(describing: error))
+            invitationHandler(false, nil)
+            return
+        }
+        guard invite.calleeSessionCode == localSessionCode,
               let contact = eligibleContactsByRemoteSessionCode[invite.callerSessionCode] else {
             invitationHandler(false, nil)
             return
@@ -1206,13 +1405,27 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
     }
 
     private func sendControl(_ kind: ChatPeerVoiceControlKind, callId: String, reason: String?) {
+        if callTransport == .gattP2p {
+            sendGattControl(kind, callId: callId, reason: reason)
+            return
+        }
         let control = ChatPeerVoiceControlMessage(
             kind: kind,
             callId: callId,
             displayName: localDisplayName,
             reason: reason
         )
-        guard let payload = try? encoder.encode(control) else { return }
+        let payload: Data
+        do {
+            payload = try encoder.encode(control)
+        } catch {
+            // ChatPeerVoiceControlMessage is a simple struct so encoding should never
+            // realistically fail; log if it ever does so a missed signal (e.g. an
+            // accept/end never reaching the peer) doesn't get hidden.
+            NSLog("[ChatPeerVoice] Failed to encode control message kind=%@: %@",
+                  String(describing: kind), String(describing: error))
+            return
+        }
         sendEnvelope(type: .control, sequence: 0, payload: payload, mode: .reliable)
     }
 
@@ -1268,7 +1481,12 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
 
         switch envelope.type {
         case .control:
-            guard let control = try? decoder.decode(ChatPeerVoiceControlMessage.self, from: envelope.payload) else {
+            let control: ChatPeerVoiceControlMessage
+            do {
+                control = try decoder.decode(ChatPeerVoiceControlMessage.self, from: envelope.payload)
+            } catch {
+                NSLog("[ChatPeerVoice] Failed to decode control message from peer %@: %@",
+                      peer.displayName, String(describing: error))
                 return
             }
             handleControl(control, from: peer)
@@ -1361,10 +1579,14 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
             return
         }
         do {
-            audioPipeline.isMuted = isMuted
-            audioPipeline.setSpeakerEnabled(isSpeakerEnabled)
-            try audioPipeline.start()
-            try startVideoIfNeeded()
+            if callTransport == .gattP2p {
+                try startGattTransportAudio()
+            } else {
+                audioPipeline.isMuted = isMuted
+                audioPipeline.setSpeakerEnabled(isSpeakerEnabled)
+                try audioPipeline.start()
+                try startVideoIfNeeded()
+            }
             callConnectedAt = callConnectedAt ?? Date()
             setPhase(.active, message: localizedStatusMessage(for: .active, kind: callKind ?? .audio))
             if case .outgoing? = callDirection {
@@ -1542,6 +1764,14 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
 
     private func handleAudioFailure(_ message: String) {
         transportQueue.async {
+            // The multipeer audio pipeline only carries multipeer calls — a GATT call runs its
+            // own engine with its own watchdog. CallKit's audio-session juggling at dial time
+            // can surface a spurious pipeline failure here, which used to kill a healthy GATT
+            // call the instant it started (ring/accept then arrived into a dead call).
+            guard self.callTransport != .gattP2p else {
+                MessagingDiagLog.log("ignoring multipeer audio-pipeline failure during gattP2p call")
+                return
+            }
             self.transitionToFailure(message: message)
             self.disconnectAndReset()
         }
@@ -1571,6 +1801,7 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         cancelPendingOfferTimeout()
         cancelRemoteVideoStaleTimeout()
         stopRinging()
+        teardownGattCallRuntime()
         audioPipeline.stop()
         videoPipeline.stop()
         screenshotKeepAlivePlayer.stop()
@@ -1614,6 +1845,7 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         lastNotifiedIncomingCallId = nil
         shouldPresentFallbackIncomingUI = false
         stopRinging()
+        teardownGattCallRuntime()
         audioPipeline.stop()
         videoPipeline.stop()
         isMuted = false
@@ -1653,27 +1885,64 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
     }
 
     private func setPhase(_ phase: ChatPeerVoiceCallPhase, message: String) {
+        let wasActive = callPhase == .active
+        let willBeActive = phase == .active
         callPhase = phase
         callStatusMessage = message
+        if willBeActive && !wasActive {
+            enableInCallSystemBehaviors()
+        } else if wasActive && !willBeActive {
+            disableInCallSystemBehaviors()
+        }
         publishSnapshot()
     }
 
+    /// Keep the screen awake (so a hands-free or speaker call doesn't auto-lock and tear
+    /// down the audio session) and — for audio-only calls — enable proximity monitoring so
+    /// the screen turns off when held to the ear and stops accidental face-taps from
+    /// muting/ending the call.
+    private func enableInCallSystemBehaviors() {
+        let isAudioOnly = (callKind ?? .audio) == .audio
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = true
+            if isAudioOnly {
+                UIDevice.current.isProximityMonitoringEnabled = true
+            }
+        }
+    }
+
+    private func disableInCallSystemBehaviors() {
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = false
+            UIDevice.current.isProximityMonitoringEnabled = false
+        }
+    }
+
     private func transitionToEnded(message: String, resultOverride: SOSChatCallResult? = nil) {
+        let wasActive = callPhase == .active
         let result = resultOverride ?? derivedCallEventResult()
         recordCurrentCallEventIfNeeded(resultOverride: result)
         systemCallBridge.reportEndedIfNeeded(callId: callId, reason: Self.systemEndedReason(for: result))
         callPhase = .ended(message: message)
         callStatusMessage = message
+        if wasActive {
+            disableInCallSystemBehaviors()
+        }
         publishSnapshot()
         scheduleTerminalReset()
     }
 
     private func transitionToFailure(message: String, resultOverride: SOSChatCallResult? = nil) {
+        MessagingDiagLog.log("call FAILURE transition: \(message) transport=\(String(describing: callTransport))")
+        let wasActive = callPhase == .active
         let result = resultOverride ?? derivedCallEventResult()
         recordCurrentCallEventIfNeeded(resultOverride: result)
         systemCallBridge.reportEndedIfNeeded(callId: callId, reason: .failed)
         callPhase = .failed(message: message)
         callStatusMessage = message
+        if wasActive {
+            disableInCallSystemBehaviors()
+        }
         publishSnapshot()
         scheduleTerminalReset()
     }
@@ -1699,7 +1968,8 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
             sessionId: sessionId,
             direction: direction == .incoming ? .incoming : .outgoing,
             result: result,
-            durationMillis: durationMillis
+            durationMillis: durationMillis,
+            analyticsTransport: "p2p_gatt"
         )
         hasPersistedCurrentCallEvent = true
     }
@@ -1964,12 +2234,12 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
     }
 
     private var isApplicationActive: Bool {
-        if Thread.isMainThread {
-            return UIApplication.shared.applicationState == .active
-        }
-        return DispatchQueue.main.sync {
-            UIApplication.shared.applicationState == .active
-        }
+        // Read the cached value rather than hopping to the main queue. Calling
+        // DispatchQueue.main.sync from transportQueue to query UIApplication.state can
+        // freeze the call flow if the main thread is busy (and risks deadlock if anything
+        // up the stack is also waiting on transportQueue). The value is kept in sync via
+        // the willResignActive / didBecomeActive / didEnterBackground notifications below.
+        cachedApplicationActive
     }
 }
 
@@ -2135,6 +2405,7 @@ private final class ChatPeerVoiceScreenshotNowPlayingBridge {
 final class ChatPeerVoiceCallController: ObservableObject {
     @Published private(set) var phase: ChatPeerVoiceCallPhase = .idle
     @Published private(set) var isEligibleForCurrentContact = false
+    @Published private(set) var isVideoEligibleForCurrentContact = false
     @Published private(set) var statusMessage = ""
     @Published private(set) var callKind: ChatPeerCallKind = .audio
     @Published private(set) var isMuted = false
@@ -2243,17 +2514,23 @@ final class ChatPeerVoiceCallController: ObservableObject {
     }
 
     var shouldPresentFullScreenExperience: Bool {
-        if callKind != .video {
-            guard !coordinator.isSystemManagingCall(sessionId: sessionId) else { return false }
-        }
         guard isCallForCurrentSession else { return false }
         switch phase {
-        case .dialing, .connecting, .active:
-            return true
-        case .ringing:
-            return direction == .outgoing
         case .idle, .ended, .failed:
             return false
+        case .ringing:
+            // Incoming ringing is owned by CallKit's native incoming-call UI; only outgoing
+            // ringing is shown in-app so the caller sees who they are reaching.
+            return direction == .outgoing
+        case .active:
+            // Once the call is connected, hand audio calls off to CallKit so the user gets
+            // the iOS native in-call experience (Dynamic Island / lock-screen UI). Video
+            // calls keep the in-app UI since CallKit doesn't render video frames.
+            return callKind == .video
+        case .dialing, .connecting:
+            // While placing an outgoing call CallKit doesn't render any UI, so the in-app
+            // screen is what the user sees regardless of whether CallKit has registered.
+            return true
         }
     }
 
@@ -2286,12 +2563,14 @@ final class ChatPeerVoiceCallController: ObservableObject {
     }
 
     var shouldShowToolbarVideoAction: Bool {
-        isEligibleForCurrentContact || (isCallForCurrentSession && callKind == .video)
+        // Video stays MultipeerConnectivity-only; GATT calls are audio-only.
+        isVideoEligibleForCurrentContact || (isCallForCurrentSession && callKind == .video)
     }
 
     func updateContact(_ nextContact: ContactRecord?) {
         contact = nextContact
-        isEligibleForCurrentContact = ChatPeerVoiceCallCoordinator.isEligibleContact(nextContact)
+        isEligibleForCurrentContact = ChatPeerVoiceCallCoordinator.isCallEligibleContact(nextContact)
+        isVideoEligibleForCurrentContact = ChatPeerVoiceCallCoordinator.isEligibleContact(nextContact)
         coordinator.bootstrap()
         refreshState()
     }
@@ -2343,14 +2622,19 @@ final class ChatPeerVoiceCallController: ObservableObject {
     }
 
     func answerIncomingCall() {
+        // Medium-strength tap so the user feels confirmation even before the call audio
+        // engine starts spinning up (which can take ~150-300ms on first answer).
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         coordinator.answerCall(sessionId: sessionId)
     }
 
     func rejectIncomingCall() {
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
         coordinator.rejectIncomingCall(sessionId: sessionId)
     }
 
     func endCall() {
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
         coordinator.endCall()
     }
 
@@ -2949,7 +3233,11 @@ private final class ChatPeerVoiceRingtonePlayer: NSObject, AVAudioPlayerDelegate
             self.audioPlayer = nil
             self.vibrationTimer?.invalidate()
             self.vibrationTimer = nil
-            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+            // Intentionally do NOT call AVAudioSession.setActive(false) here. The caller
+            // is often about to activate the audio pipeline (.playAndRecord/.voiceChat) for
+            // an answered call, and racing setActive(false) on the main queue against
+            // setActive(true) on the transport queue makes the call go silent. The session
+            // is deactivated centrally by audioPipeline.stop() once the call ends.
         }
     }
 
@@ -3086,11 +3374,17 @@ private final class ChatPeerVoiceScreenshotKeepAlivePlayer: NSObject, AVAudioPla
     }
 
     func stop() {
-        audioPlayer?.stop()
-        audioPlayer = nil
-        let session = AVAudioSession.sharedInstance()
-        try? session.overrideOutputAudioPort(.none)
-        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+        // Mirror ChatPeerVoiceRingtonePlayer: hop to the main queue so that
+        // AVAudioSession state changes are serialized on a single thread regardless of
+        // which queue called us (we're typically called from transportQueue, but in
+        // screenshot mode session activation also happens here, so consistency matters).
+        DispatchQueue.main.async {
+            self.audioPlayer?.stop()
+            self.audioPlayer = nil
+            let session = AVAudioSession.sharedInstance()
+            try? session.overrideOutputAudioPort(.none)
+            try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+        }
     }
 
     func setSpeakerEnabled(_ enabled: Bool) {
@@ -3859,4 +4153,683 @@ private func formattedCallDuration(since startDate: Date, referenceDate: Date = 
     let minutes = totalSeconds / 60
     let seconds = totalSeconds % 60
     return String(format: "%02d:%02d", minutes, seconds)
+}
+
+// MARK: - GATT (P2P 0xCD00) voice call transport
+
+enum ChatPeerCallTransport {
+    case multipeer
+    case gattP2p
+}
+
+/// Per-call runtime state for a GATT-transport voice call: directional AES keys, the audio
+/// engine, frame bundling, and the offer retry loop. Owned by the coordinator; torn down via
+/// `teardownGattCallRuntime()`.
+/// The BLE transport a GATT call rides on. Two implementations: `P2pGattChatManager` (this
+/// device is the central — it dialed the chat link) and `ContactBroadcastManager`'s peripheral
+/// link (the peer is the central — it connected to our hosted chat service). Signals must be
+/// answered on the link they arrived on, mirroring Android's `P2pCallController.CallLink`;
+/// picking the central manager unconditionally used to silently break incoming calls whenever
+/// the peer had dialed the link (offer heard, ring never sent → caller times out "unreachable").
+protocol GattCallLink: AnyObject {
+    @discardableResult func sendCallSignal(_ payload: [String: Any]) -> Bool
+    @discardableResult func sendCallAudioFrame(_ packet: Data) -> Bool
+    func setCallHold(_ active: Bool)
+}
+
+extension P2pGattChatManager: GattCallLink {}
+
+final class ChatPeerVoiceGattCallRuntime {
+    let sessionId: UUID
+    let callId: String
+    let callTag: Data
+    let contactKey: SymmetricKey
+    let isCaller: Bool
+    // This side's fresh salt (rides our offer/accept); protects our outbound audio key.
+    let localSaltHex: String
+    // The peer's salt (from their offer/accept); protects our inbound audio key.
+    var remoteSaltHex: String?
+    // Directional keys are derived only once BOTH salts are known (at activation), so each
+    // side's outbound key is unique per call regardless of callId reuse by a peer.
+    var txKey: SymmetricKey?
+    var rxKey: SymmetricKey?
+    let manager: GattCallLink
+    let audioEngine = GattCallAudioEngine()
+    var framesPerPacket = 2
+    var bitrateBps = 12_000
+    var nextSeq: UInt32 = 0
+    var pendingFrames: [Data] = []
+    var offerTimer: DispatchWorkItem?
+    var ringReceived = false
+    let offerStartedAt = Date()
+    // First offer that the link ACCEPTED for delivery. nil while the BLE link is still coming up —
+    // the no-ring window must not start counting before the peer could even hear us.
+    var offerDeliveredAt: Date?
+    var droppedAudioPackets = 0
+
+    // RX health tracking (watchdog + receiver-driven adaptation).
+    var lastRxAt = Date()
+    var rxExpectedSeq: UInt32 = 0
+    var rxFramesReceived = 0
+    var rxFramesLost = 0
+    var consecutiveGoodWindows = 0
+    var requestedRemoteBitrate = 12_000
+    var lastCfgSentAt = Date.distantPast
+    var watchdogTimer: DispatchWorkItem?
+    var adaptationTimer: DispatchWorkItem?
+
+    init(sessionId: UUID, callId: String, contactKey: SymmetricKey, isCaller: Bool, manager: GattCallLink) {
+        self.sessionId = sessionId
+        self.callId = callId
+        self.callTag = P2pCallProtocol.deriveCallTag(callId: callId)
+        self.contactKey = contactKey
+        self.isCaller = isCaller
+        self.localSaltHex = P2pCallProtocol.randomSaltHex()
+        self.manager = manager
+    }
+
+    /// Derive both directional keys; requires `remoteSaltHex` to be set. Returns false if not.
+    @discardableResult
+    func deriveKeys() -> Bool {
+        guard let remoteSaltHex else { return false }
+        // Our TX stream uses OUR salt; the peer's TX stream (our RX) uses the peer's salt.
+        txKey = P2pCallProtocol.deriveDirectionalKey(
+            contactKey: contactKey,
+            callId: callId,
+            callerToCallee: isCaller,
+            directionSaltHex: localSaltHex
+        )
+        rxKey = P2pCallProtocol.deriveDirectionalKey(
+            contactKey: contactKey,
+            callId: callId,
+            callerToCallee: !isCaller,
+            directionSaltHex: remoteSaltHex
+        )
+        return true
+    }
+}
+
+extension ChatPeerVoiceCallCoordinator {
+
+    private enum GattCallConstants {
+        static let offerRetryInterval: TimeInterval = 2
+        static let offerTimeout: TimeInterval = 10
+        // Fresh central dial to an Android host: scan + connect + MTU + service discovery can
+        // take 10-15s on crowded radios. Generous, but bounded — the UI shows "dialing" throughout.
+        static let linkSetupTimeout: TimeInterval = 30
+        // Tolerated caller-vs-us clock skew on an offer's timestamp. Was 12s, which silently
+        // dropped every offer from a peer whose clock drifted — keep it generous; the callId
+        // dedupe and RING_TIMEOUT on the caller's side already bound replay usefulness.
+        static let offerFreshness: TimeInterval = 60
+        static let watchdogTick: TimeInterval = 1
+        static let rxTimeout: TimeInterval = 5
+        static let adaptationWindow: TimeInterval = 5
+        static let cfgMinInterval: TimeInterval = 10
+        static let degradeLossPercent = 15
+        static let recoverLossPercent = 5
+        static let minWindowFrames = 50
+        static let maxCountedGapFrames = 200
+        static let bitrateFloor = 12_000
+        static let bitrateCeiling = 18_000
+    }
+
+    private struct GattAudioStartError: Error {}
+
+    // MARK: Outgoing
+
+    fileprivate func placeGattCall(sessionId: UUID, contact: ContactRecord, kind: ChatPeerCallKind) {
+        guard kind == .audio else {
+            // BLE bandwidth cannot carry video; surface the same "unavailable" banner the MC
+            // path uses for unsupported call kinds.
+            transitionToFailure(message: localizedStatusMessage(for: .unavailable, kind: kind))
+            return
+        }
+        requestPermissions(for: .audio) { [weak self] granted in
+            guard let self else { return }
+            guard granted else {
+                self.transitionToFailure(message: self.localizedPermissionRequiredMessage(for: .audio))
+                return
+            }
+            self.transportQueue.async {
+                guard self.callId == nil else { return }
+                guard let contactKey = ContactStore.shared.aesKey(for: contact) else {
+                    self.transitionToFailure(
+                        message: self.localizedStatusMessage(for: .unavailable, kind: .audio)
+                    )
+                    return
+                }
+                // Android's resolveLink parity: dial on the link that is ALREADY carrying the
+                // chat. When the peer dialed OUR hosted service (we are the peripheral),
+                // spinning up the central manager here used to tear that live link down
+                // (peer saw GATT status 19) and the offer died — the call rang out silently.
+                let link: GattCallLink
+                if ContactBroadcastManager.shared.isSessionConnected(sessionId) {
+                    link = ContactBroadcastManager.shared.callLink(for: sessionId)
+                } else {
+                    let manager = P2pGattChatManager.shared(sessionId: sessionId)
+                    manager.start()
+                    link = manager
+                }
+                link.setCallHold(true)
+                let callId = UUID().uuidString
+                let runtime = ChatPeerVoiceGattCallRuntime(
+                    sessionId: sessionId,
+                    callId: callId,
+                    contactKey: contactKey,
+                    isCaller: true,
+                    manager: link
+                )
+                self.callTransport = .gattP2p
+                self.gattRuntime = runtime
+                let displayName = Self.displayName(for: contact)
+                self.beginCall(
+                    sessionId: sessionId,
+                    contact: contact,
+                    displayName: displayName,
+                    callKind: .audio,
+                    direction: .outgoing,
+                    callId: callId,
+                    phase: .dialing,
+                    message: self.localizedStatusMessage(for: .dialing, kind: .audio)
+                )
+                self.systemCallBridge.startOutgoingCallIfNeeded(
+                    callId: callId,
+                    sessionId: sessionId,
+                    contactName: displayName,
+                    callKind: .audio
+                )
+                self.scheduleUnansweredTimeout(for: callId)
+                self.sendGattOffer(runtime)
+                self.scheduleNextGattOffer(runtime)
+            }
+        }
+    }
+
+    private func sendGattOffer(_ runtime: ChatPeerVoiceGattCallRuntime) {
+        let signal = P2pCallSignal(
+            kind: P2pBleProtocol.chatKindCallOffer,
+            callId: runtime.callId,
+            senderName: localDisplayName,
+            timestampMillis: Int64(Date().timeIntervalSince1970 * 1000),
+            sampleRateHz: 16_000,
+            frameMs: 20,
+            framesPerPacket: runtime.framesPerPacket,
+            bitrateBps: runtime.bitrateBps,
+            saltHex: runtime.localSaltHex
+        )
+        if let payload = P2pCallProtocol.encodeSignal(signal) {
+            let sent = runtime.manager.sendCallSignal(payload)
+            if sent, runtime.offerDeliveredAt == nil {
+                runtime.offerDeliveredAt = Date()
+                MessagingDiagLog.log("gatt-call offer first delivered (linkSetup=\(String(format: "%.1f", Date().timeIntervalSince(runtime.offerStartedAt)))s)")
+            }
+        }
+    }
+
+    private func scheduleNextGattOffer(_ runtime: ChatPeerVoiceGattCallRuntime) {
+        runtime.offerTimer?.cancel()
+        let work = DispatchWorkItem { [weak self, weak runtime] in
+            guard let self, let runtime else { return }
+            guard self.gattRuntime === runtime, self.callId == runtime.callId else { return }
+            switch self.callPhase {
+            case .dialing, .connecting, .ringing:
+                break
+            default:
+                return
+            }
+            // Two separate budgets (Android parity in spirit): the BLE link may take several
+            // seconds to establish AFTER the user dials — that time must not eat the no-ring
+            // window. Fail only when (a) the link never accepted an offer within the setup
+            // budget, or (b) an offer was delivered but no ring came back in the offer window.
+            let now = Date()
+            let linkNeverCameUp = runtime.offerDeliveredAt == nil &&
+                now.timeIntervalSince(runtime.offerStartedAt) >= GattCallConstants.linkSetupTimeout
+            let ringNeverCame = !runtime.ringReceived &&
+                (runtime.offerDeliveredAt.map { now.timeIntervalSince($0) >= GattCallConstants.offerTimeout } ?? false)
+            if linkNeverCameUp || ringNeverCame {
+                MessagingDiagLog.log(
+                    "gatt-call giving up: \(linkNeverCameUp ? "link never came up" : "no ring after delivered offer")"
+                )
+                self.transitionToFailure(
+                    message: self.localizedStatusMessage(for: .unavailable, kind: .audio),
+                    resultOverride: .canceled
+                )
+                self.disconnectAndReset()
+                return
+            }
+            self.sendGattOffer(runtime)
+            self.scheduleNextGattOffer(runtime)
+        }
+        runtime.offerTimer = work
+        transportQueue.asyncAfter(deadline: .now() + GattCallConstants.offerRetryInterval, execute: work)
+    }
+
+    // MARK: Signaling bridge
+
+    fileprivate func sendGattControl(_ kind: ChatPeerVoiceControlKind, callId: String, reason: String?) {
+        guard let runtime = gattRuntime, runtime.callId == callId else { return }
+        let signalKind: String
+        switch kind {
+        case .offer:
+            signalKind = P2pBleProtocol.chatKindCallOffer
+        case .ring:
+            signalKind = P2pBleProtocol.chatKindCallRing
+        case .accept:
+            signalKind = P2pBleProtocol.chatKindCallAccept
+        case .reject:
+            signalKind = P2pBleProtocol.chatKindCallReject
+        case .busy:
+            signalKind = P2pBleProtocol.chatKindCallBusy
+        case .end:
+            signalKind = P2pBleProtocol.chatKindCallEnd
+        }
+        var signal = P2pCallSignal(kind: signalKind, callId: callId, reason: reason)
+        if signalKind == P2pBleProtocol.chatKindCallAccept {
+            signal.sampleRateHz = 16_000
+            signal.frameMs = 20
+            signal.framesPerPacket = runtime.framesPerPacket
+            signal.bitrateBps = runtime.bitrateBps
+            signal.saltHex = runtime.localSaltHex
+        }
+        if let payload = P2pCallProtocol.encodeSignal(signal) {
+            _ = runtime.manager.sendCallSignal(payload)
+        }
+    }
+
+    // MARK: Inbound entry points (called by P2pGattChatManager on its BLE queue)
+
+    func handleGattCallSignal(sessionId: UUID, payload: [String: Any], link: GattCallLink) {
+        guard let signal = P2pCallProtocol.parseSignal(payload) else { return }
+        transportQueue.async { [weak self] in
+            self?.processGattSignal(sessionId: sessionId, signal: signal, link: link)
+        }
+    }
+
+    func handleGattCallAudio(_ packet: Data) {
+        transportQueue.async { [weak self] in
+            guard let self,
+                  self.callTransport == .gattP2p,
+                  case .active = self.callPhase,
+                  let runtime = self.gattRuntime,
+                  let rxKey = runtime.rxKey else {
+                return
+            }
+            guard let decoded = P2pCallProtocol.decodeAudioFrame(
+                rxKey: rxKey,
+                expectedCallTag: runtime.callTag,
+                packet: packet
+            ) else {
+                return
+            }
+            guard let frames = P2pCallProtocol.unpackFrameBundle(decoded.bundle) else { return }
+            runtime.lastRxAt = Date()
+            // Loss accounting for receiver-driven adaptation: gaps in the frame sequence are
+            // frames the sender emitted but we never got (dropped writes/notifications).
+            let expectedSeq = runtime.rxExpectedSeq
+            runtime.rxExpectedSeq = decoded.seq &+ UInt32(frames.count)
+            if expectedSeq > 0, decoded.seq > expectedSeq {
+                runtime.rxFramesLost += min(
+                    Int(decoded.seq - expectedSeq),
+                    GattCallConstants.maxCountedGapFrames
+                )
+            }
+            runtime.rxFramesReceived += frames.count
+            for (index, frame) in frames.enumerated() {
+                runtime.audioEngine.submitFrame(seq: Int(decoded.seq) + index, opus: frame)
+            }
+        }
+    }
+
+    private func processGattSignal(sessionId: UUID, signal: P2pCallSignal, link: GattCallLink) {
+        MessagingDiagLog.log("gatt-call recv kind=\(signal.kind) callId=\(signal.callId.prefix(8)) phase=\(String(describing: callPhase))")
+        switch signal.kind {
+        case P2pBleProtocol.chatKindCallOffer:
+            processGattOffer(sessionId: sessionId, signal: signal, link: link)
+        case P2pBleProtocol.chatKindCallRing:
+            guard callTransport == .gattP2p,
+                  callId == signal.callId,
+                  case .outgoing? = callDirection else { return }
+            gattRuntime?.ringReceived = true
+            if case .dialing = callPhase {
+                setPhase(.ringing, message: localizedStatusMessage(for: .ringingOutgoing, kind: .audio))
+            }
+        case P2pBleProtocol.chatKindCallAccept:
+            guard callTransport == .gattP2p,
+                  callId == signal.callId,
+                  case .outgoing? = callDirection,
+                  let runtime = gattRuntime else { return }
+            switch callPhase {
+            case .dialing, .connecting, .ringing:
+                // A valid accept carries the callee's audio-key salt; without it the inbound
+                // key can't be derived, so the call cannot proceed.
+                guard let calleeSalt = signal.saltHex, !calleeSalt.isEmpty else {
+                    sendGattControl(.end, callId: runtime.callId, reason: "error")
+                    transitionToFailure(
+                        message: localizedStatusMessage(for: .unavailable, kind: .audio),
+                        resultOverride: .canceled
+                    )
+                    disconnectAndReset()
+                    return
+                }
+                runtime.remoteSaltHex = calleeSalt
+                runtime.offerTimer?.cancel()
+                runtime.offerTimer = nil
+                if let fps = signal.framesPerPacket {
+                    runtime.framesPerPacket = min(max(fps, 1), 4)
+                }
+                if let bitrate = signal.bitrateBps {
+                    runtime.bitrateBps = min(max(bitrate, 6_000), 24_000)
+                }
+                cancelUnansweredTimeout()
+                activateAudioAndTransitionToActive()
+            default:
+                break
+            }
+        case P2pBleProtocol.chatKindCallReject, P2pBleProtocol.chatKindCallBusy:
+            guard callTransport == .gattP2p, callId == signal.callId else { return }
+            let semantic: LocalizedStatusSemantic =
+                signal.kind == P2pBleProtocol.chatKindCallBusy ? .busy : .rejected
+            transitionToEnded(
+                message: localizedStatusMessage(for: semantic, kind: .audio),
+                resultOverride: .rejected
+            )
+            disconnectAndReset()
+        case P2pBleProtocol.chatKindCallEnd:
+            guard callTransport == .gattP2p, callId == signal.callId else { return }
+            transitionToEnded(message: localizedStatusMessage(for: .ended, kind: .audio))
+            disconnectAndReset()
+        case P2pBleProtocol.chatKindCallCfg:
+            // Peer asked us to change our TX configuration (receiver-driven adaptation).
+            guard callTransport == .gattP2p,
+                  callId == signal.callId,
+                  let runtime = gattRuntime,
+                  case .active = callPhase else { return }
+            if let fps = signal.framesPerPacket {
+                runtime.framesPerPacket = min(max(fps, 1), 4)
+            }
+            if let bitrate = signal.bitrateBps {
+                let clamped = min(max(bitrate, 6_000), 24_000)
+                if clamped != runtime.bitrateBps {
+                    runtime.bitrateBps = clamped
+                    runtime.audioEngine.setBitrate(clamped)
+                    NSLog("[ChatPeerVoice] GATT call TX config applied: bitrate=%d fps=%d", clamped, runtime.framesPerPacket)
+                }
+            }
+            let ack = P2pCallSignal(
+                kind: P2pBleProtocol.chatKindCallCfgAck,
+                callId: runtime.callId,
+                ok: true
+            )
+            if let payload = P2pCallProtocol.encodeSignal(ack) {
+                _ = runtime.manager.sendCallSignal(payload)
+            }
+        case P2pBleProtocol.chatKindCallCfgAck:
+            break
+        default:
+            break
+        }
+    }
+
+    // MARK: RX watchdog + receiver-driven adaptation
+
+    fileprivate func startGattCallHealthTimers(_ runtime: ChatPeerVoiceGattCallRuntime) {
+        runtime.lastRxAt = Date()
+        scheduleGattWatchdogTick(runtime)
+        scheduleGattAdaptationTick(runtime)
+    }
+
+    private func scheduleGattWatchdogTick(_ runtime: ChatPeerVoiceGattCallRuntime) {
+        let work = DispatchWorkItem { [weak self, weak runtime] in
+            guard let self, let runtime, self.gattRuntime === runtime else { return }
+            guard case .active = self.callPhase else {
+                self.scheduleGattWatchdogTick(runtime)
+                return
+            }
+            if Date().timeIntervalSince(runtime.lastRxAt) > GattCallConstants.rxTimeout {
+                NSLog("[ChatPeerVoice] GATT call RX watchdog fired; ending call")
+                self.sendGattControl(.end, callId: runtime.callId, reason: "rx_timeout")
+                self.transitionToEnded(message: self.localizedStatusMessage(for: .ended, kind: .audio))
+                self.disconnectAndReset()
+                return
+            }
+            self.scheduleGattWatchdogTick(runtime)
+        }
+        runtime.watchdogTimer = work
+        transportQueue.asyncAfter(deadline: .now() + GattCallConstants.watchdogTick, execute: work)
+    }
+
+    /// This side measures its own inbound loss (seq gaps) and asks the sender to change its TX
+    /// config via `call_cfg`. Escalates to 18 kbps after two clean windows, drops back to
+    /// 12 kbps on sustained loss. Mirrors the Android controller's adaptation loop.
+    private func scheduleGattAdaptationTick(_ runtime: ChatPeerVoiceGattCallRuntime) {
+        let work = DispatchWorkItem { [weak self, weak runtime] in
+            guard let self, let runtime, self.gattRuntime === runtime else { return }
+            defer { self.scheduleGattAdaptationTick(runtime) }
+            guard case .active = self.callPhase else { return }
+            let received = runtime.rxFramesReceived
+            let lost = runtime.rxFramesLost
+            runtime.rxFramesReceived = 0
+            runtime.rxFramesLost = 0
+            let total = received + lost
+            guard total >= GattCallConstants.minWindowFrames else { return }
+            let lossPercent = lost * 100 / total
+            let cfgAllowed = Date().timeIntervalSince(runtime.lastCfgSentAt) >= GattCallConstants.cfgMinInterval
+            if lossPercent >= GattCallConstants.degradeLossPercent {
+                runtime.consecutiveGoodWindows = 0
+                if runtime.requestedRemoteBitrate > GattCallConstants.bitrateFloor, cfgAllowed {
+                    self.sendGattCfgRequest(runtime, bitrate: GattCallConstants.bitrateFloor, lossPercent: lossPercent)
+                }
+            } else if lossPercent <= GattCallConstants.recoverLossPercent {
+                runtime.consecutiveGoodWindows += 1
+                if runtime.consecutiveGoodWindows >= 2,
+                   runtime.requestedRemoteBitrate < GattCallConstants.bitrateCeiling,
+                   cfgAllowed {
+                    self.sendGattCfgRequest(runtime, bitrate: GattCallConstants.bitrateCeiling, lossPercent: lossPercent)
+                }
+            } else {
+                runtime.consecutiveGoodWindows = 0
+            }
+        }
+        runtime.adaptationTimer = work
+        transportQueue.asyncAfter(deadline: .now() + GattCallConstants.adaptationWindow, execute: work)
+    }
+
+    private func sendGattCfgRequest(_ runtime: ChatPeerVoiceGattCallRuntime, bitrate: Int, lossPercent: Int) {
+        runtime.requestedRemoteBitrate = bitrate
+        runtime.lastCfgSentAt = Date()
+        NSLog("[ChatPeerVoice] GATT call adaptation: loss=%d%% -> requesting %d bps", lossPercent, bitrate)
+        let signal = P2pCallSignal(
+            kind: P2pBleProtocol.chatKindCallCfg,
+            callId: runtime.callId,
+            framesPerPacket: 2,
+            bitrateBps: bitrate
+        )
+        if let payload = P2pCallProtocol.encodeSignal(signal) {
+            _ = runtime.manager.sendCallSignal(payload)
+        }
+    }
+
+    private func processGattOffer(sessionId: UUID, signal: P2pCallSignal, link: GattCallLink) {
+        // Every valid offer carries the caller's audio-key salt; without it we can't derive a
+        // collision-free key, so drop malformed/legacy offers.
+        guard let callerSalt = signal.saltHex, !callerSalt.isEmpty else { return }
+        if let offerTs = signal.timestampMillis {
+            let ageSeconds = Date().timeIntervalSince1970 - TimeInterval(offerTs) / 1000
+            if ageSeconds > GattCallConstants.offerFreshness {
+                NSLog(
+                    "[ChatPeerVoice] Dropping stale GATT offer callId=%@ age=%.0fs (clock skew?)",
+                    signal.callId, ageSeconds
+                )
+                return
+            }
+        }
+        if let currentCallId = callId {
+            if currentCallId == signal.callId {
+                // Duplicate offer retry: re-acknowledge the ring.
+                if callTransport == .gattP2p, case .incoming? = callDirection {
+                    sendGattControl(.ring, callId: currentCallId, reason: nil)
+                }
+                return
+            }
+            let isGattOutgoingToSamePeer = callTransport == .gattP2p &&
+                callSessionId == sessionId &&
+                callDirection == .outgoing &&
+                callConnectedAt == nil
+            if isGattOutgoingToSamePeer, signal.callId < currentCallId {
+                // Glare: both sides dialed each other. The lexicographically smaller callId
+                // wins; silently drop our own attempt and answer the winner's offer.
+                gattRuntime?.offerTimer?.cancel()
+                cancelUnansweredTimeout()
+                teardownGattCallRuntime()
+                resetRuntimeState()
+                processGattOffer(sessionId: sessionId, signal: signal, link: link)
+                return
+            }
+            // Another call is in progress; tell the caller we're busy.
+            sendGattBusy(sessionId: sessionId, callId: signal.callId, link: link)
+            return
+        }
+        guard let contact = ContactStore.shared.contact(for: sessionId),
+              let contactKey = ContactStore.shared.aesKey(for: contact) else {
+            return
+        }
+        link.setCallHold(true)
+        let runtime = ChatPeerVoiceGattCallRuntime(
+            sessionId: sessionId,
+            callId: signal.callId,
+            contactKey: contactKey,
+            isCaller: false,
+            manager: link
+        )
+        runtime.remoteSaltHex = callerSalt
+        if let fps = signal.framesPerPacket {
+            runtime.framesPerPacket = min(max(fps, 1), 4)
+        }
+        if let bitrate = signal.bitrateBps {
+            runtime.bitrateBps = min(max(bitrate, 6_000), 24_000)
+        }
+        callTransport = .gattP2p
+        gattRuntime = runtime
+        let trimmedSenderName = signal.senderName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = (trimmedSenderName?.isEmpty == false ? trimmedSenderName : nil)
+            ?? Self.displayName(for: contact)
+        beginCall(
+            sessionId: sessionId,
+            contact: contact,
+            displayName: displayName,
+            callKind: .audio,
+            direction: .incoming,
+            callId: signal.callId,
+            phase: .ringing,
+            message: localizedStatusMessage(for: .ringingIncoming, kind: .audio)
+        )
+        scheduleUnansweredTimeout(for: signal.callId)
+        sendGattControl(.ring, callId: signal.callId, reason: nil)
+        presentIncomingCallOutsideAppIfNeeded()
+    }
+
+    private func sendGattBusy(sessionId: UUID, callId: String, link: GattCallLink) {
+        let signal = P2pCallSignal(
+            kind: P2pBleProtocol.chatKindCallBusy,
+            callId: callId,
+            reason: "busy"
+        )
+        if let payload = P2pCallProtocol.encodeSignal(signal) {
+            _ = link.sendCallSignal(payload)
+        }
+    }
+
+    // MARK: Audio
+
+    fileprivate func startGattTransportAudio() throws {
+        guard let runtime = gattRuntime else {
+            MessagingDiagLog.log("gatt-call audio start FAILED: no runtime")
+            throw GattAudioStartError()
+        }
+        // Both salts are now known (caller had the callee's via accept; callee had the caller's
+        // via offer), so derive the collision-free directional keys before any audio flows.
+        guard runtime.deriveKeys() else {
+            MessagingDiagLog.log("gatt-call audio start FAILED: deriveKeys")
+            throw GattAudioStartError()
+        }
+        let engine = runtime.audioEngine
+        engine.bitrateBps = runtime.bitrateBps
+        // CallKit owns the session whenever it's coordinating this call — the engine must not
+        // self-activate (that leaves the mic feed zeroed) and instead comes alive in didActivate.
+        engine.callKitManagesSession = callId.map { systemCallBridge.isManagingCall(callId: $0) } ?? false
+        guard engine.prepare() else {
+            MessagingDiagLog.log("gatt-call audio start FAILED: engine.prepare")
+            throw GattAudioStartError()
+        }
+        engine.muted = isMuted
+        engine.setSpeakerEnabled(isSpeakerEnabled)
+        guard engine.startPlayback() else {
+            MessagingDiagLog.log("gatt-call audio start FAILED: engine.startPlayback")
+            throw GattAudioStartError()
+        }
+        let started = engine.startCapture { [weak self, weak runtime] frame in
+            guard let self, let runtime else { return }
+            self.transportQueue.async {
+                self.sendGattAudioFrame(frame, runtime: runtime)
+            }
+        }
+        guard started else {
+            MessagingDiagLog.log("gatt-call audio start FAILED: engine.startCapture")
+            throw GattAudioStartError()
+        }
+        MessagingDiagLog.log("gatt-call audio started ok (bitrate=\(runtime.bitrateBps) fpp=\(runtime.framesPerPacket) muted=\(isMuted))")
+        startGattCallHealthTimers(runtime)
+    }
+
+    private func sendGattAudioFrame(_ frame: Data, runtime: ChatPeerVoiceGattCallRuntime) {
+        guard callTransport == .gattP2p,
+              gattRuntime === runtime,
+              case .active = callPhase else {
+            return
+        }
+        runtime.pendingFrames.append(frame)
+        guard runtime.pendingFrames.count >= runtime.framesPerPacket else { return }
+        let frames = runtime.pendingFrames
+        runtime.pendingFrames.removeAll(keepingCapacity: true)
+        guard let bundle = P2pCallProtocol.packFrameBundle(frames) else { return }
+        guard let txKey = runtime.txKey else { return }
+        let seq = runtime.nextSeq
+        runtime.nextSeq &+= UInt32(frames.count)
+        guard let packet = P2pCallProtocol.encodeAudioFrame(
+            txKey: txKey,
+            callTag: runtime.callTag,
+            seq: seq,
+            bundle: bundle
+        ) else {
+            return
+        }
+        if !runtime.manager.sendCallAudioFrame(packet) {
+            if runtime.droppedAudioPackets == 0 {
+                MessagingDiagLog.log("gatt-call FIRST audio frame send DROPPED (link=\(type(of: runtime.manager)))")
+            }
+            runtime.droppedAudioPackets += 1
+        }
+    }
+
+    // MARK: Teardown
+
+    fileprivate func teardownGattCallRuntime() {
+        guard let runtime = gattRuntime else {
+            callTransport = .multipeer
+            return
+        }
+        runtime.offerTimer?.cancel()
+        runtime.offerTimer = nil
+        runtime.watchdogTimer?.cancel()
+        runtime.watchdogTimer = nil
+        runtime.adaptationTimer?.cancel()
+        runtime.adaptationTimer = nil
+        runtime.audioEngine.release()
+        runtime.manager.setCallHold(false)
+        if runtime.droppedAudioPackets > 0 {
+            NSLog("[ChatPeerVoice] GATT call ended droppedAudioPackets=%d", runtime.droppedAudioPackets)
+        }
+        gattRuntime = nil
+        callTransport = .multipeer
+    }
 }

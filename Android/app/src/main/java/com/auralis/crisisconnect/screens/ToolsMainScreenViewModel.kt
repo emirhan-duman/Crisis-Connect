@@ -66,6 +66,12 @@ class ToolsMainScreenViewModel {
                 R.string.tool_compass_description,
                 route = "compass",
                 icon = Icons.Filled.Explore
+            ),
+            ToolItem(
+                R.string.tool_recent_disasters_title,
+                R.string.tool_recent_disasters_description,
+                route = "recent_disasters",
+                drawableIcon = R.drawable.ic_disaster
             )
         )
 

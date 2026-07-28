@@ -34,16 +34,7 @@ struct ProfileToolbarLabelView: View {
                     .foregroundStyle(Color.primary)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            Capsule(style: .continuous)
-                .fill(Color.appSurfaceMuted)
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .stroke(Color.appBorder.opacity(0.28), lineWidth: 1)
-        )
+        .modifier(LegacyToolbarChipBackground())
         .fixedSize(horizontal: true, vertical: true)
         .transaction { $0.animation = nil }
         .onAppear {
@@ -73,6 +64,30 @@ struct ProfileToolbarLabelView: View {
         .background(Circle().fill(Color.appRowBackground))
         .clipShape(Circle())
         .overlay(Circle().stroke(Color.primary.opacity(0.2), lineWidth: 1))
+    }
+}
+
+/// On iOS 26+ the system wraps toolbar items in Liquid Glass, so the chip draws
+/// no background of its own — the old solid `appSurfaceMuted` pill is a pale
+/// blue that read as a bluish, "pressed" shape. On earlier iOS there's no glass,
+/// so keep the original muted capsule.
+private struct LegacyToolbarChipBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+        } else {
+            content
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.appSurfaceMuted)
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(Color.appBorder.opacity(0.28), lineWidth: 1)
+                )
+        }
     }
 }
 

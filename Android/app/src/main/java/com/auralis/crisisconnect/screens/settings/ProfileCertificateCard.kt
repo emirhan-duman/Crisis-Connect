@@ -45,6 +45,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import android.text.format.DateUtils
 import com.auralis.crisisconnect.R
 import java.text.DateFormat
 import java.util.Date
@@ -288,37 +292,47 @@ private fun LoadedBlock(
     val df = remember {
         DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, Locale.getDefault())
     }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        DetailRow(
-            label = stringResourceSafe(R.string.profile_cert_role_label),
-            value = status.certificate.role,
-        )
-        DetailRow(
-            label = stringResourceSafe(R.string.profile_cert_device_label),
-            value = status.certificate.deviceId,
-            mono = true,
-        )
-        DetailRow(
-            label = stringResourceSafe(R.string.profile_cert_issued_label),
-            value = df.format(Date(status.certificate.issuedAtMillis)),
-        )
-        DetailRow(
-            label = stringResourceSafe(R.string.profile_cert_expires_label),
-            value = df.format(Date(status.certificate.expiresAtMillis)),
-            highlight = when {
-                status.isExpired -> MaterialTheme.colorScheme.error
-                status.certificate.expiresAtMillis - System.currentTimeMillis() <
-                    24L * 60 * 60 * 1000 -> MaterialTheme.colorScheme.tertiary
-                else -> null
-            },
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        CertificateHero(status = status)
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            DetailRow(
+                label = stringResourceSafe(R.string.profile_cert_role_label),
+                value = status.certificate.role.replaceFirstChar { it.uppercase(Locale.getDefault()) },
+            )
+            DetailRow(
+                label = stringResourceSafe(R.string.profile_cert_device_label),
+                value = status.certificate.deviceId,
+                mono = true,
+            )
+            DetailRow(
+                label = stringResourceSafe(R.string.profile_cert_issued_label),
+                value = df.format(Date(status.certificate.issuedAtMillis)),
+            )
+            DetailRow(
+                label = stringResourceSafe(R.string.profile_cert_expires_label),
+                value = df.format(Date(status.certificate.expiresAtMillis)),
+                highlight = when {
+                    status.isExpired -> MaterialTheme.colorScheme.error
+                    status.certificate.expiresAtMillis - System.currentTimeMillis() <
+                        24L * 60 * 60 * 1000 -> MaterialTheme.colorScheme.tertiary
+                    else -> null
+                },
+            )
+        }
 
         HorizontalDivider(
-            modifier = Modifier.padding(vertical = 4.dp),
             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
         )
 
-        val canRenew = status.isExpired
+        Text(
+            text = stringResourceSafe(R.string.profile_cert_manage_label),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        )
+
+        val canRenew = status.isExpired || status.isRevoked
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -377,6 +391,76 @@ private fun LoadedBlock(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = stringResourceSafe(R.string.profile_cert_revoke_button))
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Prominent success/warning banner so a freshly issued certificate is
+ * impossible to miss. Green = active (with the live "expires in …" time),
+ * amber = expired, red = revoked.
+ */
+@Composable
+private fun CertificateHero(status: CertificateStatus.Loaded) {
+    val dark = isSystemInDarkTheme()
+    val relativeExpiry = remember(status.certificate.expiresAtMillis) {
+        DateUtils.getRelativeTimeSpanString(
+            status.certificate.expiresAtMillis,
+            System.currentTimeMillis(),
+            DateUtils.MINUTE_IN_MILLIS,
+        ).toString()
+    }
+
+    val container: Color
+    val content: Color
+    val icon: ImageVector
+    val title: String
+    val subtitle: String
+    when {
+        status.isRevoked -> {
+            container = if (dark) Color(0xFF4A1513) else Color(0xFFFADAD7)
+            content = if (dark) Color(0xFFFFB4AB) else Color(0xFF8C1D18)
+            icon = Icons.Filled.Close
+            title = stringResourceSafe(R.string.profile_cert_revoked_headline)
+            subtitle = stringResourceSafe(R.string.profile_cert_inactive_subtitle)
+        }
+        status.isExpired -> {
+            container = if (dark) Color(0xFF45330F) else Color(0xFFFBEBD0)
+            content = if (dark) Color(0xFFF5C26B) else Color(0xFF8A5A00)
+            icon = Icons.Filled.AccessTime
+            title = stringResourceSafe(R.string.profile_cert_expired_headline)
+            subtitle = stringResourceSafe(R.string.profile_cert_inactive_subtitle)
+        }
+        else -> {
+            container = if (dark) Color(0xFF0F3D22) else Color(0xFFD7F2DE)
+            content = if (dark) Color(0xFF7FE0A0) else Color(0xFF15692E)
+            icon = Icons.Filled.CheckCircle
+            title = stringResourceSafe(R.string.profile_cert_active_headline)
+            subtitle = stringResource(R.string.profile_cert_expires_relative, relativeExpiry)
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = container,
+        contentColor = content,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(32.dp))
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(text = subtitle, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }

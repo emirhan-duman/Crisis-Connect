@@ -189,7 +189,11 @@ class SignalFinderViewModel(application: Application) : AndroidViewModel(applica
                 },
                 capabilities = it.capabilities ?: ""
             )
-        }.sortedByDescending { it.level }
+        }
+            // Scan results can repeat a BSSID (multi-band APs, or the unknown-BSSID fallback);
+            // dedupe on the same composite the list UI uses as its item key.
+            .distinctBy { "${it.bssid}:${it.frequencyMhz}" }
+            .sortedByDescending { it.level }
         _wifi.value = mapped
     }
 

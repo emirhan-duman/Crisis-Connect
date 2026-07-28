@@ -18,7 +18,25 @@ data class ContactEntity(
     val remotePlatform: String = REMOTE_PLATFORM_UNKNOWN,
     val bleShareId: String = "",
     val lastKnownBleAddress: String = "",
-    val remoteDeviceId: String = ""
+    val remoteDeviceId: String = "",
+    // Firebase uid of the internet-messaging peer and their published identity public key
+    // (base64 SPKI). Captured from a QR scan or a directory lookup; empty for BT-only contacts.
+    val peerUid: String? = null,
+    val peerPublicKey: String? = null,
+    // The peer's published profile photo URL (Firebase Storage), shown via ContactAvatar.
+    val peerPhotoUrl: String? = null,
+    // Set when the peer's identity key changed from what we last stored (safety-number changed) —
+    // surfaces a "verify again" warning until the user re-confirms.
+    val peerKeyChanged: Boolean = false,
+    // The peer's E.164 phone number, captured when added by number over the internet. Used as the
+    // SPAKE2 password to automatically bootstrap an offline Bluetooth link when the two are nearby.
+    // Empty for contacts not added by number.
+    val peerPhone: String? = null,
+    // Whether the peer's device reported running in child profile mode when the contact was
+    // exchanged. Child contacts are never offered/used as SOS emergency contacts.
+    val peerIsChild: Boolean = false,
+    // Hidden transport-only contact for an authority channel peer (offline Bluetooth bridge).
+    val isAuthorityBridge: Boolean = false
 )
 
 fun ContactEntity.toContact(): Contact {
@@ -37,7 +55,14 @@ fun ContactEntity.toContact(): Contact {
         remotePlatform = normalizeRemotePlatform(remotePlatform),
         bleShareId = bleShareId.trim().uppercase(Locale.US),
         lastKnownBleAddress = normalizeMacAddress(lastKnownBleAddress),
-        remoteDeviceId = remoteDeviceId.trim()
+        remoteDeviceId = remoteDeviceId.trim(),
+        peerUid = peerUid?.trim().orEmpty(),
+        peerPublicKey = peerPublicKey?.trim().orEmpty(),
+        peerPhotoUrl = peerPhotoUrl?.trim().orEmpty(),
+        peerKeyChanged = peerKeyChanged,
+        peerPhone = peerPhone?.trim().orEmpty(),
+        peerIsChild = peerIsChild,
+        isAuthorityBridge = isAuthorityBridge
     )
 }
 
@@ -57,6 +82,13 @@ fun Contact.toEntity(): ContactEntity {
         remotePlatform = normalizeRemotePlatform(remotePlatform),
         bleShareId = bleShareId.trim().uppercase(Locale.US),
         lastKnownBleAddress = normalizeMacAddress(lastKnownBleAddress),
-        remoteDeviceId = remoteDeviceId.trim()
+        remoteDeviceId = remoteDeviceId.trim(),
+        peerUid = peerUid.trim().ifEmpty { null },
+        peerPublicKey = peerPublicKey.trim().ifEmpty { null },
+        peerPhotoUrl = peerPhotoUrl.trim().ifEmpty { null },
+        peerKeyChanged = peerKeyChanged,
+        peerPhone = peerPhone.trim().ifEmpty { null },
+        peerIsChild = peerIsChild,
+        isAuthorityBridge = isAuthorityBridge
     )
 }

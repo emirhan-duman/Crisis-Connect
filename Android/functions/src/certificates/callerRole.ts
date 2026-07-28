@@ -2,6 +2,45 @@ import { CallableRequest, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore } from "firebase-admin/firestore";
 
 /**
+ * True when the caller signed in anonymously (no real account). Anonymous callers are allowed to
+ * use QR-only messaging (publish their own key, look up a key by explicit UID, send/receive), but
+ * NOT phone/username directory discovery — otherwise free, unlimited anonymous UIDs would defeat
+ * the per-UID scan throttle and enable phone-number enumeration.
+ */
+export function isAnonymousCaller(request: CallableRequest<unknown>): boolean {
+  const token = request.auth?.token as Record<string, unknown> | undefined;
+  // A verified phone number upgrades the account to "real" even when the session
+  // began anonymously: the server-side Twilio OTP flow attaches the number via the
+  // Admin SDK, which leaves the session's sign_in_provider as "anonymous" but puts
+  // the phone into the ID token (phone_number claim + firebase.identities.phone).
+  if (typeof token?.phone_number === "string" && token.phone_number.length > 0) {
+    return false;
+  }
+  const firebase = token?.firebase as
+    | { sign_in_provider?: unknown; identities?: Record<string, unknown> }
+    | undefined;
+  const phoneIdentities = firebase?.identities?.["phone"];
+  if (Array.isArray(phoneIdentities) && phoneIdentities.length > 0) {
+    return false;
+  }
+  return firebase?.sign_in_provider === "anonymous";
+}
+
+/**
+ * Rejects anonymous callers from a directory-discovery path. Discovery by phone/username is a
+ * "find friends" feature reserved for real (e.g. phone-verified) accounts; QR key exchange stays
+ * open to everyone and is the private, enumeration-proof path.
+ */
+export function requireNonAnonymous(request: CallableRequest<unknown>): void {
+  if (isAnonymousCaller(request)) {
+    throw new HttpsError(
+      "permission-denied",
+      "Directory discovery requires a full account. Add contacts by QR instead."
+    );
+  }
+}
+
+/**
  * Returns the authenticated caller's UID or throws an HttpsError.
  */
 export function requireUid(request: CallableRequest<unknown>): string {

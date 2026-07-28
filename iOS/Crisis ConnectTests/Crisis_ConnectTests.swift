@@ -11,6 +11,7 @@ import CoreBluetooth
 import CoreLocation
 import Foundation
 import Darwin
+import FirebaseCore
 
 final class Crisis_ConnectTests: XCTestCase {
 
@@ -25,6 +26,63 @@ final class Crisis_ConnectTests: XCTestCase {
             try? FileManager.default.removeItem(at: url)
         }
         temporaryURLs.removeAll()
+    }
+
+    func testCrisisSentinelViewModelInstantiation() async {
+        await MainActor.run {
+            if FirebaseApp.app() == nil {
+                FirebaseApp.configure()
+            }
+            let vm = CrisisSentinelViewModel()
+            XCTAssertNotNil(vm)
+        }
+    }
+
+    func testCrisisSentinelHomeViewBody() async {
+        await MainActor.run {
+            if FirebaseApp.app() == nil {
+                FirebaseApp.configure()
+            }
+            let view = CrisisSentinelHomeView()
+            _ = view.body
+            XCTAssertNotNil(view)
+        }
+    }
+
+    func testCrisisSentinelHomeViewBodyWithConversations() async {
+        await MainActor.run {
+            if FirebaseApp.app() == nil {
+                FirebaseApp.configure()
+            }
+            let store = CrisisSentinelConversationStore()
+            // Clean up any existing ones or just save a new one
+            _ = store.saveDraft(id: nil, text: "Test conversation draft")
+            let view = CrisisSentinelHomeView()
+            _ = view.body
+            XCTAssertNotNil(view)
+        }
+    }
+
+    func testCrisisSentinelSettingsViewBody() async {
+        await MainActor.run {
+            if FirebaseApp.app() == nil {
+                FirebaseApp.configure()
+            }
+            let view = CrisisSentinelSettingsView()
+            _ = view.body
+            XCTAssertNotNil(view)
+        }
+    }
+
+    func testCrisisSentinelChatViewBody() async {
+        await MainActor.run {
+            if FirebaseApp.app() == nil {
+                FirebaseApp.configure()
+            }
+            let view = CrisisSentinelChatView(conversationID: "some-id")
+            _ = view.body
+            XCTAssertNotNil(view)
+        }
     }
 
     func testOfflineMapConfigurationBuildTileTemplateUsesExplicitKey() {
@@ -127,6 +185,33 @@ final class Crisis_ConnectTests: XCTestCase {
         XCTAssertEqual(
             P2pBleProtocol.advertisedShareId(from: advertisementData),
             "ZXCV6789"
+        )
+    }
+
+    func testP2pBleProtocolPotentialShareAdvertisementAcceptsServiceUUIDWithoutShareId() {
+        let advertisementData: [String: Any] = [
+            CBAdvertisementDataServiceUUIDsKey: [P2pBleProtocol.serviceUUID]
+        ]
+
+        XCTAssertTrue(
+            P2pBleProtocol.isPotentialContactShareAdvertisement(
+                expectedShareId: "ZXCV6789",
+                advertisementData: advertisementData
+            )
+        )
+    }
+
+    func testP2pBleProtocolPotentialShareAdvertisementRejectsMismatchedAdvertisedShareId() {
+        let advertisementData: [String: Any] = [
+            CBAdvertisementDataServiceUUIDsKey: [P2pBleProtocol.serviceUUID],
+            CBAdvertisementDataLocalNameKey: "ABCD2345"
+        ]
+
+        XCTAssertFalse(
+            P2pBleProtocol.isPotentialContactShareAdvertisement(
+                expectedShareId: "ZXCV6789",
+                advertisementData: advertisementData
+            )
         )
     }
 
@@ -693,6 +778,24 @@ final class Crisis_ConnectTests: XCTestCase {
         XCTAssertTrue(profile.shouldUseSignificantChangeMonitoring)
         XCTAssertFalse(profile.shouldWarmLocation)
         XCTAssertFalse(profile.shouldRequestOneShotLocation)
+    }
+
+    func testCrisisSentinelModelStatusCanSkipChecksumForFastReadiness() throws {
+        let payload = Data("installed model placeholder".utf8)
+        let modelURL = makeTemporaryURL(fileName: "test-model.task")
+        try payload.write(to: modelURL, options: [.atomic])
+        let store = CrisisSentinelModelFileStore(directoryURL: modelURL.deletingLastPathComponent())
+        let release = CrisisSentinelModelRelease(
+            id: "test-model",
+            displayName: "Test Model",
+            fileName: modelURL.lastPathComponent,
+            expectedSHA256: String(repeating: "0", count: 64),
+            expectedBytes: Int64(payload.count),
+            minFreeBytes: 0
+        )
+
+        XCTAssertEqual(store.status(for: release, validateChecksum: false).availability, .ready)
+        XCTAssertEqual(store.status(for: release, validateChecksum: true).availability, .corrupt)
     }
 
     private func makeTemporaryURL(fileName: String) -> URL {

@@ -18,6 +18,8 @@ struct RescueBroadcast: Identifiable, Equatable {
     var peripheralName: String
     var status: RescueConnectionStatus
     var rssi: Int?
+    var victimBatteryPercent: Int? = nil
+    var victimMedical: RescueVictimMedical? = nil
     var lastSeen: Date
     var lastUpdated: Date
 }
@@ -546,6 +548,10 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
             self.broadcastPublishWork = nil
             self.lastBroadcastPublishTime = ProcessInfo.processInfo.systemUptime
             let sorted = self.broadcastsBySessionId.values.sorted { $0.lastSeen > $1.lastSeen }
+            ResponderSignalStats.shared.update(
+                activeCount: sorted.count,
+                signalIds: sorted.compactMap { self.normalizedSignalId(from: $0.broadcastId) }
+            )
             DispatchQueue.main.async {
                 self.broadcasts = sorted
                 self.lastUpdated = sorted.isEmpty ? nil : Date()
@@ -585,6 +591,26 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
         }
     }
 
+    private func applyPeerBattery(_ batteryPercent: Int, sessionId: UUID) {
+        guard (0...100).contains(batteryPercent) else { return }
+        if var entry = broadcastsBySessionId[sessionId] {
+            entry.victimBatteryPercent = batteryPercent
+            entry.lastUpdated = Date()
+            broadcastsBySessionId[sessionId] = entry
+            publishBroadcasts()
+        }
+    }
+
+    private func applyPeerMedical(_ medical: RescueVictimMedical, sessionId: UUID) {
+        guard medical.hasContent else { return }
+        if var entry = broadcastsBySessionId[sessionId] {
+            entry.victimMedical = medical
+            entry.lastUpdated = Date()
+            broadcastsBySessionId[sessionId] = entry
+            publishBroadcasts()
+        }
+    }
+
     private func applyBroadcastId(_ broadcastId: String, sessionId: UUID) {
         guard let normalized = normalizeBroadcastId(broadcastId) else { return }
         if let existingSessionId = broadcastIdToSessionId[normalized], existingSessionId != sessionId {
@@ -608,6 +634,13 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
             return
         }
         let currentRSSI = broadcastsBySessionId[sessionId]?.rssi
+        // Only forward a real identity name — the scan-time placeholder is not the victim's
+        // display name and would pollute the dashboard marker.
+        let rawName = broadcastsBySessionId[sessionId]?.peripheralName
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let victimName = (rawName.isEmpty ||
+            rawName == NSLocalizedString("RESCUE_UNKNOWN_DEVICE", comment: "")) ? nil : rawName
+        let victimBatteryPercent = broadcastsBySessionId[sessionId]?.victimBatteryPercent
         Task { @MainActor [dashboardSyncService] in
             let resolvedLocation: SOSSignalLocationPayload?
             if let signalLocation, signalLocation.gps != nil {
@@ -615,16 +648,27 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
             } else {
                 resolvedLocation = await SOSSignalLocationCoordinator.shared.requestRelativeEstimate(rssi: currentRSSI)
             }
-            guard let resolvedLocation,
-                  resolvedLocation.gps != nil else {
-                return
-            }
+            // No fix is still a sighting: Android syncs it (firstSeen/lastSeen tell the dashboard a
+            // live victim exists); this used to bail here and the panel heard nothing at all.
+            let usableLocation = resolvedLocation?.gps != nil ? resolvedLocation : nil
             let reporterLocation = await SOSSignalLocationCoordinator.shared.requestReporterLocationPayload()
-            await dashboardSyncService.syncSignalLocation(
+            let reporterPayload = reporterLocation.map(Self.dashboardPayload(from:))
+            let synced = await dashboardSyncService.syncSignalLocation(
                 signalId: signalId,
-                signalLocation: resolvedLocation,
-                reporterLocation: reporterLocation.map(Self.dashboardPayload(from:))
+                signalLocation: usableLocation,
+                reporterLocation: reporterPayload,
+                victimName: victimName,
+                victimBatteryPercent: victimBatteryPercent
             )
+            if !synced {
+                // Offline rescuer: queue the observation so it ships on reconnect instead of dying
+                // when iOS suspends the app — the realistic field case.
+                RescueLiveLocationCoordinator.shared.enqueueSignalObservation(
+                    signalId: signalId,
+                    signalLocation: usableLocation,
+                    reporterLocation: reporterPayload
+                )
+            }
         }
     }
 
@@ -1192,6 +1236,11 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
                 self?.applyPeerName(peerName, sessionId: sessionId)
             }
         }
+        connection.onPeerBattery = { [weak self] batteryPercent in
+            self?.queue.async { [weak self] in
+                self?.applyPeerBattery(batteryPercent, sessionId: sessionId)
+            }
+        }
         connection.onSignalLocation = { [weak self] signalLocation in
             self?.queue.async { [weak self] in
                 self?.applySignalLocation(signalLocation, sessionId: sessionId)
@@ -1205,6 +1254,11 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
                 self?.applyStatus(status, to: sessionId)
             }
         }
+        connection.onPeerMedical = { [weak self] medical in
+            self?.queue.async { [weak self] in
+                self?.applyPeerMedical(medical, sessionId: sessionId)
+            }
+        }
         connection.onBroadcastId = { [weak self] broadcastId in
             self?.queue.async { [weak self] in
                 self?.applyBroadcastId(broadcastId, sessionId: sessionId)
@@ -1213,6 +1267,11 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
         connection.onPeerName = { [weak self] peerName in
             self?.queue.async { [weak self] in
                 self?.applyPeerName(peerName, sessionId: sessionId)
+            }
+        }
+        connection.onPeerBattery = { [weak self] batteryPercent in
+            self?.queue.async { [weak self] in
+                self?.applyPeerBattery(batteryPercent, sessionId: sessionId)
             }
         }
         connection.onSignalLocation = { [weak self] signalLocation in
@@ -1419,7 +1478,8 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
             delegate: self,
             queue: queue,
             options: [
-                CBCentralManagerOptionRestoreIdentifierKey: Self.bleCentralRestoreIdentifier
+                CBCentralManagerOptionRestoreIdentifierKey: Self.bleCentralRestoreIdentifier,
+                CBCentralManagerOptionShowPowerAlertKey: false
             ]
         )
     }
@@ -1500,6 +1560,9 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
         rssi RSSI: NSNumber
     ) {
         queue.async { [weak self] in
+            // Every advert processed is a scan event for the dashboard's responder telemetry —
+            // these counters shipped hardcoded to 0 for the app's whole life.
+            ResponderSignalStats.shared.recordScanEvent()
             self?.applyBLEDiscovery(peripheral, advertisementData: advertisementData, rssi: RSSI)
         }
     }

@@ -23,6 +23,7 @@ import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelUuid
@@ -34,10 +35,12 @@ import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.core.media.ImageFileUtils
 import com.auralis.crisisconnect.core.media.generateImageThumbnail
 import com.auralis.crisisconnect.data.Contact
+import com.google.firebase.auth.FirebaseAuth
 import com.auralis.crisisconnect.data.PREFERRED_TRANSPORT_BLE_GATT
 import com.auralis.crisisconnect.data.PREFERRED_TRANSPORT_RFCOMM
 import com.auralis.crisisconnect.data.REMOTE_PLATFORM_IOS
 import com.auralis.crisisconnect.data.REMOTE_PLATFORM_UNKNOWN
+import com.auralis.crisisconnect.data.getContact
 import com.auralis.crisisconnect.data.getContactByAddress
 import com.auralis.crisisconnect.data.getContactByRemoteDeviceId
 import com.auralis.crisisconnect.data.hasAnyBleGattContacts
@@ -65,9 +68,13 @@ import com.auralis.crisisconnect.data.local.ContactAvatarStorage
 import com.auralis.crisisconnect.getSavedUserName
 import com.auralis.crisisconnect.security.AesCipherHelper
 import com.auralis.crisisconnect.security.BleChunkReceiver
+import com.auralis.crisisconnect.service.p2p.call.P2pCallController
+import com.auralis.crisisconnect.service.p2p.call.P2pCallProtocol
 import com.auralis.crisisconnect.service.BleFilePayload
 import com.auralis.crisisconnect.service.BleImagePayload
 import com.auralis.crisisconnect.service.BleMessageNotifier
+import com.auralis.crisisconnect.service.CallAudioRoute
+import com.auralis.crisisconnect.service.RfcommForegroundService
 import com.auralis.crisisconnect.service.gattmesh.GattMeshForegroundService
 import java.nio.charset.StandardCharsets
 import java.util.Locale
@@ -78,6 +85,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -99,7 +108,12 @@ class P2pGattServerService : Service() {
         val clientDeviceId: String,
         val clientNonce: String,
         val clientPlatform: String,
-        val serverHelloProof: String
+        val serverHelloProof: String,
+        // The scanner's internet identity from the (separately authenticated) client-hello, so this
+        // displaying side can fall back to the online transport when Bluetooth is off. Null when the
+        // peer didn't supply it or its proof failed — those stay BLE-only.
+        val clientPeerUid: String? = null,
+        val clientPeerPublicKey: String? = null
     )
 
     private data class ParsedEnvelope(
@@ -433,7 +447,44 @@ class P2pGattServerService : Service() {
         bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         bluetoothAdapter = bluetoothManager?.adapter
         advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
-        startForeground(NOTIFICATION_ID, createNotification())
+        try {
+            startForegroundWithTypes(callActive = false)
+        } catch (startException: Exception) {
+            // Foreground promotion is rejected when started from the background on Android 12+
+            // (ForegroundServiceStartNotAllowedException). Stop instead of crashing.
+            Log.w(TAG, "P2P startForeground failed; stopping service", startException)
+            stopSelf()
+        }
+        P2pCallController.shared(applicationContext).registerServerLink(callLink)
+    }
+
+    /**
+     * The manifest declares microphone|phoneCall so voice calls can run under this service, but
+     * those types must NOT be part of a background start on Android 14+ (mic-while-in-use rule).
+     * Normal hosting therefore starts with connectedDevice only; the call controller upgrades the
+     * type from a user-visible context when a call becomes active and downgrades afterwards.
+     */
+    private fun startForegroundWithTypes(callActive: Boolean) {
+        val notification = createNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            if (callActive) {
+                types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                }
+            }
+            startForeground(NOTIFICATION_ID, notification, types)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun refreshForegroundTypeForCall(callActive: Boolean) {
+        runCatching { startForegroundWithTypes(callActive) }
+            .onFailure { throwable ->
+                Log.w(TAG, "Unable to refresh P2P foreground type callActive=$callActive", throwable)
+            }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -455,6 +506,23 @@ class P2pGattServerService : Service() {
             }
             ACTION_RELEASE_SHARED_HOST -> {
                 sharedHostEnabled = false
+            }
+            ACTION_CALL_ACCEPT,
+            ACTION_CALL_REJECT,
+            ACTION_CALL_HANGUP,
+            ACTION_CALL_MUTE,
+            ACTION_CALL_UNMUTE,
+            ACTION_CALL_SPEAKER,
+            // Telecom (system in-call UI) dispatches these generic call actions to whichever
+            // service owns the call's transport; for GATT calls that is this service.
+            RfcommForegroundService.ACTION_ACCEPT_CALL,
+            RfcommForegroundService.ACTION_REJECT_CALL,
+            RfcommForegroundService.ACTION_END_CALL,
+            RfcommForegroundService.ACTION_MUTE,
+            RfcommForegroundService.ACTION_UNMUTE,
+            RfcommForegroundService.ACTION_SYNC_CALL_AUDIO_ROUTE -> {
+                intent?.let { handleCallAction(action, it) }
+                return START_STICKY
             }
             else -> Unit
         }
@@ -497,6 +565,8 @@ class P2pGattServerService : Service() {
     }
 
     override fun onDestroy() {
+        P2pCallController.shared(applicationContext).unregisterServerLink(callLink)
+        callAudioSenderJob?.cancel()
         stopAdvertising()
         closeGattServer()
         clearAllControlState()
@@ -554,7 +624,12 @@ class P2pGattServerService : Service() {
         )
         val messageInCharacteristic = BluetoothGattCharacteristic(
             P2pBleProtocol.MESSAGE_IN_CHARACTERISTIC_UUID,
-            BluetoothGattCharacteristic.PROPERTY_WRITE,
+            // WRITE_NO_RESPONSE is required for the voice-call audio fast path: iOS centrals
+            // (CoreBluetooth enforces property/type matching, unlike Android's lenient stack)
+            // refuse .withoutResponse writes unless the characteristic advertises it — which
+            // silently dropped every audio frame of an iOS→Android GATT call.
+            BluetoothGattCharacteristic.PROPERTY_WRITE or
+                BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
             BluetoothGattCharacteristic.PERMISSION_WRITE
         )
         val messageOut = BluetoothGattCharacteristic(
@@ -812,6 +887,33 @@ class P2pGattServerService : Service() {
             setErrorResponse(deviceKey, "server_error", "Failed to create server proof")
             return
         }
+        // Optional: the scanner's internet identity, accepted ONLY when its separate HMAC verifies
+        // against the shared key + this session's nonces. A missing/bad proof just drops the
+        // identity (pairing still succeeds over BLE), keeping older peers compatible and a BLE MITM
+        // unable to inject a forged identity. Canonical proof form → matches iOS byte-for-byte.
+        var clientPeerUid: String? = null
+        var clientPeerPublicKey: String? = null
+        val offeredPeerUid = frame.optString("clientPeerUid").trim()
+        val offeredPeerKey = frame.optString("clientPeerPublicKey").trim()
+        val offeredIdentityProof = frame.optString("clientIdentityProof").trim()
+        if (offeredPeerUid.isNotBlank() && offeredPeerKey.isNotBlank() && offeredIdentityProof.isNotBlank()) {
+            val expectedIdentityProof = P2pBleProtocol.hmacBase64(
+                keyBytes,
+                P2pBleProtocol.buildClientIdentityProofPayload(
+                    shareId = session.shareId,
+                    serverNonce = session.serverNonce,
+                    clientNonce = clientNonce,
+                    peerUid = offeredPeerUid,
+                    peerPublicKey = offeredPeerKey
+                )
+            )
+            if (P2pBleProtocol.secureEqualsBase64(expectedIdentityProof, offeredIdentityProof)) {
+                clientPeerUid = offeredPeerUid
+                clientPeerPublicKey = offeredPeerKey
+            } else {
+                Log.w(TAG, "Client identity proof mismatch; ignoring internet identity")
+            }
+        }
         pendingHandshakes[deviceKey] = PendingHandshake(
             clientSessionCode = clientSessionCode,
             clientName = clientName,
@@ -819,7 +921,9 @@ class P2pGattServerService : Service() {
             clientDeviceId = clientDeviceId,
             clientNonce = clientNonce,
             clientPlatform = clientPlatform,
-            serverHelloProof = serverHelloProof
+            serverHelloProof = serverHelloProof,
+            clientPeerUid = clientPeerUid,
+            clientPeerPublicKey = clientPeerPublicKey
         )
         val localAvatarBase64 = localAvatarPayload()
         setDeviceResponse(
@@ -931,6 +1035,11 @@ class P2pGattServerService : Service() {
             }
             messageReceivers.remove(key)
             val envelopeBytes = P2pBleProtocol.unwrapTransportPacket(packet, MAX_TRANSPORT_PACKET_BYTES)
+            if (P2pCallProtocol.isCallAudioFrame(envelopeBytes)) {
+                // Binary voice-call audio fast path; must never reach the chat envelope parser.
+                P2pCallController.shared(applicationContext).onInboundCallAudio(envelopeBytes)
+                return BluetoothGatt.GATT_SUCCESS
+            }
             val envelope = parseEnvelope(envelopeBytes) ?: return BluetoothGatt.GATT_FAILURE
             serviceScope.launch {
                 handleIncomingEnvelope(device, envelope)
@@ -969,6 +1078,15 @@ class P2pGattServerService : Service() {
                 lastKnownBleAddress = address,
                 name = displayName
             )
+        }
+        if (P2pCallProtocol.isCallSignalKind(payload.kind)) {
+            val rawPayload = runCatching {
+                JSONObject(payloadBytes.toString(StandardCharsets.UTF_8))
+            }.getOrNull() ?: return
+            rememberCallRoute(contact.sessionCode, device)
+            P2pCallController.shared(applicationContext)
+                .onInboundCallSignal(contact, rawPayload, callLink)
+            return
         }
         when (payload.kind) {
             P2pBleProtocol.CHAT_KIND_TEXT -> {
@@ -1394,6 +1512,30 @@ class P2pGattServerService : Service() {
         }
         val remotePlatform = normalizeRemotePlatform(pending.clientPlatform)
         val classicSessionCode = pending.clientSessionCode.trim()
+
+        // Self-identity guard. Two different failures, two different answers:
+        //  * same DEVICE (our own device id or session code came back at us) is a loopback — there is
+        //    no peer, so anything we insert is a contact that is really us. Hard reject.
+        //  * same ACCOUNT on a genuinely different device (one responder carrying a phone AND a
+        //    tablet) is legitimate, so keep the Bluetooth link — but drop the internet identity,
+        //    because a contact whose peerUid is our own uid makes every internet send route back into
+        //    our own inbox. An SOS addressed to yourself helps nobody.
+        // Every comparison is non-blank gated: a signed-out device supplies no uid, and "" == "" would
+        // otherwise reject every offline pairing — the exact case this transport exists for.
+        val localDeviceId = session.deviceId.trim()
+        val incomingDeviceId = pending.clientDeviceId?.trim().orEmpty()
+        if ((incomingDeviceId.isNotBlank() && incomingDeviceId.equals(localDeviceId, ignoreCase = true)) ||
+            (classicSessionCode.isNotBlank() &&
+                classicSessionCode.equals(session.sessionCode.trim(), ignoreCase = true))
+        ) {
+            Log.w(TAG, "Rejecting pairing: the peer identity is this device")
+            return
+        }
+        val localUid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }
+            .getOrNull()?.trim().orEmpty()
+        val incomingUid = pending.clientPeerUid?.trim().orEmpty()
+        val sameAccount = localUid.isNotBlank() && incomingUid.isNotBlank() && incomingUid == localUid
+
         val useBlePrimary = shouldPersistBlePrimaryTransport(
             remotePlatform = remotePlatform,
             sessionCode = classicSessionCode
@@ -1426,14 +1568,22 @@ class P2pGattServerService : Service() {
                     },
                     remotePlatform = remotePlatform,
                     lastKnownBleAddress = address,
-                    remoteDeviceId = pending.clientDeviceId
+                    remoteDeviceId = pending.clientDeviceId,
+                    // Reciprocal internet identity from the authenticated client-hello, so this
+                    // (QR-displaying) side can fall back to the online transport when Bluetooth is
+                    // off — the fix for QR pairs being stranded on BLE. Blank for peers that didn't
+                    // supply it; they stay BLE-only as before.
+                    peerUid = if (sameAccount) "" else pending.clientPeerUid.orEmpty(),
+                    peerPublicKey = if (sameAccount) "" else pending.clientPeerPublicKey.orEmpty()
                 ),
                 migrateFromSessionCode = if (useBlePrimary) {
                     pending.clientSessionCode
                 } else {
                     peerSessionCode.takeIf { !it.equals(classicSessionCode, ignoreCase = true) }
                         ?: pending.clientSessionCode
-                }
+                },
+                analyticsSource = "ble_gatt_peer",
+                analyticsReceived = true
             )
             pending.clientAvatarBase64?.takeIf { it.isNotBlank() }?.let { avatarPayload ->
                 ContactAvatarStorage.saveRemoteAvatarPayload(
@@ -1498,6 +1648,179 @@ class P2pGattServerService : Service() {
                 if (offset < packet.size) {
                     kotlinx.coroutines.delay(NOTIFY_CHUNK_DELAY_MS)
                 }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------------------
+    // Voice call link (peripheral role): signaling as encrypted chat envelopes, audio as
+    // binary P2pCallProtocol frames over single unacked notifications.
+    // -------------------------------------------------------------------------------------
+
+    @Volatile
+    private var cachedCallRoute: Pair<String, BluetoothDevice>? = null
+
+    private val callAudioQueue = Channel<Pair<BluetoothDevice, ByteArray>>(
+        capacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+
+    @Volatile
+    private var callAudioSenderJob: Job? = null
+
+    private val callLink = object : P2pCallController.CallLink {
+        override val linkName: String = "p2p-server"
+
+        override fun isReadyForSession(sessionCode: String): Boolean {
+            return findSubscribedDeviceForSession(sessionCode) != null
+        }
+
+        override suspend fun sendCallSignal(sessionCode: String, payload: JSONObject): Boolean {
+            val contact = getContact(applicationContext, sessionCode) ?: return false
+            val device = findSubscribedDeviceForSession(sessionCode) ?: return false
+            rememberCallRoute(sessionCode, device)
+            return sendCallEnvelope(contact, device, payload)
+        }
+
+        override fun trySendCallAudio(sessionCode: String, packet: ByteArray): Boolean {
+            val cached = cachedCallRoute
+            val device = if (cached?.first == sessionCode &&
+                deviceKey(cached.second)?.let(subscribedCentrals::containsKey) == true
+            ) {
+                cached.second
+            } else {
+                findSubscribedDeviceForSession(sessionCode)?.also {
+                    rememberCallRoute(sessionCode, it)
+                } ?: return false
+            }
+            val wrapped = runCatching { P2pBleProtocol.wrapTransportPacket(packet) }.getOrNull()
+                ?: return false
+            if (wrapped.size > notifyChunkSizeForDevice(device)) {
+                return false
+            }
+            ensureCallAudioSender()
+            return callAudioQueue.trySend(device to wrapped).isSuccess
+        }
+    }
+
+    private fun rememberCallRoute(sessionCode: String, device: BluetoothDevice?) {
+        if (device != null) {
+            cachedCallRoute = sessionCode to device
+        }
+    }
+
+    /**
+     * Resolves the subscribed central for a contact. The contact's lastKnownBleAddress is kept
+     * fresh by every inbound envelope; when it is stale and exactly one central is subscribed,
+     * that central is the only possible peer on this 1:1 link.
+     */
+    private fun findSubscribedDeviceForSession(sessionCode: String): BluetoothDevice? {
+        cachedCallRoute?.let { (cachedSession, cachedDevice) ->
+            if (cachedSession == sessionCode &&
+                deviceKey(cachedDevice)?.let(subscribedCentrals::containsKey) == true
+            ) {
+                return cachedDevice
+            }
+        }
+        val contact = runCatching { getContact(applicationContext, sessionCode) }.getOrNull()
+        val address = contact?.lastKnownBleAddress?.trim()?.uppercase(Locale.US).orEmpty()
+        if (address.isNotBlank()) {
+            subscribedCentrals[address]?.let { return it }
+        }
+        return subscribedCentrals.values.singleOrNull()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun ensureCallAudioSender() {
+        if (callAudioSenderJob?.isActive == true) return
+        synchronized(this) {
+            if (callAudioSenderJob?.isActive == true) return
+            callAudioSenderJob = serviceScope.launch {
+                for ((device, wrapped) in callAudioQueue) {
+                    notifyMutex.withLock {
+                        if (!hasBluetoothConnectPermission()) return@withLock
+                        val characteristic = messageOutCharacteristic ?: return@withLock
+                        val server = gattServer ?: return@withLock
+                        characteristic.value = wrapped
+                        runCatching {
+                            server.notifyCharacteristicChanged(device, characteristic, false)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun sendCallEnvelope(
+        contact: Contact,
+        device: BluetoothDevice,
+        innerPayload: JSONObject
+    ): Boolean {
+        val characteristic = messageOutCharacteristic ?: return false
+        val server = gattServer ?: return false
+        val key = P2pBleProtocol.decodeBase64(contact.aesKey)?.takeIf { it.isNotEmpty() } ?: return false
+        if (deviceKey(device)?.let(subscribedCentrals::containsKey) != true) {
+            return false
+        }
+        val innerBytes = innerPayload.toString().toByteArray(StandardCharsets.UTF_8)
+        val encrypted = runCatching { AesCipherHelper.encrypt(key, innerBytes) }.getOrNull()
+            ?: return false
+        val outerBytes = JSONObject().apply {
+            put("type", P2pBleProtocol.TYPE_CHAT_ENVELOPE)
+            put("fromDeviceId", LocalKeyStorage.getOrCreateP2pDeviceId(this@P2pGattServerService))
+            put("payload", Base64.encodeToString(encrypted, Base64.NO_WRAP))
+        }.toString().toByteArray(StandardCharsets.UTF_8)
+        val packet = runCatching { P2pBleProtocol.wrapTransportPacket(outerBytes) }.getOrNull()
+            ?: return false
+        notifyMutex.withLock {
+            val maxChunkBytes = notifyChunkSizeForDevice(device)
+            var offset = 0
+            while (offset < packet.size) {
+                val end = (offset + maxChunkBytes).coerceAtMost(packet.size)
+                val chunk = packet.copyOfRange(offset, end)
+                characteristic.value = chunk
+                val notified = runCatching {
+                    server.notifyCharacteristicChanged(device, characteristic, false)
+                }.getOrDefault(false)
+                if (!notified) {
+                    return false
+                }
+                offset = end
+                if (offset < packet.size) {
+                    kotlinx.coroutines.delay(NOTIFY_CHUNK_DELAY_MS)
+                }
+            }
+        }
+        return true
+    }
+
+    private fun handleCallAction(action: String, intent: Intent) {
+        val sessionCode = intent.getStringExtra(RfcommForegroundService.EXTRA_SESSION_CODE)
+            ?.takeIf { it.isNotBlank() } ?: return
+        val callId = intent.getStringExtra(RfcommForegroundService.EXTRA_CALL_ID).orEmpty()
+        val controller = P2pCallController.shared(applicationContext)
+        when (action) {
+            ACTION_CALL_ACCEPT -> controller.acceptCall(sessionCode, callId)
+            ACTION_CALL_REJECT -> controller.rejectCall(sessionCode, callId)
+            ACTION_CALL_HANGUP -> controller.endActiveCallFromNotification(sessionCode, callId)
+            ACTION_CALL_MUTE -> controller.setMuted(sessionCode, muted = true)
+            ACTION_CALL_UNMUTE -> controller.setMuted(sessionCode, muted = false)
+            ACTION_CALL_SPEAKER -> controller.toggleSpeaker(sessionCode)
+            RfcommForegroundService.ACTION_ACCEPT_CALL -> {
+                val acceptedByTelecom = intent.getStringExtra(RfcommForegroundService.EXTRA_CALL_FLAG) ==
+                    RfcommForegroundService.CALL_ANSWERED_BY_TELECOM_FLAG
+                controller.acceptCall(sessionCode, callId, acceptedByTelecom = acceptedByTelecom)
+            }
+            RfcommForegroundService.ACTION_REJECT_CALL -> controller.rejectCall(sessionCode, callId)
+            RfcommForegroundService.ACTION_END_CALL ->
+                controller.endActiveCallFromNotification(sessionCode, callId)
+            RfcommForegroundService.ACTION_MUTE -> controller.setMuted(sessionCode, muted = true)
+            RfcommForegroundService.ACTION_UNMUTE -> controller.setMuted(sessionCode, muted = false)
+            RfcommForegroundService.ACTION_SYNC_CALL_AUDIO_ROUTE -> {
+                val route = intent.getStringExtra(RfcommForegroundService.EXTRA_CALL_AUDIO_ROUTE)
+                    ?.let { name -> runCatching { CallAudioRoute.valueOf(name) }.getOrNull() }
+                controller.onTelecomAudioRouteChanged(sessionCode, route)
             }
         }
     }
@@ -2041,6 +2364,21 @@ class P2pGattServerService : Service() {
             "com.auralis.crisisconnect.action.P2P_ACQUIRE_SHARED_HOST"
         private const val ACTION_RELEASE_SHARED_HOST =
             "com.auralis.crisisconnect.action.P2P_RELEASE_SHARED_HOST"
+        const val ACTION_CALL_ACCEPT = "com.auralis.crisisconnect.action.P2P_CALL_ACCEPT"
+        const val ACTION_CALL_REJECT = "com.auralis.crisisconnect.action.P2P_CALL_REJECT"
+        const val ACTION_CALL_HANGUP = "com.auralis.crisisconnect.action.P2P_CALL_HANGUP"
+        const val ACTION_CALL_MUTE = "com.auralis.crisisconnect.action.P2P_CALL_MUTE"
+        const val ACTION_CALL_UNMUTE = "com.auralis.crisisconnect.action.P2P_CALL_UNMUTE"
+        const val ACTION_CALL_SPEAKER = "com.auralis.crisisconnect.action.P2P_CALL_SPEAKER"
+
+        /**
+         * Upgrades/downgrades the foreground-service type around an active voice call. Must be
+         * triggered from a user-visible context (chat screen or the call notification) so the
+         * Android 14+ mic-while-in-use rule is satisfied.
+         */
+        fun applyCallForegroundType(context: Context, callActive: Boolean) {
+            activeInstance?.refreshForegroundTypeForCall(callActive)
+        }
         private const val MESH_INITIATOR_RANK_MANUFACTURER_ID = 0x0F0F
         private const val MAX_TRANSPORT_PACKET_BYTES = 8_192
         private const val MAX_ENCRYPTED_CHAT_PACKET_BYTES = 4_096

@@ -64,7 +64,13 @@ import com.auralis.crisisconnect.data.saveContact
 import com.auralis.crisisconnect.getSavedUserName
 import com.auralis.crisisconnect.data.saveRemoteMessage
 import com.auralis.crisisconnect.data.updateContactAddress
+import com.auralis.crisisconnect.messaging.MessagingIdentity
+import com.auralis.crisisconnect.nearby.NearbyContactAdvertiser
+import com.auralis.crisisconnect.nearby.NearbyContactScanner
+import com.auralis.crisisconnect.nearby.NearbyDiscoveryPreferences
+import com.auralis.crisisconnect.nearby.NearbyPairingServer
 import com.auralis.crisisconnect.security.AesCipherHelper
+import com.google.firebase.auth.FirebaseAuth
 import com.auralis.crisisconnect.security.decryptAesGcm
 import com.auralis.crisisconnect.security.encryptAesGcm
 import com.auralis.crisisconnect.telecom.RfcommTelecomCoordinator
@@ -103,6 +109,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -301,6 +308,9 @@ class RfcommForegroundService : Service() {
                 trackCallStart(sessionCode, callId, CallDirection.INCOMING, startedAt)
             },
             sendRing = { thread, callId -> sendJsonLine(thread, buildRing(callId)) },
+            sendReject = { thread, callId, reason ->
+                sendJsonLine(thread, buildReject(callId, reason))
+            },
             scheduleCallTimeout = ::scheduleCallTimeout,
             updateCallState = ::updateCallState,
             showIncomingCallNotification = ::showIncomingCallNotification,
@@ -415,7 +425,7 @@ class RfcommForegroundService : Service() {
             emitCallEvent = { event ->
                 serviceScope.launch {
                     runCatching {
-                        saveCallEvent(applicationContext, event)
+                        saveCallEvent(applicationContext, event, analyticsTransport = "bluetooth")
                     }.onFailure { error ->
                         Log.e(TAG, "Failed to persist call event", error)
                     }
@@ -437,6 +447,15 @@ class RfcommForegroundService : Service() {
 
     private val foregroundStarted = AtomicBoolean(false)
     private val foregroundHasPhoneCallType = AtomicBoolean(false)
+
+    // Nearby contact discovery (generic beacon + SPAKE2 pairing responder + device scan) is hosted
+    // here instead of a dedicated foreground service so the app shows a single persistent
+    // notification: any active foreground service lifts the background-BLE restrictions for the
+    // whole process, so it doesn't need its own. Tracks the opt-in preference while the service
+    // lives.
+    @Volatile
+    private var nearbyDiscoveryEnabled = false
+
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
@@ -445,6 +464,9 @@ class RfcommForegroundService : Service() {
                 BluetoothAdapter.STATE_ON -> {
                     Log.i(TAG, "Bluetooth turned ON, ensuring listener")
                     ensureListening("bluetooth state ON")
+                    // The BLE advertiser/scanner die silently with the adapter; a plain (idempotent)
+                    // start() would see stale state and no-op, so force a stop+start cycle.
+                    restartNearbyDiscoveryIfEnabled()
                 }
                 BluetoothAdapter.STATE_OFF, BluetoothAdapter.STATE_TURNING_OFF -> {
                     Log.w(TAG, "Bluetooth turning OFF/OFF, stopping accept thread")
@@ -452,6 +474,41 @@ class RfcommForegroundService : Service() {
                 }
             }
         }
+    }
+
+    private fun observeNearbyDiscoveryPreference() {
+        serviceScope.launch {
+            NearbyDiscoveryPreferences.isEnabled(applicationContext)
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    nearbyDiscoveryEnabled = enabled
+                    if (enabled) {
+                        Log.i(TAG, "Nearby discovery opted in, starting components")
+                        startNearbyDiscoveryComponents()
+                    } else {
+                        Log.i(TAG, "Nearby discovery opted out, stopping components")
+                        stopNearbyDiscoveryComponents()
+                    }
+                }
+        }
+    }
+
+    private fun startNearbyDiscoveryComponents() {
+        NearbyContactAdvertiser.start(applicationContext)
+        NearbyPairingServer.start(applicationContext)
+        NearbyContactScanner.start(applicationContext)
+    }
+
+    private fun stopNearbyDiscoveryComponents() {
+        NearbyContactAdvertiser.stop()
+        NearbyPairingServer.stop()
+        NearbyContactScanner.stop()
+    }
+
+    private fun restartNearbyDiscoveryIfEnabled() {
+        if (!nearbyDiscoveryEnabled) return
+        stopNearbyDiscoveryComponents()
+        startNearbyDiscoveryComponents()
     }
 
     override fun onCreate() {
@@ -469,6 +526,9 @@ class RfcommForegroundService : Service() {
         observeBleFallbackIncomingMessages()
         if (foregroundStarted.get()) {
             ensureListening("service onCreate")
+            // Background BLE work needs an active foreground service, so only host nearby
+            // discovery once the foreground start actually succeeded.
+            observeNearbyDiscoveryPreference()
         } else {
             Log.w(TAG, "Foreground start failed in onCreate, stopping service to avoid crash")
         }
@@ -689,6 +749,11 @@ class RfcommForegroundService : Service() {
             }
         }
         ensureListening("onStartCommand")
+        // Every app open restarts the service via startForegroundService; the idempotent start()s
+        // give components that bailed earlier (Bluetooth off, phone number not set yet) a retry.
+        if (nearbyDiscoveryEnabled) {
+            startNearbyDiscoveryComponents()
+        }
         return START_STICKY
     }
 
@@ -710,6 +775,11 @@ class RfcommForegroundService : Service() {
         runCatching { unregisterReceiver(bluetoothStateReceiver) }
         bleFallbackMessageJob?.cancel()
         bleFallbackMessageJob = null
+        // Only tear down the shared nearby singletons when this service started them, so an
+        // independent short-lived user (e.g. NearbyAutoLink's scan) is never killed from here.
+        if (nearbyDiscoveryEnabled) {
+            stopNearbyDiscoveryComponents()
+        }
         stopAll()
         serviceScope.cancel()
     }
@@ -952,6 +1022,16 @@ class RfcommForegroundService : Service() {
                 return@launch
             }
             val callId = UUID.randomUUID().toString()
+            if (!ActiveCallRegistry.tryAcquire(
+                    ActiveCallRegistry.Transport.RFCOMM,
+                    sessionCode,
+                    callId
+                )
+            ) {
+                Log.w(TAG, "Refusing outgoing RFCOMM call: another call is active (${ActiveCallRegistry.current()})")
+                handler.post { callback(false) }
+                return@launch
+            }
             val session = CallSession(
                 sessionCode = sessionCode,
                 callId = callId,
@@ -1483,6 +1563,24 @@ class RfcommForegroundService : Service() {
         }
     }
 
+    /**
+     * Announces our internet identity (Firebase uid + long-term public key) over the Bluetooth link
+     * so the peer can stamp it onto their contact and reach us over the internet when Bluetooth
+     * drops — no QR re-scan needed. Sent on every connection, so it self-heals a uid that changed
+     * (e.g. after a data wipe). The key is base64 (no '|'/newline), so '|' is a safe delimiter.
+     */
+    private fun sendPeerIdentity(sessionCode: String) {
+        serviceScope.launch {
+            val uid = FirebaseAuth.getInstance().currentUser?.uid?.trim()
+                ?.takeIf { it.isNotBlank() } ?: return@launch
+            val publicKey = runCatching { MessagingIdentity(applicationContext).publicKeyBase64() }
+                .getOrNull()?.trim()?.takeIf { it.isNotBlank() } ?: return@launch
+            val thread = connectedThreads[sessionCode] ?: return@launch
+            val payload = "PEER_IDENTITY|$uid|$publicKey\n"
+            thread.write(payload.toByteArray(Charsets.UTF_8))
+        }
+    }
+
     fun isSessionActive(sessionCode: String): Boolean =
         activeSessions.value.contains(sessionCode)
 
@@ -1746,6 +1844,7 @@ class RfcommForegroundService : Service() {
         updateActiveSessions(sessionCode, connected = true)
         connectedThread.start()
         sendPeerName(sessionCode)
+        sendPeerIdentity(sessionCode)
     }
 
     private fun connectionFailed(sessionCode: String) {
@@ -3172,6 +3271,7 @@ class RfcommForegroundService : Service() {
         notifyPeer: Boolean,
         resultOverride: CallResult? = null
     ) {
+        ActiveCallRegistry.release(ActiveCallRegistry.Transport.RFCOMM, session.callId)
         val fallbackDirection = if (session.isOutgoing) {
             CallDirection.OUTGOING
         } else {
@@ -3686,6 +3786,10 @@ class RfcommForegroundService : Service() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val localizedContext = NotificationLocalization.localizedContext(this)
+            // Nearby discovery used to run in its own foreground service with this channel; it is
+            // hosted here now, so drop the stale channel from upgraded installs.
+            NotificationManagerCompat.from(this)
+                .deleteNotificationChannel(LEGACY_NEARBY_DISCOVERY_CHANNEL_ID)
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 localizedContext.getString(R.string.rfcomm_service_channel_name),
@@ -3783,6 +3887,12 @@ class RfcommForegroundService : Service() {
                         localServer.accept()
                     } catch (ioException: IOException) {
                         Log.d(TAG, "AcceptThread[${mode.label}]: accept() failed or socket closed", ioException)
+                        break
+                    } catch (securityException: SecurityException) {
+                        // "Not allowed for non-active user": thrown when the device switches to another
+                        // Android user mid-accept. Break and let the listener machinery reschedule with
+                        // backoff (the listen() path already throttles via ACTIVE_USER_RETRY_DELAY_MS).
+                        Log.w(TAG, "AcceptThread[${mode.label}]: accept() denied (non-active user?)", securityException)
                         break
                     }
 
@@ -4385,6 +4495,8 @@ class RfcommForegroundService : Service() {
             "dcs_rfcomm_calls_v3"
         )
         private val LEGACY_ONGOING_CALL_CHANNEL_IDS = listOf("dcs_rfcomm_ongoing_calls")
+        // Channel of the retired standalone NearbyDiscoveryService, deleted on channel setup.
+        private const val LEGACY_NEARBY_DISCOVERY_CHANNEL_ID = "nearby_discovery"
         private const val OFFLINE_MAP_SHARE_MIME =
             "application/vnd.auralis.offline-map-share+zip"
         private const val OUTBOUND_ROUTE_BLE_GATT_FALLBACK = "ble_gatt_fallback"

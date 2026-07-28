@@ -33,6 +33,10 @@ final class NotificationsSettingsViewModel: ObservableObject {
         didSet { userDefaults.set(contactUpdatesEnabled, forKey: Keys.contactUpdatesEnabled) }
     }
 
+    @Published var chatMessagesEnabled: Bool {
+        didSet { userDefaults.set(chatMessagesEnabled, forKey: Keys.chatMessagesEnabled) }
+    }
+
     @Published var playSoundEnabled: Bool {
         didSet { userDefaults.set(playSoundEnabled, forKey: Keys.playSoundEnabled) }
     }
@@ -52,6 +56,7 @@ final class NotificationsSettingsViewModel: ObservableObject {
         self.appNotificationsEnabled = storedAppEnabled ?? true
         self.sosAlertsEnabled = storedSos ?? true
         self.contactUpdatesEnabled = storedContacts ?? true
+        self.chatMessagesEnabled = (userDefaults.object(forKey: Keys.chatMessagesEnabled) as? Bool) ?? true
         self.playSoundEnabled = storedSound ?? true
         refreshAuthorization()
     }
@@ -145,6 +150,7 @@ final class NotificationsSettingsViewModel: ObservableObject {
         static let appNotificationsEnabled = "notifications.appEnabled"
         static let sosAlertsEnabled = "notifications.sosAlerts"
         static let contactUpdatesEnabled = "notifications.contactUpdates"
+        static let chatMessagesEnabled = "notifications.chatMessages"
         static let playSoundEnabled = "notifications.playSound"
     }
 }

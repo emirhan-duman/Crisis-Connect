@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">راهنمای اضطراری</string>
+    <string name="guide_screen_intro_subtitle">به‌سرعت به اطلاعات حیاتی دسترسی پیدا کنید و تحت فشار اقدامات کوتاه را دنبال کنید.</string>
+    <string name="guide_screen_filter_all">همه دسته‌ها</string>
+    <string name="guide_screen_section_30_seconds">در ۳۰ ثانیه</string>
+    <string name="guide_screen_section_step_by_step">گام به گام</string>
+    <string name="guide_screen_section_dont">انجام ندهید</string>
+    <string name="guide_screen_section_checklist">فهرست بازبینی</string>
+    <string name="guide_screen_expand_details">نمایش جزئیات</string>
+    <string name="guide_screen_collapse_details">پنهان کردن جزئیات</string>
+    <string name="guide_screen_action_start_checklist">شروع فهرست بازبینی</string>
+    <string name="guide_screen_action_call_local">تماس با %1$s</string>
+    <string name="guide_screen_action_open_assembly">باز کردن محل تجمع</string>
+    <string name="guide_screen_source_note">یادداشت منبع:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d تکمیل شد</string>
+    <string name="guide_screen_no_dial_app_with_number">برنامه‌ای برای تماس با %1$s یافت نشد.</string>
+    <string name="guide_screen_no_map_app">برنامه‌ای برای باز کردن نقشه یافت نشد.</string>
+    <string name="guide_screen_assembly_query">محل تجمع بلایا</string>
+    <string name="guide_screen_search_placeholder">جستجو بر اساس کد، دسته یا موضوع</string>
+    <string name="guide_screen_clear_search">پاک کردن جستجو</string>
+    <string name="guide_screen_clear_filters">پاک کردن فیلترها</string>
+    <string name="guide_screen_empty_title">هیچ راهنمایی یافت نشد</string>
+    <string name="guide_screen_empty_body">فیلترها را کاهش دهید یا با یک کلیدواژه گسترده‌تر جستجو کنید.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d اقدام سریع دیگر</string>
+    <string name="guide_screen_region_value">منطقه: %1$s • شماره اضطراری: %2$s</string>
+    <string name="guide_screen_results_count">%1$d راهنما فهرست شد</string>
+    <string name="guide_screen_read_minutes_format">%1$d دقیقه</string>
+</resources>

@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">دليل الطوارئ</string>
+    <string name="guide_screen_intro_subtitle">اطّلع على المعلومات الحرجة بسرعة واتّبع خطوات قصيرة تحت الضغط.</string>
+    <string name="guide_screen_filter_all">كل الفئات</string>
+    <string name="guide_screen_section_30_seconds">خلال 30 ثانية</string>
+    <string name="guide_screen_section_step_by_step">خطوة بخطوة</string>
+    <string name="guide_screen_section_dont">لا تفعل</string>
+    <string name="guide_screen_section_checklist">قائمة التحقق</string>
+    <string name="guide_screen_expand_details">عرض التفاصيل</string>
+    <string name="guide_screen_collapse_details">إخفاء التفاصيل</string>
+    <string name="guide_screen_action_start_checklist">بدء قائمة التحقق</string>
+    <string name="guide_screen_action_call_local">اتصل بـ %1$s</string>
+    <string name="guide_screen_action_open_assembly">فتح منطقة التجمّع</string>
+    <string name="guide_screen_source_note">ملاحظة المصدر:</string>
+    <string name="guide_screen_checklist_progress">اكتمل %1$d/%2$d</string>
+    <string name="guide_screen_no_dial_app_with_number">لم يُعثر على تطبيق للاتصال بـ %1$s.</string>
+    <string name="guide_screen_no_map_app">لم يُعثر على تطبيق لفتح الخرائط.</string>
+    <string name="guide_screen_assembly_query">منطقة تجمّع الكوارث</string>
+    <string name="guide_screen_search_placeholder">ابحث بالرمز أو الفئة أو الموضوع</string>
+    <string name="guide_screen_clear_search">مسح البحث</string>
+    <string name="guide_screen_clear_filters">مسح عوامل التصفية</string>
+    <string name="guide_screen_empty_title">لم يُعثر على دليل</string>
+    <string name="guide_screen_empty_body">جرّب تقليل عوامل التصفية أو البحث بكلمة أوسع.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d إجراءات سريعة أخرى</string>
+    <string name="guide_screen_region_value">المنطقة: %1$s • رقم الطوارئ: %2$s</string>
+    <string name="guide_screen_results_count">%1$d دليلًا معروضًا</string>
+    <string name="guide_screen_read_minutes_format">%1$d دقيقة</string>
+</resources>

@@ -11,15 +11,26 @@ import CryptoKit
 struct RoleCertificate {
     let ownerUID: String
     let role: String
+    let deviceId: String
     let issuedAtMillis: Int64
     let expiresAtMillis: Int64
     let signatureBase64: String
+    let agency: String
     let version: Int
 
-    static let certificateVersion = 1
+    // Version we issue/expect for new certificates. v2 binds the deviceId, v3
+    // additionally binds the issuing user's agency (e.g. AFAD/FEMA).
+    static let certificateVersion = 3
+    // Versions this client still accepts/verifies. v2 (no agency) is kept so peers
+    // that have not re-provisioned keep working through the rollout; they simply
+    // show no verified agency. The agency is only appended to the v3 canonical.
+    static let supportedVersions: Set<Int> = [2, 3]
+    static let agencyCertificateVersion = 3
+    static let agencyMaxLength = 64
     static let defaultMaxClockSkewMillis: Int64 = 60_000
     static let defaultOfflineGraceMillis: Int64 = 7 * 24 * 60 * 60 * 1000
     static let allowedRoles: Set<String> = ["admin", "fieldteam"]
+    static let deviceIdRegex = try! NSRegularExpression(pattern: "^cc-[0-9a-f]{24}$")
 
     func signatureBytes() throws -> Data {
         try decodeBase64Data(signatureBase64, fieldName: "signature")
@@ -30,8 +41,10 @@ struct RoleCertificate {
             Self.storageKeyVersion: version,
             Self.storageKeyOwnerUID: ownerUID,
             Self.storageKeyRole: role,
+            Self.storageKeyDeviceId: deviceId,
             Self.storageKeyIssuedAt: issuedAtMillis,
             Self.storageKeyExpiresAt: expiresAtMillis,
+            Self.storageKeyAgency: agency,
             Self.storageKeySignature: signatureBase64
         ]
         return try JSONSerialization.data(withJSONObject: payload, options: [])
@@ -42,9 +55,17 @@ struct RoleCertificate {
             publicKeyBase64: publicKeyBase64,
             ownerUID: ownerUID,
             role: role,
+            deviceId: deviceId,
             issuedAtMillis: issuedAtMillis,
-            expiresAtMillis: expiresAtMillis
+            expiresAtMillis: expiresAtMillis,
+            agency: agency,
+            version: version
         )
+    }
+
+    func isBound(to deviceIdToCheck: String) -> Bool {
+        let normalized = deviceIdToCheck.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !normalized.isEmpty && deviceId == normalized
     }
 
     func isOwned(by userUID: String) -> Bool {
@@ -86,11 +107,17 @@ struct RoleCertificate {
     }
 
     func hasValidShape() -> Bool {
-        guard version == Self.certificateVersion else { return false }
+        guard Self.supportedVersions.contains(version) else { return false }
         guard !ownerUID.isEmpty else { return false }
         guard Self.allowedRoles.contains(role) else { return false }
+        guard Self.isValidDeviceId(deviceId) else { return false }
         guard issuedAtMillis > 0, expiresAtMillis > issuedAtMillis else { return false }
         return (try? signatureBytes().isEmpty == false) ?? false
+    }
+
+    static func isValidDeviceId(_ value: String) -> Bool {
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return deviceIdRegex.firstMatch(in: value, options: [], range: range) != nil
     }
 
     static func fromStorageBytes(_ bytes: Data) -> RoleCertificate? {
@@ -100,7 +127,7 @@ struct RoleCertificate {
 
     static func fromCallableResponse(_ data: [String: Any]) throws -> RoleCertificate {
         let version = parseIntValue(data["certificateVersion"] ?? data["version"]) ?? certificateVersion
-        guard version == certificateVersion else {
+        guard supportedVersions.contains(version) else {
             throw RoleCertificateError.unsupportedVersion(version)
         }
 
@@ -112,6 +139,12 @@ struct RoleCertificate {
 
         guard let role = normalizeRole(data["role"] as? String) else {
             throw RoleCertificateError.invalidRole((data["role"] as? String) ?? "")
+        }
+
+        guard let deviceId = (data["deviceId"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            isValidDeviceId(deviceId) else {
+            throw RoleCertificateError.missingField("deviceId")
         }
 
         guard let issuedAtMillis = parseInt64Value(data["issuedAtMs"] ?? data["issuedAt"] ?? data["iat"]) else {
@@ -128,12 +161,19 @@ struct RoleCertificate {
             throw RoleCertificateError.missingField("certificate")
         }
 
+        // Agency is only bound (signed) from v3 onward; ignore it on legacy v2.
+        let agency = version >= agencyCertificateVersion
+            ? sanitizeAgency(data["agency"] as? String)
+            : ""
+
         let certificate = RoleCertificate(
             ownerUID: ownerUID,
             role: role,
+            deviceId: deviceId,
             issuedAtMillis: issuedAtMillis,
             expiresAtMillis: expiresAtMillis,
             signatureBase64: signature,
+            agency: agency,
             version: version
         )
         guard certificate.hasValidShape() else {
@@ -146,19 +186,27 @@ struct RoleCertificate {
         publicKeyBase64: String,
         ownerUID: String,
         role: String,
+        deviceId: String,
         issuedAtMillis: Int64,
-        expiresAtMillis: Int64
+        expiresAtMillis: Int64,
+        agency: String,
+        version: Int = certificateVersion
     ) throws -> Data {
         let normalizedPublicKey = publicKeyBase64.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedOwnerUID = ownerUID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let normalizedRole = normalizeRole(role) else {
             throw RoleCertificateError.invalidRole(role)
         }
+        let normalizedDeviceId = deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedAgency = sanitizeAgency(agency)
         guard !normalizedPublicKey.isEmpty else {
             throw RoleCertificateError.missingField("publicKey")
         }
         guard !normalizedOwnerUID.isEmpty else {
             throw RoleCertificateError.missingField("ownerUid")
+        }
+        guard isValidDeviceId(normalizedDeviceId) else {
+            throw RoleCertificateError.missingField("deviceId")
         }
         guard issuedAtMillis > 0 else {
             throw RoleCertificateError.invalidCertificate
@@ -167,8 +215,37 @@ struct RoleCertificate {
             throw RoleCertificateError.invalidCertificate
         }
 
-        let canonical = "\(normalizedPublicKey)|\(normalizedOwnerUID)|\(normalizedRole)|\(issuedAtMillis)|\(expiresAtMillis)"
+        var canonical = "\(normalizedPublicKey)|\(normalizedOwnerUID)|\(normalizedRole)|\(normalizedDeviceId)|\(issuedAtMillis)|\(expiresAtMillis)"
+        // The agency segment exists only in the v3 canonical. Legacy v2
+        // certificates were signed without it, so their canonical must end at
+        // expiresAtMillis to verify against the original signature.
+        if version >= agencyCertificateVersion {
+            canonical.append("|\(normalizedAgency)")
+        }
         return Data(canonical.utf8)
+    }
+
+    /// Normalises the agency display label so the client rebuilds an identical
+    /// canonical signing payload to the backend (`sanitizeAgency` in
+    /// functions/src/certificates/issuance.ts): strips control characters and the
+    /// '|' delimiter, collapses whitespace, trims, and bounds the length.
+    static func sanitizeAgency(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "" }
+        var scalars = String.UnicodeScalarView()
+        for scalar in raw.unicodeScalars {
+            if scalar.value < 0x20 || scalar.value == 0x7F || scalar == "|" {
+                scalars.append(" ")
+            } else {
+                scalars.append(scalar)
+            }
+        }
+        let collapsed = String(scalars)
+            .components(separatedBy: .whitespaces)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard collapsed.count > agencyMaxLength else { return collapsed }
+        return String(collapsed.prefix(agencyMaxLength))
+            .trimmingCharacters(in: .whitespaces)
     }
 
     static func normalizeRole(_ rawRole: String?) -> String? {
@@ -200,6 +277,12 @@ struct RoleCertificate {
             throw RoleCertificateError.invalidStorage
         }
 
+        guard let deviceId = (json[storageKeyDeviceId] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            isValidDeviceId(deviceId) else {
+            throw RoleCertificateError.invalidStorage
+        }
+
         guard let issuedAtMillis = parseInt64Value(json[storageKeyIssuedAt]),
               let expiresAtMillis = parseInt64Value(json[storageKeyExpiresAt]),
               let signature = (json[storageKeySignature] as? String)?
@@ -208,13 +291,21 @@ struct RoleCertificate {
             throw RoleCertificateError.invalidStorage
         }
 
+        let storedVersion = parseIntValue(json[storageKeyVersion]) ?? certificateVersion
+        // Agency is only bound (signed) from v3 onward; ignore it on legacy v2.
+        let agency = storedVersion >= agencyCertificateVersion
+            ? sanitizeAgency(json[storageKeyAgency] as? String)
+            : ""
+
         let certificate = RoleCertificate(
             ownerUID: ownerUID,
             role: role,
+            deviceId: deviceId,
             issuedAtMillis: issuedAtMillis,
             expiresAtMillis: expiresAtMillis,
             signatureBase64: signature,
-            version: parseIntValue(json[storageKeyVersion]) ?? certificateVersion
+            agency: agency,
+            version: storedVersion
         )
         guard certificate.hasValidShape() else {
             throw RoleCertificateError.invalidStorage
@@ -247,8 +338,10 @@ struct RoleCertificate {
     private static let storageKeyVersion = "v"
     private static let storageKeyOwnerUID = "uid"
     private static let storageKeyRole = "role"
+    private static let storageKeyDeviceId = "did"
     private static let storageKeyIssuedAt = "iat"
     private static let storageKeyExpiresAt = "exp"
+    private static let storageKeyAgency = "agcy"
     private static let storageKeySignature = "sig"
 }
 

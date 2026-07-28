@@ -20,6 +20,7 @@ internal data class InboundRateWindow(
 
 internal data class PeerVerificationState(
     val role: String,
+    val agency: String,
     val verifiedAtMillis: Long
 )
 
@@ -82,7 +83,16 @@ internal enum class MeshPacketType(val wireValue: String) {
     AUTH_PROOF("auth_proof"),
     IMAGE_INIT("image_init"),
     IMAGE_CHUNK("image_chunk"),
-    IMAGE_DONE("image_done")
+    IMAGE_DONE("image_done"),
+
+    // Telsiz (push-to-talk), authority mesh only. All single-hop, fire-and-forget.
+    // Control packets (join/leave/floor) carry their payload in [MeshPacket.message]; PTT_AUDIO
+    // carries the Opus frame in [MeshPacket.blobDataBase64] with the sequence in [MeshPacket.blobIndex].
+    PTT_JOIN("ptt_join"),
+    PTT_LEAVE("ptt_leave"),
+    PTT_FLOOR_CLAIM("ptt_floor_claim"),
+    PTT_FLOOR_RELEASE("ptt_floor_release"),
+    PTT_AUDIO("ptt_audio")
 }
 
 /**

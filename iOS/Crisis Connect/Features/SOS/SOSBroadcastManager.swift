@@ -33,6 +33,11 @@ final class BlePeripheralHostCoordinator: NSObject, CBPeripheralManagerDelegate 
 
     let queue = DispatchQueue(label: "ble.peripheral.host.queue")
     private let advertisementRotationInterval: TimeInterval = 3
+    // Descriptors at or above this priority belong to time-critical flows (active
+    // QR contact share = 100, SOS broadcast = 1000). They are advertised alone and
+    // continuously instead of rotating with passive profiles like the public mesh,
+    // because a scanner keying off one advertisement misses rotated-out packets.
+    private let pinnedAdvertisementPriority = 100
     private let maxForegroundAdvertisementPayloadBytes = 31
     private let recoveryDelay: TimeInterval = 2
 
@@ -83,18 +88,53 @@ final class BlePeripheralHostCoordinator: NSObject, CBPeripheralManagerDelegate 
         }
     }
 
+    func peripheralManager(_ peripheral: CBPeripheralManager, willRestoreState dict: [String: Any]) {
+        // The system relaunched us with previously published services. No manual reconstruction is
+        // needed: the profiles are re-registered during app init and the poweredOn callback that
+        // follows this runs refreshHostingLocked(), which rebuilds services + advertising from
+        // their live state. Implementing the method is what opts us into receiving the relaunch.
+        NSLog("[SOSBroadcast] CBPeripheralManager state restored (%d services)",
+              (dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService])?.count ?? 0)
+    }
+
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         profiles.values.forEach { profile in
             profile.peripheralManagerDidUpdateState(peripheral)
         }
+        // Log every state transition so we can diagnose "BLE silently stopped working"
+        // reports — without this, .poweredOff / .unauthorized / .unsupported all silently
+        // tear the hosted configuration down with no breadcrumb in the device log.
         switch peripheral.state {
         case .poweredOn:
+            NSLog("[SOSBroadcast] CBPeripheralManager state: poweredOn — refreshing hosted services")
             recoveryWork?.cancel()
             recoveryWork = nil
             refreshHostingLocked()
         case .resetting:
+            NSLog("[SOSBroadcast] CBPeripheralManager state: resetting — scheduling recovery")
             scheduleRecoveryLocked()
-        default:
+        case .poweredOff:
+            NSLog("[SOSBroadcast] CBPeripheralManager state: poweredOff — Bluetooth is OFF, clearing hosted configuration")
+            recoveryWork?.cancel()
+            recoveryWork = nil
+            clearHostedConfigurationLocked()
+        case .unauthorized:
+            NSLog("[SOSBroadcast] CBPeripheralManager state: unauthorized — user denied Bluetooth permission, clearing hosted configuration")
+            recoveryWork?.cancel()
+            recoveryWork = nil
+            clearHostedConfigurationLocked()
+        case .unsupported:
+            NSLog("[SOSBroadcast] CBPeripheralManager state: unsupported — device does not support BLE peripheral role")
+            recoveryWork?.cancel()
+            recoveryWork = nil
+            clearHostedConfigurationLocked()
+        case .unknown:
+            NSLog("[SOSBroadcast] CBPeripheralManager state: unknown — clearing hosted configuration until state resolves")
+            recoveryWork?.cancel()
+            recoveryWork = nil
+            clearHostedConfigurationLocked()
+        @unknown default:
+            NSLog("[SOSBroadcast] CBPeripheralManager state: unrecognized raw=%d — clearing hosted configuration", peripheral.state.rawValue)
             recoveryWork?.cancel()
             recoveryWork = nil
             clearHostedConfigurationLocked()
@@ -177,7 +217,22 @@ final class BlePeripheralHostCoordinator: NSObject, CBPeripheralManagerDelegate 
             return
         }
         if peripheralManager == nil {
-            peripheralManager = CBPeripheralManager(delegate: self, queue: queue)
+            peripheralManager = CBPeripheralManager(
+                delegate: self,
+                queue: queue,
+                options: [
+                    // State restoration: when the system jetsams the app while it is hosting (an SOS
+                    // beacon, the chat characteristics), iOS can relaunch it in the background and
+                    // hand the published services back — WITHOUT this key the beacon simply went
+                    // silent on memory pressure until the user manually reopened the app, which a
+                    // trapped victim cannot do. (Force-quit is different and unfixable by design:
+                    // iOS never restores an app the user explicitly killed.) The rescue central has
+                    // used the same pattern all along.
+                    CBPeripheralManagerOptionRestoreIdentifierKey:
+                        "com.auralis.crisisconnect.peripheral-host",
+                    CBPeripheralManagerOptionShowPowerAlertKey: false
+                ]
+            )
         }
     }
 
@@ -279,11 +334,15 @@ final class BlePeripheralHostCoordinator: NSObject, CBPeripheralManagerDelegate 
         advertisementRotationWork?.cancel()
         advertisementRotationWork = nil
 
-        let descriptors = combinedAdvertisementDescriptorsIfPossible(
-            from: activeProfilesLocked()
+        let sortedDescriptors = activeProfilesLocked()
             .compactMap(\.hostedAdvertisementDescriptor)
             .sorted { lhs, rhs in lhs.priority > rhs.priority }
-        )
+        let descriptors: [BleHostedAdvertisementDescriptor]
+        if let pinned = sortedDescriptors.first, pinned.priority >= pinnedAdvertisementPriority {
+            descriptors = [pinned]
+        } else {
+            descriptors = combinedAdvertisementDescriptorsIfPossible(from: sortedDescriptors)
+        }
         guard !descriptors.isEmpty else { return }
 
         let descriptorIndex = min(advertisedDescriptorIndex, descriptors.count - 1)
@@ -401,7 +460,19 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
 
     @Published private(set) var elapsedSeconds: Int = 0
     @Published private(set) var isBroadcasting: Bool = false
+    /// Rescuers that completed the authenticated handshake against this beacon. The bookkeeping
+    /// (sessionKeys) always existed; nothing ever published it, so the SOS screen showed a static
+    /// "ACTIVE" while a victim had no way to know anyone had actually found them.
+    @Published private(set) var connectedRescuerCount: Int = 0
+    /// The shared BLE peripheral session is up. This does NOT mean the user is in danger: the same
+    /// hosted service carries the legacy BLE chat characteristics, so opening a chat brings it up too.
     @Published private(set) var isSessionActive: Bool = false
+
+    /// The user DECLARED an emergency by pressing SOS. Everything that tells the outside world a human
+    /// is in danger — the agency dashboard report, the automatic contact alerts, the location
+    /// broadcast, and being advertised where rescuers can see it — hangs off THIS, never off
+    /// `isSessionActive`. Conflating the two is what made merely opening a chat transmit a real SOS.
+    @Published private(set) var isEmergencyDeclared: Bool = false
     @Published private(set) var bluetoothState: CBManagerState = .unknown
     @Published private(set) var lastAuthenticatedFieldTeamSessionId: UUID?
 
@@ -417,6 +488,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     private var secureAckCharacteristic: CBMutableCharacteristic?
     private var secureChatInCharacteristic: CBMutableCharacteristic?
     private var secureChatOutCharacteristic: CBMutableCharacteristic?
+    private var callIoOutCharacteristic: CBMutableCharacteristic?
 
     private var authResponseValues: [UUID: Data] = [:]
     private var secureAckValues: [UUID: Data] = [:]
@@ -426,6 +498,14 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     private var pendingAckValues: [UUID: Data] = [:]
     private var pendingNotifications: [PendingNotificationKey: PendingNotification] = [:]
     private var sessionKeys: [UUID: SymmetricKey] = [:]
+
+    private func publishRescuerCount() {
+        let count = sessionKeys.count
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.connectedRescuerCount != count else { return }
+            self.connectedRescuerCount = count
+        }
+    }
     private var authSessionNonces: [UUID: String] = [:]
     private var pskCentrals: Set<UUID> = []
     private var secureInReceivers: [UUID: SOSChunkReceiver] = [:]
@@ -437,6 +517,10 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     private var centralToSessionId: [UUID: UUID] = [:]
     private var sessionToCentralId: [UUID: UUID] = [:]
     private var incomingImageTransfers: [String: BleImagePayload.IncomingTransfer] = [:]
+    // Victim-side inbound voice/file reassembly — mirrors the rescuer's RescueConnection maps so
+    // both directions carry the full media set (the victim used to silently drop these).
+    private var incomingVoiceTransfers: [String: BleVoicePayload.IncomingTransfer] = [:]
+    private var incomingFileTransfers: [String: BleFilePayload.IncomingTransfer] = [:]
 
     private let queue = BlePeripheralHostCoordinator.shared.queue
 
@@ -449,6 +533,8 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     private let secureAckUUID = CBUUID(string: "0000CC21-0000-1000-8000-00805F9B34FB")
     private let secureChatInUUID = CBUUID(string: "0000CC30-0000-1000-8000-00805F9B34FB")
     private let secureChatOutUUID = CBUUID(string: "0000CC31-0000-1000-8000-00805F9B34FB")
+    private let callIoInUUID = CBUUID(string: "0000CC40-0000-1000-8000-00805F9B34FB")
+    private let callIoOutUUID = CBUUID(string: "0000CC41-0000-1000-8000-00805F9B34FB")
     private let statusValue = Data("ACTIVE".utf8)
     private let handshakeAckValue = Data("OK".utf8)
     private let messageAckValue = Data("DELIVERED".utf8)
@@ -469,7 +555,12 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     var hostPrimaryServiceUUID: CBUUID { serviceUUID }
     var isPeripheralHostActive: Bool { isSessionActive && PlatformRuntime.supportsBlePeripheralHosting }
     var hostedAdvertisementDescriptor: BleHostedAdvertisementDescriptor? {
-        guard isPeripheralHostActive else { return nil }
+        // Hosting is advertised only when an emergency was declared. CoreBluetooth cannot put service
+        // DATA in an advertisement — the trick Android uses to mark intent — so on iOS intent is
+        // carried by WHETHER the SOS service is advertised at all. A chat session still hosts the
+        // service (buildHostedService below is gated on isPeripheralHostActive, not on this), so the
+        // characteristics stay live; it simply is not announced to rescue scanners.
+        guard isPeripheralHostActive, isEmergencyDeclared else { return nil }
         return BleHostedAdvertisementDescriptor(
             serviceUUIDs: [serviceUUID],
             localName: nil,
@@ -517,12 +608,27 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
-    func start() {
-        guard timer == nil else { return }
+    /// - Parameter declaringEmergency: `true` ONLY from the SOS button. `false` brings the shared BLE
+    ///   peripheral up so a legacy chat has a transport and announces nothing to anyone.
+    ///
+    /// This used to take no parameter, so every caller declared an emergency — including the chat
+    /// screen, which starts a session merely to get its transport. That reported a live emergency to
+    /// the agency dashboard and auto-messaged the user's contacts with no user action at all. The
+    /// emergency block below is unchanged and un-gated internally: a suppressed real SOS is far worse
+    /// than an accidental one, so nothing here is made conditional except who may reach it.
+    func start(declaringEmergency: Bool) {
+        guard timer == nil else {
+            // A chat already had the session up and the user has now pressed SOS: escalate in place
+            // rather than returning, or the real emergency would be silently swallowed.
+            if declaringEmergency, !isEmergencyDeclared {
+                declareEmergency()
+            }
+            return
+        }
         isSessionActive = true
         lastAuthenticatedFieldTeamSessionId = nil
-        Task { @MainActor in
-            self.signalLocationCoordinator.beginBroadcasting()
+        if declaringEmergency {
+            declareEmergency()
         }
         startDate = Date()
         updateElapsed()
@@ -538,11 +644,35 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         BlePeripheralHostCoordinator.shared.setNeedsRefresh()
     }
 
+    /// Idempotent: the SOS button can be pressed while a chat session is already hosting.
+    private func declareEmergency() {
+        guard !isEmergencyDeclared else { return }
+        isEmergencyDeclared = true
+        AppAnalytics.sosActivated()
+        // Lock-screen + Dynamic Island live status (best-effort, never blocks the broadcast).
+        SosLiveActivityController.sosDeclared(startedAt: Date())
+        Task { @MainActor in
+            self.signalLocationCoordinator.beginBroadcasting()
+        }
+        // Internet uplinks (best-effort; never block the BLE broadcast): the agency dashboard
+        // report and the automatic emergency-contact alerts.
+        SosCloudReporter.shared.onSosStarted()
+        SosContactNotifier.shared.onSosStarted()
+        // The session was advertised as chat-only until now; re-announce it so rescuers can see it.
+        BlePeripheralHostCoordinator.shared.setNeedsRefresh()
+    }
+
     func stop() {
         isSessionActive = false
+        if isEmergencyDeclared {
+            SosLiveActivityController.sosEnded()
+        }
+        isEmergencyDeclared = false
         Task { @MainActor in
             self.signalLocationCoordinator.endBroadcasting()
         }
+        SosCloudReporter.shared.onSosStopped()
+        SosContactNotifier.shared.onSosStopped()
         timer?.invalidate()
         timer = nil
         startDate = nil
@@ -614,6 +744,18 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
             value: nil,
             permissions: [.readable]
         )
+        let callIoInCharacteristic = CBMutableCharacteristic(
+            type: callIoInUUID,
+            properties: [.write, .writeWithoutResponse],
+            value: nil,
+            permissions: [.writeable]
+        )
+        let callIoOutCharacteristic = CBMutableCharacteristic(
+            type: callIoOutUUID,
+            properties: [.read, .notify],
+            value: nil,
+            permissions: [.readable]
+        )
 
         let service = CBMutableService(type: serviceUUID, primary: true)
         service.characteristics = [
@@ -624,7 +766,9 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
             secureInCharacteristic,
             secureAckCharacteristic,
             secureChatInCharacteristic,
-            secureChatOutCharacteristic
+            secureChatOutCharacteristic,
+            callIoInCharacteristic,
+            callIoOutCharacteristic
         ]
 
         self.service = service
@@ -636,6 +780,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         self.secureAckCharacteristic = secureAckCharacteristic
         self.secureChatInCharacteristic = secureChatInCharacteristic
         self.secureChatOutCharacteristic = secureChatOutCharacteristic
+        self.callIoOutCharacteristic = callIoOutCharacteristic
         return service
     }
 
@@ -648,6 +793,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         pendingAckValues.removeAll()
         pendingNotifications.removeAll()
         sessionKeys.removeAll()
+        publishRescuerCount()
         authSessionNonces.removeAll()
         pskCentrals.removeAll()
         secureInReceivers.removeAll()
@@ -779,6 +925,8 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
             return handleAuthChallenge(request.value, central: request.central, peripheral: peripheral)
         case secureInUUID:
             return handleSecureIn(request.value, central: request.central, peripheral: peripheral)
+        case callIoInUUID:
+            return handleCallIo(request.value, central: request.central)
         case secureChatInUUID:
             return handleSecureChatIn(request.value, central: request.central, peripheral: peripheral)
         case secureAckUUID:
@@ -799,6 +947,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         if value == pskChallengeValue {
             guard let key = localPskKey() else { return .unlikelyError }
             sessionKeys[centralId] = key
+            publishRescuerCount()
             authSessionNonces.removeValue(forKey: centralId)
             pskCentrals.insert(centralId)
             authResponseValues[centralId] = pskResponseValue
@@ -818,6 +967,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
                 outputByteCount: 32
             )
             sessionKeys[centralId] = sessionKey
+            publishRescuerCount()
 
             let response = makeX509PublicKeyData(from: serverKey.publicKey)
             authSessionNonces[centralId] = buildSessionNonce(
@@ -860,6 +1010,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
                 verifiedCentrals.insert(centralId)
                 let sessionId = BroadcastSessionId.fromBroadcastId(payload.broadcastId)
                 bindSession(sessionId, to: centralId)
+                registerCallTransport(centralId: centralId, sessionId: sessionId)
                 setAck(handshakeAckValue, for: central, peripheral: peripheral)
                 DispatchQueue.main.async {
                     SOSChatStore.shared.ensureSession(
@@ -885,6 +1036,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
             verifiedCentrals.insert(centralId)
             let sessionId = stableSessionId(from: proof)
             bindSession(sessionId, to: centralId)
+            registerCallTransport(centralId: centralId, sessionId: sessionId)
             setAck(handshakeAckValue, for: central, peripheral: peripheral)
             DispatchQueue.main.async {
                 SOSChatStore.shared.ensureSession(id: sessionId, role: .fieldTeam, isVerified: true)
@@ -938,6 +1090,38 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
                     central: central,
                     peripheral: peripheral
                 )
+            } else if let voicePacket = BleVoicePayload.parsePacket(cleanedText) {
+                handleIncomingVoicePacket(
+                    voicePacket,
+                    sessionId: sessionId,
+                    central: central,
+                    peripheral: peripheral
+                )
+            } else if let filePacket = BleFilePayload.parsePacket(cleanedText) {
+                handleIncomingFilePacket(
+                    filePacket,
+                    sessionId: sessionId,
+                    central: central,
+                    peripheral: peripheral
+                )
+            } else if let liveLocation = Self.parseLiveLocationPayload(cleanedText) {
+                DispatchQueue.main.async {
+                    _ = SOSChatStore.shared.upsertRemoteLocationMessage(
+                        sessionId: sessionId,
+                        latitude: liveLocation.latitude,
+                        longitude: liveLocation.longitude,
+                        horizontalAccuracyMeters: liveLocation.horizontalAccuracyMeters,
+                        capturedAt: liveLocation.capturedAt,
+                        transportMessageId: liveLocation.messageId
+                    )
+                }
+                if let messageId = liveLocation.messageId {
+                    setAck(
+                        BleChatEnvelope.encodeDeliveredAck(messageId: messageId),
+                        for: central,
+                        peripheral: peripheral
+                    )
+                }
             } else if let envelope = BleChatEnvelope.decodeChat(cleanedText), !BleChatEnvelope.isExpired(envelope) {
                 let appended = appendRemoteMessageOnMain(
                     sessionId: sessionId,
@@ -1011,7 +1195,50 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         return .success
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Voice call over the rescue link (peripheral role): dedicated 0xCC40/0xCC41 pair; the
+    // engine owns state/crypto, this class is only the packet pipe. See RescueCallEngine.
+    // ---------------------------------------------------------------------------------------
+
+    private func handleCallIo(_ value: Data?, central: CBCentral) -> CBATTError.Code {
+        guard let value, !value.isEmpty else { return .invalidAttributeValueLength }
+        let centralId = central.identifier
+        guard verifiedCentrals.contains(centralId), sessionKeys[centralId] != nil else {
+            return .insufficientAuthentication
+        }
+        let sessionId = resolveSessionId(for: centralId)
+        registerCallTransport(centralId: centralId, sessionId: sessionId)
+        RescueCallEngine.shared.onInboundPacket(sessionId: sessionId, packet: value)
+        return .success
+    }
+
+    /// Registers (or refreshes) the engine transport for one verified rescuer. Captures the
+    /// session key by value, so re-registration after a re-handshake supplies the fresh key.
+    private func registerCallTransport(centralId: UUID, sessionId: UUID) {
+        guard let key = sessionKeys[centralId], let central = knownCentrals[centralId] else { return }
+        RescueCallEngine.shared.registerTransport(
+            RescueCallEngine.Transport(
+                sessionId: sessionId,
+                sendPacket: { [weak self] packet in
+                    guard let self,
+                          let characteristic = self.callIoOutCharacteristic,
+                          let peripheral = self.peripheralManager else {
+                        return false
+                    }
+                    return peripheral.updateValue(
+                        packet,
+                        for: characteristic,
+                        onSubscribedCentrals: [central]
+                    )
+                },
+                sessionKey: { key },
+                peerName: { nil }
+            )
+        )
+    }
+
     private func resetCentralState(for centralId: UUID) {
+        RescueCallEngine.shared.unregisterTransport(sessionId: resolveSessionId(for: centralId))
         authResponseValues.removeValue(forKey: centralId)
         secureAckValues.removeValue(forKey: centralId)
         secureChatOutValues.removeValue(forKey: centralId)
@@ -1333,15 +1560,19 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
 
     private func sendPeerIdentity(to central: CBCentral, peripheral: CBPeripheralManager) {
         let name = localDisplayName()
-        let role = pskCentrals.contains(central.identifier) ? "contact" : "victim"
+        let isContactPeer = pskCentrals.contains(central.identifier)
+        let role = isContactPeer ? "contact" : "victim"
         let payload = buildPeerInfoPayload(
             name: name,
             role: role,
             batteryPercent: currentBatteryPercent(),
             avatarBase64: localAvatarPayload(),
-            signalLocation: pskCentrals.contains(central.identifier) ? nil : signalLocationCoordinator.currentVictimLocationPayload().map {
+            signalLocation: isContactPeer ? nil : signalLocationCoordinator.currentVictimLocationPayload().map {
                 SOSSignalLocationPayload(gps: $0, relativeEstimate: nil)
-            }
+            },
+            // Medical details go to verified rescuers only — contacts chat here too, and they
+            // should not silently receive health data.
+            medical: isContactPeer ? nil : MedicalInfoStore.load().toPeerInfoJSON()
         )
         guard let sessionKey = sessionKeys[central.identifier] else { return }
         let encrypted = AesGcmHelper.encryptPacket(
@@ -1405,7 +1636,8 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         role: String,
         batteryPercent: Int? = nil,
         avatarBase64: String? = nil,
-        signalLocation: SOSSignalLocationPayload? = nil
+        signalLocation: SOSSignalLocationPayload? = nil,
+        medical: [String: Any]? = nil
     ) -> String {
         var payload: [String: Any] = [
             "kind": "peer_info",
@@ -1414,6 +1646,9 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         ]
         if let batteryPercent, (0...100).contains(batteryPercent) {
             payload["batteryPct"] = batteryPercent
+        }
+        if let medical, !medical.isEmpty {
+            payload["medical"] = medical
         }
         if let avatarBase64 = avatarBase64?.trimmingCharacters(in: .whitespacesAndNewlines),
            !avatarBase64.isEmpty {
@@ -1512,6 +1747,282 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         )
         guard !encrypted.isEmpty else { return }
         _ = enqueueSecureChatPayloads([encrypted], for: central.identifier, peripheral: peripheral)
+    }
+
+    /// Encrypts + queues one transfer-control packet (done/abort) back to the rescuer.
+    private func sendTransferControlPacket(
+        _ packetText: String,
+        to central: CBCentral,
+        peripheral: CBPeripheralManager
+    ) {
+        guard !packetText.isEmpty,
+              let sessionKey = sessionKeys[central.identifier] else {
+            return
+        }
+        let encrypted = AesGcmHelper.encryptPacket(
+            key: sessionKey,
+            plaintext: Data(packetText.utf8),
+            maxPacketSize: maxSecureChatPacketBytes
+        )
+        guard !encrypted.isEmpty else { return }
+        _ = enqueueSecureChatPayloads([encrypted], for: central.identifier, peripheral: peripheral)
+    }
+
+    private func cleanupStaleMediaTransfers() {
+        let now = Date()
+        incomingVoiceTransfers = incomingVoiceTransfers.filter { _, transfer in
+            now.timeIntervalSince(transfer.createdAt) < 90
+        }
+        incomingFileTransfers = incomingFileTransfers.filter { _, transfer in
+            now.timeIntervalSince(transfer.createdAt) < 90
+        }
+    }
+
+    private func handleIncomingVoicePacket(
+        _ packet: BleVoicePayload.Packet,
+        sessionId: UUID,
+        central: CBCentral,
+        peripheral: CBPeripheralManager
+    ) {
+        cleanupStaleMediaTransfers()
+        switch packet {
+        case .initPacket(let payload):
+            incomingVoiceTransfers[imageTransferKey(centralId: central.identifier, transferId: payload.transferId)] =
+                BleVoicePayload.IncomingTransfer(
+                    transferId: payload.transferId,
+                    messageId: payload.messageId,
+                    mimeType: payload.mimeType,
+                    durationMillis: payload.durationMillis,
+                    totalBytes: payload.totalBytes,
+                    totalChunks: payload.totalChunks,
+                    sha256: payload.sha256
+                )
+        case .chunk(let payload):
+            let key = imageTransferKey(centralId: central.identifier, transferId: payload.transferId)
+            guard var transfer = incomingVoiceTransfers[key] else { return }
+            guard transfer.addChunk(index: payload.chunkIndex, bytes: payload.bytes) else {
+                incomingVoiceTransfers.removeValue(forKey: key)
+                sendTransferControlPacket(
+                    BleVoicePayload.buildAbortPacket(payload.transferId, reason: "invalid_chunk"),
+                    to: central,
+                    peripheral: peripheral
+                )
+                return
+            }
+            incomingVoiceTransfers[key] = transfer
+            guard transfer.isComplete,
+                  let audioData = transfer.composedData(),
+                  audioData.count <= BleVoicePayload.maxOutgoingTotalBytes else {
+                return
+            }
+            let digest = Data(SHA256.hash(data: audioData))
+            guard digest == transfer.sha256 else {
+                incomingVoiceTransfers.removeValue(forKey: key)
+                sendTransferControlPacket(
+                    BleVoicePayload.buildAbortPacket(payload.transferId, reason: "sha_mismatch"),
+                    to: central,
+                    peripheral: peripheral
+                )
+                return
+            }
+            incomingVoiceTransfers.removeValue(forKey: key)
+            guard let audioRelativePath = SOSChatStore.persistVoiceData(
+                audioData,
+                messageId: transfer.messageId,
+                mimeType: transfer.mimeType
+            ) else {
+                sendTransferControlPacket(
+                    BleVoicePayload.buildAbortPacket(payload.transferId, reason: "persist_failed"),
+                    to: central,
+                    peripheral: peripheral
+                )
+                return
+            }
+            let durationMillis = transfer.durationMillis
+            let transportMessageId = transfer.messageId
+            DispatchQueue.main.async {
+                let appended = SOSChatStore.shared.appendRemoteAudioMessage(
+                    sessionId: sessionId,
+                    audioRelativePath: audioRelativePath,
+                    durationMillis: durationMillis,
+                    transportMessageId: transportMessageId
+                )
+                if appended {
+                    let title = SOSChatStore.shared.sessions.first(where: { $0.id == sessionId })?.displayName
+                    SOSNotificationCenter.notifyIncomingMessage(
+                        sessionId: sessionId,
+                        title: title,
+                        body: SOSChatStore.voicePreviewText(),
+                        kind: .sosAlert
+                    )
+                }
+            }
+            sendTransferControlPacket(
+                BleVoicePayload.buildDonePacket(payload.transferId),
+                to: central,
+                peripheral: peripheral
+            )
+        case .done:
+            break
+        case .abort(let payload):
+            incomingVoiceTransfers.removeValue(
+                forKey: imageTransferKey(centralId: central.identifier, transferId: payload.transferId)
+            )
+        }
+    }
+
+    private func handleIncomingFilePacket(
+        _ packet: BleFilePayload.Packet,
+        sessionId: UUID,
+        central: CBCentral,
+        peripheral: CBPeripheralManager
+    ) {
+        cleanupStaleMediaTransfers()
+        switch packet {
+        case .initPacket(let payload):
+            incomingFileTransfers[imageTransferKey(centralId: central.identifier, transferId: payload.transferId)] =
+                BleFilePayload.IncomingTransfer(
+                    transferId: payload.transferId,
+                    messageId: payload.messageId,
+                    displayName: payload.displayName,
+                    mimeType: payload.mimeType,
+                    originalSizeBytes: payload.originalSizeBytes,
+                    totalBytes: payload.totalBytes,
+                    totalChunks: payload.totalChunks,
+                    sha256: payload.sha256
+                )
+        case .chunk(let payload):
+            let key = imageTransferKey(centralId: central.identifier, transferId: payload.transferId)
+            guard var transfer = incomingFileTransfers[key] else { return }
+            guard transfer.addChunk(index: payload.chunkIndex, bytes: payload.bytes) else {
+                incomingFileTransfers.removeValue(forKey: key)
+                sendTransferControlPacket(
+                    BleFilePayload.buildAbortPacket(payload.transferId, reason: "invalid_chunk"),
+                    to: central,
+                    peripheral: peripheral
+                )
+                return
+            }
+            incomingFileTransfers[key] = transfer
+            guard transfer.isComplete,
+                  let fileData = transfer.composedData(),
+                  fileData.count <= BleFilePayload.maxOutgoingTotalBytes else {
+                return
+            }
+            let digest = Data(SHA256.hash(data: fileData))
+            guard digest == transfer.sha256 else {
+                incomingFileTransfers.removeValue(forKey: key)
+                sendTransferControlPacket(
+                    BleFilePayload.buildAbortPacket(payload.transferId, reason: "sha_mismatch"),
+                    to: central,
+                    peripheral: peripheral
+                )
+                return
+            }
+            incomingFileTransfers.removeValue(forKey: key)
+            guard P2pSharedTransferSupport.persistSharedDocumentData(
+                fileData,
+                messageId: transfer.messageId,
+                displayName: transfer.displayName
+            ) != nil else {
+                sendTransferControlPacket(
+                    BleFilePayload.buildAbortPacket(payload.transferId, reason: "persist_failed"),
+                    to: central,
+                    peripheral: peripheral
+                )
+                return
+            }
+            sendTransferControlPacket(
+                BleFilePayload.buildDonePacket(payload.transferId),
+                to: central,
+                peripheral: peripheral
+            )
+        case .done:
+            break
+        case .abort(let payload):
+            incomingFileTransfers.removeValue(
+                forKey: imageTransferKey(centralId: central.identifier, transferId: payload.transferId)
+            )
+        }
+    }
+
+    private struct VictimLiveLocationPayload {
+        let messageId: String?
+        let latitude: Double
+        let longitude: Double
+        let horizontalAccuracyMeters: Double?
+        let capturedAt: Date
+    }
+
+    private static func parseLiveLocationPayload(_ message: String) -> VictimLiveLocationPayload? {
+        guard let data = message.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data, options: []),
+              let json = object as? [String: Any],
+              let kind = json["kind"] as? String,
+              kind == "live_location" else {
+            return nil
+        }
+        func numeric(_ raw: Any?) -> Double? {
+            if let value = raw as? Double { return value.isFinite ? value : nil }
+            if let value = raw as? Int { return Double(value) }
+            if let value = raw as? NSNumber { return value.doubleValue.isFinite ? value.doubleValue : nil }
+            return nil
+        }
+        guard let latitude = numeric(json["latitude"]),
+              let longitude = numeric(json["longitude"]) else {
+            return nil
+        }
+        let messageId = (json["messageId"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let timestampMillis = numeric(json["timestampMillis"])
+        return VictimLiveLocationPayload(
+            messageId: messageId?.isEmpty == false ? messageId : nil,
+            latitude: latitude,
+            longitude: longitude,
+            horizontalAccuracyMeters: numeric(json["accuracyMeters"]),
+            capturedAt: timestampMillis.map { Date(timeIntervalSince1970: $0 / 1000) } ?? Date()
+        )
+    }
+
+    /// Victim → rescuer voice clip over the rescue link, mirroring sendImageMessage.
+    func sendVoiceMessage(
+        to sessionId: UUID,
+        audioFileName: String,
+        mimeType: String,
+        durationMillis: Int,
+        messageId: String
+    ) -> Bool {
+        var queued = false
+        queue.sync {
+            let centralId = sessionToCentralId[sessionId] ?? sessionId
+            guard verifiedCentrals.contains(centralId),
+                  let sessionKey = sessionKeys[centralId],
+                  let peripheralManager,
+                  let audioData = SOSChatStore.loadVoiceData(fileName: audioFileName),
+                  !audioData.isEmpty else {
+                return
+            }
+            let transferId = UUID().uuidString.lowercased()
+            let packets = BleVoicePayload.buildPackets(
+                transferId: transferId,
+                messageId: messageId,
+                mimeType: mimeType,
+                durationMillis: durationMillis,
+                bytes: audioData
+            )
+            guard !packets.isEmpty else { return }
+            let encryptedPackets = packets.compactMap { packet -> Data? in
+                let encrypted = AesGcmHelper.encryptPacket(
+                    key: sessionKey,
+                    plaintext: Data(packet.utf8),
+                    maxPacketSize: maxSecureChatPacketBytes
+                )
+                return encrypted.isEmpty ? nil : encrypted
+            }
+            guard encryptedPackets.count == packets.count else { return }
+            queued = enqueueSecureChatPayloads(encryptedPackets, for: centralId, peripheral: peripheralManager)
+        }
+        return queued
     }
 
     private func makeThumbnailRelativePath(imageData: Data, messageId: String) -> String? {

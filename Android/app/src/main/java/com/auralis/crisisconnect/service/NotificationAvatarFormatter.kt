@@ -37,6 +37,21 @@ internal object NotificationAvatarFormatter {
         return generateInitialAvatarBitmap(context, sessionCode, contactName)
     }
 
+    /**
+     * Circular avatar for a remote (non-contact) sender — e.g. an authority-channel peer whose photo
+     * came from their profile URL: the [photo] circle-cropped when given, else the same deterministic
+     * colored-initial avatar contacts get ([seed] keeps the color stable per sender).
+     */
+    fun resolveRemoteAvatarBitmap(
+        context: Context,
+        seed: String,
+        name: String,
+        photo: Bitmap? = null
+    ): Bitmap? {
+        if (photo != null) toCircularPhotoAvatar(context, photo)?.let { return it }
+        return generateInitialAvatarBitmap(context, seed, name)
+    }
+
     private fun toCircularPhotoAvatar(context: Context, source: Bitmap): Bitmap? {
         if (source.width <= 0 || source.height <= 0) {
             return null

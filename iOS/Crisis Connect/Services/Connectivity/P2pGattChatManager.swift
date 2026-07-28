@@ -147,6 +147,13 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
     private static let registryQueue = DispatchQueue(label: "contact.p2p.chat.registry")
     private static var sharedManagers: [UUID: P2pGattChatManager] = [:]
 
+    /// Registry peek for callers that only want a link that ALREADY exists (the send-retry
+    /// queue's Bluetooth drain): shared(sessionId:) creates a dormant manager as a side effect,
+    /// which would slowly grow the registry with an entry per queued conversation.
+    static func sharedIfExists(sessionId: UUID) -> P2pGattChatManager? {
+        registryQueue.sync { sharedManagers[sessionId] }
+    }
+
     static func shared(sessionId: UUID) -> P2pGattChatManager {
         if let existing = registryQueue.sync(execute: { sharedManagers[sessionId] }) {
             return existing
@@ -190,6 +197,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
     private var incomingVoiceTransfers: [String: P2pIncomingVoiceTransfer] = [:]
     private var incomingImageTransfers: [String: P2pIncomingImageTransfer] = [:]
     private var incomingFileTransfers: [String: P2pIncomingFileTransfer] = [:]
+    private var callHoldActive = false
 
     private final class WriteRequest {
         let characteristic: CBCharacteristic
@@ -306,6 +314,91 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
         syncOnQueue { isReadyForWrites }
     }
 
+    // MARK: - Voice call link (signaling + binary audio over the same characteristics)
+
+    /// Keeps the connection alive for the duration of a voice call: cancels any delayed stop and
+    /// prevents new ones until released. Released via `setCallHold(false)`, which resumes the
+    /// regular lifecycle (grace period, then stop unless the chat screen re-attached).
+    func setCallHold(_ active: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.callHoldActive = active
+            if active {
+                self.disconnectWork?.cancel()
+                self.disconnectWork = nil
+                self.shouldStayConnected = true
+                self.beginScanIfPossible()
+            } else {
+                self.scheduleDelayedStop()
+            }
+        }
+    }
+
+    /// Sends an encrypted call-signaling payload over the regular acknowledged write queue.
+    func sendCallSignal(_ payload: [String: Any]) -> Bool {
+        syncOnQueue {
+            ensureCentralInitialized()
+            guard isReadyForWrites, let characteristic = messageInCharacteristic else {
+                beginScanIfPossible()
+                return false
+            }
+            guard let packet = makeCallEnvelope(payload) else { return false }
+            enqueueWrite(packet, to: characteristic)
+            return true
+        }
+    }
+
+    /// Single-ATT-write audio fast path (write-without-response); false when the link cannot
+    /// take the packet right now so the caller can count the drop.
+    func sendCallAudioFrame(_ packet: Data) -> Bool {
+        syncOnQueue {
+            guard isReadyForWrites,
+                  let peripheral = activePeripheral,
+                  let characteristic = messageInCharacteristic else {
+                return false
+            }
+            let wrapped = BleAesGcm.wrapTransportPacket(packet)
+            // Android builds up to 1.1.7 declare MESSAGE_IN with PROPERTY_WRITE only — CoreBluetooth
+            // (unlike Android's lenient stack) refuses .withoutResponse writes to it, which silently
+            // dropped EVERY audio frame of an iOS→Android call. Fall back to acknowledged writes for
+            // those peers; newer Android hosts advertise writeWithoutResponse and get the fast path.
+            let writeType: CBCharacteristicWriteType =
+                characteristic.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
+            let maxLength = peripheral.maximumWriteValueLength(for: writeType)
+            guard wrapped.count <= maxLength else { return false }
+            if writeType == .withoutResponse {
+                guard peripheral.canSendWriteWithoutResponse else { return false }
+            }
+            peripheral.writeValue(wrapped, for: characteristic, type: writeType)
+            return true
+        }
+    }
+
+    private func makeCallEnvelope(_ innerPayload: [String: Any]) -> Data? {
+        guard let contact = currentContact,
+              let key = ContactStore.shared.aesKey(for: contact) else {
+            return nil
+        }
+        guard let innerData = try? JSONSerialization.data(withJSONObject: innerPayload, options: []),
+              let encryptedPacket = BleAesGcm.encryptPacket(
+                key: key,
+                plaintext: innerData,
+                maxPacketSize: p2pMaxEncryptedChatPacketBytes
+              ).nilIfEmptyData else {
+            return nil
+        }
+        let outerPayload: [String: Any] = [
+            "type": P2pBleProtocol.typeChatEnvelope,
+            "fromDeviceId": localDeviceId(),
+            "payload": encryptedPacket.base64EncodedString()
+        ]
+        guard let outerData = try? JSONSerialization.data(withJSONObject: outerPayload, options: []),
+              outerData.count <= p2pMaxEnvelopePacketBytes else {
+            return nil
+        }
+        return BleAesGcm.wrapTransportPacket(outerData)
+    }
+
     func sendVoiceMessage(audioFileName: String, mimeType: String, durationMillis: Int, messageId: String) -> Bool {
         guard let data = SOSChatStore.loadVoiceData(fileName: audioFileName), !data.isEmpty else { return false }
         guard data.count <= P2pBleProtocol.voiceMaxTotalBytes else { return false }
@@ -381,7 +474,10 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
         if central.state == .poweredOn {
             beginScanIfPossible()
         } else {
-            stopScanIfNeeded()
+            // Bluetooth went away: the peripheral/characteristics are dead objects now. Without a
+            // full reset, isReadyForWrites stayed TRUE and message/call sends kept routing into
+            // the void ("offer delivered" to nobody) instead of falling back to the internet.
+            resetConnectionState(clearPeripheral: true)
             updateStatus(.disconnected)
         }
     }
@@ -393,36 +489,62 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
         rssi RSSI: NSNumber
     ) {
         guard shouldStayConnected else { return }
-        guard currentContact?.preferredTransport == .bleGatt else { return }
+        guard let contact = currentContact, contact.preferredTransport == .bleGatt else { return }
         guard activePeripheral == nil else { return }
 
+        let expectedAddress = contact.lastKnownBleAddress?.nilIfEmpty?.uppercased()
+        let expectedShareId = contact.bleShareId?.nilIfEmpty
+        let expectedDeviceId = contact.remoteDeviceId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+        let advertisesP2pService = P2pBleProtocol.advertisesService(
+            P2pBleProtocol.serviceUUID,
+            in: advertisementData
+        )
         let candidateAddress = peripheral.identifier.uuidString.uppercased()
-        if let expectedAddress = currentContact?.lastKnownBleAddress?.nilIfEmpty?.uppercased() {
+        if let expectedAddress {
             if candidateAddress == expectedAddress {
                 connect(peripheral)
                 return
             }
         }
 
-        if let expectedShareId = currentContact?.bleShareId?.nilIfEmpty {
-            guard
-                let advertisedShareId = P2pBleProtocol.advertisedShareId(
-                    from: advertisementData,
-                    peripheralName: peripheral.name
-                ),
-                P2pBleProtocol.normalizeShareId(advertisedShareId) == P2pBleProtocol.normalizeShareId(expectedShareId)
-            else {
+        if let expectedShareId {
+            if let advertisedShareId = P2pBleProtocol.advertisedShareId(from: advertisementData) {
+                guard P2pBleProtocol.normalizeShareId(advertisedShareId) == P2pBleProtocol.normalizeShareId(expectedShareId) else {
+                    return
+                }
+                connect(peripheral)
                 return
             }
+            if let peripheralNameShareId = P2pBleProtocol.advertisedShareId(from: [:], peripheralName: peripheral.name),
+               P2pBleProtocol.normalizeShareId(peripheralNameShareId) == P2pBleProtocol.normalizeShareId(expectedShareId) {
+                connect(peripheral)
+                return
+            }
+            if expectedDeviceId != nil, advertisesP2pService {
+                connect(peripheral)
+                return
+            }
+            return
+        }
+
+        if expectedDeviceId != nil {
+            if advertisesP2pService {
+                connect(peripheral)
+            }
+            return
+        }
+
+        if expectedAddress != nil {
+            return
+        }
+
+        // With an unfiltered scan the discovery callback sees every nearby device,
+        // so the last-resort path must still require the P2P service advertisement.
+        if advertisesP2pService {
             connect(peripheral)
-            return
         }
-
-        if currentContact?.lastKnownBleAddress?.nilIfEmpty != nil {
-            return
-        }
-
-        connect(peripheral)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -519,6 +641,10 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
         updateStatus(.ready)
         ContactStore.shared.updateBleAddress(sessionId: sessionId, address: peripheral.identifier.uuidString.uppercased())
         flushPendingEvents()
+        // The link just came up: hand any queued texts for this conversation to it. Android drains
+        // its queue on exactly this transition; without the kick a pending message sat unsent next
+        // to a live Bluetooth link until the user happened to foreground the app.
+        Task { @MainActor in InternetSendRetryQueue.shared.kick(reason: "bt-ready") }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
@@ -543,7 +669,35 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
 
     private func ensureCentralInitialized() {
         guard central == nil else { return }
-        central = CBCentralManager(delegate: self, queue: queue)
+        central = CBCentralManager(
+            delegate: self,
+            queue: queue,
+            options: [
+                // Restoration is per-session (the identifier must be unique per manager). Delivery
+                // only happens when a manager with the same id is re-created after relaunch — i.e.
+                // when the user reopens this chat — so this mainly protects an in-flight connection
+                // across a background kill rather than resurrecting every chat at launch.
+                CBCentralManagerOptionRestoreIdentifierKey:
+                    "com.auralis.crisisconnect.p2p-chat.\(sessionId.uuidString)",
+                CBCentralManagerOptionShowPowerAlertKey: false
+            ]
+        )
+    }
+
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let restored = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral]) ?? []
+            // Re-adopt the link the system kept alive for us; the normal connect callbacks then
+            // resume the identity handshake exactly as after a fresh connect.
+            if let peripheral = restored.first {
+                peripheral.delegate = self
+                self.activePeripheral = peripheral
+                if peripheral.state == .connected {
+                    peripheral.discoverServices([P2pBleProtocol.serviceUUID])
+                }
+            }
+        }
     }
 
     private func beginScanIfPossible() {
@@ -553,15 +707,13 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
         guard central.state == .poweredOn else { return }
         guard currentContact?.preferredTransport == .bleGatt else { return }
         guard activePeripheral == nil else { return }
-        let scanServices: [CBUUID]? =
-            if currentContact?.lastKnownBleAddress?.nilIfEmpty != nil || currentContact?.bleShareId?.nilIfEmpty != nil {
-                nil
-            } else {
-                [P2pBleProtocol.serviceUUID]
-            }
         if !central.isScanning {
+            // Scan unfiltered: when the Android peer co-advertises its mesh profile,
+            // the P2P service UUID may only appear in the scan response, which a
+            // CoreBluetooth service-filtered scan never matches. Candidates are
+            // validated in didDiscover (address / shareId / deviceId + service).
             central.scanForPeripherals(
-                withServices: scanServices,
+                withServices: nil,
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
             )
             DispatchQueue.main.async { [weak self] in
@@ -900,6 +1052,11 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
         do {
             guard let packet = try outputReceiver.onChunk(value) else { return }
             let envelopeData = try BleAesGcm.unwrapTransportPacket(packet, maxPacketSize: p2pMaxEnvelopePacketBytes)
+            if P2pCallProtocol.isCallAudioFrame(envelopeData) {
+                // Binary voice-call audio fast path; must never reach the chat envelope parser.
+                ChatPeerVoiceCallCoordinator.shared.handleGattCallAudio(envelopeData)
+                return
+            }
             guard let envelope = parseEnvelope(from: envelopeData),
                   let contact = currentContact,
                   let key = ContactStore.shared.aesKey(for: contact) else {
@@ -918,6 +1075,17 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
 
             if let expectedRemoteDeviceId = contact.remoteDeviceId?.nilIfEmpty,
                envelope.fromDeviceId.caseInsensitiveCompare(expectedRemoteDeviceId) != .orderedSame {
+                return
+            }
+
+            if P2pCallProtocol.isCallSignalKind(payload.kind) {
+                if let rawPayload = (try? JSONSerialization.jsonObject(with: payloadData)) as? [String: Any] {
+                    ChatPeerVoiceCallCoordinator.shared.handleGattCallSignal(
+                        sessionId: sessionId,
+                        payload: rawPayload,
+                        link: self
+                    )
+                }
                 return
             }
 
@@ -992,7 +1160,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
                             sessionId: self.sessionId,
                             title: notificationTitle,
                             body: P2pSharedTransferSupport.previewText(for: text),
-                            kind: .contactUpdate
+                            kind: .chatMessage
                         )
                     }
                 case P2pBleProtocol.chatKindVoiceInit,
@@ -1207,7 +1375,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
                 sessionId: self.sessionId,
                 title: notificationTitle,
                 body: NSLocalizedString("Voice message", comment: ""),
-                kind: .contactUpdate
+                kind: .chatMessage
             )
         }
     }
@@ -1320,7 +1488,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
                 sessionId: self.sessionId,
                 title: notificationTitle,
                 body: SOSChatStore.imagePreviewText(),
-                kind: .contactUpdate
+                kind: .chatMessage
             )
         }
     }
@@ -1438,6 +1606,10 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
     private func scheduleDelayedStop() {
         disconnectWork?.cancel()
         disconnectWork = nil
+        if callHoldActive {
+            // An active voice call owns the link; the call coordinator releases the hold.
+            return
+        }
         let hasActiveWork = shouldStayConnected ||
             activePeripheral != nil ||
             (central?.isScanning ?? false) ||

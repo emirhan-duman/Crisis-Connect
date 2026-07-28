@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.maplibre.android.offline.OfflineManager
+import com.auralis.crisisconnect.util.initializeMapLibreSafely
 import com.auralis.crisisconnect.domain.offline.DeleteRegionUseCase
 import com.auralis.crisisconnect.domain.offline.ListRegionsUseCase
 import com.auralis.crisisconnect.domain.offline.PauseDownloadUseCase
@@ -72,9 +73,21 @@ object OfflineServiceLocator {
 
     private fun buildRepository(context: Context): OfflineRegionRepository {
         val db = database ?: OfflineDatabase.build(context).also { database = it }
+        // MapLibre MUST be initialized before touching OfflineManager, or it throws a
+        // MapLibreConfigurationException. This factory runs during composition BEFORE the screen's
+        // MapView initializes MapLibre, so if the offline-map tool is the first map opened in the
+        // process (common on a fresh launch), OfflineManager.getInstance would crash. Initialize
+        // here first (idempotent). If the device can't run MapLibre at all (no GL ES 3.0), surface a
+        // clear, catchable failure instead of the opaque config exception.
+        if (!initializeMapLibreSafely(context, "OfflineServiceLocator")) {
+            throw OfflineMapUnavailableException()
+        }
         val manager = OfflineManager.getInstance(context)
         return OfflineRegionRepositoryImpl(db, manager, applicationScope).also {
             applicationScope.launch { it.refresh() }
         }
     }
 }
+
+/** Thrown when the offline-map runtime (MapLibre / GL ES 3.0) is unavailable on this device. */
+class OfflineMapUnavailableException : IllegalStateException("Offline maps are not available on this device.")

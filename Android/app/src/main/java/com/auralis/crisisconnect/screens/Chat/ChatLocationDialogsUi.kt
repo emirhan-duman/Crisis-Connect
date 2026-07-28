@@ -149,7 +149,7 @@ import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -1893,7 +1893,7 @@ private fun rememberOfflineMaxZoomForLocation(
 ): Double? {
     val context = LocalContext.current
     val listRegionsUseCase = remember { OfflineServiceLocator.provideListRegionsUseCase(context) }
-    val regions by listRegionsUseCase().collectAsState(initial = emptyList())
+    val regions by listRegionsUseCase().collectAsStateWithLifecycle(initialValue = emptyList())
     return remember(regions, latitude, longitude, styleUrl) {
         val normalizedStyle = styleUrl.trim()
         regions

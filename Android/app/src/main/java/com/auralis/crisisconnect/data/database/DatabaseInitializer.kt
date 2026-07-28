@@ -32,12 +32,13 @@ class DatabaseInitializer(
         }
 
         if (currentUser?.isAnonymous == true) {
-            auth.signOut()
-            LocalKeyStorage.clearUid(context)
-            Log.i(
-                TAG,
-                "Cleared persisted anonymous Firebase session. App now continues in local-only mode until explicit sign-in."
-            )
+            // Keep anonymous sessions — they are a valid QR-only internet-messaging identity
+            // (created by MessagingBootstrap so a QR-added contact can be reached online without an
+            // explicit login). We must NOT sign out here, otherwise the identity key never publishes
+            // and internet messaging stays unavailable. Real-account setup (country profile, uid
+            // mapping) is intentionally skipped for anonymous users; every real-account feature
+            // already gates on !isAnonymous.
+            Log.i(TAG, "Retaining anonymous Firebase session for internet messaging.")
             return
         }
 
@@ -65,24 +66,44 @@ class DatabaseInitializer(
         LocalKeyStorage.saveCountry(context, countryCode)
 
         if (savedUid == null || savedUid != uid) {
-            val userData = hashMapOf(
-                "id" to uid,
-                "platform" to "android",
-                "role" to "user",
-                "email" to "",
-                "username" to "",
-                "verified" to false,
-                "country" to countryCode,
-                "createdAt" to FieldValue.serverTimestamp()
-            )
-
-            db.collection("users").document(uid).set(userData)
-                .addOnSuccessListener {
-                    LocalKeyStorage.saveUid(context, uid)
-                    Log.d(TAG, "✅ User saved with country=$countryCode")
+            // A stale/missing local uid does NOT mean the cloud doc is new: a reinstall or
+            // account switch lands here with a fully populated users/{uid}. Replacing it
+            // (set without merge) nuked profile fields — including username, which web and
+            // iOS also write — and rules even reject the replace for panel accounts because
+            // it resets role/verified. Only seed the skeleton when the doc truly does not exist.
+            val docRef = db.collection("users").document(uid)
+            docRef.get()
+                .addOnSuccessListener { snapshot ->
+                    if (snapshot.exists()) {
+                        LocalKeyStorage.saveUid(context, uid)
+                        docRef.update(
+                            hashMapOf<String, Any>(
+                                "country" to countryCode,
+                                "countrySource" to FieldValue.delete(),
+                                "vpnActive" to FieldValue.delete()
+                            )
+                        )
+                        return@addOnSuccessListener
+                    }
+                    val userData = hashMapOf(
+                        "id" to uid,
+                        "platform" to "android",
+                        "role" to "user",
+                        "verified" to false,
+                        "country" to countryCode,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                    docRef.set(userData)
+                        .addOnSuccessListener {
+                            LocalKeyStorage.saveUid(context, uid)
+                            Log.d(TAG, "✅ User saved with country=$countryCode")
+                        }
+                        .addOnFailureListener { e ->
+                            Log.e(TAG, "❌ Failed to save user", e)
+                        }
                 }
                 .addOnFailureListener { e ->
-                    Log.e(TAG, "❌ Failed to save user", e)
+                    Log.e(TAG, "❌ Failed to load user before bootstrap", e)
                 }
         } else {
             val updates = hashMapOf<String, Any>(

@@ -65,8 +65,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
@@ -91,6 +93,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -139,10 +142,13 @@ import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.ai.CrisisSentinelChatMessage
 import com.auralis.crisisconnect.ai.CrisisSentinelChatRole
 import com.auralis.crisisconnect.ai.CrisisSentinelConversationSummary
+import com.auralis.crisisconnect.ai.CrisisSentinelMapPoint
 import com.auralis.crisisconnect.ai.CrisisSentinelModelAvailability
 import com.auralis.crisisconnect.ai.CrisisSentinelModelStatus
 import com.auralis.crisisconnect.ai.CrisisSentinelResponseSource
 import com.auralis.crisisconnect.ai.CrisisSentinelUserMode
+import org.json.JSONArray
+import org.json.JSONObject
 import com.auralis.crisisconnect.ui.components.AppBackTopBar
 import com.auralis.crisisconnect.ui.components.AppBottomBar
 import java.text.SimpleDateFormat
@@ -159,6 +165,26 @@ private fun openCrisisSentinelUrl(context: android.content.Context, url: String)
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     runCatching { context.startActivity(intent) }
+}
+
+/** Opens the offline map on the given AI-provided points (camera fits all of them). */
+private fun openPointsOnMap(navController: NavController, points: List<CrisisSentinelMapPoint>) {
+    val first = points.firstOrNull() ?: return
+    val pointsJson = JSONArray().also { array ->
+        points.forEach { point ->
+            array.put(
+                JSONObject()
+                    .put("lat", point.lat)
+                    .put("lng", point.lng)
+                    .put("label", point.label)
+                    .apply { point.details?.let { put("details", it) } }
+            )
+        }
+    }.toString()
+    navController.navigate(
+        "offline_map?lat=${first.lat}&lng=${first.lng}" +
+            "&label=${Uri.encode(first.label)}&points=${Uri.encode(pointsJson)}"
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -254,6 +280,7 @@ fun CrisisSentinelScreen(navController: NavController) {
             item {
                 DownloadOnlyCard(
                     isModelReady = uiState.modelStatus.isReady,
+                    isOnlineAvailable = uiState.onlineEngineAvailable,
                     onOpenMainMenu = {
                         navController.navigate("main") {
                             launchSingleTop = true
@@ -289,6 +316,8 @@ fun CrisisSentinelHomeScreen(navController: NavController) {
     val lifecycleOwner = LocalLifecycleOwner.current
     var showInfo by remember { mutableStateOf(false) }
     var showDeleteModelConfirm by remember { mutableStateOf(false) }
+    var conversationMenuTarget by remember { mutableStateOf<CrisisSentinelConversationSummary?>(null) }
+    var conversationPendingRename by remember { mutableStateOf<CrisisSentinelConversationSummary?>(null) }
     var conversationPendingDelete by remember { mutableStateOf<CrisisSentinelConversationSummary?>(null) }
     val openNewConversation = {
         navController.navigate("crisis_sentinel_chat/$CRISIS_SENTINEL_NEW_CONVERSATION_ID")
@@ -338,6 +367,32 @@ fun CrisisSentinelHomeScreen(navController: NavController) {
         )
     }
 
+    conversationMenuTarget?.let { conversation ->
+        ConversationActionsSheet(
+            title = conversation.title,
+            onRename = {
+                conversationMenuTarget = null
+                conversationPendingRename = conversation
+            },
+            onDelete = {
+                conversationMenuTarget = null
+                conversationPendingDelete = conversation
+            },
+            onDismiss = { conversationMenuTarget = null }
+        )
+    }
+
+    conversationPendingRename?.let { conversation ->
+        RenameConversationDialog(
+            initialTitle = conversation.title,
+            onDismiss = { conversationPendingRename = null },
+            onConfirm = { newTitle ->
+                conversationPendingRename = null
+                viewModel.renameConversation(conversation.id, newTitle)
+            }
+        )
+    }
+
     conversationPendingDelete?.let { conversation ->
         DeleteConversationConfirmationDialog(
             onDismiss = { conversationPendingDelete = null },
@@ -373,7 +428,7 @@ fun CrisisSentinelHomeScreen(navController: NavController) {
             AppBottomBar(navController = navController)
         },
         floatingActionButton = {
-            if (uiState.modelStatus.isReady) {
+            if (uiState.canChat) {
                 ExtendedFloatingActionButton(
                     onClick = openNewConversation,
                     icon = { Icon(imageVector = Icons.Filled.Add, contentDescription = null) },
@@ -383,7 +438,7 @@ fun CrisisSentinelHomeScreen(navController: NavController) {
         },
         floatingActionButtonPosition = FabPosition.End
     ) { innerPadding ->
-        if (uiState.modelStatus.isReady) {
+        if (uiState.canChat) {
             if (uiState.conversations.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -418,8 +473,13 @@ fun CrisisSentinelHomeScreen(navController: NavController) {
                     ) { conversation ->
                         ConversationRow(
                             conversation = conversation,
-                            onClick = { navController.navigate("crisis_sentinel_chat/${conversation.id}") },
-                            onLongPress = { conversationPendingDelete = conversation }
+                            onClick = {
+                                // Encode: cloud ids carry a "cloud:" prefix in the path segment.
+                                navController.navigate(
+                                    "crisis_sentinel_chat/${Uri.encode(conversation.id)}"
+                                )
+                            },
+                            onLongPress = { conversationMenuTarget = conversation }
                         )
                     }
                 }
@@ -436,7 +496,12 @@ fun CrisisSentinelHomeScreen(navController: NavController) {
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 item {
-                    ModelNotReadyCard(onOpenDownload = { navController.navigate("crisis_sentinel") })
+                    ModelNotReadyCard(
+                        onOpenDownload = { navController.navigate("crisis_sentinel") },
+                        // Field-team users could also chat online, so reaching this card means
+                        // BOTH engines are down — say "AI unavailable", not just "download".
+                        showOnlineHint = uiState.isOnlineEngineAllowed
+                    )
                 }
             }
         }
@@ -520,12 +585,14 @@ fun CrisisSentinelSettingsScreen(navController: NavController) {
 @Composable
 fun CrisisSentinelChatScreen(
     navController: NavController,
-    conversationId: String
+    conversationId: String,
+    initialPrompt: String? = null
 ) {
     val viewModel: CrisisSentinelViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val transientMessage = uiState.transientMessageRes
+    var showEnginePicker by remember { mutableStateOf(false) }
     val swipeBackThresholdPx = with(LocalDensity.current) { 96.dp.toPx() }
     val swipeBackOffset = remember { Animatable(0f) }
     val swipeBackScope = rememberCoroutineScope()
@@ -578,9 +645,16 @@ fun CrisisSentinelChatScreen(
         viewModel.openConversation(conversationId)
     }
 
+    LaunchedEffect(initialPrompt) {
+        if (!initialPrompt.isNullOrBlank()) {
+            viewModel.onPromptChanged(initialPrompt)
+        }
+    }
+
     // Smart scroll: follow the conversation only when the user is already at the bottom (or just
-    // sent a message); otherwise offer a "new reply" chip instead of yanking the list.
-    LaunchedEffect(chatMessages.size, uiState.isGenerating) {
+    // sent a message); otherwise offer a "new reply" chip instead of yanking the list. The
+    // streaming length keeps the list pinned to the bottom while an online reply grows.
+    LaunchedEffect(chatMessages.size, uiState.isGenerating, uiState.streamingReply?.length) {
         if (chatMessages.isEmpty()) return@LaunchedEffect
         val lastIsUser = chatMessages.last().role == CrisisSentinelChatRole.User
         if (lastIsUser || isChatListAtBottom) {
@@ -610,6 +684,28 @@ fun CrisisSentinelChatScreen(
             snackbarHostState.showSnackbar(message)
             viewModel.clearTransientMessage()
         }
+    }
+
+    if (showEnginePicker) {
+        LaunchedEffect(Unit) {
+            viewModel.refreshOnlineProviders()
+        }
+        CrisisSentinelEnginePickerSheet(
+            selectedEngine = uiState.selectedEngine,
+            onlineAvailable = uiState.onlineEngineAvailable,
+            edgeAvailable = uiState.edgeEngineAvailable,
+            onSelect = viewModel::selectEngine,
+            onDismiss = { showEnginePicker = false },
+            providers = uiState.onlineProviders,
+            isLoadingProviders = uiState.isLoadingProviders,
+            providersLoadFailed = uiState.providersLoadFailed,
+            selectedModel = uiState.selectedOnlineModel,
+            onSelectModel = viewModel::selectOnlineModel
+        )
+    }
+
+    val onShowOnMap: (List<CrisisSentinelMapPoint>) -> Unit = remember(navController) {
+        { points -> openPointsOnMap(navController, points) }
     }
 
     Box(
@@ -714,7 +810,19 @@ fun CrisisSentinelChatScreen(
                     title = uiState.activeConversation?.title
                         ?.takeIf { it.isNotBlank() }
                         ?: stringResource(R.string.crisis_sentinel_new_chat),
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
+                    actions = {
+                        // Engine choice only exists for field-team users; everyone else is
+                        // Edge-only and keeps the plain top bar.
+                        if (uiState.isOnlineEngineAllowed) {
+                            CrisisSentinelEngineChip(
+                                selectedEngine = uiState.selectedEngine,
+                                onClick = { showEnginePicker = true },
+                                modifier = Modifier.padding(end = 8.dp),
+                                selectedModelLabel = uiState.selectedOnlineModel?.modelLabel
+                            )
+                        }
+                    }
                 )
             },
             snackbarHost = {
@@ -774,12 +882,18 @@ fun CrisisSentinelChatScreen(
                                 canRegenerate = message.role == CrisisSentinelChatRole.Assistant &&
                                     message.id == lastMessageId &&
                                     !uiState.isGenerating,
-                                onRegenerate = viewModel::regenerateLastResponse
+                                onRegenerate = viewModel::regenerateLastResponse,
+                                onShowOnMap = onShowOnMap
                             )
                         }
                         if (uiState.isGenerating) {
                             item {
-                                AssistantThinkingBubble()
+                                val streaming = uiState.streamingReply
+                                if (streaming.isNullOrBlank()) {
+                                    AssistantThinkingBubble()
+                                } else {
+                                    StreamingAssistantBubble(text = streaming)
+                                }
                             }
                         }
                     }
@@ -829,7 +943,8 @@ fun CrisisSentinelChatScreen(
                         runCatching { speechLauncher.launch(speechIntent) }
                             .onFailure { viewModel.markInputUnavailable() }
                     },
-                    modelReady = uiState.modelStatus.isReady,
+                    engineReady = uiState.activeEngine != null,
+                    showUnavailableHint = uiState.activeEngine == null && uiState.isOnlineEngineAllowed,
                     isDownloading = uiState.modelDownloadState.isActive,
                     onDownloadModel = { viewModel.requestModelDownload() },
                     modifier = Modifier
@@ -844,12 +959,16 @@ fun CrisisSentinelChatScreen(
 @Composable
 private fun DownloadOnlyCard(
     isModelReady: Boolean,
-    onOpenMainMenu: () -> Unit
+    onOpenMainMenu: () -> Unit,
+    isOnlineAvailable: Boolean = false
 ) {
+    // Field-team users can chat via the cloud engine before (or instead of) downloading the
+    // on-device model, so the card unlocks whenever either engine is usable.
+    val canUseAi = isModelReady || isOnlineAvailable
     Card(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isModelReady) {
+            containerColor = if (canUseAi) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
                 MaterialTheme.colorScheme.surfaceContainer
@@ -866,9 +985,9 @@ private fun DownloadOnlyCard(
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = if (isModelReady) Icons.Filled.CheckCircle else Icons.Filled.CloudDownload,
+                    imageVector = if (canUseAi) Icons.Filled.CheckCircle else Icons.Filled.CloudDownload,
                     contentDescription = null,
-                    tint = if (isModelReady) {
+                    tint = if (canUseAi) {
                         MaterialTheme.colorScheme.onPrimaryContainer
                     } else {
                         MaterialTheme.colorScheme.primary
@@ -876,10 +995,10 @@ private fun DownloadOnlyCard(
                 )
                 Text(
                     text = stringResource(
-                        if (isModelReady) {
-                            R.string.crisis_sentinel_download_ready_title
-                        } else {
-                            R.string.crisis_sentinel_download_only_title
+                        when {
+                            isModelReady -> R.string.crisis_sentinel_download_ready_title
+                            isOnlineAvailable -> R.string.crisis_sentinel_download_fieldteam_online_title
+                            else -> R.string.crisis_sentinel_download_only_title
                         }
                     ),
                     style = MaterialTheme.typography.titleMedium,
@@ -888,10 +1007,10 @@ private fun DownloadOnlyCard(
             }
             Text(
                 text = stringResource(
-                    if (isModelReady) {
-                        R.string.crisis_sentinel_download_ready_body
-                    } else {
-                        R.string.crisis_sentinel_download_only_body
+                    when {
+                        isModelReady -> R.string.crisis_sentinel_download_ready_body
+                        isOnlineAvailable -> R.string.crisis_sentinel_download_fieldteam_online_body
+                        else -> R.string.crisis_sentinel_download_only_body
                     }
                 ),
                 style = MaterialTheme.typography.bodyMedium,
@@ -899,7 +1018,7 @@ private fun DownloadOnlyCard(
             )
             Button(
                 onClick = onOpenMainMenu,
-                enabled = isModelReady,
+                enabled = canUseAi,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(text = stringResource(R.string.crisis_sentinel_open_main_menu))
@@ -1016,6 +1135,108 @@ private fun DeleteModelConfirmationDialog(
         confirmButton = {
             TextButton(onClick = onConfirm) {
                 Text(text = stringResource(R.string.crisis_sentinel_model_delete_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(R.string.cancel))
+            }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConversationActionsSheet(
+    title: String,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = title.ifBlank { stringResource(R.string.crisis_sentinel_new_chat) },
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            ConversationActionRow(
+                icon = Icons.Filled.Edit,
+                label = stringResource(R.string.crisis_sentinel_chat_rename),
+                onClick = onRename
+            )
+            ConversationActionRow(
+                icon = Icons.Filled.Delete,
+                label = stringResource(R.string.crisis_sentinel_chat_delete_title),
+                tint = MaterialTheme.colorScheme.error,
+                onClick = onDelete
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun ConversationActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = androidx.compose.ui.graphics.Color.Transparent,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(imageVector = icon, contentDescription = null, tint = tint)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = tint
+            )
+        }
+    }
+}
+
+@Composable
+private fun RenameConversationDialog(
+    initialTitle: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var title by remember { mutableStateOf(initialTitle) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.crisis_sentinel_chat_rename)) },
+        text = {
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                singleLine = true,
+                label = { Text(text = stringResource(R.string.crisis_sentinel_chat_rename_hint)) },
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(title) },
+                enabled = title.trim().isNotBlank()
+            ) {
+                Text(text = stringResource(R.string.crisis_sentinel_chat_rename))
             }
         },
         dismissButton = {
@@ -1161,19 +1382,34 @@ private fun EmptyConversationState() {
 }
 
 @Composable
-private fun ModelNotReadyCard(onOpenDownload: () -> Unit) {
+private fun ModelNotReadyCard(
+    onOpenDownload: () -> Unit,
+    showOnlineHint: Boolean = false
+) {
     Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = stringResource(R.string.crisis_sentinel_model_answer_not_ready),
+                text = stringResource(
+                    if (showOnlineHint) {
+                        R.string.crisis_sentinel_engine_unavailable_title
+                    } else {
+                        R.string.crisis_sentinel_model_answer_not_ready
+                    }
+                ),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                text = stringResource(R.string.crisis_sentinel_model_fallback),
+                text = stringResource(
+                    if (showOnlineHint) {
+                        R.string.crisis_sentinel_engine_unavailable_hint
+                    } else {
+                        R.string.crisis_sentinel_model_fallback
+                    }
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1201,7 +1437,14 @@ private fun ConversationRow(
     }
     val preview = conversation.lastMessagePreview
         ?.takeIf { it.isNotBlank() }
-        ?: stringResource(R.string.crisis_sentinel_empty_chat_preview)
+        ?: stringResource(
+            if (conversation.isCloud) {
+                // Chat docs carry no message preview; say what the cloud row is instead.
+                R.string.crisis_sentinel_cloud_chat_preview
+            } else {
+                R.string.crisis_sentinel_empty_chat_preview
+            }
+        )
     val previewText = if (conversation.isDraft) {
         stringResource(R.string.crisis_sentinel_draft_preview, preview)
     } else {
@@ -1229,6 +1472,15 @@ private fun ConversationRow(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (conversation.isCloud) {
+                        Icon(
+                            imageVector = Icons.Filled.Cloud,
+                            contentDescription =
+                                stringResource(R.string.crisis_sentinel_cloud_chat_preview),
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                     Text(
                         text = conversation.title.ifBlank { stringResource(R.string.crisis_sentinel_new_chat) },
                         style = MaterialTheme.typography.titleMedium,
@@ -1366,7 +1618,8 @@ private fun SuggestionCard(text: String, onClick: () -> Unit) {
 private fun ChatMessageBubble(
     message: CrisisSentinelChatMessage,
     canRegenerate: Boolean = false,
-    onRegenerate: () -> Unit = {}
+    onRegenerate: () -> Unit = {},
+    onShowOnMap: (List<CrisisSentinelMapPoint>) -> Unit = {}
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
@@ -1424,10 +1677,21 @@ private fun ChatMessageBubble(
                         color = textColor
                     )
                 } else {
-                    MarkdownLiteText(
-                        text = message.text,
-                        color = textColor
-                    )
+                    if (message.text.isNotBlank()) {
+                        MarkdownLiteText(
+                            text = message.text,
+                            color = textColor
+                        )
+                    }
+                    message.cardJson?.let { cardJson ->
+                        CrisisSentinelCardView(cardJson = cardJson, onShowOnMap = onShowOnMap)
+                    }
+                    if (message.mapPoints.isNotEmpty()) {
+                        ShowOnMapButton(points = message.mapPoints, onShowOnMap = onShowOnMap)
+                    }
+                    if (message.unsupportedToolName != null) {
+                        UnsupportedToolNotice()
+                    }
                 }
                 if (!isUser && message.source != null) {
                     val sourceLabel = stringResource(responseSourceLabel(message.source))
@@ -1440,7 +1704,8 @@ private fun ChatMessageBubble(
                             )
                         }
                     Text(
-                        text = listOfNotNull(sourceLabel, durationLabel).joinToString(" · "),
+                        text = listOfNotNull(sourceLabel, message.modelName, durationLabel)
+                            .joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -1550,6 +1815,23 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendWithInlineBol
 }
 
 @Composable
+private fun StreamingAssistantBubble(text: String) {
+    // Mirrors the assistant style of ChatMessageBubble (full-width, no bubble) while the online
+    // reply streams; the finished message replaces it with a full ChatMessageBubble.
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        MarkdownLiteText(
+            text = text,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@Composable
 private fun AssistantThinkingBubble() {
     // Bubble-less to match the assistant message style; animated typing dots instead of a spinner.
     Row(
@@ -1612,7 +1894,8 @@ private fun ChatComposer(
     onPhotoOcrClicked: () -> Unit,
     onTextFileClicked: () -> Unit,
     onVoiceClicked: () -> Unit,
-    modelReady: Boolean = true,
+    engineReady: Boolean = true,
+    showUnavailableHint: Boolean = false,
     isDownloading: Boolean = false,
     onDownloadModel: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -1655,7 +1938,32 @@ private fun ChatComposer(
                 .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-        if (!modelReady) {
+        if (!engineReady) {
+            if (showUnavailableHint) {
+                // Field-team user with neither engine reachable: name the condition (offline +
+                // model missing) instead of implying a download is the only fix.
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.crisis_sentinel_engine_unavailable_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = stringResource(R.string.crisis_sentinel_engine_unavailable_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
             // Persistent, in-place CTA instead of a transient snackbar when the offline model
             // hasn't been downloaded yet.
             FilledTonalButton(
@@ -2125,5 +2433,7 @@ private fun responseSourceLabel(source: CrisisSentinelResponseSource): Int {
     return when (source) {
         CrisisSentinelResponseSource.LocalModel -> R.string.crisis_sentinel_source_local_model
         CrisisSentinelResponseSource.OfflineRules -> R.string.crisis_sentinel_source_offline_rules
+        CrisisSentinelResponseSource.OnlineModel -> R.string.crisis_sentinel_source_online_model
+        CrisisSentinelResponseSource.OnlineModel -> R.string.crisis_sentinel_source_online_model
     }
 }

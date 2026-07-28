@@ -19,6 +19,10 @@ struct ContactQRPayload: Codable {
     let name: String?
     let bluetoothName: String?
     let shareId: String?
+    // Our internet-messaging identity, so the scanner can reach us online later (mirrors Android's
+    // NewChat QR fields). Only the PUBLIC key travels; the private key never leaves the device.
+    let peerUid: String?
+    let peerPublicKey: String?
 
     init(
         v: Int = currentVersion,
@@ -28,7 +32,9 @@ struct ContactQRPayload: Codable {
         bleFallbackCapable: Bool = true,
         name: String? = nil,
         bluetoothName: String? = nil,
-        shareId: String? = nil
+        shareId: String? = nil,
+        peerUid: String? = nil,
+        peerPublicKey: String? = nil
     ) {
         self.v = v
         self.code = code
@@ -38,6 +44,8 @@ struct ContactQRPayload: Codable {
         self.name = name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.bluetoothName = bluetoothName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.shareId = shareId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.peerUid = peerUid?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.peerPublicKey = peerPublicKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -49,6 +57,8 @@ struct ContactQRPayload: Codable {
         case name
         case bluetoothName
         case shareId
+        case peerUid
+        case peerPublicKey
         case legacyName = "n"
         case legacyBroadcastId = "b"
         case legacyKey = "k"
@@ -70,6 +80,8 @@ struct ContactQRPayload: Codable {
             ?? container.decodeIfPresent(String.self, forKey: .legacyName)
         let bluetoothName = try container.decodeIfPresent(String.self, forKey: .bluetoothName)
         let shareId = try container.decodeIfPresent(String.self, forKey: .shareId)
+        let peerUid = try container.decodeIfPresent(String.self, forKey: .peerUid)
+        let peerPublicKey = try container.decodeIfPresent(String.self, forKey: .peerPublicKey)
 
         self.init(
             v: version,
@@ -79,7 +91,9 @@ struct ContactQRPayload: Codable {
             bleFallbackCapable: bleFallbackCapable,
             name: name,
             bluetoothName: bluetoothName,
-            shareId: shareId
+            shareId: shareId,
+            peerUid: peerUid,
+            peerPublicKey: peerPublicKey
         )
     }
 
@@ -93,6 +107,8 @@ struct ContactQRPayload: Codable {
         try container.encodeIfPresent(name, forKey: .name)
         try container.encodeIfPresent(bluetoothName, forKey: .bluetoothName)
         try container.encodeIfPresent(shareId, forKey: .shareId)
+        try container.encodeIfPresent(peerUid, forKey: .peerUid)
+        try container.encodeIfPresent(peerPublicKey, forKey: .peerPublicKey)
     }
 
     func encodedString() -> String? {

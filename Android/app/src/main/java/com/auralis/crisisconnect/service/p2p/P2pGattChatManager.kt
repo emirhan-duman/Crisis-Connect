@@ -16,6 +16,7 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
+import android.bluetooth.BluetoothStatusCodes
 import android.os.Build
 import android.os.ParcelUuid
 import android.util.Base64
@@ -47,6 +48,8 @@ import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.getSavedUserName
 import com.auralis.crisisconnect.security.AesCipherHelper
 import com.auralis.crisisconnect.security.BleChunkReceiver
+import com.auralis.crisisconnect.service.p2p.call.P2pCallController
+import com.auralis.crisisconnect.service.p2p.call.P2pCallProtocol
 import com.auralis.crisisconnect.security.BleChunkSender
 import com.auralis.crisisconnect.service.BleFilePayload
 import com.auralis.crisisconnect.service.BleImagePayload
@@ -273,7 +276,9 @@ class P2pGattChatManager(
     fun updateContact(contact: Contact?) {
         currentContact = contact
         if (contact == null || normalizePreferredTransport(contact.preferredTransport) != PREFERRED_TRANSPORT_BLE_GATT) {
-            stopNow()
+            if (!callHoldActive) {
+                stopNow()
+            }
         } else {
             refreshConnectedSessions()
         }
@@ -289,6 +294,9 @@ class P2pGattChatManager(
     }
 
     fun stop() {
+        if (callHoldActive) {
+            return
+        }
         stopNow()
     }
 
@@ -325,6 +333,10 @@ class P2pGattChatManager(
     fun detach() {
         delayedStopJob?.cancel()
         delayedStopJob = null
+        if (callHoldActive) {
+            // An active voice call owns the link; the call controller detaches when it ends.
+            return
+        }
         if (!shouldStayConnected || (activeGatt == null && !isScanning && pendingConnectAddress.isNullOrBlank())) {
             stopNow()
             return
@@ -332,6 +344,111 @@ class P2pGattChatManager(
         delayedStopJob = scope.launch {
             delay(P2P_CHAT_DISCONNECT_GRACE_MS)
             stopNow()
+        }
+    }
+
+    // -------------------------------------------------------------------------------------
+    // Voice call link (central role): signaling as encrypted chat envelopes over the regular
+    // acknowledged write path, audio as binary P2pCallProtocol frames via write-without-response.
+    // -------------------------------------------------------------------------------------
+
+    @Volatile
+    private var callHoldActive = false
+
+    internal val callLink = object : P2pCallController.CallLink {
+        override val linkName: String = "p2p-client"
+
+        override fun isReadyForSession(sessionCode: String): Boolean {
+            val contact = currentContact ?: return false
+            return isReady() && contact.sessionCode.equals(sessionCode, ignoreCase = true)
+        }
+
+        override suspend fun sendCallSignal(sessionCode: String, payload: JSONObject): Boolean {
+            val contact = currentContact
+                ?.takeIf { it.sessionCode.equals(sessionCode, ignoreCase = true) }
+                ?: return false
+            val packet = buildRawEnvelopePacket(contact, payload) ?: return false
+            return writePacket(packet)
+        }
+
+        override fun trySendCallAudio(sessionCode: String, packet: ByteArray): Boolean {
+            val contact = currentContact ?: return false
+            if (!contact.sessionCode.equals(sessionCode, ignoreCase = true)) return false
+            return trySendCallAudioFast(packet)
+        }
+
+        override fun setCallHold(active: Boolean) {
+            setCallHoldActive(active)
+        }
+    }
+
+    init {
+        P2pCallController.shared(appContext).registerClientLink(callLink)
+    }
+
+    internal fun setCallHoldActive(active: Boolean) {
+        val wasActive = callHoldActive
+        callHoldActive = active
+        if (active) {
+            delayedStopJob?.cancel()
+            delayedStopJob = null
+        } else if (wasActive) {
+            // Resume the normal lifecycle: linger briefly, then release the link unless the
+            // chat screen re-attached in the meantime.
+            detach()
+        }
+    }
+
+    private suspend fun buildRawEnvelopePacket(contact: Contact, innerPayload: JSONObject): ByteArray? {
+        val keyBytes = P2pBleProtocol.decodeBase64(contact.aesKey)?.takeIf { it.isNotEmpty() } ?: return null
+        val innerBytes = innerPayload.toString().toByteArray(StandardCharsets.UTF_8)
+        val encrypted = runCatching { AesCipherHelper.encrypt(keyBytes, innerBytes) }.getOrNull()
+            ?: return null
+        val outer = JSONObject().apply {
+            put("type", P2pBleProtocol.TYPE_CHAT_ENVELOPE)
+            put("fromDeviceId", LocalKeyStorage.getOrCreateP2pDeviceId(appContext))
+            put("payload", Base64.encodeToString(encrypted, Base64.NO_WRAP))
+        }.toString().toByteArray(StandardCharsets.UTF_8)
+        return runCatching { P2pBleProtocol.wrapTransportPacket(outer) }.getOrNull()
+    }
+
+    /**
+     * Single-ATT-write audio fast path. Uses WRITE_TYPE_NO_RESPONSE so the 25 pkt/s stream never
+     * waits for acknowledgements. On API < 33 the legacy write API shares mutable state with the
+     * chunked chat writer, so the frame is dropped when a chat write is in flight (writeMutex).
+     */
+    @SuppressLint("MissingPermission")
+    private fun trySendCallAudioFast(packet: ByteArray): Boolean {
+        if (!hasBleConnectPermission()) return false
+        val gatt = activeGatt ?: return false
+        val characteristic = messageInCharacteristic ?: return false
+        val wrapped = runCatching { P2pBleProtocol.wrapTransportPacket(packet) }.getOrNull()
+            ?: return false
+        if (wrapped.size > currentGattWriteChunkSize()) {
+            return false
+        }
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            runCatching {
+                gatt.writeCharacteristic(
+                    characteristic,
+                    wrapped,
+                    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                ) == BluetoothStatusCodes.SUCCESS
+            }.getOrDefault(false)
+        } else {
+            if (!writeMutex.tryLock()) {
+                return false
+            }
+            try {
+                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                characteristic.value = wrapped
+                @Suppress("DEPRECATION")
+                val ok = runCatching { gatt.writeCharacteristic(characteristic) }.getOrDefault(false)
+                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                ok
+            } finally {
+                writeMutex.unlock()
+            }
         }
     }
 
@@ -1240,6 +1357,11 @@ class P2pGattChatManager(
             outputReceiver.reset()
             return
         }
+        if (P2pCallProtocol.isCallAudioFrame(envelopeBytes)) {
+            // Binary voice-call audio fast path; must never reach the chat envelope parser.
+            P2pCallController.shared(appContext).onInboundCallAudio(envelopeBytes)
+            return
+        }
         val envelope = parseEnvelope(envelopeBytes) ?: return
         val contact = currentContact ?: return
         if (contact.remoteDeviceId.isNotBlank() &&
@@ -1257,6 +1379,13 @@ class P2pGattChatManager(
             return
         }
         val payload = parsePayload(payloadBytes) ?: return
+        if (P2pCallProtocol.isCallSignalKind(payload.kind)) {
+            val rawPayload = runCatching {
+                JSONObject(payloadBytes.toString(StandardCharsets.UTF_8))
+            }.getOrNull() ?: return
+            P2pCallController.shared(appContext).onInboundCallSignal(contact, rawPayload, callLink)
+            return
+        }
         scope.launch {
             persistRuntimeMetadata(payload.senderName ?: authenticatedName)
             when (payload.kind) {

@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="es">
-    <string name="sensor_monitor_dashboard_title">Panel de control del sensor de desastres</string>
+    <string name="sensor_monitor_dashboard_title">Panel de control de sensores</string>
     <string name="sensor_monitor_dashboard_subtitle">Realice un seguimiento de los cambios ambientales en tiempo real para identificar los riesgos más rápidamente.</string>
     <string name="sensor_monitor_dashboard_status_active_title">Monitoreo en vivo activo</string>
     <string name="sensor_monitor_dashboard_status_paused_title">Monitoreo en pausa</string>

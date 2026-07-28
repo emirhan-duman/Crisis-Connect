@@ -11,9 +11,11 @@ import com.auralis.crisisconnect.data.getContact
 import com.auralis.crisisconnect.data.local.ContactAvatarStorage
 import com.auralis.crisisconnect.data.normalizeMacAddress
 import com.auralis.crisisconnect.data.updateContactAesKey
+import com.auralis.crisisconnect.data.updateContactChildFlag
 import com.auralis.crisisconnect.data.updateContactName
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.getSavedUserName
+import com.auralis.crisisconnect.security.ChildProfileManager
 import com.auralis.crisisconnect.security.decryptAesGcm
 import com.auralis.crisisconnect.security.encryptAesGcm
 import kotlinx.coroutines.CoroutineScope
@@ -230,6 +232,11 @@ internal class RfcommHandshakeDelegate(
                     payloadBase64 = remoteAvatar
                 )
             }
+            // Optional field: old app versions never send it, so absence means "leave as is"
+            // rather than "adult" — only a peer that reports the flag can change it.
+            if (json.has("isChild")) {
+                updateContactChildFlag(appContext, sessionCode, json.optBoolean("isChild", false))
+            }
 
             onSessionActive(sessionCode)
         }
@@ -327,6 +334,7 @@ internal class RfcommHandshakeDelegate(
                     put("avatarB64", avatarPayload)
                 }
                 put("aesKey", aesKeyBase64.trim())
+                put("isChild", ChildProfileManager.isEnabled(appContext))
             }.toString().toByteArray(Charsets.UTF_8)
             val encrypted = encryptAesGcm(keyBytes, payload) ?: return@launch
             val (ivBase64, cipherBase64) = encrypted

@@ -83,6 +83,9 @@ class RescueScreenViewModelTest {
             rssi = -80,
             lastSeen = 1_000L,
             lastUpdated = 1_000L,
+            isSosVictim = true,
+            sosState = RescueScreenViewModel.SosState.CLEARED,
+            clearedAtMillis = 2_000L,
         )
         val active = old.copy(
             address = "11:22:33:44:55:66",
@@ -92,6 +95,8 @@ class RescueScreenViewModelTest {
             status = "Aktif",
             rssi = -61,
             lastSeen = 5_000L,
+            sosState = RescueScreenViewModel.SosState.ACTIVE,
+            clearedAtMillis = null,
         )
 
         val prompt = RescueScreenViewModel.buildRescueAiSignalPrompt(

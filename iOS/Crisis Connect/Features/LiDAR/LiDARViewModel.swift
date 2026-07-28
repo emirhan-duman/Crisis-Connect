@@ -8,30 +8,8 @@
 import Foundation
 import Combine
 import ARKit
-import CoreImage
 import CoreGraphics
 import UIKit
-
-enum LiDARPalette: String, Identifiable {
-    case nightVision
-
-    var id: String { rawValue }
-
-    var titleKey: String { "LIDAR_PALETTE_NIGHT" }
-
-    var darkColor: CIColor {
-        CIColor(red: 0.0, green: 0.05, blue: 0.02)
-    }
-
-    var lightColor: CIColor {
-        CIColor(red: 0.2, green: 1.0, blue: 0.45)
-    }
-
-    var contrast: Double { 1.35 }
-    var brightness: Double { 0.04 }
-    var saturation: Double { 1.2 }
-    var gamma: Double { 0.78 }
-}
 
 enum LiDARAlertPreset: String, CaseIterable, Identifiable {
     case near
@@ -95,32 +73,6 @@ enum LiDARScanProfile: String, CaseIterable, Identifiable {
         }
     }
 
-    fileprivate func normalizedRegion(for lane: LiDARSamplingLane) -> CGRect {
-        let region = evaluationRegion
-        switch lane {
-        case .left:
-            return CGRect(
-                x: region.minX + region.width * 0.04,
-                y: region.minY + region.height * 0.24,
-                width: region.width * 0.24,
-                height: region.height * 0.52
-            )
-        case .center:
-            return CGRect(
-                x: region.minX + region.width * 0.31,
-                y: region.minY + region.height * 0.08,
-                width: region.width * 0.38,
-                height: region.height * 0.76
-            )
-        case .right:
-            return CGRect(
-                x: region.minX + region.width * 0.72,
-                y: region.minY + region.height * 0.24,
-                width: region.width * 0.24,
-                height: region.height * 0.52
-            )
-        }
-    }
 }
 
 enum LiDARSignalQuality: Equatable {
@@ -133,34 +85,6 @@ enum LiDARSignalQuality: Equatable {
         case .weak: return "LIDAR_SIGNAL_WEAK"
         case .medium: return "LIDAR_SIGNAL_MEDIUM"
         case .strong: return "LIDAR_SIGNAL_STRONG"
-        }
-    }
-}
-
-enum LiDARGuidanceState: Equatable {
-    case moveForward
-    case moveLeft
-    case moveRight
-    case stop
-    case scanSlowly
-
-    var titleKey: String {
-        switch self {
-        case .moveForward: return "LIDAR_GUIDANCE_FORWARD"
-        case .moveLeft: return "LIDAR_GUIDANCE_LEFT"
-        case .moveRight: return "LIDAR_GUIDANCE_RIGHT"
-        case .stop: return "LIDAR_GUIDANCE_STOP"
-        case .scanSlowly: return "LIDAR_GUIDANCE_SCAN"
-        }
-    }
-
-    var detailKey: String {
-        switch self {
-        case .moveForward: return "LIDAR_GUIDANCE_FORWARD_DETAIL"
-        case .moveLeft: return "LIDAR_GUIDANCE_LEFT_DETAIL"
-        case .moveRight: return "LIDAR_GUIDANCE_RIGHT_DETAIL"
-        case .stop: return "LIDAR_GUIDANCE_STOP_DETAIL"
-        case .scanSlowly: return "LIDAR_GUIDANCE_SCAN_DETAIL"
         }
     }
 }
@@ -190,14 +114,13 @@ enum LiDARAlertState: Equatable {
     }
 }
 
-struct LiDARLaneSnapshot: Equatable {
-    let left: Float?
-    let center: Float?
-    let right: Float?
+struct LiDARAlertTransition: Equatable {
+    let state: LiDARAlertState
+    let saferFrameStreak: Int
 }
 
 enum LiDARProcessing {
-    static func clampMaxDepth(_ value: Float, min minDepth: Float = 1.0, max maxDepth: Float = 8.0) -> Float {
+    static func clampMaxDepth(_ value: Float, min minDepth: Float = 1.0, max maxDepth: Float = 5.0) -> Float {
         min(max(value, minDepth), maxDepth)
     }
 
@@ -256,6 +179,47 @@ enum LiDARProcessing {
         }
     }
 
+    static func stabilizedAlertState(
+        current: LiDARAlertState,
+        proposed: LiDARAlertState,
+        distanceMeters: Double?,
+        alertPreset: LiDARAlertPreset,
+        saferFrameStreak: Int
+    ) -> LiDARAlertTransition {
+        guard proposed != .signalLost else {
+            return LiDARAlertTransition(state: .signalLost, saferFrameStreak: 0)
+        }
+        guard current != .signalLost else {
+            return LiDARAlertTransition(state: proposed, saferFrameStreak: 0)
+        }
+
+        let currentSeverity = alertSeverity(current)
+        let proposedSeverity = alertSeverity(proposed)
+        guard proposedSeverity < currentSeverity else {
+            return LiDARAlertTransition(state: proposed, saferFrameStreak: 0)
+        }
+
+        let releaseDistance: Double
+        switch current {
+        case .danger:
+            releaseDistance = alertPreset.dangerDistanceMeters + 0.18
+        case .caution:
+            releaseDistance = alertPreset.cautionDistanceMeters + 0.22
+        case .clear, .signalLost:
+            return LiDARAlertTransition(state: proposed, saferFrameStreak: 0)
+        }
+
+        guard let distanceMeters, distanceMeters >= releaseDistance else {
+            return LiDARAlertTransition(state: current, saferFrameStreak: 0)
+        }
+
+        let nextStreak = saferFrameStreak + 1
+        guard nextStreak >= 3 else {
+            return LiDARAlertTransition(state: current, saferFrameStreak: nextStreak)
+        }
+        return LiDARAlertTransition(state: proposed, saferFrameStreak: 0)
+    }
+
     static func statusKey(isSupported: Bool, isRunning: Bool, isFrozen: Bool) -> String {
         guard isSupported else { return "LIDAR_STATUS_UNSUPPORTED" }
         if isFrozen {
@@ -288,56 +252,11 @@ enum LiDARProcessing {
         }
     }
 
-    static func guidance(
-        for snapshot: LiDARLaneSnapshot,
-        forwardDistance: Float?,
-        signalQuality: LiDARSignalQuality,
-        isRunning: Bool,
-        isFrozen: Bool
-    ) -> LiDARGuidanceState {
-        guard isRunning || isFrozen else { return .scanSlowly }
-        guard signalQuality != .weak else { return .scanSlowly }
-
-        let center = laneValue(snapshot.center, fallback: forwardDistance)
-        let left = laneValue(snapshot.left, fallback: center)
-        let right = laneValue(snapshot.right, fallback: center)
-        let forward = laneValue(forwardDistance, fallback: center)
-
-        if forward < 0.85 {
-            if right > left + 0.4, right > 1.1 {
-                return .moveRight
-            }
-            if left > right + 0.4, left > 1.1 {
-                return .moveLeft
-            }
-            return .stop
-        }
-
-        if center < 1.2 {
-            if right > center + 0.35, right > 1.25 {
-                return .moveRight
-            }
-            if left > center + 0.35, left > 1.25 {
-                return .moveLeft
-            }
-            return .stop
-        }
-
-        if right > left + 0.75, right > center + 0.35 {
-            return .moveRight
-        }
-        if left > right + 0.75, left > center + 0.35 {
-            return .moveLeft
-        }
-
-        return .moveForward
-    }
-
     static func recommendedMaxDepth(
         from samples: [Float],
         focusDistance: Float?,
         min minDepth: Float = 2.5,
-        max maxDepth: Float = 8.0
+        max maxDepth: Float = 5.0
     ) -> Float {
         let upperPercentile = percentileDepth(from: samples, percentile: 0.85)
         let focus = focusDistance ?? upperPercentile ?? minDepth
@@ -349,21 +268,13 @@ enum LiDARProcessing {
         current + alpha * (target - current)
     }
 
-    private static func laneValue(_ value: Float?, fallback: Float?) -> Float {
-        if let value, value.isFinite, value > 0 {
-            return value
+    private static func alertSeverity(_ state: LiDARAlertState) -> Int {
+        switch state {
+        case .clear, .signalLost: return 0
+        case .caution: return 1
+        case .danger: return 2
         }
-        if let fallback, fallback.isFinite, fallback > 0 {
-            return fallback
-        }
-        return 0
     }
-}
-
-private enum LiDARSamplingLane: CaseIterable {
-    case left
-    case center
-    case right
 }
 
 private struct LiDARPixelWindow {
@@ -379,7 +290,39 @@ private struct LiDARFrameAnalysis {
     let forwardDistance: Float?
     let adaptiveMaxDepth: Float
     let signalQuality: LiDARSignalQuality
-    let guidance: LiDARGuidanceState
+}
+
+private struct LiDARDepthHistogram {
+    private static let binCount = 160
+    private let maximumDepth: Float
+    private(set) var sampleCount = 0
+    private var bins = [Int](repeating: 0, count: binCount)
+
+    init(maximumDepth: Float) {
+        self.maximumDepth = maximumDepth
+    }
+
+    mutating func add(_ depth: Float) {
+        guard depth.isFinite, depth > 0, depth <= maximumDepth else { return }
+        let normalized = min(max(depth / maximumDepth, 0), 0.999999)
+        let index = min(Int(normalized * Float(Self.binCount)), Self.binCount - 1)
+        bins[index] += 1
+        sampleCount += 1
+    }
+
+    func percentile(_ percentile: Double) -> Float? {
+        guard sampleCount > 0 else { return nil }
+        let clamped = min(max(percentile, 0), 1)
+        let target = max(1, Int((Double(sampleCount) * clamped).rounded(.up)))
+        var accumulated = 0
+        for (index, count) in bins.enumerated() {
+            accumulated += count
+            if accumulated >= target {
+                return (Float(index) + 0.5) / Float(Self.binCount) * maximumDepth
+            }
+        }
+        return maximumDepth
+    }
 }
 
 private enum LiDARPreferenceKey {
@@ -393,13 +336,10 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var isRunning: Bool = false
     @Published private(set) var statusKey: String = "LIDAR_STATUS_INACTIVE"
     @Published private(set) var distanceMeters: Double?
-    @Published private(set) var depthImage: CGImage?
     @Published private(set) var depthDisplayTransform: CGAffineTransform = .identity
-    @Published private(set) var palette: LiDARPalette = .nightVision
     @Published private(set) var alertState: LiDARAlertState = .signalLost
     @Published private(set) var adaptiveMaxDepthMeters: Float = 5.0
     @Published private(set) var signalQuality: LiDARSignalQuality = .weak
-    @Published private(set) var guidanceState: LiDARGuidanceState = .scanSlowly
     @Published private(set) var alertPreset: LiDARAlertPreset
     @Published private(set) var scanProfile: LiDARScanProfile
     @Published private(set) var hapticsEnabled: Bool
@@ -407,15 +347,20 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
 
     private let defaults: UserDefaults
     private weak var session: ARSession?
+    private weak var frameRenderer: LiDARFrameRendering?
     private var pendingStart: Bool = false
     private var lastUpdateTime: TimeInterval = 0
     private var lastDistance: Double?
-    private let distanceSmoothingAlpha: Double = 0.18
+    private var lastRawDistance: Double?
+    private var saferFrameStreak = 0
+    private let analysisInterval: TimeInterval = 1.0 / 30.0
     private let depthSmoothingAlpha: Float = 0.22
-    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
-    private let minDepthMeters: Float = 1.0
-    private let maxDepthLimit: Float = 8.0
+    private let maxDepthLimit: Float = 5.0
     private let minimumConfidence: UInt8 = 1
+    private let sessionDelegateQueue = DispatchQueue(
+        label: "com.crisisconnect.lidar.session",
+        qos: .userInteractive
+    )
     private var viewportSize: CGSize = .zero
     private var interfaceOrientation: UIInterfaceOrientation = .portrait
     private let cautionFeedback = UIImpactFeedbackGenerator(style: .rigid)
@@ -458,11 +403,16 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
 
     func attach(session: ARSession) {
         self.session = session
+        session.delegateQueue = sessionDelegateQueue
         session.delegate = self
         if pendingStart {
             pendingStart = false
             start()
         }
+    }
+
+    func attach(renderer: LiDARFrameRendering) {
+        frameRenderer = renderer
     }
 
     func start() {
@@ -476,24 +426,18 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
         }
 
         let configuration = ARWorldTrackingConfiguration()
-        if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
-            configuration.frameSemantics.insert(.smoothedSceneDepth)
-        } else {
-            configuration.frameSemantics.insert(.sceneDepth)
-        }
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
-            configuration.sceneReconstruction = .meshWithClassification
-        } else if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-            configuration.sceneReconstruction = .mesh
-        }
+        // Raw scene depth is captured with the current camera frame. The HUD applies its
+        // own hysteresis, so ARKit's multi-frame smoothing would only add alert latency.
+        configuration.frameSemantics.insert(.sceneDepth)
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         lastUpdateTime = 0
         distanceMeters = nil
         lastDistance = nil
-        depthImage = nil
+        lastRawDistance = nil
+        saferFrameStreak = 0
+        frameRenderer?.clear()
         adaptiveMaxDepthMeters = 5.0
         signalQuality = .weak
-        guidanceState = .scanSlowly
         isFrozen = false
         isRunning = true
         lastFeedbackState = .signalLost
@@ -524,11 +468,12 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
         isFrozen = false
         statusKey = LiDARProcessing.statusKey(isSupported: isSupported, isRunning: isRunning, isFrozen: isFrozen)
         distanceMeters = nil
-        depthImage = nil
         lastDistance = nil
+        lastRawDistance = nil
+        saferFrameStreak = 0
+        frameRenderer?.clear()
         adaptiveMaxDepthMeters = 5.0
         signalQuality = .weak
-        guidanceState = .scanSlowly
         alertState = .signalLost
     }
 
@@ -540,7 +485,7 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
         }
         statusKey = LiDARProcessing.statusKey(isSupported: isSupported, isRunning: isRunning, isFrozen: isFrozen)
         alertState = LiDARProcessing.alertState(
-            for: distanceMeters,
+            for: lastRawDistance,
             alertPreset: alertPreset,
             isRunning: isRunning,
             isFrozen: isFrozen
@@ -552,7 +497,7 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
         alertPreset = preset
         defaults.set(preset.rawValue, forKey: LiDARPreferenceKey.alertPreset)
         alertState = LiDARProcessing.alertState(
-            for: distanceMeters,
+            for: lastRawDistance,
             alertPreset: preset,
             isRunning: isRunning,
             isFrozen: isFrozen
@@ -578,19 +523,29 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard isRunning, !isFrozen else { return }
-        if frame.timestamp - lastUpdateTime < 0.2 { return }
-        lastUpdateTime = frame.timestamp
         let displayTransform = makeDisplayTransform(for: frame)
+        let depthData = frame.sceneDepth
 
-        guard let depthData = frame.smoothedSceneDepth ?? frame.sceneDepth else {
+        frameRenderer?.enqueue(
+            LiDARRenderFrame(
+                capturedImage: frame.capturedImage,
+                depthMap: depthData?.depthMap,
+                confidenceMap: depthData?.confidenceMap,
+                displayTransform: displayTransform,
+                maxDepthMeters: adaptiveMaxDepthMeters
+            )
+        )
+
+        if frame.timestamp - lastUpdateTime < analysisInterval { return }
+        lastUpdateTime = frame.timestamp
+
+        guard let depthData else {
             DispatchQueue.main.async { [weak self] in
                 self?.applyMeasurement(
                     distance: nil,
-                    depthImage: nil,
                     displayTransform: displayTransform,
                     adaptiveMaxDepth: nil,
-                    signalQuality: .weak,
-                    guidance: .scanSlowly
+                    signalQuality: .weak
                 )
             }
             return
@@ -598,25 +553,24 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
         let depthMap = depthData.depthMap
         let confidenceMap = depthData.confidenceMap
 
-        let analysis = analyzeDepthMap(depthMap, confidenceMap: confidenceMap)
-        let palette = self.palette
-        let maxDepth = analysis.adaptiveMaxDepth
-        let depthImage = makeNightVisionImage(
-            capturedImage: frame.capturedImage,
-            from: depthMap,
+        let trackingIsNormal: Bool
+        if case .normal = frame.camera.trackingState {
+            trackingIsNormal = true
+        } else {
+            trackingIsNormal = false
+        }
+        let analysis = analyzeDepthMap(
+            depthMap,
             confidenceMap: confidenceMap,
-            palette: palette,
-            maxDepth: maxDepth
+            trackingIsNormal: trackingIsNormal
         )
 
         DispatchQueue.main.async { [weak self] in
             self?.applyMeasurement(
                 distance: analysis.forwardDistance.map(Double.init),
-                depthImage: depthImage,
                 displayTransform: displayTransform,
                 adaptiveMaxDepth: analysis.adaptiveMaxDepth,
-                signalQuality: analysis.signalQuality,
-                guidance: analysis.guidance
+                signalQuality: analysis.signalQuality
             )
         }
     }
@@ -625,11 +579,9 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.applyMeasurement(
                 distance: nil,
-                depthImage: nil,
                 displayTransform: nil,
                 adaptiveMaxDepth: nil,
-                signalQuality: .weak,
-                guidance: .scanSlowly
+                signalQuality: .weak
             )
         }
     }
@@ -638,11 +590,9 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.applyMeasurement(
                 distance: nil,
-                depthImage: nil,
                 displayTransform: nil,
                 adaptiveMaxDepth: nil,
-                signalQuality: .weak,
-                guidance: .scanSlowly
+                signalQuality: .weak
             )
         }
     }
@@ -654,7 +604,11 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
         }
     }
 
-    private func analyzeDepthMap(_ depthMap: CVPixelBuffer, confidenceMap: CVPixelBuffer?) -> LiDARFrameAnalysis {
+    private func analyzeDepthMap(
+        _ depthMap: CVPixelBuffer,
+        confidenceMap: CVPixelBuffer?,
+        trackingIsNormal: Bool
+    ) -> LiDARFrameAnalysis {
         CVPixelBufferLockBaseAddress(depthMap, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
 
@@ -673,8 +627,7 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
             return LiDARFrameAnalysis(
                 forwardDistance: nil,
                 adaptiveMaxDepth: adaptiveMaxDepthMeters,
-                signalQuality: .weak,
-                guidance: .scanSlowly
+                signalQuality: .weak
             )
         }
         let width = CVPixelBufferGetWidth(depthMap)
@@ -690,71 +643,51 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
 
         let activeScanProfile = scanProfile
         let evaluationWindow = pixelWindow(for: activeScanProfile.evaluationRegion, width: width, height: height)
-        let laneWindows = Dictionary(uniqueKeysWithValues: LiDARSamplingLane.allCases.map {
-            ($0, pixelWindow(for: activeScanProfile.normalizedRegion(for: $0), width: width, height: height))
-        })
-
-        var allSamples: [Float] = []
-        var leftSamples: [Float] = []
-        var centerSamples: [Float] = []
-        var rightSamples: [Float] = []
-        let capacity = (evaluationWindow.xRange.upperBound - evaluationWindow.xRange.lowerBound + 1)
+        let evaluatedPixelCount = (evaluationWindow.xRange.upperBound - evaluationWindow.xRange.lowerBound + 1)
             * (evaluationWindow.yRange.upperBound - evaluationWindow.yRange.lowerBound + 1)
-        allSamples.reserveCapacity(capacity)
-        leftSamples.reserveCapacity(capacity / 3)
-        centerSamples.reserveCapacity(capacity / 3)
-        rightSamples.reserveCapacity(capacity / 3)
-
-        var totalValidPoints = 0
+        var histogram = LiDARDepthHistogram(maximumDepth: maxDepthLimit)
         var confidentPoints = 0
+        var highConfidencePoints = 0
 
         for y in evaluationWindow.yRange {
             let rowOffset = y * stride
             for x in evaluationWindow.xRange {
                 let depth = buffer[rowOffset + x]
-                guard depth.isFinite, depth > 0 else { continue }
-                totalValidPoints += 1
+                guard depth.isFinite, depth > 0, depth <= maxDepthLimit else { continue }
 
                 if let confidenceBuffer, confidenceStride > 0 {
                     let confidenceValue = confidenceBuffer[y * confidenceStride + x]
                     guard confidenceValue >= minimumConfidence else { continue }
+                    if confidenceValue >= 2 {
+                        highConfidencePoints += 1
+                    }
+                } else {
+                    highConfidencePoints += 1
                 }
 
                 confidentPoints += 1
-                allSamples.append(depth)
-
-                if let leftWindow = laneWindows[.left], leftWindow.contains(x: x, y: y) {
-                    leftSamples.append(depth)
-                }
-                if let centerWindow = laneWindows[.center], centerWindow.contains(x: x, y: y) {
-                    centerSamples.append(depth)
-                }
-                if let rightWindow = laneWindows[.right], rightWindow.contains(x: x, y: y) {
-                    rightSamples.append(depth)
-                }
+                histogram.add(depth)
             }
         }
 
-        let snapshot = LiDARLaneSnapshot(
-            left: laneDepth(from: leftSamples),
-            center: laneDepth(from: centerSamples),
-            right: laneDepth(from: rightSamples)
-        )
-        let forwardDistance = LiDARProcessing.conservativeDepth(from: allSamples, percentile: 0.22)
-            ?? snapshot.center
-            ?? LiDARProcessing.representativeDepth(from: allSamples)
-        let confidentRatio = totalValidPoints > 0 ? Double(confidentPoints) / Double(totalValidPoints) : 0
-        let signalQuality = LiDARProcessing.signalQuality(for: confidentRatio)
-        let guidance = LiDARProcessing.guidance(
-            for: snapshot,
-            forwardDistance: forwardDistance,
-            signalQuality: signalQuality,
-            isRunning: isRunning,
-            isFrozen: isFrozen
-        )
-        let targetMaxDepth = LiDARProcessing.recommendedMaxDepth(
-            from: allSamples,
-            focusDistance: snapshot.center ?? forwardDistance
+        let forwardDistance = histogram.percentile(0.22)
+        let highConfidenceRatio = confidentPoints > 0
+            ? Double(highConfidencePoints) / Double(confidentPoints)
+            : 0
+        let confidentCoverage = evaluatedPixelCount > 0
+            ? Double(confidentPoints) / Double(evaluatedPixelCount)
+            : 0
+        let qualityScore = confidentCoverage * (0.72 + 0.28 * highConfidenceRatio)
+        let signalQuality = trackingIsNormal
+            ? LiDARProcessing.signalQuality(for: qualityScore)
+            : .weak
+
+        let upperDepth = histogram.percentile(0.85)
+        let focusDepth = forwardDistance ?? upperDepth ?? 2.5
+        let targetMaxDepth = LiDARProcessing.clampMaxDepth(
+            max(2.5, focusDepth * 2.2, (upperDepth ?? focusDepth) * 1.15),
+            min: 2.5,
+            max: maxDepthLimit
         )
         let adaptiveMaxDepth = LiDARProcessing.smoothedValue(
             current: adaptiveMaxDepthMeters,
@@ -765,171 +698,30 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
         return LiDARFrameAnalysis(
             forwardDistance: forwardDistance,
             adaptiveMaxDepth: adaptiveMaxDepth,
-            signalQuality: signalQuality,
-            guidance: guidance
-        )
-    }
-
-    private func makeNightVisionImage(
-        capturedImage: CVPixelBuffer,
-        from depthMap: CVPixelBuffer,
-        confidenceMap: CVPixelBuffer?,
-        palette: LiDARPalette,
-        maxDepth: Float
-    ) -> CGImage? {
-        let cameraImage = makeNightVisionCameraImage(from: capturedImage)
-        guard let overlayImage = makeDepthOverlayImage(
-            from: depthMap,
-            confidenceMap: confidenceMap,
-            palette: palette,
-            maxDepth: maxDepth
-        ) else {
-            return ciContext.createCGImage(cameraImage, from: cameraImage.extent)
-        }
-
-        let overlayCIImage = CIImage(cgImage: overlayImage)
-        let scaleX = cameraImage.extent.width / overlayCIImage.extent.width
-        let scaleY = cameraImage.extent.height / overlayCIImage.extent.height
-        let scaledOverlay = overlayCIImage
-            .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 1.6])
-            .cropped(to: cameraImage.extent)
-        let composited = scaledOverlay.applyingFilter("CISourceOverCompositing", parameters: [
-            kCIInputBackgroundImageKey: cameraImage
-        ])
-        return ciContext.createCGImage(composited, from: cameraImage.extent)
-    }
-
-    private func makeNightVisionCameraImage(from capturedImage: CVPixelBuffer) -> CIImage {
-        let baseImage = CIImage(cvPixelBuffer: capturedImage)
-        let exposed = baseImage.applyingFilter("CIExposureAdjust", parameters: [
-            "inputEV": 0.65
-        ])
-        let tuned = exposed.applyingFilter("CIColorControls", parameters: [
-            kCIInputContrastKey: 1.2,
-            kCIInputBrightnessKey: -0.02,
-            kCIInputSaturationKey: 0.18
-        ])
-        return tuned.applyingFilter("CIColorMonochrome", parameters: [
-            "inputColor": CIColor(red: 0.5, green: 1.0, blue: 0.58),
-            "inputIntensity": 0.92
-        ])
-    }
-
-    private func makeDepthOverlayImage(
-        from depthMap: CVPixelBuffer,
-        confidenceMap: CVPixelBuffer?,
-        palette: LiDARPalette,
-        maxDepth: Float
-    ) -> CGImage? {
-        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
-
-        let lockedConfidenceMap: CVPixelBuffer? = {
-            guard let confidenceMap else { return nil }
-            CVPixelBufferLockBaseAddress(confidenceMap, .readOnly)
-            return confidenceMap
-        }()
-        defer {
-            if let lockedConfidenceMap {
-                CVPixelBufferUnlockBaseAddress(lockedConfidenceMap, .readOnly)
-            }
-        }
-
-        guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
-        let width = CVPixelBufferGetWidth(depthMap)
-        let height = CVPixelBufferGetHeight(depthMap)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
-        let stride = bytesPerRow / MemoryLayout<Float32>.size
-        let buffer = baseAddress.assumingMemoryBound(to: Float32.self)
-        let confidenceBuffer = confidenceMap.flatMap { CVPixelBufferGetBaseAddress($0) }?.assumingMemoryBound(to: UInt8.self)
-        let confidenceStride = confidenceMap.map {
-            CVPixelBufferGetBytesPerRow($0) / MemoryLayout<UInt8>.size
-        } ?? 0
-
-        var rgba = [UInt8](repeating: 0, count: width * height * 4)
-        let maxDepth = max(maxDepth, minDepthMeters)
-        for y in 0..<height {
-            let rowOffset = y * stride
-            for x in 0..<width {
-                let outputOffset = ((y * width) + x) * 4
-                if let confidenceBuffer, confidenceStride > 0 {
-                    let confidenceValue = confidenceBuffer[y * confidenceStride + x]
-                    if confidenceValue < minimumConfidence {
-                        continue
-                    }
-                }
-                let depth = buffer[rowOffset + x]
-                guard depth.isFinite else {
-                    continue
-                }
-
-                let normalized = Double(min(max(depth / maxDepth, 0), 1))
-                let proximity = pow(1.0 - normalized, palette.gamma)
-                let rightDepth = x + 1 < width ? buffer[rowOffset + x + 1] : depth
-                let downDepth = y + 1 < height ? buffer[(y + 1) * stride + x] : depth
-                let gradient = (rightDepth.isFinite ? abs(depth - rightDepth) : 0)
-                    + (downDepth.isFinite ? abs(depth - downDepth) : 0)
-                let edgeBoost = min(max(Double(gradient) / 0.45, 0), 1)
-
-                var alpha = proximity * 0.1 + edgeBoost * 0.32
-                if depth < 1.1 {
-                    alpha = max(alpha, 0.42)
-                } else if depth < 2.2 {
-                    alpha = max(alpha, 0.22)
-                }
-                let clampedAlpha = min(max(alpha, 0), 0.55)
-
-                let tint = (
-                    red: palette.lightColor.red,
-                    green: palette.lightColor.green,
-                    blue: palette.lightColor.blue
-                )
-                rgba[outputOffset] = UInt8(tint.red * clampedAlpha * 255.0)
-                rgba[outputOffset + 1] = UInt8(tint.green * clampedAlpha * 255.0)
-                rgba[outputOffset + 2] = UInt8(tint.blue * clampedAlpha * 255.0)
-                rgba[outputOffset + 3] = UInt8(clampedAlpha * 255.0)
-            }
-        }
-
-        let data = Data(rgba)
-        guard let provider = CGDataProvider(data: data as CFData) else { return nil }
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        return CGImage(
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bitsPerPixel: 32,
-            bytesPerRow: width * 4,
-            space: colorSpace,
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-            provider: provider,
-            decode: nil,
-            shouldInterpolate: true,
-            intent: .defaultIntent
+            signalQuality: signalQuality
         )
     }
 
     private func applyMeasurement(
         distance newDistance: Double?,
-        depthImage: CGImage?,
         displayTransform: CGAffineTransform?,
         adaptiveMaxDepth: Float?,
-        signalQuality: LiDARSignalQuality,
-        guidance: LiDARGuidanceState
+        signalQuality: LiDARSignalQuality
     ) {
         if let newDistance, newDistance.isFinite, newDistance > 0 {
+            lastRawDistance = newDistance
             let smoothed = lastDistance.map {
-                $0 + distanceSmoothingAlpha * (newDistance - $0)
+                let alpha = newDistance < $0 ? 0.72 : 0.22
+                return $0 + alpha * (newDistance - $0)
             } ?? newDistance
             lastDistance = smoothed
             distanceMeters = smoothed
         } else {
+            lastRawDistance = nil
             distanceMeters = nil
             lastDistance = nil
         }
 
-        self.depthImage = depthImage
         if let displayTransform {
             depthDisplayTransform = displayTransform
         }
@@ -937,14 +729,22 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
             adaptiveMaxDepthMeters = LiDARProcessing.clampMaxDepth(adaptiveMaxDepth, min: 2.5, max: maxDepthLimit)
         }
         self.signalQuality = signalQuality
-        guidanceState = guidance
         statusKey = LiDARProcessing.statusKey(isSupported: isSupported, isRunning: isRunning, isFrozen: isFrozen)
-        let nextAlertState = LiDARProcessing.alertState(
-            for: distanceMeters,
+        let proposedAlertState = LiDARProcessing.alertState(
+            for: lastRawDistance,
             alertPreset: alertPreset,
             isRunning: isRunning,
             isFrozen: isFrozen
         )
+        let transition = LiDARProcessing.stabilizedAlertState(
+            current: alertState,
+            proposed: proposedAlertState,
+            distanceMeters: lastRawDistance,
+            alertPreset: alertPreset,
+            saferFrameStreak: saferFrameStreak
+        )
+        saferFrameStreak = transition.saferFrameStreak
+        let nextAlertState = transition.state
         emitFeedbackIfNeeded(for: nextAlertState)
         alertState = nextAlertState
     }
@@ -952,11 +752,6 @@ final class LiDARViewModel: NSObject, ObservableObject, ARSessionDelegate {
     private func makeDisplayTransform(for frame: ARFrame) -> CGAffineTransform {
         guard viewportSize.width > 0, viewportSize.height > 0 else { return .identity }
         return frame.displayTransform(for: interfaceOrientation, viewportSize: viewportSize)
-    }
-
-    private func laneDepth(from samples: [Float]) -> Float? {
-        LiDARProcessing.conservativeDepth(from: samples, percentile: 0.28)
-            ?? LiDARProcessing.representativeDepth(from: samples)
     }
 
     private func pixelWindow(for rect: CGRect, width: Int, height: Int) -> LiDARPixelWindow {

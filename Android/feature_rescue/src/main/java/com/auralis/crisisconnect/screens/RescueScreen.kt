@@ -3,6 +3,7 @@ package com.auralis.crisisconnect.screens
 import android.Manifest
 import android.app.Activity
 import android.content.Context
+import android.util.Log
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -45,14 +46,26 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.font.FontFamily
+import com.auralis.crisisconnect.BuildConfig
+import com.auralis.crisisconnect.service.gattmesh.MeshDiagnostics
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SignalCellularAlt
@@ -78,9 +91,11 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,10 +109,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.auralis.crisisconnect.R
-import com.auralis.crisisconnect.ai.CrisisSentinelResponse
-import com.auralis.crisisconnect.ai.CrisisSentinelResponseSource
-import com.auralis.crisisconnect.ai.CrisisSentinelUserMode
+import com.auralis.crisisconnect.service.BlePeerIdentityUtils
 import com.auralis.crisisconnect.ui.components.AppBottomBar
+import kotlin.math.roundToInt
 import java.text.DateFormat
 import java.util.Date
 
@@ -111,8 +125,8 @@ fun RescueScreen(
 ) {
     val viewModel: RescueScreenViewModel = viewModel()
     val settingsViewModel: RescueSettingsViewModel = viewModel()
-    val uiState by viewModel.uiState.collectAsState()
-    val settingsUiState by settingsViewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val settingsUiState by settingsViewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scanPermissions = remember { requiredRescueScanPermissions() }
     val meshPermissions = remember { requiredRescueMeshPermissions() }
@@ -212,11 +226,10 @@ fun RescueScreen(
         onDispose { viewModel.stopScanning() }
     }
 
-    val activeStatus = stringResource(R.string.rescue_status_active)
-    val acknowledgedStatus = stringResource(R.string.rescue_status_acknowledged)
-    val clearedStatus = stringResource(R.string.rescue_status_cleared)
     val visibleBroadcasts = if (settingsUiState.showOnlyActiveSignals) {
-        uiState.broadcasts.filter { it.status == activeStatus }
+        uiState.broadcasts.filter {
+            it.isSosVictim && it.sosState != RescueScreenViewModel.SosState.CLEARED
+        }
     } else {
         uiState.broadcasts
     }
@@ -224,7 +237,9 @@ fun RescueScreen(
         uiState.canControlMesh && (uiState.isMeshEnabled || uiState.isMeshBusy || uiState.meshErrorMessage != null)
 
     val totalSignals = uiState.broadcasts.size
-    val activeSignals = uiState.broadcasts.count { it.status == activeStatus }
+    val activeSignals = uiState.broadcasts.count {
+        it.isSosVictim && it.sosState != RescueScreenViewModel.SosState.CLEARED
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
@@ -284,6 +299,13 @@ fun RescueScreen(
                     isScanning = uiState.isScanning,
                     activeSignals = activeSignals,
                     totalSignals = totalSignals,
+                    remoteSignals = uiState.remoteSignals.size,
+                    onOpenRemoteSignals = {
+                        runCatching { navController.navigate("remote_signals") }
+                            .onFailure {
+                                Log.w("RescueScreen", "Unable to open remote signals route", it)
+                            }
+                    },
                     lastUpdated = uiState.lastUpdated,
                     canControlMesh = uiState.canControlMesh,
                     isMeshEnabled = uiState.isMeshEnabled,
@@ -305,22 +327,6 @@ fun RescueScreen(
                 )
             }
             item {
-                RescueFieldAiCard(
-                    canUseFieldAi = uiState.canUseFieldAi,
-                    mode = uiState.fieldAiMode,
-                    certificateRole = uiState.fieldAiCertificateRole,
-                    prompt = uiState.fieldAiPrompt,
-                    response = uiState.fieldAiResponse,
-                    isGenerating = uiState.isFieldAiGenerating,
-                    isModelReady = uiState.isFieldAiModelReady,
-                    messageId = uiState.fieldAiMessage,
-                    onPromptChanged = viewModel::onFieldAiPromptChanged,
-                    onDraftFromSignals = viewModel::generateFieldAiFromSignals,
-                    onAsk = viewModel::generateFieldAiFromPrompt,
-                    onCancel = viewModel::cancelFieldAiGeneration,
-                )
-            }
-            item {
                 AnimatedVisibility(
                     visible = showMeshStatusCard,
                     enter = fadeIn(animationSpec = tween(durationMillis = 260)) +
@@ -335,6 +341,31 @@ fun RescueScreen(
                         errorMessageId = uiState.meshErrorMessage,
                         onOpenWifiSettings = openWifiSettings,
                         onResolvePermissions = requestMeshPermissions,
+                    )
+                }
+            }
+            item {
+                AnimatedVisibility(
+                    visible = uiState.isMeshEnabled,
+                    enter = fadeIn(animationSpec = tween(durationMillis = 260)) +
+                        expandVertically(animationSpec = tween(durationMillis = 320)),
+                    exit = fadeOut(animationSpec = tween(durationMillis = 180)) +
+                        shrinkVertically(animationSpec = tween(durationMillis = 220)),
+                ) {
+                    RescueMeshChatEntryCard(
+                        onClick = {
+                            // ROUTE_RESCUE_MESH_CHAT in RescueActivity — the authority/rescue group chat.
+                            navController.navigate("mesh_chat") { launchSingleTop = true }
+                        }
+                    )
+                }
+            }
+            if (BuildConfig.DEBUG) {
+                item {
+                    val diagnostics by MeshDiagnostics.events.collectAsStateWithLifecycle()
+                    RescueMeshDiagnosticsCard(
+                        lines = diagnostics,
+                        onClear = { MeshDiagnostics.clear() }
                     )
                 }
             }
@@ -413,9 +444,6 @@ fun RescueScreen(
                     RescueSignalCard(
                         broadcast = broadcast,
                         lastSeenText = lastSeenText,
-                        activeStatus = activeStatus,
-                        acknowledgedStatus = acknowledgedStatus,
-                        clearedStatus = clearedStatus,
                         showAddress = settingsUiState.showDeviceAddress,
                         onClick = if (hasAddress) {
                             {
@@ -427,7 +455,12 @@ fun RescueScreen(
                                     } else {
                                         "chat/$encodedCode"
                                     }
-                                    navController.navigate(route)
+                                    // Fallback path (no onConversationSelected wired). The chat routes
+                                    // live in the main NavHost, not in every graph that hosts this
+                                    // screen, so guard against "destination cannot be found in the
+                                    // navigation graph" instead of crashing.
+                                    runCatching { navController.navigate(route) }
+                                        .onFailure { Log.w("RescueScreen", "Unable to open conversation route '$route'", it) }
                                 }
                             }
                         } else {
@@ -436,6 +469,7 @@ fun RescueScreen(
                     )
                 }
             }
+
         }
     }
 }
@@ -470,6 +504,108 @@ private fun RescueMeshToggleAction(
                 checked = isMeshEnabled,
                 onCheckedChange = onToggle,
                 enabled = enabled
+            )
+        }
+    }
+}
+
+@Composable
+private fun RescueMeshDiagnosticsCard(lines: List<String>, onClear: () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "Mesh tanılama (debug) • ${lines.size}",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                if (expanded) {
+                    TextButton(onClick = onClear) { Text(text = "Temizle") }
+                }
+            }
+            if (expanded) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp)
+                        .padding(bottom = 12.dp)
+                        .height(240.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = lines.takeLast(40).reversed().joinToString("\n")
+                            .ifEmpty { "(henüz olay yok)" },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RescueMeshChatEntryCard(onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Forum,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.rescue_mesh_chat_entry_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = stringResource(R.string.rescue_mesh_chat_entry_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer
             )
         }
     }
@@ -528,297 +664,12 @@ private fun RescueErrorCard(
 }
 
 @Composable
-private fun RescueFieldAiCard(
-    canUseFieldAi: Boolean,
-    mode: CrisisSentinelUserMode,
-    certificateRole: String?,
-    prompt: String,
-    response: CrisisSentinelResponse?,
-    isGenerating: Boolean,
-    isModelReady: Boolean,
-    messageId: Int?,
-    onPromptChanged: (String) -> Unit,
-    onDraftFromSignals: () -> Unit,
-    onAsk: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                Surface(
-                    modifier = Modifier.size(36.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SignalCellularAlt,
-                        contentDescription = null,
-                        modifier = Modifier.padding(8.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.rescue_ai_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = stringResource(R.string.rescue_ai_body),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RescueAiPill(
-                    text = stringResource(R.string.rescue_ai_role_format, stringResource(mode.labelRes())),
-                    isPrimary = true,
-                    modifier = Modifier.weight(1f)
-                )
-                RescueAiPill(
-                    text = if (isModelReady) {
-                        stringResource(R.string.crisis_sentinel_model_active)
-                    } else {
-                        stringResource(R.string.crisis_sentinel_source_offline_rules)
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            if (!canUseFieldAi) {
-                Text(
-                    text = stringResource(R.string.rescue_ai_requires_role),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-                return@Column
-            }
-
-            certificateRole?.takeIf { it.isNotBlank() }?.let { role ->
-                Text(
-                    text = stringResource(R.string.rescue_ai_certificate_role_format, role),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            OutlinedTextField(
-                value = prompt,
-                onValueChange = onPromptChanged,
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isGenerating,
-                minLines = 2,
-                maxLines = 5,
-                label = { Text(text = stringResource(R.string.rescue_ai_prompt_label)) },
-                placeholder = { Text(text = stringResource(R.string.rescue_ai_prompt_placeholder)) },
-                shape = RoundedCornerShape(14.dp)
-            )
-
-            messageId?.let {
-                Text(
-                    text = stringResource(it),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilledTonalButton(
-                    onClick = onDraftFromSignals,
-                    enabled = !isGenerating,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.rescue_ai_draft_from_signals),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                FilledTonalButton(
-                    onClick = onAsk,
-                    enabled = !isGenerating,
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                ) {
-                    Text(text = stringResource(R.string.crisis_sentinel_ask))
-                }
-            }
-
-            if (isGenerating) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringResource(R.string.crisis_sentinel_generation_working),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = onCancel) {
-                            Text(text = stringResource(R.string.crisis_sentinel_generation_cancel))
-                        }
-                    }
-                }
-            }
-
-            response?.let {
-                RescueAiResponseBlock(response = it)
-            }
-        }
-    }
-}
-
-@Composable
-private fun RescueAiPill(
-    text: String,
-    isPrimary: Boolean = false,
-    modifier: Modifier = Modifier
-) {
-    val container = if (isPrimary) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant
-    }
-    val content = if (isPrimary) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(999.dp),
-        color = container,
-        border = BorderStroke(
-            width = 1.dp,
-            color = content.copy(alpha = 0.12f)
-        )
-    ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = content,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun RescueAiResponseBlock(response: CrisisSentinelResponse) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                shape = RoundedCornerShape(16.dp)
-            )
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = stringResource(R.string.crisis_sentinel_response_title),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = stringResource(response.source.labelRes()),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        Text(
-            text = response.answer,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        if (response.safetyNotices.isNotEmpty()) {
-            Text(
-                text = stringResource(
-                    R.string.rescue_ai_safety_format,
-                    response.safetyNotices.take(2).joinToString(" • ")
-                ),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.error
-            )
-        }
-        if (response.followUpQuestions.isNotEmpty()) {
-            Text(
-                text = stringResource(
-                    R.string.rescue_ai_followup_format,
-                    response.followUpQuestions.take(2).joinToString(" • ")
-                ),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-private fun CrisisSentinelUserMode.labelRes(): Int = when (this) {
-    CrisisSentinelUserMode.Public -> R.string.crisis_sentinel_mode_public
-    CrisisSentinelUserMode.FieldTeam -> R.string.crisis_sentinel_mode_field
-    CrisisSentinelUserMode.Coordinator -> R.string.crisis_sentinel_mode_coordinator
-}
-
-private fun CrisisSentinelResponseSource.labelRes(): Int = when (this) {
-    CrisisSentinelResponseSource.LocalModel -> R.string.crisis_sentinel_source_local_model
-    CrisisSentinelResponseSource.OfflineRules -> R.string.crisis_sentinel_source_offline_rules
-}
-
-@Composable
 private fun RescueMissionOverview(
     isScanning: Boolean,
     activeSignals: Int,
     totalSignals: Int,
+    remoteSignals: Int,
+    onOpenRemoteSignals: () -> Unit,
     lastUpdated: Long?,
     canControlMesh: Boolean,
     isMeshEnabled: Boolean,
@@ -904,6 +755,14 @@ private fun RescueMissionOverview(
                     modifier = Modifier.weight(1f),
                     label = stringResource(R.string.rescue_overview_total_label),
                     value = totalSignals.toString()
+                )
+                // The agency panel feed on the phone: tap → full remote-signal page.
+                RescueStatPill(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onOpenRemoteSignals),
+                    label = stringResource(R.string.rescue_overview_remote_label),
+                    value = remoteSignals.toString()
                 )
             }
 
@@ -1346,32 +1205,29 @@ private fun RescueEmptyState() {
 private fun RescueSignalCard(
     broadcast: RescueScreenViewModel.SOSBroadcast,
     lastSeenText: String,
-    activeStatus: String,
-    acknowledgedStatus: String,
-    clearedStatus: String,
     showAddress: Boolean,
     onClick: (() -> Unit)? = null
 ) {
-    val (statusContainer, statusContent, statusOutline) = when (broadcast.status) {
-        activeStatus -> Triple(
+    val (statusContainer, statusContent, statusOutline) = when {
+        !broadcast.isSosVictim -> Triple(
+            MaterialTheme.colorScheme.surfaceVariant,
+            MaterialTheme.colorScheme.onSurfaceVariant,
+            MaterialTheme.colorScheme.outline
+        )
+        broadcast.sosState == RescueScreenViewModel.SosState.ACTIVE -> Triple(
             MaterialTheme.colorScheme.errorContainer,
             MaterialTheme.colorScheme.onErrorContainer,
             MaterialTheme.colorScheme.error
         )
-        acknowledgedStatus -> Triple(
+        broadcast.sosState == RescueScreenViewModel.SosState.ACKNOWLEDGED -> Triple(
             MaterialTheme.colorScheme.tertiaryContainer,
             MaterialTheme.colorScheme.onTertiaryContainer,
             MaterialTheme.colorScheme.tertiary
         )
-        clearedStatus -> Triple(
+        else -> Triple(
             MaterialTheme.colorScheme.secondaryContainer,
             MaterialTheme.colorScheme.onSecondaryContainer,
             MaterialTheme.colorScheme.secondary
-        )
-        else -> Triple(
-            MaterialTheme.colorScheme.surfaceVariant,
-            MaterialTheme.colorScheme.onSurfaceVariant,
-            MaterialTheme.colorScheme.outline
         )
     }
 
@@ -1424,23 +1280,57 @@ private fun RescueSignalCard(
                     )
                 }
                 Spacer(modifier = Modifier.width(12.dp))
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = statusContainer,
-                    border = BorderStroke(
-                        width = 1.dp,
-                        color = statusOutline.copy(alpha = 0.28f)
-                    )
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
-                        text = broadcast.status,
-                        modifier = Modifier
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = statusContent,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    if (broadcast.isSosVictim) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = statusContainer,
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = statusOutline.copy(alpha = 0.28f)
+                            )
+                        ) {
+                            Text(
+                                text = stringResource(
+                                    when (broadcast.sosState) {
+                                        RescueScreenViewModel.SosState.ACTIVE ->
+                                            R.string.rescue_status_active
+                                        RescueScreenViewModel.SosState.ACKNOWLEDGED ->
+                                            R.string.rescue_status_acknowledged
+                                        RescueScreenViewModel.SosState.CLEARED ->
+                                            R.string.rescue_status_cleared
+                                    }
+                                ),
+                                modifier = Modifier
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = statusContent,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)
+                        )
+                    ) {
+                        Text(
+                            text = broadcast.status,
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
 
@@ -1476,6 +1366,88 @@ private fun RescueSignalCard(
                     contentDescription = stringResource(R.string.rescue_content_desc_signal_strength),
                     text = stringResource(R.string.rescue_signal_strength_format, rssi)
                 )
+            }
+
+            // Victim telemetry arrives post-handshake via peer_info; until now it was only
+            // uploaded to the dashboard, never shown to the rescuer holding the phone.
+            val signalMeta = broadcast.broadcastId?.let { signalId ->
+                BlePeerIdentityUtils.SignalLocationRegistry.snapshotForSignalId(signalId)
+            }
+            signalMeta?.victimBatteryPercent?.let { battery ->
+                RescueDetailRow(
+                    icon = Icons.Default.BatteryFull,
+                    contentDescription = stringResource(R.string.rescue_victim_battery_format, battery),
+                    text = stringResource(R.string.rescue_victim_battery_format, battery)
+                )
+            }
+            signalMeta?.victimMedical?.let { medical ->
+                val medicalSummary = listOfNotNull(
+                    medical.bloodType?.let {
+                        stringResource(R.string.rescue_medical_blood_format, it)
+                    },
+                    medical.allergies?.let {
+                        stringResource(R.string.rescue_medical_allergies_format, it)
+                    },
+                    medical.medication?.let {
+                        stringResource(R.string.rescue_medical_medication_format, it)
+                    },
+                    medical.notes
+                ).joinToString(" • ")
+                if (medicalSummary.isNotBlank()) {
+                    RescueDetailRow(
+                        icon = Icons.Default.MedicalServices,
+                        contentDescription = medicalSummary,
+                        text = medicalSummary
+                    )
+                }
+            }
+            val victimGps = signalMeta?.victimLocation
+            if (victimGps != null) {
+                val context = LocalContext.current
+                val locationLabel = stringResource(R.string.rescue_open_victim_location)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { openVictimLocation(context, victimGps, broadcast.userId) },
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        modifier = Modifier.size(30.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LocationOn,
+                            contentDescription = locationLabel,
+                            modifier = Modifier
+                                .padding(7.dp)
+                                .size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Text(
+                        text = locationLabel,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            } else {
+                signalMeta?.relativeEstimate?.let { estimate ->
+                    val estimatedDistance = stringResource(
+                        R.string.rescue_estimated_distance_format,
+                        estimate.distanceMeters.roundToInt()
+                    )
+                    RescueDetailRow(
+                        icon = Icons.Default.Explore,
+                        contentDescription = estimatedDistance,
+                        text = estimatedDistance
+                    )
+                }
             }
 
             RescueDetailRow(
@@ -1535,4 +1507,25 @@ private fun RescueDetailRow(
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+internal fun openVictimLocation(
+    context: Context,
+    location: BlePeerIdentityUtils.PeerLocationSnapshot,
+    label: String
+) {
+    val encodedLabel = Uri.encode(label.ifBlank { "SOS" })
+    val geoIntent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse(
+            "geo:${location.latitude},${location.longitude}" +
+                "?q=${location.latitude},${location.longitude}($encodedLabel)"
+        )
+    )
+    val webFallbackIntent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("https://maps.google.com/?q=${location.latitude},${location.longitude}")
+    )
+    runCatching { context.startActivity(geoIntent) }
+        .recoverCatching { context.startActivity(webFallbackIntent) }
 }

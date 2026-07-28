@@ -10,4 +10,6 @@
     <color name="splash_background">#FFF4F7FB</color>
     <color name="splash_icon_background">#00FFFFFF</color>
     <color name="splash_bg">#FFF4F7FB</color>
+    <color name="dcs_logo_navy">#FF0C314B</color>
+    <color name="dcs_logo_orange">#FFF28317</color>
 </resources>

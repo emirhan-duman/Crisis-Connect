@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">ہنگامی رہنمائی</string>
+    <string name="guide_screen_intro_subtitle">اہم معلومات تک تیزی سے پہنچیں اور دباؤ میں مختصر اقدامات پر عمل کریں۔</string>
+    <string name="guide_screen_filter_all">تمام زمرے</string>
+    <string name="guide_screen_section_30_seconds">30 سیکنڈ میں</string>
+    <string name="guide_screen_section_step_by_step">قدم بہ قدم</string>
+    <string name="guide_screen_section_dont">یہ نہ کریں</string>
+    <string name="guide_screen_section_checklist">چیک لسٹ</string>
+    <string name="guide_screen_expand_details">تفصیلات دکھائیں</string>
+    <string name="guide_screen_collapse_details">تفصیلات چھپائیں</string>
+    <string name="guide_screen_action_start_checklist">چیک لسٹ شروع کریں</string>
+    <string name="guide_screen_action_call_local">%1$s کو کال کریں</string>
+    <string name="guide_screen_action_open_assembly">اجتماعی علاقہ کھولیں</string>
+    <string name="guide_screen_source_note">ماخذ کا نوٹ:</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d مکمل</string>
+    <string name="guide_screen_no_dial_app_with_number">%1$s کو کال کرنے کے لیے کوئی ایپ نہیں ملی۔</string>
+    <string name="guide_screen_no_map_app">نقشے کھولنے کے لیے کوئی ایپ نہیں ملی۔</string>
+    <string name="guide_screen_assembly_query">آفت کا اجتماعی علاقہ</string>
+    <string name="guide_screen_search_placeholder">کوڈ، زمرے، یا موضوع سے تلاش کریں</string>
+    <string name="guide_screen_clear_search">تلاش صاف کریں</string>
+    <string name="guide_screen_clear_filters">فلٹرز صاف کریں</string>
+    <string name="guide_screen_empty_title">کوئی رہنمائی نہیں ملی</string>
+    <string name="guide_screen_empty_body">فلٹرز کم کرنے یا کسی وسیع تر مطلوبہ لفظ سے تلاش کرنے کی کوشش کریں۔</string>
+    <string name="guide_screen_more_quick_steps">+%1$d مزید فوری اقدامات</string>
+    <string name="guide_screen_region_value">خطہ: %1$s • ہنگامی نمبر: %2$s</string>
+    <string name="guide_screen_results_count">%1$d رہنمائیاں درج ہیں</string>
+    <string name="guide_screen_read_minutes_format">%1$d منٹ</string>
+</resources>

@@ -35,6 +35,7 @@ class RescueSettingsViewModel(application: Application) : AndroidViewModel(appli
         val meshAlwaysOn: Boolean = false,
         val canUseMeshAlwaysOn: Boolean = false,
         val showDeviceAddress: Boolean = true,
+        val showRescueInNavbar: Boolean = false,
         val crisisLinkEnabled: Boolean = false,
         val crisisLinkLiveLocationEnabled: Boolean = false,
         val crisisLinkLiveLocationIntervalSeconds: Int = DEFAULT_LIVE_LOCATION_INTERVAL_SECONDS,
@@ -73,6 +74,7 @@ class RescueSettingsViewModel(application: Application) : AndroidViewModel(appli
                     meshAlwaysOn = effectiveMeshAlwaysOn,
                     canUseMeshAlwaysOn = canUseMeshAlwaysOn,
                     showDeviceAddress = prefs[SHOW_DEVICE_ADDRESS] ?: true,
+                    showRescueInNavbar = prefs[SHOW_RESCUE_IN_NAVBAR] ?: false,
                     crisisLinkEnabled = effectiveCrisisLink,
                     crisisLinkLiveLocationEnabled = liveLocationEnabled,
                     crisisLinkLiveLocationIntervalSeconds = liveLocationIntervalSeconds,
@@ -116,6 +118,8 @@ class RescueSettingsViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun setShowDeviceAddress(enabled: Boolean) = updateBoolean(SHOW_DEVICE_ADDRESS, enabled)
+
+    fun setShowRescueInNavbar(enabled: Boolean) = updateBoolean(SHOW_RESCUE_IN_NAVBAR, enabled)
 
     fun setCrisisLinkEnabled(enabled: Boolean) {
         viewModelScope.launch(exceptionHandler) {
@@ -200,6 +204,7 @@ class RescueSettingsViewModel(application: Application) : AndroidViewModel(appli
         val SHOW_ONLY_ACTIVE_SIGNALS = booleanPreferencesKey("rescue_show_only_active_signals")
         val MESH_ALWAYS_ON_ENABLED = booleanPreferencesKey("rescue_mesh_always_on_enabled")
         val SHOW_DEVICE_ADDRESS = booleanPreferencesKey("rescue_show_device_address")
+        val SHOW_RESCUE_IN_NAVBAR = booleanPreferencesKey("rescue_show_in_navbar")
         val CRISIS_LINK_ENABLED = booleanPreferencesKey("rescue_crisis_link_enabled")
         val CRISIS_LINK_LIVE_LOCATION_ENABLED = booleanPreferencesKey("rescue_crisis_link_live_location_enabled")
         val CRISIS_LINK_LIVE_LOCATION_INTERVAL_SECONDS = intPreferencesKey("rescue_crisis_link_live_location_interval_seconds")

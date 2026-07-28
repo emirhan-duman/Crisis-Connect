@@ -15,7 +15,8 @@ enum class ScanError {
     DEVICE_NOT_FOUND,
     HANDSHAKE_FAILED,
     PAIRING_FAILED,
-    ALREADY_REGISTERED
+    ALREADY_REGISTERED,
+    BLUETOOTH_OFF
 }
 
 enum class ScanStatusStage {
@@ -168,6 +169,7 @@ class QrScannerViewModel(application: Application) : AndroidViewModel(applicatio
                         DeviceError.DEVICE_NOT_FOUND -> ScanError.DEVICE_NOT_FOUND
                         DeviceError.HANDSHAKE_FAILED -> ScanError.HANDSHAKE_FAILED
                         DeviceError.PAIRING_FAILED -> ScanError.PAIRING_FAILED
+                        DeviceError.BLUETOOTH_OFF -> ScanError.BLUETOOTH_OFF
                     }
                     setError(errorCode)
                 }
@@ -212,6 +214,7 @@ class QrScannerViewModel(application: Application) : AndroidViewModel(applicatio
             ScanError.HANDSHAKE_FAILED -> getString(R.string.qr_scan_error_handshake_failed)
             ScanError.PAIRING_FAILED -> getString(R.string.qr_scan_error_pairing_failed)
             ScanError.ALREADY_REGISTERED -> getString(R.string.qr_scan_status_already_registered)
+            ScanError.BLUETOOTH_OFF -> getString(R.string.qr_scan_error_bluetooth_off)
         }
         val stage = when (error) {
             ScanError.ALREADY_REGISTERED -> ScanStatusStage.ALREADY_REGISTERED

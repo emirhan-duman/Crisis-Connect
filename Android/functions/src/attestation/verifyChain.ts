@@ -48,6 +48,19 @@ async function thumbprintHex(cert: X509Certificate): Promise<string> {
   return toHex(raw);
 }
 
+// SHA-256 over the certificate's SubjectPublicKeyInfo (the public key), as
+// opposed to the whole certificate. The trusted Google attestation root must be
+// matched by its public key, NOT by exact certificate bytes: devices ship their
+// own copy of the Google root baked into the TEE/StrongBox at manufacture, and
+// Google periodically re-issues the same root CA (same key + serial) with a new
+// validity window. Those copies are not byte-identical, so a full-certificate
+// thumbprint comparison falsely rejects genuine devices, while the public key is
+// stable across re-issues.
+async function publicKeyThumbprintHex(cert: X509Certificate): Promise<string> {
+  const digest = await webcrypto.subtle.digest("SHA-256", cert.publicKey.rawData);
+  return toHex(digest);
+}
+
 function pemListToChain(pemList: string[]): X509Certificate[] {
   if (!Array.isArray(pemList) || pemList.length === 0) {
     throw new AttestationVerificationError(
@@ -103,15 +116,26 @@ async function ensureChainEndsInGoogleRoot(
   }
   const lastCert = chain[chain.length - 1];
   const lastThumb = await thumbprintHex(lastCert);
+  const lastKeyThumb = await publicKeyThumbprintHex(lastCert);
   for (const root of roots) {
     const rootThumb = await thumbprintHex(root);
-    if (rootThumb === lastThumb) {
+    // Primary anchor: the terminal cert's public key matches a trusted Google
+    // root's public key. (Exact-thumbprint is kept as a fast path.) This is safe
+    // because verifySignatures() has already proven the chain is signed up to
+    // this key, so matching the key proves the chain is anchored to Google.
+    const rootKeyThumb = await publicKeyThumbprintHex(root);
+    if (rootThumb === lastThumb || rootKeyThumb === lastKeyThumb) {
       return rootThumb;
     }
   }
+  const rootKeyThumbs = await Promise.all(roots.map((r) => publicKeyThumbprintHex(r)));
+  const chainSubjects = chain.map((c) => c.subject).join(" || ");
   throw new AttestationVerificationError(
     "chain-untrusted-root",
-    "Chain root is not in the trusted Google attestation root set."
+    "Chain root is not in the trusted Google attestation root set.",
+    `chainLen=${chain.length} lastSubject="${lastCert.subject}" lastIssuer="${lastCert.issuer}" ` +
+      `lastKeyThumb=${lastKeyThumb} trustedRootCount=${roots.length} ` +
+      `trustedKeyThumbs=[${rootKeyThumbs.join(",")}] chainSubjects=[${chainSubjects}]`
   );
 }
 

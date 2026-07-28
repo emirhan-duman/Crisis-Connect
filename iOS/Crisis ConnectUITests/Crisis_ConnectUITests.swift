@@ -88,6 +88,18 @@ final class Crisis_ConnectUITests: XCTestCase {
     }
 
     @MainActor
+    func testCrisisSentinelNavigation() throws {
+        let app = makeApp(with: ["UITEST_SET_ONBOARDING_COMPLETE", "UITEST_MOCK_CRISIS_SENTINEL_READY"])
+        app.launch()
+
+        let sentinelCard = app.buttons["messages-crisis-sentinel-entry"]
+        XCTAssertTrue(sentinelCard.waitForExistence(timeout: 10))
+        sentinelCard.tap()
+
+        XCTAssertTrue(app.scrollViews["crisis-sentinel-home-screen"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             let app = makeApp(with: ["UITEST_SET_ONBOARDING_COMPLETE"])

@@ -20,10 +20,25 @@ import { requireUid, resolveCallerRoleKey } from "./callerRole";
 
 const masterPrivateKeySecret = defineSecret("MASTER_PRIVATE_KEY_PEM");
 
-const CERTIFICATE_VERSION = 2;
+// Version 3 binds the issuing user's agency (e.g. AFAD/FEMA) into the signed
+// payload so peers can display a *verified* institution. Bumping the version
+// invalidates v2 certificates (their canonical payload lacks the agency field),
+// so every device must re-provision once.
+const CERTIFICATE_VERSION = 3;
 const CERTIFICATE_TTL_MS = 72 * 60 * 60 * 1000;
+// Agency is a short display label. It is sanitised before signing so the
+// canonical payload can never be ambiguous (the '|' delimiter is stripped) and
+// stays bounded. The Android client applies the identical sanitisation when it
+// rebuilds the canonical payload for local signature verification.
+const AGENCY_MAX_LENGTH = 64;
 const RESCUE_DEVICE_ID_REGEX = /^cc-[0-9a-f]{24}$/;
 const EXPECTED_PACKAGE_NAME = "com.auralis.crisisconnect";
+// Apple App Attest binds the attestation to the app's *App ID* — the 10-char
+// Apple Team ID, a dot, then the bundle id — and authData carries
+// rpIdHash = SHA-256(appId). The bundle id alone is NOT enough, so iOS
+// attestation must be verified against the full App ID.
+const APPLE_TEAM_ID = "XY9479JQWV";
+const APPLE_APP_ID = `${APPLE_TEAM_ID}.${EXPECTED_PACKAGE_NAME}`;
 const ACCEPTED_DEVICE_VERDICTS: DeviceRecognitionVerdict[] = [
   "MEETS_DEVICE_INTEGRITY",
   "MEETS_STRONG_INTEGRITY",
@@ -33,6 +48,40 @@ const ACCEPTED_SECURITY_LEVELS: SecurityLevel[] = [
   SecurityLevel.strongBox,
 ];
 const INTEGRITY_MAX_AGE_MS = 5 * 60 * 1000;
+
+function parseUidAllowlist(value: string | undefined, fallback: string): ReadonlySet<string> {
+  return new Set(
+    (value ?? fallback)
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+  );
+}
+
+// TESTER allowlist: these UIDs may provision from a debug/sideloaded build whose Play Integrity
+// `appRecognitionVerdict` is UNRECOGNIZED_VERSION. Only the Play-recognition check is relaxed —
+// device-integrity verdicts, the nonce, the package name, and the full hardware key-attestation
+// chain are STILL enforced, and the role still comes from Firestore users/{uid}.role. Lets the
+// developer iterate on a real device without a Play release each time. emirhanduman2009@gmail.com.
+const TESTER_UIDS = parseUidAllowlist(
+  process.env.CC_TESTER_UIDS,
+  "x23DVPQVj2UQlGQTlxDhi4GXR1h2"
+);
+
+// DEMO allowlist: these UIDs bypass the ENTIRE device-attestation chain (Play Integrity + device
+// integrity + hardware key attestation / Apple App Attest), so the account can obtain a certificate
+// on ANY device — including emulators and unlocked/rooted test devices. The client-supplied public
+// key is trusted as-is; the role still comes from Firestore users/{uid}.role.
+// ⚠ SECURITY: anyone who can sign in as a demo account can obtain its rescue role on any device.
+// Keep its password strong, prefer a non-admin role, and DISABLE for production by setting
+// CC_DEMO_UIDS="". demo@crisisconnect.network.
+const DEMO_UIDS = parseUidAllowlist(
+  process.env.CC_DEMO_UIDS,
+  "8blrCEoszTWBVWb3lA1TnbSn7aJ3"
+);
+
+const DEMO_ATTESTATION_OUTCOME_LABEL = "Demo";
+const DEMO_INTEGRITY_VERDICT = "DEMO_BYPASS";
 
 type RescueRole = "admin" | "fieldteam";
 type Platform = "android" | "ios";
@@ -44,6 +93,11 @@ interface RawIssueInput {
   attestationChainPem?: unknown;
   integrityToken?: unknown;
   attestationChallenge?: unknown;
+  // Display-only device metadata (Android Build.MANUFACTURER/MODEL,
+  // iOS "Apple" + friendly model name). Not security-relevant; surfaced in the
+  // dashboard certificates list so operators can recognise a responder's device.
+  deviceBrand?: unknown;
+  deviceModel?: unknown;
   // iOS-only fields
   appAttestKeyId?: unknown;
   appAttestObject?: unknown;
@@ -101,6 +155,70 @@ async function assertAuthed(
     );
   }
   return { uid, role: role as RescueRole };
+}
+
+/**
+ * Normalises the agency display label so it is safe to embed in the signed
+ * canonical payload: strips control characters and the '|' delimiter, collapses
+ * whitespace, trims, and bounds the length. Mirrors `RoleCertificate.sanitizeAgency`
+ * on the Android client so both sides build an identical canonical string.
+ */
+function sanitizeAgency(raw: unknown): string {
+  if (typeof raw !== "string") {
+    return "";
+  }
+  let cleaned = "";
+  for (const ch of raw) {
+    const code = ch.codePointAt(0) ?? 0;
+    // Drop control characters, DEL, and the '|' canonical delimiter so the
+    // signed canonical payload stays unambiguous.
+    cleaned += code < 0x20 || code === 0x7f || ch === "|" ? " " : ch;
+  }
+  return cleaned.replace(/\s+/g, " ").trim().slice(0, AGENCY_MAX_LENGTH).trim();
+}
+
+// Max length for the display-only device brand/model labels persisted on the
+// certificate document.
+const DEVICE_LABEL_MAX_LENGTH = 64;
+
+/**
+ * Sanitises a client-supplied device brand/model label for display. Strips
+ * control characters and the '|' delimiter, collapses whitespace, trims and
+ * bounds the length. Returns null when nothing usable remains. These fields are
+ * display-only (never signed), so this is defensive hygiene rather than a
+ * security boundary.
+ */
+function sanitizeDeviceLabel(raw: unknown): string | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  let cleaned = "";
+  for (const ch of raw) {
+    const code = ch.codePointAt(0) ?? 0;
+    cleaned += code < 0x20 || code === 0x7f || ch === "|" ? " " : ch;
+  }
+  const result = cleaned
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, DEVICE_LABEL_MAX_LENGTH)
+    .trim();
+  return result.length > 0 ? result : null;
+}
+
+/**
+ * Resolves the caller's agency from Firestore `users/{uid}.agency` — the same
+ * authoritative document the role is read from. Returns "" when absent so the
+ * certificate is still issuable for users without an assigned agency.
+ */
+async function resolveCallerAgency(uid: string): Promise<string> {
+  try {
+    const snap = await getFirestore().doc(`users/${uid}`).get();
+    const data = snap.data() as { agency?: unknown } | undefined;
+    return sanitizeAgency(data?.agency);
+  } catch (error) {
+    console.warn("Failed to resolve caller agency from Firestore", error);
+    return "";
+  }
 }
 
 function validatePublicKeyBase64(publicKeyBase64: string): Buffer {
@@ -341,9 +459,11 @@ function buildSigningPayload(
   role: RescueRole,
   deviceId: string,
   issuedAtMs: number,
-  expiresAtMs: number
+  expiresAtMs: number,
+  agency: string
 ): Buffer {
-  const canonical = `${publicKeyBase64}|${ownerUid}|${role}|${deviceId}|${issuedAtMs}|${expiresAtMs}`;
+  const canonical =
+    `${publicKeyBase64}|${ownerUid}|${role}|${deviceId}|${issuedAtMs}|${expiresAtMs}|${agency}`;
   return Buffer.from(canonical, "utf8");
 }
 
@@ -371,6 +491,9 @@ async function writeCertificateDoc(args: {
   platform: Platform;
   attestationSecurityLevel: string;
   integrityVerdicts: string[];
+  agency: string;
+  deviceBrand: string | null;
+  deviceModel: string | null;
 }): Promise<void> {
   const db = getFirestore();
   const certId = `cert_${args.uid}`;
@@ -379,6 +502,7 @@ async function writeCertificateDoc(args: {
     ownerUid: args.uid,
     deviceId: args.deviceId,
     role: args.role,
+    agency: args.agency,
     publicKeyBase64: args.publicKeyBase64,
     signatureBase64: args.signatureBase64,
     issuedAtMs: args.issuedAtMs,
@@ -387,6 +511,9 @@ async function writeCertificateDoc(args: {
     platform: args.platform,
     attestationSecurityLevel: args.attestationSecurityLevel,
     integrityVerdicts: args.integrityVerdicts,
+    // Display-only device metadata for the dashboard certificates list.
+    deviceBrand: args.deviceBrand,
+    deviceModel: args.deviceModel,
     issuedAt: Timestamp.fromMillis(args.issuedAtMs),
     expiresAt: Timestamp.fromMillis(args.expiresAtMs),
     createdAt: FieldValue.serverTimestamp(),
@@ -442,16 +569,44 @@ async function runAndroidAttestation(
   input: ValidatedAndroidInput,
   uid: string
 ): Promise<PlatformAttestationOutcome> {
+  if (DEMO_UIDS.has(uid)) {
+    console.warn(
+      `[issueRoleCertificate] DEMO uid=${uid} deviceId=${input.deviceId} — bypassing ALL Android ` +
+        "attestation (Play Integrity + device integrity + key attestation). Demo/test only."
+    );
+    return {
+      publicKeyBase64: input.publicKeyBase64,
+      attestationSecurityLevel: DEMO_ATTESTATION_OUTCOME_LABEL,
+      integrityVerdicts: [DEMO_INTEGRITY_VERDICT],
+    };
+  }
+  const isTester = TESTER_UIDS.has(uid);
+  if (isTester) {
+    console.warn(
+      `[issueRoleCertificate] tester uid=${uid} — relaxing Play-recognition only ` +
+        "(device integrity + key attestation still enforced)"
+    );
+  }
   try {
     await decodeAndVerifyIntegrity(input.integrityToken, {
       packageName: EXPECTED_PACKAGE_NAME,
       acceptedDeviceVerdicts: ACCEPTED_DEVICE_VERDICTS,
-      requirePlayRecognition: true,
+      // Testers may use a debug/sideloaded (UNRECOGNIZED_VERSION) build; everyone else must be
+      // installed from Play (PLAY_RECOGNIZED).
+      requirePlayRecognition: !isTester,
       expectedNonceBase64: input.attestationChallenge.toString("base64"),
       maxAgeMs: INTEGRITY_MAX_AGE_MS,
     });
   } catch (error) {
     if (error instanceof IntegrityVerificationError) {
+      // TODO(diagnostic): remove after pinning down the app-not-play-recognized
+      // verdict. Logs the exact Play Integrity verdict to Cloud Logging so we can
+      // distinguish UNRECOGNIZED_VERSION (binary/signing mismatch) from
+      // UNEVALUATED (account/licensing/project mismatch).
+      console.warn(
+        `[issueRoleCertificate] Play Integrity rejected uid=${uid} ` +
+          `deviceId=${input.deviceId} code=${error.code} :: ${error.detail ?? error.message}`
+      );
       await logAttestationFailure(uid, input.deviceId, error.code, error.detail);
       throw new HttpsError(
         "permission-denied",
@@ -476,6 +631,11 @@ async function runAndroidAttestation(
     });
   } catch (error) {
     if (error instanceof AttestationVerificationError) {
+      // TODO(diagnostic): remove once chain-untrusted-root is understood.
+      console.warn(
+        `[issueRoleCertificate] Key attestation rejected uid=${uid} ` +
+          `deviceId=${input.deviceId} code=${error.code} :: ${error.detail ?? error.message}`
+      );
       await logAttestationFailure(uid, input.deviceId, error.code, error.detail);
       throw new HttpsError(
         "permission-denied",
@@ -504,6 +664,17 @@ async function runIosAttestation(
   input: ValidatedIosInput,
   uid: string
 ): Promise<PlatformAttestationOutcome> {
+  if (DEMO_UIDS.has(uid)) {
+    console.warn(
+      `[issueRoleCertificate] DEMO uid=${uid} deviceId=${input.deviceId} — bypassing ALL iOS ` +
+        "attestation (Apple App Attest). Demo/test only."
+    );
+    return {
+      publicKeyBase64: input.publicKeyBase64,
+      attestationSecurityLevel: DEMO_ATTESTATION_OUTCOME_LABEL,
+      integrityVerdicts: [DEMO_INTEGRITY_VERDICT],
+    };
+  }
   let verified;
   try {
     verified = await verifyAppleAttestation({
@@ -516,7 +687,7 @@ async function runIosAttestation(
       // This prevents an attacker who steals the attestation from re-using
       // it with a different device key.
       boundData: input.publicKeyDer,
-      expectedBundleId: EXPECTED_PACKAGE_NAME,
+      expectedBundleId: APPLE_APP_ID,
       // Allow development AAGUID for unsigned debug installs; production
       // builds shipped through the App Store land in the prod environment.
       allowDevelopmentEnvironment: true,
@@ -552,7 +723,10 @@ export const issueRoleCertificate = onCall(
   },
   async (request) => {
     const { uid, role } = await assertAuthed(request);
-    const input = validateInput(request.data as RawIssueInput | undefined);
+    const rawInput = request.data as RawIssueInput | undefined;
+    const input = validateInput(rawInput);
+    const deviceBrand = sanitizeDeviceLabel(rawInput?.deviceBrand);
+    const deviceModel = sanitizeDeviceLabel(rawInput?.deviceModel);
 
     await assertDeviceOwnership(input.deviceId, uid);
     await consumeNonce(input.deviceId, uid, input.attestationChallenge);
@@ -563,6 +737,7 @@ export const issueRoleCertificate = onCall(
 
     await revokeExistingCertificate(uid, input.deviceId);
 
+    const agency = await resolveCallerAgency(uid);
     const issuedAtMs = Date.now();
     const expiresAtMs = issuedAtMs + CERTIFICATE_TTL_MS;
     const payload = buildSigningPayload(
@@ -571,7 +746,8 @@ export const issueRoleCertificate = onCall(
       role,
       input.deviceId,
       issuedAtMs,
-      expiresAtMs
+      expiresAtMs,
+      agency
     );
     const signature = signPayload(payload);
     const signatureBase64 = signature.toString("base64");
@@ -587,6 +763,9 @@ export const issueRoleCertificate = onCall(
       platform: input.platform,
       attestationSecurityLevel: outcome.attestationSecurityLevel,
       integrityVerdicts: outcome.integrityVerdicts,
+      agency,
+      deviceBrand,
+      deviceModel,
     });
 
     await writeIssuanceAuditLog(uid, input.deviceId, role);
@@ -596,6 +775,7 @@ export const issueRoleCertificate = onCall(
       ownerUid: uid,
       deviceId: input.deviceId,
       role,
+      agency,
       issuedAtMs,
       expiresAtMs,
       certificate: signatureBase64,

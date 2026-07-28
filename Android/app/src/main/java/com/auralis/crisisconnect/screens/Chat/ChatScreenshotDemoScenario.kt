@@ -3,6 +3,7 @@ package com.auralis.crisisconnect.screens.Chat
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.ChatMessage
 import com.auralis.crisisconnect.data.Contact
 import com.auralis.crisisconnect.data.MessageDeliveryStatus
@@ -34,7 +35,13 @@ internal object ChatScreenshotDemoScenario {
 
     private const val TAG = "ChatDemoScenario"
 
-    internal const val DEMO_CONTACT_NAME: String = "Mert Demir"
+    /**
+     * Localized display name for the scripted contact (e.g. "Mert Demir" in
+     * Turkish, "Alex Carter" in English) so store screenshots read natively
+     * in every supported language.
+     */
+    internal fun demoContactName(context: Context): String =
+        context.getString(R.string.screenshot_demo_contact_name)
 
     /**
      * Stable, non-BLE, non-mesh session code for the demo contact. Chosen
@@ -58,8 +65,8 @@ internal object ChatScreenshotDemoScenario {
      * Build the fake contact that gets injected into the Messages list.
      * Inert fields: unusable address, no AES key, default transport.
      */
-    fun buildDemoContact(): Contact = Contact(
-        name = DEMO_CONTACT_NAME,
+    fun buildDemoContact(context: Context): Contact = Contact(
+        name = demoContactName(context),
         aesKey = "",
         sessionCode = DEMO_SESSION_CODE,
         verified = true,
@@ -75,16 +82,13 @@ internal object ChatScreenshotDemoScenario {
     )
 
     /**
-     * Build the scripted Japanese scenario anchored to today's local
-     * 20:56 / 20:58 / 21:00 so the bubble timestamps match what the user
-     * expects to see in the screenshot.
-     *
-     * If today's 21:00 hasn't happened yet (e.g. running in the morning),
-     * the anchor shifts to yesterday so the timeline is strictly in the
-     * past relative to now.
+     * Build the scripted scenario in the app's current language (message
+     * bodies and the sender name come from string resources, so screenshots
+     * read natively in every supported locale).
      */
     fun buildTimeline(context: Context, sessionCode: String): DemoTimeline {
         val voicePath = writePlaceholderAudioFile(context)
+        val contactName = demoContactName(context)
 
         // Anchor relative to "now" so the conversation reads as a fresh
         // emergency that just happened. Spread mirrors the spec the user
@@ -102,7 +106,8 @@ internal object ChatScreenshotDemoScenario {
             textIncoming(
                 sessionCode = sessionCode,
                 uuid = "demo-msg-01",
-                text = "İyi misin? Şebeke gitti.",
+                text = context.getString(R.string.screenshot_demo_msg_incoming),
+                senderName = contactName,
                 timestampMillis = tIncomingText
             ),
             audioIncoming(
@@ -110,19 +115,20 @@ internal object ChatScreenshotDemoScenario {
                 uuid = "demo-msg-02",
                 audioPath = voicePath,
                 durationMillis = DEMO_VOICE_DURATION_MS,
+                senderName = contactName,
                 timestampMillis = tIncomingVoice
             ),
             textOutgoing(
                 sessionCode = sessionCode,
                 uuid = "demo-msg-03",
-                text = "Binadan çıktım. Sen?",
+                text = context.getString(R.string.screenshot_demo_msg_outgoing_1),
                 timestampMillis = tOutgoing1,
                 deliveryStatus = MessageDeliveryStatus.READ
             ),
             textOutgoing(
                 sessionCode = sessionCode,
                 uuid = "demo-msg-04",
-                text = "Annemle toplanma noktasına gidiyoruz.",
+                text = context.getString(R.string.screenshot_demo_msg_outgoing_2),
                 timestampMillis = tOutgoing2,
                 deliveryStatus = MessageDeliveryStatus.READ
             )
@@ -144,8 +150,8 @@ internal object ChatScreenshotDemoScenario {
 
     /**
      * Preview text shown on the Messages list row for the demo contact.
-     * We want the most recent outgoing line ("無事だよ…") to match the
-     * scripted timeline's last entry.
+     * We want the most recent outgoing line to match the scripted
+     * timeline's last entry.
      */
     fun buildDemoLatestMessage(context: Context, nowMillis: Long): ChatMessage {
         val timeline = buildTimeline(context, DEMO_SESSION_CODE)
@@ -272,6 +278,7 @@ internal object ChatScreenshotDemoScenario {
         sessionCode: String,
         uuid: String,
         text: String,
+        senderName: String,
         timestampMillis: Long
     ): ChatMessage = ChatMessage(
         id = uuid.hashCode().toLong(),
@@ -284,7 +291,7 @@ internal object ChatScreenshotDemoScenario {
         timestampMillis = timestampMillis,
         originalTimestampMillis = timestampMillis,
         deliveryStatus = null,
-        senderDisplayName = DEMO_CONTACT_NAME
+        senderDisplayName = senderName
     )
 
     private fun textOutgoing(
@@ -311,6 +318,7 @@ internal object ChatScreenshotDemoScenario {
         uuid: String,
         audioPath: String,
         durationMillis: Long,
+        senderName: String,
         timestampMillis: Long
     ): ChatMessage = ChatMessage(
         id = uuid.hashCode().toLong(),
@@ -325,6 +333,6 @@ internal object ChatScreenshotDemoScenario {
         timestampMillis = timestampMillis,
         originalTimestampMillis = timestampMillis,
         deliveryStatus = null,
-        senderDisplayName = DEMO_CONTACT_NAME
+        senderDisplayName = senderName
     )
 }

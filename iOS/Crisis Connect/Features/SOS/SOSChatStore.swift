@@ -20,6 +20,8 @@ enum SOSChatMessageStatus: String, Codable, Sendable {
     case sent
     case delivered
     case read
+    // The relay definitively rejected the send after every retry — user can tap to retry.
+    case failed
 }
 
 enum SOSChatMessageKind: String, Codable, Sendable {
@@ -28,6 +30,8 @@ enum SOSChatMessageKind: String, Codable, Sendable {
     case image
     case location
     case call
+    // Emergency alert (wire template 202): rendered as an unmistakable red bubble.
+    case sosAlert
 }
 
 enum SOSChatCallDirection: String, Codable, Sendable {
@@ -46,7 +50,8 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
     let id: UUID
     let sessionId: UUID
     let kind: SOSChatMessageKind
-    let text: String
+    // Mutable: SOS live-location updates rewrite the referenced alert bubble in place.
+    var text: String
     let audioRelativePath: String?
     let audioDurationMillis: Int?
     let imageRelativePath: String?
@@ -235,6 +240,8 @@ extension SOSChatMessage {
         case .call:
             return callEventPreviewText
                 ?? NSLocalizedString("SOS_CHAT_REPLY_UNKNOWN_PLACEHOLDER", comment: "")
+        case .sosAlert:
+            return P2pSharedTransferSupport.previewText(for: text)
         }
     }
 
@@ -252,6 +259,8 @@ extension SOSChatMessage {
         case .call:
             resolvedText = callEventPreviewText
                 ?? NSLocalizedString("SOS_CHAT_REPLY_UNKNOWN_PLACEHOLDER", comment: "")
+        case .sosAlert:
+            resolvedText = text
         }
         let trimmed = resolvedText.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
@@ -509,6 +518,10 @@ final class SOSChatStore: ObservableObject {
     nonisolated static func loadImageData(fileName: String, thumbnail: Bool = false) -> Data? {
         let normalized = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return nil }
+        let cacheKey = (thumbnail ? "thumb:" : "full:") + normalized as NSString
+        if let cached = imageDataCache.object(forKey: cacheKey) {
+            return cached as Data
+        }
         let destination = thumbnail
             ? imageThumbnailFileURL(fileName: normalized)
             : imageMessageFileURL(fileName: normalized)
@@ -518,7 +531,28 @@ final class SOSChatStore: ObservableObject {
         if !payload.wasEncrypted {
             try? LocalEncryptedFileStore.write(payload.data, to: destination)
         }
+        // Cost is byte length so the NSCache totalCostLimit acts as a memory budget.
+        imageDataCache.setObject(payload.data as NSData, forKey: cacheKey, cost: payload.data.count)
         return payload.data
+    }
+
+    /// In-memory LRU cache for image bytes so scrolling back through a chat doesn't re-read
+    /// & decrypt the same file every time. Capped at ~64 MB total payload — iOS will evict
+    /// the cache automatically on memory warning.
+    nonisolated private static let imageDataCache: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.totalCostLimit = 64 * 1024 * 1024
+        cache.countLimit = 256
+        return cache
+    }()
+
+    /// Drop a specific image from the in-memory cache (call when the underlying file is
+    /// rewritten or deleted so subsequent loads re-read from disk).
+    nonisolated static func invalidateCachedImageData(fileName: String, thumbnail: Bool = false) {
+        let normalized = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        let cacheKey = (thumbnail ? "thumb:" : "full:") + normalized as NSString
+        imageDataCache.removeObject(forKey: cacheKey)
     }
 
     nonisolated static func loadSessionAvatarData(fileName: String) -> Data? {
@@ -652,7 +686,12 @@ final class SOSChatStore: ObservableObject {
     }
 
     @discardableResult
-    func appendRemoteMessage(sessionId: UUID, text: String, transportMessageId: String? = nil) -> Bool {
+    func appendRemoteMessage(
+        sessionId: UUID,
+        text: String,
+        transportMessageId: String? = nil,
+        kind: SOSChatMessageKind = .text
+    ) -> Bool {
         ensureSession(id: sessionId, role: .unknown)
         let normalizedTransportId = normalizedTransportMessageId(transportMessageId)
         if let normalizedTransportId,
@@ -664,7 +703,7 @@ final class SOSChatStore: ObservableObject {
         let message = SOSChatMessage(
             id: UUID(),
             sessionId: sessionId,
-            kind: .text,
+            kind: kind,
             text: text,
             audioRelativePath: nil,
             audioDurationMillis: nil,
@@ -681,6 +720,9 @@ final class SOSChatStore: ObservableObject {
             session.lastMessage = P2pSharedTransferSupport.previewText(for: text)
             session.unreadCount += 1
         }
+        // Any incoming message proves the peer was just alive — feed the local last-seen record
+        // (covers every transport: BLE, mesh and internet).
+        ContactLastSeenStore.record(sessionId: sessionId)
         schedulePersist()
         return true
     }
@@ -690,13 +732,14 @@ final class SOSChatStore: ObservableObject {
         sessionId: UUID,
         text: String,
         status: SOSChatMessageStatus,
-        transportMessageId: String? = nil
+        transportMessageId: String? = nil,
+        kind: SOSChatMessageKind = .text
     ) -> SOSChatMessage {
         ensureSession(id: sessionId, role: .unknown)
         let message = SOSChatMessage(
             id: UUID(),
             sessionId: sessionId,
-            kind: .text,
+            kind: kind,
             text: text,
             audioRelativePath: nil,
             audioDurationMillis: nil,
@@ -788,13 +831,42 @@ final class SOSChatStore: ObservableObject {
         return message
     }
 
+    /// Call ids already filed in this process. Both call engines converge here, and a duplicated
+    /// teardown — a remote `busy`/`end` racing a local hangup, a CallKit end action racing a remote
+    /// end — would otherwise append a second timeline row and, for an incoming missed call, bump
+    /// unreadCount twice. Process-scoped is enough: both filers are process-scoped too. (The GATT
+    /// engine carries its own hasPersistedCurrentCallEvent latch; the internet engine had none.)
+    private var filedCallEventKeys: [String] = []
+
     @discardableResult
     func appendCallEvent(
         sessionId: UUID,
         direction: SOSChatCallDirection,
         result: SOSChatCallResult,
-        durationMillis: Int?
-    ) -> SOSChatMessage {
+        durationMillis: Int?,
+        analyticsTransport: String? = nil,
+        callEventKey: String? = nil
+    ) -> SOSChatMessage? {
+        // Idempotency BEFORE the analytics emit, or a double file would also double-count
+        // callConnected/callEnded for that transport.
+        if let callEventKey {
+            guard !filedCallEventKeys.contains(callEventKey) else { return nil }
+            filedCallEventKeys.append(callEventKey)
+            // Bounded so a long-lived process can't grow this without limit.
+            if filedCallEventKeys.count > 200 { filedCallEventKeys.removeFirst() }
+        }
+        // Both call transports file exactly one event per call here, so this is their single
+        // counting point (mirrors Android's saveCallEvent). Nil transport = demo/backfill rows.
+        if let analyticsTransport {
+            if result == .answered {
+                AppAnalytics.callConnected(transport: analyticsTransport)
+            }
+            AppAnalytics.callEnded(
+                transport: analyticsTransport,
+                durationSeconds: max(0, (durationMillis ?? 0) / 1000),
+                result: result.rawValue
+            )
+        }
         ensureSession(id: sessionId, role: .unknown)
         let timestamp = Date()
         let previewText = Self.callEventPreviewText(direction: direction, result: result)
@@ -966,17 +1038,116 @@ final class SOSChatStore: ObservableObject {
         return result.changed
     }
 
+    /// Rewrites an existing remote bubble's text in place (SOS live-location updates). Returns
+    /// false when no message with that transport id exists yet.
+    @discardableResult
+    func updateRemoteMessageText(sessionId: UUID, transportMessageId: String, text: String) -> Bool {
+        guard let normalizedId = normalizedTransportMessageId(transportMessageId) else { return false }
+        var messages = messagesBySession[sessionId, default: []]
+        guard let index = messages.firstIndex(where: {
+            !$0.isLocal && $0.transportMessageId == normalizedId
+        }) else { return false }
+        messages[index].text = text
+        setMessages(messages, for: sessionId)
+        updateSession(sessionId: sessionId) { session in
+            session.lastMessage = P2pSharedTransferSupport.previewText(for: text)
+        }
+        schedulePersist()
+        return true
+    }
+
+    /// SOS live-location update (wire template 203): rewrite the referenced SOS-ALERT bubble's text
+    /// in place ALWAYS, but promote the conversation-list preview ONLY when that alert is still the
+    /// latest message — so a location refresh to a buried alert never clobbers a newer message's
+    /// preview. Exact Android parity (MessageDao.updateSosAlertText rewrites the row; the list preview
+    /// is derived from the latest row). Guarded to kind == .sosAlert: an unrelated bubble that happens
+    /// to share the wire id is left untouched (history integrity). Returns true when a row was rewritten.
+    @discardableResult
+    func updateSosAlertText(sessionId: UUID, transportMessageId: String, text: String) -> Bool {
+        guard let normalizedId = normalizedTransportMessageId(transportMessageId) else { return false }
+        var messages = messagesBySession[sessionId, default: []]
+        guard let index = messages.firstIndex(where: {
+            !$0.isLocal && $0.kind == .sosAlert && $0.transportMessageId == normalizedId
+        }) else { return false }
+        messages[index].text = text
+        let isLatest = index == messages.indices.last
+        setMessages(messages, for: sessionId)
+        if isLatest {
+            updateSession(sessionId: sessionId) { session in
+                session.lastMessage = P2pSharedTransferSupport.previewText(for: text)
+            }
+        }
+        schedulePersist()
+        return true
+    }
+
+    /// Same rewrite for our OWN bubble — the victim's SOS alert updates its text as live-location
+    /// refreshes go out, mirroring what the recipient sees.
+    @discardableResult
+    func updateLocalMessageText(sessionId: UUID, transportMessageId: String, text: String) -> Bool {
+        guard let normalizedId = normalizedTransportMessageId(transportMessageId) else { return false }
+        var messages = messagesBySession[sessionId, default: []]
+        guard let index = messages.firstIndex(where: {
+            $0.isLocal && $0.transportMessageId == normalizedId
+        }) else { return false }
+        messages[index].text = text
+        setMessages(messages, for: sessionId)
+        updateSession(sessionId: sessionId) { session in
+            session.lastMessage = P2pSharedTransferSupport.previewText(for: text)
+        }
+        schedulePersist()
+        return true
+    }
+
     func markDelivered(sessionId: UUID, transportMessageIds: [String]? = nil) {
         let ids = normalizedTransportMessageIds(transportMessageIds)
         updateLocalMessages(sessionId: sessionId, transportMessageIds: ids) { status in
             switch status {
-            case .pending, .sent:
+            case .pending, .sent, .failed:
                 return .delivered
             case .delivered, .read:
                 return status
             }
         }
         schedulePersist()
+    }
+
+    /// The relay accepted the message — upgrade pending/failed to sent, never downgrade a receipt.
+    func markSent(sessionId: UUID, transportMessageId: String) {
+        guard let normalized = normalizedTransportMessageId(transportMessageId) else { return }
+        updateLocalMessages(sessionId: sessionId, transportMessageIds: [normalized]) { status in
+            switch status {
+            case .pending, .failed:
+                return .sent
+            case .sent, .delivered, .read:
+                return status
+            }
+        }
+        schedulePersist()
+    }
+
+    /// Every retry burned out — surface the failure so the user can tap to resend.
+    func markFailed(sessionId: UUID, transportMessageId: String) {
+        guard let normalized = normalizedTransportMessageId(transportMessageId) else { return }
+        updateLocalMessages(sessionId: sessionId, transportMessageIds: [normalized]) { status in
+            status == .pending ? .failed : status
+        }
+        schedulePersist()
+    }
+
+    /// Store-and-forward queue view: every local text message still waiting for the relay, across
+    /// all sessions. The retry engine re-sends these with their ORIGINAL transportMessageId (the
+    /// receiver dedups on it, so a double-delivery is harmless).
+    func pendingOutgoingTextMessages() -> [(sessionId: UUID, transportMessageId: String, text: String)] {
+        var result: [(UUID, String, String)] = []
+        for (sessionId, messages) in messagesBySession {
+            for message in messages
+            where message.isLocal && message.status == .pending && message.kind == .text {
+                guard let tid = normalizedTransportMessageId(message.transportMessageId) else { continue }
+                result.append((sessionId, tid, message.text))
+            }
+        }
+        return result
     }
 
     func markRead(sessionId: UUID, transportMessageIds: [String]? = nil) {

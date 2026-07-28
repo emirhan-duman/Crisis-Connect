@@ -29,7 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,12 +52,12 @@ import java.util.Date
 fun SignalFinderScreen(navController: NavController) {
     val viewModel: SignalFinderViewModel = viewModel()
     val context = LocalContext.current
-    val cellSignals by viewModel.cells.collectAsState()
-    val wifiSignals by viewModel.wifi.collectAsState()
-    val bluetoothSignals by viewModel.bluetooth.collectAsState()
-    val isRefreshing by viewModel.isRefreshing.collectAsState()
-    val errorMessage by viewModel.errorMessage.collectAsState()
-    val lastUpdated by viewModel.lastUpdated.collectAsState()
+    val cellSignals by viewModel.cells.collectAsStateWithLifecycle()
+    val wifiSignals by viewModel.wifi.collectAsStateWithLifecycle()
+    val bluetoothSignals by viewModel.bluetooth.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val lastUpdated by viewModel.lastUpdated.collectAsStateWithLifecycle()
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
@@ -140,7 +140,9 @@ fun SignalFinderScreen(navController: NavController) {
                     EmptyState(text = stringResource(R.string.signal_finder_no_cells))
                 }
             } else {
-                items(cellSignals) { cell ->
+                // No guaranteed-unique cell id (neighbor cells can share a null cellId), so cells
+                // stay position-keyed; contentType still lets the LazyColumn reuse compositions.
+                items(cellSignals, contentType = { "cell_signal" }) { cell ->
                     SignalCard {
                         Text(
                             text = stringResource(
@@ -195,7 +197,12 @@ fun SignalFinderScreen(navController: NavController) {
             if (wifiSignals.isEmpty()) {
                 item { EmptyState(text = stringResource(R.string.signal_finder_no_wifi)) }
             } else {
-                items(wifiSignals) { wifi ->
+                items(
+                    wifiSignals,
+                    // VM dedupes on this same composite, so it is collision-safe as a key.
+                    key = { "${it.bssid}:${it.frequencyMhz}" },
+                    contentType = { "wifi_signal" }
+                ) { wifi ->
                     SignalCard {
                         Text(
                             text = wifi.ssid,
@@ -234,7 +241,13 @@ fun SignalFinderScreen(navController: NavController) {
             if (bluetoothSignals.isEmpty()) {
                 item { EmptyState(text = stringResource(R.string.signal_finder_no_bluetooth)) }
             } else {
-                items(bluetoothSignals) { bt ->
+                items(
+                    bluetoothSignals,
+                    // The VM dedupes by address (map-keyed), and the list re-sorts by RSSI on every
+                    // scan callback — stable keys let rows move instead of rebinding en masse.
+                    key = { it.address },
+                    contentType = { "bluetooth_signal" }
+                ) { bt ->
                     SignalCard {
                         Text(
                             text = bt.name ?: stringResource(R.string.signal_bluetooth_unknown_name),

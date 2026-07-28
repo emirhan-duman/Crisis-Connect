@@ -188,6 +188,22 @@ class RescueFeatureManager(private val context: Context) {
 
     fun stopMeshService(): Boolean = stopService(MESH_AWARE_SERVICE_CLASS_NAME)
 
+    /** Start the authority (yetkili) GATT mesh foreground service so it connects in the background. */
+    fun startAuthorityMeshService(): Boolean {
+        // Only start when the split is genuinely installed: the platform must have the feature_rescue
+        // dex on the service process's classpath, which it does for a Play-installed module (reported
+        // by SplitInstallManager) but NOT for a sideloaded (adb) debug split — starting it there would
+        // crash the service process with ClassNotFoundException. Queue a deferred install otherwise.
+        if (!isInstalled()) {
+            Log.w(LOG_TAG, "Authority mesh background start skipped; feature module not installed")
+            prefetchIfNeeded()
+            return false
+        }
+        return startForegroundService(AUTHORITY_MESH_SERVICE_CLASS_NAME)
+    }
+
+    fun stopAuthorityMeshService(): Boolean = stopService(AUTHORITY_MESH_SERVICE_CLASS_NAME)
+
     fun startCrisisLinkService(): Boolean {
         if (!isInstalled()) {
             Log.w(LOG_TAG, "Crisis Link start skipped because feature is not installed")
@@ -288,6 +304,8 @@ class RescueFeatureManager(private val context: Context) {
             "com.auralis.crisisconnect.service.GattRescueClientService"
         const val MESH_AWARE_SERVICE_CLASS_NAME =
             "com.auralis.crisisconnect.service.mesh.MeshAwareService"
+        const val AUTHORITY_MESH_SERVICE_CLASS_NAME =
+            "com.auralis.crisisconnect.service.mesh.AuthorityMeshForegroundService"
         const val CRISIS_LINK_SERVICE_CLASS_NAME =
             "com.auralis.crisisconnect.service.CrisisLinkForegroundService"
         const val EXTRA_START_DESTINATION = "extra_rescue_start_destination"

@@ -22,7 +22,10 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.Contact
+import com.auralis.crisisconnect.messaging.InternetConversation
+import com.google.firebase.auth.FirebaseAuth
 import com.auralis.crisisconnect.data.BleBroadcastDirectory
 import com.auralis.crisisconnect.data.BleSessionResolver
 import com.auralis.crisisconnect.data.DeviceError
@@ -30,6 +33,7 @@ import com.auralis.crisisconnect.data.DeviceResult
 import com.auralis.crisisconnect.data.deleteContact
 import com.auralis.crisisconnect.data.getContact
 import com.auralis.crisisconnect.data.getContactByRemoteSessionCode
+import com.auralis.crisisconnect.data.getContactByPeerUid
 import com.auralis.crisisconnect.data.getContacts
 import com.auralis.crisisconnect.data.markContactVerified
 import com.auralis.crisisconnect.data.normalizeMacAddress
@@ -50,7 +54,9 @@ import com.auralis.crisisconnect.service.p2p.resolveP2pShare
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -303,7 +309,13 @@ data class QrData(
     val shareId: String? = null,
     val qraId: String? = null,
     val platform: String,
-    val bleFallbackCapable: Boolean = false
+    val bleFallbackCapable: Boolean = false,
+    // Firebase uid + identity public key (base64 SPKI) of the person shown in the QR, so the
+    // scanner can later message them over the E2E internet transport without a directory lookup.
+    val peerUid: String? = null,
+    val peerPublicKey: String? = null,
+    // Whether the QR owner's device was in child profile mode when the QR was rendered.
+    val peerIsChild: Boolean = false
 )
 
 private fun candidateDiscoveryNames(data: QrData, overrideName: String? = null): List<String> {
@@ -502,6 +514,17 @@ private suspend fun tryBleShareQrFallback(
         remotePlatform = remotePlatform,
         sessionCode = classicSessionCode
     )
+    // Only retain the scanned peer's internet identity when it is COMPLETE (uid AND key together).
+    // A QR generated before the peer finished signing in (e.g. broken/absent Play Services) carries
+    // the public key but no uid; persisting that half-identity would leave the contact permanently
+    // supportsInternet=false with a dangling key. Fall back to a clean Bluetooth-only contact — it
+    // heals into internet-capable later via the BT PEER_IDENTITY exchange or a fresh (complete) QR
+    // scan, matching the empty-uid guards in updateContactPeerIdentity / addContact.
+    val scannedPeerUid = data.peerUid?.trim().orEmpty()
+    val scannedPeerKey = data.peerPublicKey?.trim().orEmpty()
+    val hasCompleteInternetIdentity = scannedPeerUid.isNotEmpty() && scannedPeerKey.isNotEmpty()
+    val resolvedPeerUid = if (hasCompleteInternetIdentity) scannedPeerUid else ""
+    val resolvedPeerKey = if (hasCompleteInternetIdentity) scannedPeerKey else ""
     val savedContact = withContext(Dispatchers.IO) {
         saveBleContactAndMigrateLegacySession(
             context = context,
@@ -529,7 +552,13 @@ private suspend fun tryBleShareQrFallback(
                 remotePlatform = remotePlatform,
                 bleShareId = resolved.shareId,
                 lastKnownBleAddress = resolved.address,
-                remoteDeviceId = resolved.remoteDeviceId
+                remoteDeviceId = resolved.remoteDeviceId,
+                // Retain the scanned peer's internet identity so the chat can continue online
+                // later even without Bluetooth proximity — but only when it is complete (see above);
+                // otherwise stay a clean Bluetooth-only contact instead of a broken half-identity.
+                peerUid = resolvedPeerUid,
+                peerPublicKey = resolvedPeerKey,
+                peerIsChild = data.peerIsChild
             ),
             migrateFromSessionCode = if (useBlePrimary) {
                 originalSessionContact?.sessionCode ?: data.sessionCode
@@ -537,7 +566,8 @@ private suspend fun tryBleShareQrFallback(
                 originalSessionContact?.sessionCode
                     ?.takeIf { !it.equals(classicSessionCode, ignoreCase = true) }
                     ?: bleSessionCode.takeIf { !it.equals(classicSessionCode, ignoreCase = true) }
-            }
+            },
+            analyticsSource = "qr"
         )
     }
     withContext(Dispatchers.IO) {
@@ -681,7 +711,16 @@ private fun parseQrJsonPayload(json: String): QrData? {
             shareId = shareId,
             qraId = qraId,
             platform = platform,
-            bleFallbackCapable = bleFallbackCapable
+            bleFallbackCapable = bleFallbackCapable,
+            peerUid = readJsonField(obj, listOf("peerUid", "uid", "fbUid", "firebaseUid")),
+            peerPublicKey = readJsonField(
+                obj,
+                listOf("peerPublicKey", "peerPubKey", "publicKey", "idKey", "identityKey")
+            ),
+            peerIsChild = readJsonBooleanField(
+                obj,
+                listOf("isChild", "childProfile", "child_profile")
+            ) ?: false
         )
     }.getOrNull()
 
@@ -929,6 +968,94 @@ suspend fun findDeviceByName(
     }
 }
 
+/**
+ * Internet-first QR fallback: registers or refreshes a contact from a QR that carries the peer's
+ * internet identity WITHOUT requiring a Bluetooth handshake. Lets re-scanning an already-saved
+ * contact — or adding someone who is out of Bluetooth range — succeed so the chat works online.
+ *
+ * For an existing thread we keep its (handshake-negotiated) session code. For a brand-new contact we
+ * use the symmetric [InternetConversation.pairId] of the two uids, so both peers derive the same
+ * conversation id from their uids alone — meaning a one-way scan is enough to message over the
+ * internet (the recipient auto-creates its side on first message). Returns the saved session code.
+ */
+private fun saveInternetContactFromQr(
+    context: Context,
+    data: QrData,
+    overrideName: String?
+): Pair<String, Boolean>? {
+    val peerUid = data.peerUid?.trim().orEmpty()
+    val peerKey = data.peerPublicKey?.trim().orEmpty()
+    if (peerUid.isEmpty() || peerKey.isEmpty()) return null
+    val name = overrideName?.takeIf { it.isNotBlank() }
+        ?: data.name?.trim()?.takeIf { it.isNotBlank() }
+    // Reuse an existing thread whenever possible: match by the QR's Bluetooth identifiers, else by
+    // the peer's uid (a contact we already stamped), else by NAME for an old contact that has no
+    // internet identity yet (this "heals" a legacy Bluetooth/RFCOMM contact — e.g. one keyed by MAC
+    // address — so re-scanning enables internet on it instead of spawning a duplicate chat).
+    val existing = findStoredContactForQr(context, data, expectedName = name)
+        ?: getContactByPeerUid(context, peerUid)
+        ?: name?.let { targetName ->
+            runCatching { getContacts(context) }.getOrNull()?.firstOrNull { c ->
+                c.peerUid.isBlank() && c.name.equals(targetName, ignoreCase = true)
+            }
+        }
+    val contact = if (existing != null) {
+        existing.copy(
+            name = name ?: existing.name,
+            peerUid = peerUid,
+            peerPublicKey = peerKey,
+            peerIsChild = data.peerIsChild
+        )
+    } else {
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid?.trim().orEmpty()
+        val conversationId = if (myUid.isNotEmpty()) {
+            InternetConversation.pairId(myUid, peerUid)
+        } else {
+            data.sessionCode.trim()
+        }
+        Contact(
+            name = name ?: context.getString(R.string.qr_contact_fallback_name),
+            aesKey = data.aesKey,
+            sessionCode = conversationId,
+            peerUid = peerUid,
+            peerPublicKey = peerKey,
+            peerIsChild = data.peerIsChild
+        )
+    }
+    saveContact(context, contact, analyticsSource = "qr")
+    return contact.sessionCode to (existing != null)
+}
+
+/**
+ * After a QR pairing saves an internet-capable contact, tell the peer OUR internet identity over the
+ * relay so their side heals its BLE-only reciprocal contact (see IDENTITY_ANNOUNCE_TEMPLATE). This is
+ * the MTU-independent half of bidirectional QR pairing — the BLE client-hello can silently drop the
+ * identity on a small Android↔iOS MTU, so we never rely on it alone. Best-effort and idempotent.
+ */
+// App-lifetime scope so a fire-and-forget announce survives the QR screen closing and never blocks
+// the pairing coroutine (the Firestore write can hang indefinitely offline — audit root cause F).
+private val announceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+private fun announceOurIdentity(context: Context, savedSessionCode: String) {
+    val appContext = context.applicationContext
+    announceScope.launch {
+        runCatching {
+            val contact = getContact(appContext, savedSessionCode)
+                ?: getContactByRemoteSessionCode(appContext, savedSessionCode)
+                ?: return@launch
+            if (!contact.supportsInternet) return@launch
+            val mySessionCode = com.auralis.crisisconnect.data.database.LocalKeyStorage
+                .getOrCreateP2pSessionCode(appContext)
+            val myName = runCatching {
+                com.auralis.crisisconnect.getSavedUserName(appContext).first().trim()
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+            val sent = com.auralis.crisisconnect.messaging.InternetChatTransport(appContext)
+                .sendIdentityAnnounce(contact, mySessionCode, myName)
+            Log.i("QRHelpers", "Identity announce after QR sent=$sent to ${contact.sessionCode}")
+        }.onFailure { Log.w("QRHelpers", "Identity announce after QR failed", it) }
+    }
+}
+
 fun connectUsingQr(
     context: Context,
     rawQrText: String,
@@ -971,19 +1098,82 @@ fun connectUsingQr(
 
     lifecycleOwner.lifecycleScope.launch {
         fun finishFailure(code: DeviceError) {
+            // Internet-first fallback: the Bluetooth pairing couldn't complete (out of range / BT off),
+            // but if the QR carries the peer's internet identity we still register/refresh the contact
+            // so the chat works online. This makes re-scanning an already-saved contact — the common
+            // "device not found" case — succeed instead of dead-ending.
+            val peerUid = data.peerUid?.trim().orEmpty()
+            val peerKey = data.peerPublicKey?.trim().orEmpty()
+            if (peerUid.isNotEmpty() && peerKey.isNotEmpty()) {
+                lifecycleOwner.lifecycleScope.launch {
+                    val saved = withContext(Dispatchers.IO) {
+                        saveInternetContactFromQr(context, data, overrideName)
+                    }
+                    if (saved != null) {
+                        val (sessionCode, wasExisting) = saved
+                        announceOurIdentity(context, sessionCode)
+                        onResult(
+                            if (wasExisting) QrConnectResult.AlreadyRegistered(sessionCode)
+                            else QrConnectResult.Saved(sessionCode)
+                        )
+                    } else {
+                        onResult(QrConnectResult.Failure(code))
+                    }
+                }
+                return
+            }
             onResult(QrConnectResult.Failure(code))
         }
 
         suspend fun persistContact(contact: Contact) {
+            // Always carry the scanned peer's internet identity onto every saved contact, even when
+            // it was added over Bluetooth/RFCOMM — otherwise supportsInternet stays false and the
+            // chat can never fall back to the internet. (The classic save paths build Contact()
+            // without these fields, which was exactly why re-scanning never enabled internet.)
+            val withInternet = contact.copy(
+                peerUid = contact.peerUid.ifBlank { data.peerUid?.trim().orEmpty() },
+                peerPublicKey = contact.peerPublicKey.ifBlank { data.peerPublicKey?.trim().orEmpty() }
+            )
             withContext(Dispatchers.IO) {
-                saveContact(context, contact)
+                saveContact(context, withInternet)
             }
+            announceOurIdentity(context, withInternet.sessionCode)
         }
 
         val adapter = BluetoothAdapter.getDefaultAdapter()
         if (adapter == null) {
             Log.w("QRHelpers", "Bluetooth adapter is null")
             finishFailure(DeviceError.DEVICE_NOT_FOUND)
+            return@launch
+        }
+
+        // Bluetooth is OFF: do NOT attempt the BT handshake — it would fail AND, combined with the
+        // internet fallback, could spawn a duplicate contact (one from the BT path's persistContact,
+        // one from the fallback). If the QR carries the peer's internet identity, add/refresh the
+        // contact over the internet directly (single write, deduped); otherwise tell the user BT is off.
+        if (!adapter.isEnabled) {
+            Log.i("QRHelpers", "Bluetooth is off — routing QR add through the internet path")
+            val peerUid = data.peerUid?.trim().orEmpty()
+            val peerKey = data.peerPublicKey?.trim().orEmpty()
+            if (peerUid.isNotEmpty() && peerKey.isNotEmpty()) {
+                val saved = withContext(Dispatchers.IO) {
+                    saveInternetContactFromQr(context, data, overrideName)
+                }
+                if (saved != null) {
+                    val (sessionCode, wasExisting) = saved
+                    // Reciprocal announce here too (no BLE hello happened at all, so this relay-borne
+                    // announce is the ONLY channel that can heal the displayer's side).
+                    announceOurIdentity(context, sessionCode)
+                    onResult(
+                        if (wasExisting) QrConnectResult.AlreadyRegistered(sessionCode)
+                        else QrConnectResult.Saved(sessionCode)
+                    )
+                } else {
+                    onResult(QrConnectResult.Failure(DeviceError.BLUETOOTH_OFF))
+                }
+            } else {
+                onResult(QrConnectResult.Failure(DeviceError.BLUETOOTH_OFF))
+            }
             return@launch
         }
 
@@ -1013,16 +1203,33 @@ fun connectUsingQr(
             payloadName = data.name,
             sessionCode = data.sessionCode
         )
-        storedContact?.sessionCode
-            ?.takeIf { it.isNotBlank() }
-            ?.let { existingSessionCode ->
-                Log.d(
-                    "QRHelpers",
-                    "QR belongs to an already registered contact: $existingSessionCode"
-                )
-                onResult(QrConnectResult.AlreadyRegistered(existingSessionCode))
-                return@launch
+        val existingContact = storedContact
+        if (existingContact != null && existingContact.sessionCode.isNotBlank()) {
+            // Stamp the peer's internet identity onto the already-registered contact. Re-scanning an
+            // existing contact is exactly how a user enables internet messaging on it, so we must NOT
+            // early-return without saving peerUid/peerPublicKey (the previous bug: it did, leaving
+            // supportsInternet=false so the chat could never fall back to the internet).
+            val peerUid = data.peerUid?.trim().orEmpty()
+            val peerKey = data.peerPublicKey?.trim().orEmpty()
+            if (peerUid.isNotEmpty() && peerKey.isNotEmpty() &&
+                (existingContact.peerUid != peerUid || existingContact.peerPublicKey != peerKey)
+            ) {
+                withContext(Dispatchers.IO) {
+                    saveContact(
+                        context,
+                        existingContact.copy(peerUid = peerUid, peerPublicKey = peerKey)
+                    )
+                }
+                Log.d("QRHelpers", "Stamped internet identity onto existing contact ${existingContact.sessionCode}")
             }
+            Log.d(
+                "QRHelpers",
+                "QR belongs to an already registered contact: ${existingContact.sessionCode}"
+            )
+            announceOurIdentity(context, existingContact.sessionCode)
+            onResult(QrConnectResult.AlreadyRegistered(existingContact.sessionCode))
+            return@launch
+        }
         val forceFinalName = overrideName?.trim()?.isNotBlank() == true
         suspend fun ensureFinalContactName(
             savedSessionCode: String = data.sessionCode,
@@ -1060,6 +1267,11 @@ fun connectUsingQr(
                     savedSessionCode = savedSessionCode,
                     forceOverride = forceFinalName
                 )
+                // Reciprocal identity announce: the BLE-direct success path (used for iOS QRs) saves
+                // the contact WITHOUT going through persistContact, so hook the announce here too —
+                // otherwise the displayer never learns our internet identity when the BLE client-hello
+                // dropped it, and their side stays BLE-only.
+                announceOurIdentity(context, savedSessionCode)
                 onResult(QrConnectResult.Saved(savedSessionCode))
             }
         }

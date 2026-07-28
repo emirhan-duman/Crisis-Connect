@@ -12,10 +12,14 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.BuildConfig
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.data.local.ContactLastSeenStore
+import com.auralis.crisisconnect.settingsDataStore
 import com.auralis.crisisconnect.ai.CrisisSentinelLiteRtModelRuntime
 import com.auralis.crisisconnect.ai.CrisisSentinelModelFileStore
 import com.auralis.crisisconnect.ai.CrisisSentinelModelManifestCache
@@ -27,6 +31,7 @@ import com.auralis.crisisconnect.ai.CrisisSentinelUserMode
 import com.auralis.crisisconnect.service.client.BleClientManager
 import com.auralis.crisisconnect.service.mesh.MeshPeerAuthEvent
 import com.auralis.crisisconnect.service.gattmesh.GattMeshServiceBinding
+import com.auralis.crisisconnect.service.gattmesh.MeshProfiles
 import com.auralis.crisisconnect.service.mesh.AuthorityMeshServiceController
 import com.auralis.crisisconnect.data.BleBroadcastDirectory
 import com.auralis.crisisconnect.data.BleSessionResolver
@@ -34,6 +39,7 @@ import com.auralis.crisisconnect.data.updateContactAddress
 import com.auralis.crisisconnect.security.CertificateProvisioningNotifier
 import com.auralis.crisisconnect.security.SecurityRepository
 import com.auralis.crisisconnect.service.BleRadioPolicy
+import com.auralis.crisisconnect.service.RemoteSosSignals
 import com.auralis.crisisconnect.service.client.RescueClientServiceBinding
 import com.auralis.crisisconnect.service.scan.BleScanCoordinator
 import com.auralis.crisisconnect.util.UUIDGenerator
@@ -60,6 +66,14 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
         runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
     }
 
+    /**
+     * Real SOS lifecycle of a victim entry, independent of BLE link health ([SOSBroadcast.status]):
+     * ACTIVE = a declared (12-byte) SOS advert is being seen; ACKNOWLEDGED = this rescuer reached
+     * the victim (link connected at least once); CLEARED = the node switched to a chat-host-only
+     * advert, i.e. the victim stopped the SOS.
+     */
+    enum class SosState { ACTIVE, ACKNOWLEDGED, CLEARED }
+
     data class SOSBroadcast(
         val address: String,
         val sessionCode: String,
@@ -72,10 +86,14 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
         val rssi: Int?,
         val lastSeen: Long,
         val lastUpdated: Long,
+        val isSosVictim: Boolean = false,
+        val sosState: SosState = SosState.ACTIVE,
+        val clearedAtMillis: Long? = null,
     )
 
     data class RescueUiState(
         val broadcasts: List<SOSBroadcast> = emptyList(),
+        val remoteSignals: List<RemoteSosSignals.RemoteSignal> = emptyList(),
         val isScanning: Boolean = false,
         val errorMessage: Int? = null,
         val canControlMesh: Boolean = false,
@@ -96,6 +114,10 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
     )
 
     private val context = application.applicationContext
+    // Enablement flag the authority mesh foreground service self-gates on. The rescue toggle is the
+    // source of truth, so it must persist this — see setMeshEnabled().
+    private val authorityMeshEnabledKey =
+        booleanPreferencesKey(MeshProfiles.AUTHORITY.enabledPrefKey)
     private val bluetoothManager =
         context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
     private val crisisServiceUuid: UUID = UUIDGenerator.fromAssignedNumber(SERVICE_ASSIGNED_NUMBER)
@@ -179,6 +201,25 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
             }
         }
         observeMeshState()
+        observeRemoteSignals()
+    }
+
+    private fun observeRemoteSignals() {
+        viewModelScope.launch(exceptionHandler) {
+            RemoteSosSignals.observe(context).collect { signals ->
+                _uiState.update { current ->
+                    // Signals already visible as a live BLE row stay in the BLE list only.
+                    val bleSignalIds = current.broadcasts
+                        .mapNotNull { it.broadcastId?.lowercase(java.util.Locale.US) }
+                        .toSet()
+                    current.copy(
+                        remoteSignals = signals.filterNot { signal ->
+                            signal.signalId.lowercase(java.util.Locale.US) in bleSignalIds
+                        }
+                    )
+                }
+            }
+        }
     }
 
     private suspend fun refreshRoleAuthorization(attemptProvisioning: Boolean) {
@@ -257,7 +298,43 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
 
     fun setMeshEnabled(enabled: Boolean) {
         if (!canControlMesh) return
-        meshServiceBinding.setEnabled(enabled)
+        viewModelScope.launch(exceptionHandler) {
+            if (enabled) {
+                // Show progress immediately so the user doesn't think the tap was ignored and keep
+                // re-tapping (the old "have to press it 2-3 times" symptom).
+                _uiState.update { it.copy(isMeshBusy = true, meshErrorMessage = null) }
+                // Make sure the shared group key is present BEFORE starting. The foreground service
+                // self-stops at its key-guard when the key is missing, so if the async fetch hasn't
+                // landed yet the toggle silently bounces back — which is exactly why it used to take
+                // several taps. ensureAuthorityMeshGroupKey() is idempotent and caches the key.
+                val hasKey = runCatching { securityRepository.ensureAuthorityMeshGroupKey() }
+                    .getOrDefault(false)
+                if (!hasKey) {
+                    _uiState.update {
+                        it.copy(
+                            isMeshBusy = false,
+                            meshErrorMessage = R.string.rescue_mesh_error_unauthorized,
+                        )
+                    }
+                    return@launch
+                }
+            }
+            // The authority mesh foreground service self-gates on its own settings flag
+            // (advanced_authority_mesh_enabled). The rescue toggle is the enablement source of
+            // truth, so the flag MUST be persisted before (re)starting the service: otherwise
+            // GattMeshCommandDecider sees settingsEnabled=false on START and immediately stops the
+            // service. Awaiting the write also avoids a race with the service reading the flag in
+            // onStartCommand, and survives process restarts.
+            runCatching {
+                context.settingsDataStore.edit { prefs ->
+                    prefs[authorityMeshEnabledKey] = enabled
+                }
+            }
+            meshServiceBinding.setEnabled(enabled)
+            if (!enabled) {
+                _uiState.update { it.copy(isMeshBusy = false) }
+            }
+        }
     }
 
     fun setAutoConnectToScannedBroadcasts(enabled: Boolean) {
@@ -497,8 +574,10 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
                 _uiState.update { current ->
                     current.copy(
                         isMeshEnabled = meshState.isEnabled,
-                        // GattMeshServiceState has no "busy" phase; setEnabled() flips state quickly.
-                        isMeshBusy = false,
+                        // Keep the "starting…" spinner (set when the toggle was tapped) until the
+                        // service actually reports the mesh as enabled, so a slow group-key fetch or
+                        // startup doesn't look like an ignored tap.
+                        isMeshBusy = current.isMeshBusy && !meshState.isEnabled,
                         meshConnectedPeerCount = meshState.connectedPeerCount,
                         meshErrorMessage = meshState.errorMessage,
                         // peerAuthEvent is Wi-Fi Aware-specific; the GATT authority mesh exposes
@@ -533,7 +612,23 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
             userId = state.userId,
             now = now,
         )
-        discovered[nodeKey] = updated
+        val withSosState = if (
+            state.status == BleClientManager.ConnectionStatus.Connected &&
+            updated.isSosVictim &&
+            updated.sosState == SosState.ACTIVE
+        ) {
+            // Someone on this device reached the victim — the signal is being handled.
+            updated.copy(sosState = SosState.ACKNOWLEDGED)
+        } else {
+            updated
+        }
+        discovered[nodeKey] = withSosState
+        if (state.status == BleClientManager.ConnectionStatus.Connected ||
+            state.status == BleClientManager.ConnectionStatus.Ready
+        ) {
+            // Feed the BT-side "son görülme" so the chat header stays truthful offline.
+            ContactLastSeenStore.record(context, withSosState.sessionCode, now)
+        }
         connectionStatuses[address] = state.status
         publishBroadcasts()
         maybeResumeScanAfterAutoConnect(state.status)
@@ -543,9 +638,19 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
         val record = result.scanRecord ?: return
         val serviceUuids = record.serviceUuids ?: return
         val crisisUuid = serviceUuids.firstOrNull { isCrisisConnectService(it.uuid) }
-        val hasCrisis = crisisUuid != null
+        // Hosting the SOS GATT server is not the same as declaring an emergency — a device with a
+        // legacy BLE chat open hosts it too. Only a declared victim belongs on the rescue screen.
+        val hasCrisis = crisisUuid != null && !isChatHostOnly(record, crisisUuid)
+        // A chat-host advert (id + 0x00 flag) from a node we track as a victim means the SOS was
+        // stopped: the shared GATT server is still up for chat, but the emergency is over.
+        val isChatHostAdvert = crisisUuid != null && !hasCrisis
         val hasGattMesh = serviceUuids.any { it.uuid == gattMeshServiceUuid }
-        if (!hasCrisis && !hasGattMesh) return
+        if (!hasCrisis && !hasGattMesh) {
+            if (isChatHostAdvert) {
+                markVictimSosCleared(result.device.address)
+            }
+            return
+        }
         val mode = when {
             hasCrisis && hasGattMesh -> BroadcastMode.DUAL
             hasCrisis -> BroadcastMode.SOS
@@ -567,6 +672,20 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
 
         viewModelScope.launch(exceptionHandler) {
             val current = discovered[nodeKey]
+            val isSosVictim = (current?.isSosVictim ?: false) || hasCrisis
+            val previousSosState = current?.sosState ?: SosState.ACTIVE
+            val sosState = when {
+                // A fresh declared advert re-activates a previously cleared victim.
+                hasCrisis -> if (previousSosState == SosState.CLEARED) SosState.ACTIVE else previousSosState
+                isChatHostAdvert && current?.isSosVictim == true &&
+                    previousSosState != SosState.CLEARED -> SosState.CLEARED
+                else -> previousSosState
+            }
+            val clearedAtMillis = when {
+                sosState != SosState.CLEARED -> null
+                previousSosState != SosState.CLEARED -> now
+                else -> current?.clearedAtMillis
+            }
             val mergedMode = reconcileBroadcastModeForScan(
                 current?.channelId?.let { parseModeFromChannelId(it) },
                 mode
@@ -604,6 +723,9 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
                     address = normalizedAddress
                 ),
                 sessionCode = sessionCode,
+                isSosVictim = isSosVictim,
+                sosState = sosState,
+                clearedAtMillis = clearedAtMillis,
             )
             discovered[nodeKey] = updated
             publishBroadcasts()
@@ -620,6 +742,27 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
                 pauseScanForAutoConnect()
                 manager.connectTo(normalizedAddress)
             }
+        }
+    }
+
+    private fun markVictimSosCleared(rawAddress: String) {
+        val normalizedAddress = normalizeAddress(rawAddress)
+        val nodeKey = stableNodeIdFor(normalizedAddress)
+        viewModelScope.launch(exceptionHandler) {
+            val current = discovered[nodeKey] ?: return@launch
+            if (!current.isSosVictim) return@launch
+            val now = System.currentTimeMillis()
+            discovered[nodeKey] = if (current.sosState == SosState.CLEARED) {
+                // Still advertising as a chat host nearby — keep the cleared card fresh.
+                current.copy(lastSeen = now)
+            } else {
+                current.copy(
+                    sosState = SosState.CLEARED,
+                    clearedAtMillis = now,
+                    lastSeen = now,
+                )
+            }
+            publishBroadcasts()
         }
     }
 
@@ -675,8 +818,17 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
         cleanupJob = viewModelScope.launch(exceptionHandler) {
             while (true) {
                 delay(CLEANUP_INTERVAL_MS)
-                val cutoff = System.currentTimeMillis() - STALE_ENTRY_TIMEOUT_MS
-                val toRemove = discovered.filter { it.value.lastSeen < cutoff }.keys
+                val now = System.currentTimeMillis()
+                val cutoff = now - STALE_ENTRY_TIMEOUT_MS
+                val toRemove = discovered.filter { (_, entry) ->
+                    if (entry.sosState == SosState.CLEARED) {
+                        // Keep a cleared victim visible briefly so the rescuer sees the SOS ended
+                        // instead of the card silently vanishing.
+                        now - (entry.clearedAtMillis ?: entry.lastSeen) > CLEARED_RETENTION_MS
+                    } else {
+                        entry.lastSeen < cutoff
+                    }
+                }.keys
                 if (toRemove.isNotEmpty()) {
                     toRemove.forEach { key ->
                         val entry = discovered.remove(key)
@@ -817,10 +969,34 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
         }?.trim()?.lowercase(Locale.US)
     }
 
+    /**
+     * True when the advert says "this device is merely hosting the shared GATT server for a chat",
+     * not "a human here pressed SOS".
+     *
+     * The SOS service also hosts the legacy BLE chat characteristics, so its presence alone is not a
+     * declaration. Intent rides in the payload LENGTH, which keeps a real victim's advert byte-for-
+     * byte what every shipped rescuer already parses: 12 bytes = emergency, 13 = id + flag.
+     *
+     * Unknown flag values deliberately read as EMERGENCY, not chat-host: if a future build adds a
+     * third mode, an old rescuer must over-report rather than silently drop a real victim from the
+     * list. Hiding someone who is actually in danger is the one failure worse than a phantom.
+     */
+    private fun isChatHostOnly(record: android.bluetooth.le.ScanRecord, serviceUuid: android.os.ParcelUuid): Boolean {
+        val data = record.getServiceData(serviceUuid) ?: return false
+        if (data.size != BROADCAST_ID_BYTE_SIZE + 1) return false
+        return data[BROADCAST_ID_BYTE_SIZE] == INTENT_FLAG_CHAT_HOST
+    }
+
     private fun parseBroadcastId(record: android.bluetooth.le.ScanRecord, serviceUuid: android.os.ParcelUuid): String? {
         val data = record.getServiceData(serviceUuid) ?: return null
         if (data.size == BROADCAST_ID_BYTE_SIZE) {
             return "CC-${data.toHexString().uppercase(Locale.US)}"
+        }
+        // Same id, plus the trailing intent flag. Parsed so a chat host stays resolvable by session
+        // code (an in-flight conversation must survive the peer ceasing to declare) even though it is
+        // filtered out of the victim list above.
+        if (data.size == BROADCAST_ID_BYTE_SIZE + 1) {
+            return "CC-${data.copyOf(BROADCAST_ID_BYTE_SIZE).toHexString().uppercase(Locale.US)}"
         }
         val raw = runCatching { data.toString(Charsets.UTF_8) }.getOrNull()?.trim() ?: return null
         if (raw.isBlank()) return null
@@ -848,10 +1024,16 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
         return String(chars)
     }
 
-    private fun isCrisisConnectService(uuid: UUID): Boolean {
-        val normalized = uuid.toString().lowercase(Locale.ROOT)
-        return normalized.startsWith("0000cc") && normalized.endsWith("-0000-1000-8000-00805f9b34fb")
-    }
+    /**
+     * Only 0xCC00 is the SOS service.
+     *
+     * This used to prefix-match "0000cc", which also swallows 0xCCA1 (the authority mesh) and 0xCCA6
+     * (the SPAKE2 nearby-contact pairing advertised by anyone sitting on the add-contact screen) —
+     * so people who had not pressed SOS, and were in no danger at all, were listed to rescuers as
+     * victims. The 16-bit-derived UUIDs are all built the same way, so an exact comparison is both
+     * correct and cheaper than the string work it replaces.
+     */
+    private fun isCrisisConnectService(uuid: UUID): Boolean = uuid == crisisServiceUuid
 
     internal enum class BroadcastMode {
         SOS,
@@ -862,6 +1044,8 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
     companion object {
         private const val TAG = "RescueScreenVM"
         private const val SERVICE_ASSIGNED_NUMBER = 0xCC00
+        /** Mirrors GattSOSServerService.INTENT_FLAG_CHAT_HOST — "server up for chat, not an SOS". */
+        private const val INTENT_FLAG_CHAT_HOST: Byte = 0x00
         private const val GATT_MESH_SERVICE_UUID = "6f4b5d5e-2e0a-4f13-9b89-7d9f3f1d1001"
         private const val BROADCAST_ID_BYTE_SIZE = 12
         private const val BROADCAST_ID_HEX_LENGTH = 24
@@ -869,6 +1053,7 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
         private const val MAX_NODE_ID_HEX_LENGTH = 24
         private const val CLEANUP_INTERVAL_MS = 15_000L
         private const val STALE_ENTRY_TIMEOUT_MS = 20_000L
+        private const val CLEARED_RETENTION_MS = 120_000L
         private const val AUTO_CONNECT_SCAN_RESUME_TIMEOUT_MS = 12_000L
         private val MESH_CONTROL_ROLES = setOf("admin", "fieldteam")
         private val RESCUE_AI_ROLES = setOf("admin", "fieldteam")
@@ -888,7 +1073,7 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
             if (broadcasts.isEmpty()) {
                 return "Saha ekibiyim. Yakında rescue sinyali görünmüyor; tarama durumu, eksik bilgiler ve güvenli takip adımlarını içeren kısa SITREP kontrol listesi hazırla."
             }
-            val activeCount = broadcasts.count { it.status == activeStatus }
+            val activeCount = broadcasts.count { it.isSosVictim && it.sosState != SosState.CLEARED }
             val signalLines = broadcasts
                 .sortedByDescending { it.lastSeen }
                 .take(5)

@@ -38,11 +38,18 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.with
 import androidx.compose.foundation.Canvas
@@ -97,6 +104,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.CallMade
 import androidx.compose.material.icons.filled.CallMissed
@@ -104,6 +112,7 @@ import androidx.compose.material.icons.filled.CallReceived
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -114,6 +123,7 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Mic
@@ -349,6 +359,7 @@ private fun SearchResultRow(
             }
             MessageType.AUDIO -> context.getString(R.string.conversation_preview_voice_message)
             MessageType.IMAGE -> context.getString(R.string.conversation_preview_photo_message)
+            MessageType.SOS_ALERT -> context.getString(R.string.conversation_preview_sos)
         }
     }
     val timestamp = remember(message.timestampMillis) {
@@ -362,6 +373,7 @@ private fun SearchResultRow(
         }
         MessageType.AUDIO -> Icons.Filled.Mic
         MessageType.IMAGE -> Icons.Filled.Image
+        MessageType.SOS_ALERT -> Icons.Filled.Warning
     }
     Row(
         modifier = Modifier
@@ -404,6 +416,48 @@ private fun SearchResultRow(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+/**
+ * WhatsApp-style "peer is typing" bubble: an incoming-styled bubble with three softly pulsing dots,
+ * shown as the last timeline row while fresh typing pulses arrive over the internet transport.
+ */
+@Composable
+internal fun TypingIndicatorBubble(modifier: Modifier = Modifier) {
+    val (bubbleColor, contentColor) = incomingChatBubbleColors()
+    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Surface(
+            color = bubbleColor,
+            shape = RoundedCornerShape(topStart = 4.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 18.dp),
+            tonalElevation = 1.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val transition = rememberInfiniteTransition(label = "typing_dots")
+                repeat(3) { index ->
+                    val alpha by transition.animateFloat(
+                        initialValue = 0.25f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(420),
+                            repeatMode = RepeatMode.Reverse,
+                            initialStartOffset = StartOffset(index * 150)
+                        ),
+                        label = "typing_dot_$index"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .graphicsLayer { this.alpha = alpha }
+                            .background(contentColor, CircleShape)
+                    )
+                }
+            }
         }
     }
 }
@@ -477,7 +531,7 @@ internal fun CallOverlay(
                 MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
             }
             val chipLabel = if (call.encrypted) {
-                stringResource(R.string.chat_call_secure)
+                stringResource(R.string.chat_call_via_bluetooth)
             } else {
                 stringResource(R.string.chat_call_unsecured)
             }
@@ -856,7 +910,7 @@ internal fun ChatCallStatusBar(
         }
         add(
             if (call.encrypted) {
-                stringResource(R.string.chat_call_secure)
+                stringResource(R.string.chat_call_via_bluetooth)
             } else {
                 stringResource(R.string.chat_call_unsecured)
             }
@@ -1186,7 +1240,9 @@ internal fun DateHeader(date: String) {
 }
 
 @Composable
-internal fun ChatEncryptionNoticeCard() {
+internal fun ChatEncryptionNoticeCard(
+    text: String = stringResource(R.string.chat_e2ee_notice)
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f),
@@ -1210,7 +1266,7 @@ internal fun ChatEncryptionNoticeCard() {
                 modifier = Modifier.size(18.dp)
             )
             Text(
-                text = stringResource(R.string.chat_e2ee_notice),
+                text = text,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Start,
                 modifier = Modifier.weight(1f)
@@ -1220,14 +1276,27 @@ internal fun ChatEncryptionNoticeCard() {
 }
 
 @Composable
-fun ConnectionStatusBadge(connectionState: ChatConnectionState) {
+fun ConnectionStatusBadge(
+    connectionState: ChatConnectionState,
+    transport: ChatTransport = ChatTransport.Bluetooth,
+    // Icon-only pill (text collapses away) — used after a short reveal so the transport stays
+    // visible at a glance while the presence line ("çevrimiçi" / son görülme) gets the space.
+    compact: Boolean = false
+) {
     val statusIcon = when (connectionState) {
-        ChatConnectionState.Connected -> Icons.Filled.Link
+        ChatConnectionState.Connected -> when (transport) {
+            ChatTransport.Bluetooth -> Icons.Filled.Bluetooth
+            ChatTransport.Internet -> Icons.Filled.Public
+        }
         else -> null
+    }
+    val connectedLabel = when (transport) {
+        ChatTransport.Bluetooth -> R.string.chat_status_connected_bluetooth
+        ChatTransport.Internet -> R.string.chat_status_connected_internet
     }
     val (label, backgroundColor, contentColor) = when (connectionState) {
         ChatConnectionState.Connected -> Triple(
-            stringResource(R.string.chat_status_connected),
+            stringResource(connectedLabel),
             StatusConnectedContainer,
             StatusConnectedOnContainer
         )
@@ -1250,6 +1319,8 @@ fun ConnectionStatusBadge(connectionState: ChatConnectionState) {
             MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
+    // Only collapse when there IS an icon to stand in for the text (i.e. the connected states).
+    val iconOnly = compact && statusIcon != null
     Surface(
         color = backgroundColor,
         contentColor = contentColor,
@@ -1264,14 +1335,21 @@ fun ConnectionStatusBadge(connectionState: ChatConnectionState) {
             statusIcon?.let { icon ->
                 Icon(
                     imageVector = icon,
-                    contentDescription = null,
+                    contentDescription = if (iconOnly) label else null,
                     modifier = Modifier.size(12.dp)
                 )
             }
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall
-            )
+            AnimatedVisibility(
+                visible = !iconOnly,
+                enter = expandHorizontally() + fadeIn(),
+                exit = shrinkHorizontally() + fadeOut()
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1
+                )
+            }
         }
     }
 }

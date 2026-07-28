@@ -8,6 +8,7 @@
 import Foundation
 import CoreBluetooth
 import Combine
+import FirebaseAuth
 
 struct ContactVerificationResult {
     let shareId: String
@@ -67,6 +68,12 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
     private var keyData: Data?
     private var localDisplayName: String = ""
     private var activePeripheral: CBPeripheral?
+    // Fallback candidates matched only by the P2P service UUID (no shareId in the
+    // advertisement) can be unrelated Crisis Connect devices nearby — e.g. an
+    // Android peer that always advertises CD00. Once rejected they must not be
+    // retried, or they starve the real QR host out of the 12s verification window.
+    private var rejectedFallbackPeripheralIds: Set<UUID> = []
+    private var activeCandidateIsFallback = false
     private var controlCharacteristic: CBCharacteristic?
     private var bootstrapPayload: P2pBootstrapPayload?
     private var controlStage: P2pControlStage?
@@ -87,6 +94,8 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         queue.async { [weak self] in
             guard let self else { return }
             self.stopScanning(disconnect: true)
+            self.rejectedFallbackPeripheralIds.removeAll()
+            self.activeCandidateIsFallback = false
             self.targetPayload = payload
             self.keyData = P2pBleProtocol.decodeBase64(payload.key)
             self.localDisplayName = localDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -155,20 +164,26 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         guard activePeripheral == nil else { return }
 
         if let expectedShareId = payload.shareId?.nilIfEmpty {
-            guard
-                let advertisedShareId = P2pBleProtocol.advertisedShareId(
-                    from: advertisementData,
-                    peripheralName: peripheral.name
-                ),
-                P2pBleProtocol.normalizeShareId(advertisedShareId) == P2pBleProtocol.normalizeShareId(expectedShareId)
-            else {
+            let normalizedExpected = P2pBleProtocol.normalizeShareId(expectedShareId)
+            if let advertised = P2pBleProtocol.advertisedShareId(
+                from: advertisementData,
+                peripheralName: peripheral.name
+            ) {
+                guard P2pBleProtocol.normalizeShareId(advertised) == normalizedExpected else { return }
+                connectIfNeeded(peripheral, isFallbackCandidate: false)
                 return
             }
-            connectIfNeeded(peripheral)
+            guard P2pBleProtocol.advertisesService(
+                P2pBleProtocol.serviceUUID,
+                in: advertisementData
+            ) else { return }
+            guard !rejectedFallbackPeripheralIds.contains(peripheral.identifier) else { return }
+            connectIfNeeded(peripheral, isFallbackCandidate: true)
             return
         }
 
-        connectIfNeeded(peripheral)
+        guard !rejectedFallbackPeripheralIds.contains(peripheral.identifier) else { return }
+        connectIfNeeded(peripheral, isFallbackCandidate: true)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -178,6 +193,9 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         if activePeripheral?.identifier == peripheral.identifier {
+            if activeCandidateIsFallback {
+                rejectedFallbackPeripheralIds.insert(peripheral.identifier)
+            }
             activePeripheral = nil
         }
         resumeScanIfNeeded()
@@ -342,7 +360,36 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             return
         }
 
-        let frame: [String: Any?] = [
+        // Carry our internet-messaging identity so the QR-displaying peer can reach us online too
+        // (the QR only gave us THEIR identity). Signed with a separate HMAC bound to this session's
+        // nonces; omitted when we have no identity yet, so older peers pair exactly as before.
+        var identityFields: [String: Any?] = [:]
+        if let peerUid = Auth.auth().currentUser?.uid.trimmingCharacters(in: .whitespacesAndNewlines),
+           !peerUid.isEmpty,
+           let peerPublicKey = (try? MessagingIdentity.shared.publicKeyBase64())?
+               .trimmingCharacters(in: .whitespacesAndNewlines),
+           !peerPublicKey.isEmpty,
+           let identityProof = P2pBleProtocol.hmacBase64(
+               key: keyData,
+               payload: P2pBleProtocol.buildClientIdentityProofPayload(
+                   shareId: payload.shareId,
+                   serverNonce: payload.serverNonce,
+                   clientNonce: clientNonce,
+                   peerUid: peerUid,
+                   peerPublicKey: peerPublicKey
+               )
+           ) {
+            identityFields = [
+                "clientPeerUid": peerUid,
+                "clientPeerPublicKey": peerPublicKey,
+                "clientIdentityProof": identityProof
+            ]
+            MessagingDiagLog.log("pairing(scanner): attaching our internet identity peer=\(peerUid.prefix(8)) to client-hello")
+        } else {
+            MessagingDiagLog.log("pairing(scanner): NO internet identity to attach (uid=\(Auth.auth().currentUser != nil)) — displayer stays BLE-only for us")
+        }
+
+        var frame: [String: Any?] = [
             "type": P2pBleProtocol.typeClientHello,
             "protocolVersion": P2pBleProtocol.protocolVersion,
             "shareId": payload.shareId,
@@ -354,6 +401,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             "avatarB64": localAvatarBase64,
             "proof": proof
         ]
+        frame.merge(identityFields) { _, new in new }
         let compactFrame = frame.compactMapValues { $0 }
         guard let data = try? JSONSerialization.data(withJSONObject: compactFrame, options: []) else {
             disconnectAndResumeScan()
@@ -514,15 +562,19 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         return encoded.nilIfEmpty
     }
 
-    private func connectIfNeeded(_ peripheral: CBPeripheral) {
+    private func connectIfNeeded(_ peripheral: CBPeripheral, isFallbackCandidate: Bool) {
         guard let central else { return }
         activePeripheral = peripheral
+        activeCandidateIsFallback = isFallbackCandidate
         peripheral.delegate = self
         setProgress(.pairing)
         central.connect(peripheral, options: nil)
     }
 
     private func disconnectAndResumeScan() {
+        if activeCandidateIsFallback, let rejectedId = activePeripheral?.identifier {
+            rejectedFallbackPeripheralIds.insert(rejectedId)
+        }
         guard let central, let activePeripheral else {
             resumeScanIfNeeded()
             return
@@ -539,6 +591,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
     private func resumeScanIfNeeded() {
         guard completion != nil else { return }
         activePeripheral = nil
+        activeCandidateIsFallback = false
         controlCharacteristic = nil
         bootstrapPayload = nil
         controlStage = nil
@@ -570,7 +623,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
 
     private func ensureCentralManager() {
         if central == nil {
-            central = CBCentralManager(delegate: self, queue: queue)
+            central = CBCentralManager(delegate: self, queue: queue, options: [CBCentralManagerOptionShowPowerAlertKey: false])
         }
     }
 

@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="tr">
-    <string name="sensor_monitor_dashboard_title">Afet Sensör Paneli</string>
+    <string name="sensor_monitor_dashboard_title">Sensör Paneli</string>
     <string name="sensor_monitor_dashboard_subtitle">Çevresel değişimleri anlık izleyerek riskleri daha hızlı tespit edin.</string>
     <string name="sensor_monitor_dashboard_status_active_title">Canlı izleme aktif</string>
     <string name="sensor_monitor_dashboard_status_paused_title">İzleme duraklatıldı</string>

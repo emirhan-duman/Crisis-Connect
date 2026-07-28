@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.analytics.Analytics
 import com.auralis.crisisconnect.core.media.BLE_IMAGE_TRANSFER_PROFILE
 import com.auralis.crisisconnect.core.media.prepareImageAttachmentForTransfer
 import com.auralis.crisisconnect.data.BleBroadcastDirectory
@@ -29,6 +30,7 @@ import com.auralis.crisisconnect.data.MessageType
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.data.imageMessageFile
 import com.auralis.crisisconnect.data.imageThumbnailFile
+import com.auralis.crisisconnect.data.local.ContactLastSeenStore
 import com.auralis.crisisconnect.data.markMessagesAsRead
 import com.auralis.crisisconnect.data.observeMessages
 import com.auralis.crisisconnect.data.saveLocalAudioMessage
@@ -48,8 +50,10 @@ import com.auralis.crisisconnect.service.BleImageTransferReceiptStore
 import com.auralis.crisisconnect.service.BleVoicePayload
 import com.auralis.crisisconnect.service.BleVoiceTransferProgressStore
 import com.auralis.crisisconnect.service.BleVoiceTransferReceiptStore
+import com.auralis.crisisconnect.service.CallUiState
 import com.auralis.crisisconnect.service.GattSOSServerService
 import com.auralis.crisisconnect.service.BlePeerIdentityUtils
+import com.auralis.crisisconnect.service.p2p.call.P2pCallController
 import com.auralis.crisisconnect.service.client.BleClientManager
 import com.auralis.crisisconnect.service.client.RescueClientServiceBinding
 import com.auralis.crisisconnect.service.SosServerServiceBinding
@@ -102,6 +106,15 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
 
     private val _connectionState = MutableStateFlow<BleClientManager.ConnectionState?>(null)
     val connectionState: StateFlow<BleClientManager.ConnectionState?> = _connectionState.asStateFlow()
+
+    // BT-side "son görülme": fed by live link transitions and incoming message timestamps, so the
+    // header can show when the peer was last provably alive even with no internet presence doc.
+    private val _peerLastSeenMillis = MutableStateFlow<Long?>(null)
+    val peerLastSeenMillis: StateFlow<Long?> = _peerLastSeenMillis.asStateFlow()
+
+    // Live voice call over the rescue link, scoped to this conversation.
+    private val _rescueCall = MutableStateFlow<CallUiState?>(null)
+    val rescueCall: StateFlow<CallUiState?> = _rescueCall.asStateFlow()
 
     private val _serverReady = MutableStateFlow(false)
     val serverReady: StateFlow<Boolean> = _serverReady.asStateFlow()
@@ -167,6 +180,70 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
         observeSosBinding()
         observeVoiceTransferProgress()
         observeImageTransferProgress()
+        observeRescueCalls()
+    }
+
+    private fun observeRescueCalls() {
+        viewModelScope.launch(exceptionHandler) {
+            P2pCallController.shared(getApplication<Application>().applicationContext)
+                .calls
+                .collectLatest { calls ->
+                    val code = sessionCode
+                    _rescueCall.value = if (code.isNullOrBlank()) {
+                        null
+                    } else {
+                        calls.values.firstOrNull { it.sessionCode.equals(code, ignoreCase = true) }
+                    }
+                }
+        }
+    }
+
+    fun startRescueCall() {
+        val code = sessionCode ?: return
+        val appContext = getApplication<Application>().applicationContext
+        // startCall reads the contact row via Room — must never run on the main thread
+        // (tapping the call button used to crash with assertNotMainThread here).
+        viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
+            val started = P2pCallController.shared(appContext).startCall(code)
+            if (!started) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        appContext,
+                        appContext.getString(R.string.ble_call_unavailable),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+
+    fun acceptRescueCall(callId: String) {
+        val code = sessionCode ?: return
+        P2pCallController.shared(getApplication<Application>().applicationContext)
+            .acceptCall(code, callId)
+    }
+
+    fun rejectRescueCall(callId: String) {
+        val code = sessionCode ?: return
+        P2pCallController.shared(getApplication<Application>().applicationContext)
+            .rejectCall(code, callId)
+    }
+
+    fun endRescueCall() {
+        val code = sessionCode ?: return
+        P2pCallController.shared(getApplication<Application>().applicationContext).endCall(code)
+    }
+
+    fun setRescueCallMuted(muted: Boolean) {
+        val code = sessionCode ?: return
+        P2pCallController.shared(getApplication<Application>().applicationContext)
+            .setMuted(code, muted)
+    }
+
+    fun toggleRescueCallSpeaker() {
+        val code = sessionCode ?: return
+        P2pCallController.shared(getApplication<Application>().applicationContext)
+            .toggleSpeaker(code)
     }
 
     fun initialize(sessionCode: String) {
@@ -175,6 +252,10 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         this.sessionCode = normalizedCode
+        _peerLastSeenMillis.value = ContactLastSeenStore.get(
+            getApplication<Application>().applicationContext,
+            normalizedCode
+        )
         _voiceTransfers.value = emptyMap()
         _imageTransfers.value = emptyMap()
         sessionAddress = BleSessionResolver.addressForSessionCode(normalizedCode)
@@ -187,7 +268,7 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
         readReceiptRetryAtRealtime = null
         registerSessionAliases()
         updateServerReady()
-        ensureSosRunningIfVictim()
+        ensureChatHostRunning()
         sessionAddress?.let { pendingConnectAddress = it }
         lastRequestedAddress = null
         BleChatStore.ensureSession(normalizedCode)
@@ -203,6 +284,12 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
         messageJob = viewModelScope.launch(exceptionHandler) {
             BleChatStore.observeMessages(sessionCode).collectLatest { list ->
                 _messages.value = list
+                list.asSequence()
+                    .filter { !it.isLocal }
+                    .maxOfOrNull { it.timestampMillis }
+                    ?.let { newestRemote ->
+                        recordPeerAlive(minOf(newestRemote, System.currentTimeMillis()))
+                    }
             }
         }
     }
@@ -385,9 +472,22 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
                 "status=${state.status} reason=${state.reason} serverReady=${_serverReady.value}"
         )
         _connectionState.value = state
+        if (state.status == BleClientManager.ConnectionStatus.Ready ||
+            state.status == BleClientManager.ConnectionStatus.Connected
+        ) {
+            recordPeerAlive()
+        }
         if (state.status == BleClientManager.ConnectionStatus.Ready) {
             flushPendingMessages()
             flushPendingReadReceipts()
+        }
+    }
+
+    private fun recordPeerAlive(atMillis: Long = System.currentTimeMillis()) {
+        val code = sessionCode ?: return
+        ContactLastSeenStore.record(getApplication<Application>().applicationContext, code, atMillis)
+        if (atMillis > (_peerLastSeenMillis.value ?: 0L)) {
+            _peerLastSeenMillis.value = atMillis
         }
     }
 
@@ -465,6 +565,7 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
             attemptConnection()
             flushPendingMessages()
         }
+        Analytics.messageSent(kind = "text", transport = "ble_gatt")
         return true
     }
 
@@ -1178,7 +1279,7 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
             _connectionState.value?.status == BleClientManager.ConnectionStatus.Ready &&
                 manager != null
         if (!serverPathReady && !clientPathReady) {
-            ensureSosRunningIfVictim()
+            ensureChatHostRunning()
             pendingConnectAddress = address
             attemptConnection()
             scheduleReadReceiptRetry(delayMs = READ_RECEIPT_RETRY_DELAY_MS)
@@ -1194,7 +1295,7 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
                 sent = manager?.sendReadReceiptAwait(normalizedAddress, batchIds) == true
             }
             if (!sent) {
-                ensureSosRunningIfVictim()
+                ensureChatHostRunning()
                 pendingConnectAddress = normalizedAddress
                 attemptConnection()
                 scheduleReadReceiptRetry(delayMs = READ_RECEIPT_RETRY_DELAY_MS)
@@ -1293,7 +1394,21 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
         pendingConnectAddress = null
     }
 
-    private fun ensureSosRunningIfVictim() {
+    /**
+     * Brings up the shared GATT server so a legacy BLE chat has a transport — WITHOUT declaring an
+     * emergency.
+     *
+     * The old name and the old string ("SOS started to enable messaging") record what this was always
+     * meant to be: transport bring-up. But the service conflated hosting with declaring, so opening a
+     * chat reported a live emergency to the agency dashboard and auto-messaged the user's contacts.
+     * Starting without EXTRA_USER_DECLARED hosts the server and tells nobody anything; only the SOS
+     * button declares. The toast is gone with the declaration it used to announce — saying "SOS
+     * started" when no SOS is being sent would be worse than silence.
+     *
+     * The rescue-role gate is kept exactly as it was, purely to avoid changing behaviour that nobody
+     * reported as broken.
+     */
+    private fun ensureChatHostRunning() {
         if (attemptedAutoSosStart) {
             return
         }
@@ -1309,13 +1424,8 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
         runCatching {
             val intent = Intent(ctx, GattSOSServerService::class.java)
             ContextCompat.startForegroundService(ctx, intent)
-            Toast.makeText(
-                ctx,
-                ctx.getString(R.string.ble_chat_auto_sos_started),
-                Toast.LENGTH_LONG
-            ).show()
         }.onFailure { throwable ->
-            Log.w(TAG, "Failed to auto-start SOS for BLE chat", throwable)
+            Log.w(TAG, "Failed to start the BLE chat GATT host", throwable)
         }
     }
 
@@ -1453,7 +1563,7 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
                             outboundRoute = queued.outboundRoute
                         )
                     }
-                    ensureSosRunningIfVictim()
+                    ensureChatHostRunning()
                     pendingConnectAddress = address
                     attemptConnection()
                     break

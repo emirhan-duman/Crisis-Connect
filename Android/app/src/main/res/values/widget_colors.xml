@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_card_bg">#FFFFFF</color>
+    <color name="widget_text_primary">#1A1C1E</color>
+    <color name="widget_text_secondary">#74767A</color>
+
+    <!-- Severity accents: same family as the in-app alertColorFor() palette. -->
+    <color name="widget_severity_red">#D32F2F</color>
+    <color name="widget_severity_orange">#EF6C00</color>
+    <color name="widget_severity_green">#2E7D32</color>
+    <color name="widget_severity_neutral">#607D8B</color>
+    <color name="widget_severity_red_container">#26D32F2F</color>
+    <color name="widget_severity_orange_container">#26EF6C00</color>
+    <color name="widget_severity_green_container">#262E7D32</color>
+    <color name="widget_severity_neutral_container">#26607D8B</color>
+</resources>

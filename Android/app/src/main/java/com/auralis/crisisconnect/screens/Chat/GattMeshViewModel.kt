@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.analytics.Analytics
 import com.auralis.crisisconnect.core.chat.previewTextForReplyTarget
 import com.auralis.crisisconnect.data.Contact
 import com.auralis.crisisconnect.data.GattMeshChatStore
@@ -31,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import com.auralis.crisisconnect.security.SecurityRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -59,6 +61,8 @@ class GattMeshViewModel(application: Application) : AndroidViewModel(application
         val connectedPeers: List<GattMeshConnectedPeer> = emptyList(),
         val errorMessage: Int? = null,
         val canChat: Boolean = false,
+        /** This device's own verified institution (kurum), shown on the self row in the peers sheet. */
+        val localAgency: String? = null,
     )
 
     private val appContext = application.applicationContext
@@ -90,15 +94,23 @@ class GattMeshViewModel(application: Application) : AndroidViewModel(application
     private var retryPendingDispatchAtMillis: Long? = null
     private var flushReadReceiptsJob: Job? = null
 
+    private val localAgencyFlow = MutableStateFlow<String?>(null)
+
     init {
+        viewModelScope.launch(exceptionHandler) {
+            localAgencyFlow.value = runCatching {
+                SecurityRepository(appContext).getUsableStoredCertificateAgency()
+            }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+        }
+
         val publicMeshEnabledFlow = appContext.settingsDataStore.data
             .map { prefs -> prefs[PUBLIC_MESH_ENABLED] ?: false }
             .distinctUntilChanged()
 
         viewModelScope.launch(exceptionHandler) {
-            combine(meshBinding.state, publicMeshEnabledFlow) { serviceState, publicMeshEnabled ->
-                serviceState to publicMeshEnabled
-            }.collect { (serviceState, publicMeshEnabled) ->
+            combine(meshBinding.state, publicMeshEnabledFlow, localAgencyFlow) { serviceState, publicMeshEnabled, localAgency ->
+                Triple(serviceState, publicMeshEnabled, localAgency)
+            }.collect { (serviceState, publicMeshEnabled, localAgency) ->
                 val canChat = publicMeshEnabled &&
                     serviceState.isEnabled &&
                     serviceState.sendReadyPeerCount > 0
@@ -112,6 +124,7 @@ class GattMeshViewModel(application: Application) : AndroidViewModel(application
                     connectedPeers = serviceState.connectedPeers,
                     errorMessage = serviceState.errorMessage,
                     canChat = canChat,
+                    localAgency = localAgency,
                 )
                 syncMeshBindingForScreen(publicMeshEnabled)
                 flushPendingDispatchIfPossible()
@@ -195,6 +208,7 @@ class GattMeshViewModel(application: Application) : AndroidViewModel(application
         )
         _messageDraft.value = ""
         enqueuePendingDispatch(packetId)
+        Analytics.messageSent(kind = "text", transport = "ble_mesh", chat = "mesh")
 
         viewModelScope.launch(exceptionHandler) {
             persistLocalMessageState(

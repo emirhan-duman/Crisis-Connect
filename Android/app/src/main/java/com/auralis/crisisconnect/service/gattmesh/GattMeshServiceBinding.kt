@@ -28,8 +28,12 @@ class GattMeshServiceBinding(
     private val _state = MutableStateFlow(GattMeshServiceState())
     val state: StateFlow<GattMeshServiceState> = _state.asStateFlow()
 
+    private val _pttState = MutableStateFlow(com.auralis.crisisconnect.service.gattmesh.ptt.PttSessionState())
+    val pttState: StateFlow<com.auralis.crisisconnect.service.gattmesh.ptt.PttSessionState> = _pttState.asStateFlow()
+
     private var service: GattMeshForegroundService? = null
     private var stateCollector: Job? = null
+    private var pttStateCollector: Job? = null
     private var bindRetryJob: Job? = null
     private var stateWatchdogJob: Job? = null
     private var isBound = false
@@ -54,11 +58,20 @@ class GattMeshServiceBinding(
                     _state.value = current
                 }
             }
+            pttStateCollector?.cancel()
+            pttStateCollector = scope.launch {
+                service?.pttState?.collect { current ->
+                    _pttState.value = current
+                }
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             stateCollector?.cancel()
             stateCollector = null
+            pttStateCollector?.cancel()
+            pttStateCollector = null
+            _pttState.value = com.auralis.crisisconnect.service.gattmesh.ptt.PttSessionState()
             service = null
             isBound = false
             if (!keepBound) {
@@ -171,6 +184,25 @@ class GattMeshServiceBinding(
             tryBind(createIfNeeded = true)
         }
         return service?.sendReadReceipt(messageIds) ?: false
+    }
+
+    // ---- Telsiz (push-to-talk) ----
+
+    fun joinTelsiz() {
+        if (keepBound && !isBound) tryBind(createIfNeeded = true)
+        service?.joinTelsiz()
+    }
+
+    fun leaveTelsiz() {
+        service?.leaveTelsiz()
+    }
+
+    fun pttPressTalk() {
+        service?.pttPressTalk()
+    }
+
+    fun pttReleaseTalk() {
+        service?.pttReleaseTalk()
     }
 
     private fun tryBind(createIfNeeded: Boolean): Boolean {

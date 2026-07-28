@@ -90,6 +90,7 @@ import androidx.navigation.NavController
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.screens.Guide.GuideMainScreenViewModel.GuideArticle
 import com.auralis.crisisconnect.screens.Guide.GuideMainScreenViewModel.GuideCategory
+import com.auralis.crisisconnect.service.sos.EmergencyNumberResolver
 import com.auralis.crisisconnect.ui.components.AppBottomBar
 import java.text.Normalizer
 import java.util.Locale
@@ -103,10 +104,6 @@ private val CheckedChecklistItemsSaver = Saver<Set<String>, ArrayList<String>>(
 private data class GuideItemEntry(
     val category: GuideCategory,
     val article: GuideArticle
-)
-
-private data class EmergencyContact(
-    val number: String
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -164,7 +161,7 @@ fun GuideMainScreen(navController: NavController) {
     val context = LocalContext.current
     val locale = Locale.getDefault()
     val categories = remember { GuideMainScreenViewModel.CATEGORIES }
-    val emergencyContact = remember(locale) { resolveEmergencyContact(locale) }
+    val emergencyInfo = remember(context) { EmergencyNumberResolver.resolveWithRegion(context) }
     val listState = rememberLazyListState()
 
     var selectedCategoryId by rememberSaveable { mutableStateOf(ALL_CATEGORIES_ID) }
@@ -255,11 +252,11 @@ fun GuideMainScreen(navController: NavController) {
                 item {
                     GuideIntroPanel(
                         locale = locale,
-                        emergencyContact = emergencyContact,
+                        emergencyInfo = emergencyInfo,
                         onCallEmergency = {
                             dialEmergency(
                                 context = context,
-                                number = emergencyContact.number
+                                number = emergencyInfo.number
                             )
                         },
                         onOpenAssemblyArea = { openAssemblyAreaMap(context) }
@@ -310,14 +307,15 @@ fun GuideMainScreen(navController: NavController) {
 @Composable
 private fun GuideIntroPanel(
     locale: Locale,
-    emergencyContact: EmergencyContact,
+    emergencyInfo: EmergencyNumberResolver.RegionalEmergencyNumber,
     onCallEmergency: () -> Unit,
     onOpenAssemblyArea: () -> Unit
 ) {
-    val countryLabel = remember(locale) {
-        locale.getDisplayCountry(locale).ifBlank {
-            locale.country.uppercase(Locale.US).ifBlank { "N/A" }
-        }
+    val unknownCountryLabel = stringResource(R.string.guide_country_unknown)
+    val countryLabel = remember(locale, emergencyInfo.countryIso) {
+        emergencyInfo.countryIso
+            ?.let { iso -> Locale("", iso).getDisplayCountry(locale).ifBlank { iso } }
+            ?: unknownCountryLabel
     }
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -353,7 +351,7 @@ private fun GuideIntroPanel(
                 text = stringResource(
                     R.string.guide_screen_region_value,
                     countryLabel,
-                    emergencyContact.number
+                    emergencyInfo.number
                 ),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -376,7 +374,7 @@ private fun GuideIntroPanel(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = stringResource(R.string.guide_screen_action_call_local, emergencyContact.number),
+                        text = stringResource(R.string.guide_screen_action_call_local, emergencyInfo.number),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1071,19 +1069,6 @@ private fun GuideItemEntry.matchesQuery(queryTokens: List<String>, locale: Local
     }.toSearchKey(locale)
 
     return queryTokens.all { token -> haystack.contains(token) }
-}
-
-private fun resolveEmergencyContact(locale: Locale): EmergencyContact {
-    val languageCode = locale.language.lowercase(Locale.US)
-    val number = when (languageCode) {
-        "tr" -> "112"
-        "ja" -> "119"
-        "es" -> "112"
-        "hi" -> "112"
-        else -> "911"
-    }
-
-    return EmergencyContact(number = number)
 }
 
 private fun dialEmergency(context: Context, number: String) {

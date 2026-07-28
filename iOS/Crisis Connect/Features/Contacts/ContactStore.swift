@@ -92,8 +92,29 @@ struct ContactRecord: Identifiable, Codable, Equatable {
     var bleShareId: String?
     var lastKnownBleAddress: String?
     var remoteDeviceId: String?
+    // E2E internet-messaging identity of the peer (Firebase uid + base64 SPKI public key), captured
+    // from a QR scan or an incoming message. Mirrors Android's Contact.peerUid/peerPublicKey.
+    var peerUid: String?
+    var peerPublicKey: String?
+    var peerPhotoUrl: String?
+    /// True when a directory re-discovery replaced a previously pinned identity key — surfaced as
+    /// the safety-number "key changed" warning until the user confirms they verified it.
+    var peerKeyChanged: Bool?
+    /// True when the directory marks this peer as a child account (never an SOS auto-recipient).
+    var peerIsChild: Bool?
+    /// The peer's E.164 number - the SPAKE2 password for the offline Bluetooth bridge.
+    var peerPhone: String?
+    /// Hidden transport-only contact auto-created for an authority (kurum) channel peer;
+    /// never shown in contact lists - the conversation lives in the channel thread.
+    var isAuthorityBridge: Bool?
     var createdAt: Date
     var lastUpdated: Date
+
+    /// True when this contact can be reached over the E2E internet transport (uid + key both known).
+    var supportsInternet: Bool {
+        (peerUid?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            && (peerPublicKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+    }
 
     init(
         id: UUID,
@@ -110,6 +131,13 @@ struct ContactRecord: Identifiable, Codable, Equatable {
         bleShareId: String? = nil,
         lastKnownBleAddress: String? = nil,
         remoteDeviceId: String? = nil,
+        peerUid: String? = nil,
+        peerPublicKey: String? = nil,
+        peerPhotoUrl: String? = nil,
+        peerKeyChanged: Bool? = nil,
+        peerIsChild: Bool? = nil,
+        peerPhone: String? = nil,
+        isAuthorityBridge: Bool? = nil,
         createdAt: Date,
         lastUpdated: Date
     ) {
@@ -132,6 +160,13 @@ struct ContactRecord: Identifiable, Codable, Equatable {
         self.bleShareId = bleShareId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.lastKnownBleAddress = lastKnownBleAddress?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.remoteDeviceId = remoteDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.peerUid = peerUid?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.peerPublicKey = peerPublicKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.peerPhotoUrl = peerPhotoUrl?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.peerKeyChanged = peerKeyChanged
+        self.peerIsChild = peerIsChild
+        self.peerPhone = peerPhone
+        self.isAuthorityBridge = isAuthorityBridge
         self.createdAt = createdAt
         self.lastUpdated = lastUpdated
     }
@@ -151,6 +186,13 @@ struct ContactRecord: Identifiable, Codable, Equatable {
         case bleShareId
         case lastKnownBleAddress
         case remoteDeviceId
+        case peerUid
+        case peerPublicKey
+        case peerPhotoUrl
+        case peerKeyChanged
+        case peerIsChild
+        case peerPhone
+        case isAuthorityBridge
         case createdAt
         case lastUpdated
     }
@@ -190,6 +232,13 @@ struct ContactRecord: Identifiable, Codable, Equatable {
             bleShareId: bleShareId,
             lastKnownBleAddress: try container.decodeIfPresent(String.self, forKey: .lastKnownBleAddress),
             remoteDeviceId: remoteDeviceId,
+            peerUid: try container.decodeIfPresent(String.self, forKey: .peerUid),
+            peerPublicKey: try container.decodeIfPresent(String.self, forKey: .peerPublicKey),
+            peerPhotoUrl: try container.decodeIfPresent(String.self, forKey: .peerPhotoUrl),
+            peerKeyChanged: try container.decodeIfPresent(Bool.self, forKey: .peerKeyChanged),
+            peerIsChild: try container.decodeIfPresent(Bool.self, forKey: .peerIsChild),
+            peerPhone: try container.decodeIfPresent(String.self, forKey: .peerPhone),
+            isAuthorityBridge: try container.decodeIfPresent(Bool.self, forKey: .isAuthorityBridge),
             createdAt: try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
             lastUpdated: try container.decodeIfPresent(Date.self, forKey: .lastUpdated) ?? Date()
         )
@@ -309,6 +358,77 @@ final class ContactStore: ObservableObject {
         return stateQueue.sync {
             storedContacts.first { $0.sessionCode.lowercased() == normalized }
         }
+    }
+
+    /// A stored contact whose remoteSessionCode (or own sessionCode) matches — used to heal a
+    /// BLE-only paired contact when the peer announces its internet identity over the relay.
+    func contactForRemoteSessionCode(_ remoteSessionCode: String) -> ContactRecord? {
+        let normalized = remoteSessionCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+        return stateQueue.sync {
+            storedContacts.first {
+                $0.remoteSessionCode?.caseInsensitiveCompare(normalized) == .orderedSame
+                    || $0.sessionCode.caseInsensitiveCompare(normalized) == .orderedSame
+            }
+        }
+    }
+
+    /// Stamps a peer's internet identity onto the paired BLE contact [id], AND absorbs any separate
+    /// internet-only duplicate a preceding plain message may have auto-created for the same uid
+    /// (so the user is never left with two threads). The BLE contact is the survivor — it holds the
+    /// real BLE session + verification. Only heals a contact whose peerUid is still blank.
+    @discardableResult
+    func healAndAbsorb(id: UUID, peerUid: String, peerPublicKey: String) -> ContactRecord? {
+        let healed = healInternetIdentity(id: id, peerUid: peerUid, peerPublicKey: peerPublicKey)
+        guard healed != nil else { return nil }
+        let uid = peerUid.trimmingCharacters(in: .whitespacesAndNewlines)
+        var survivor: ContactRecord?
+        var snapshot: [ContactRecord] = []
+        stateQueue.sync {
+            var next = storedContacts
+            guard let primary = next.firstIndex(where: { $0.id == id }) else { return }
+            // Any OTHER contact holding this uid is the auto-created internet-only duplicate; drop it.
+            let dupes = next.enumerated().filter {
+                $0.offset != primary
+                    && $0.element.peerUid?.caseInsensitiveCompare(uid) == .orderedSame
+            }.map { $0.element.id }
+            if !dupes.isEmpty {
+                next.removeAll { dupes.contains($0.id) }
+            }
+            survivor = next.first { $0.id == id }
+            storedContacts = next
+            snapshot = next
+        }
+        if survivor != nil { publish(snapshot) }
+        return survivor
+    }
+
+    /// Stamps a peer's internet identity onto the contact with [id], but only if it has none yet
+    /// (idempotent, never hijacks an established identity). Returns the healed record or nil.
+    @discardableResult
+    func healInternetIdentity(id: UUID, peerUid: String, peerPublicKey: String) -> ContactRecord? {
+        let uid = peerUid.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = peerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !uid.isEmpty, !key.isEmpty else { return nil }
+        var healed: ContactRecord?
+        var snapshot: [ContactRecord] = []
+        stateQueue.sync {
+            var next = storedContacts
+            guard let index = next.firstIndex(where: { $0.id == id }),
+                  (next[index].peerUid?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty else {
+                return
+            }
+            next[index].peerUid = uid
+            next[index].peerPublicKey = key
+            next[index].lastUpdated = Date()
+            healed = next[index]
+            storedContacts = next
+            snapshot = next
+        }
+        if healed != nil {
+            publish(snapshot)
+        }
+        return healed
     }
 
     func contactForRemoteDeviceId(_ remoteDeviceId: String) -> ContactRecord? {
@@ -433,6 +553,23 @@ final class ContactStore: ObservableObject {
         DispatchQueue.main.async { self.objectWillChange.send() }
     }
 
+    /// User-chosen rename. The name a user typed (or their address book supplied) must survive
+    /// every automatic update — until this existed there was NO way to fix a typo'd contact name
+    /// anywhere in the app, so a bad name at pairing time was permanent.
+    func renameContact(id: UUID, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let snapshot: [ContactRecord] = stateQueue.sync {
+            guard let index = storedContacts.firstIndex(where: { $0.id == id }) else {
+                return storedContacts
+            }
+            storedContacts[index].name = trimmed
+            return storedContacts
+        }
+        schedulePersist(snapshot)
+        DispatchQueue.main.async { self.objectWillChange.send() }
+    }
+
     @discardableResult
     func upsertContact(name: String, broadcastId: String, aesKeyBase64: String) -> ContactRecord {
         let normalizedBroadcastId = broadcastId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -542,10 +679,18 @@ final class ContactStore: ObservableObject {
         remotePlatform: ContactRemotePlatform,
         bleShareId: String?,
         lastKnownBleAddress: String?,
-        remoteDeviceId: String?
+        remoteDeviceId: String?,
+        peerUid: String? = nil,
+        peerPublicKey: String? = nil,
+        peerPhotoUrl: String? = nil,
+        analyticsSource: String? = nil,
+        analyticsReceived: Bool = false
     ) -> ContactRecord {
         let normalizedSession = normalizeSessionCode(sessionCode)
         let normalizedRemoteSession = remoteSessionCode?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let normalizedPeerUid = peerUid?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let normalizedPeerPublicKey = peerPublicKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let normalizedPeerPhotoUrl = peerPhotoUrl?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let normalizedShareId = bleShareId?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().nilIfEmpty
         let normalizedAddress = lastKnownBleAddress?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().nilIfEmpty
         let normalizedDeviceId = remoteDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
@@ -566,6 +711,7 @@ final class ContactStore: ObservableObject {
         var updatedRecord: ContactRecord!
         var snapshot: [ContactRecord] = []
         var migratedSessionPairs: [(UUID, UUID)] = []
+        var insertedNewRecord = false
 
         stateQueue.sync {
             var next = storedContacts
@@ -617,6 +763,9 @@ final class ContactStore: ObservableObject {
                 mergedRecord.bleShareId = normalizedShareId ?? mergedRecord.bleShareId
                 mergedRecord.lastKnownBleAddress = normalizedAddress ?? mergedRecord.lastKnownBleAddress
                 mergedRecord.remoteDeviceId = normalizedDeviceId ?? mergedRecord.remoteDeviceId
+                mergedRecord.peerUid = normalizedPeerUid ?? mergedRecord.peerUid
+                mergedRecord.peerPublicKey = normalizedPeerPublicKey ?? mergedRecord.peerPublicKey
+                mergedRecord.peerPhotoUrl = normalizedPeerPhotoUrl ?? mergedRecord.peerPhotoUrl
                 mergedRecord.lastUpdated = now
 
                 next = next.enumerated().compactMap { index, record in
@@ -648,19 +797,161 @@ final class ContactStore: ObservableObject {
                     bleShareId: normalizedShareId,
                     lastKnownBleAddress: normalizedAddress,
                     remoteDeviceId: normalizedDeviceId,
+                    peerUid: normalizedPeerUid,
+                    peerPublicKey: normalizedPeerPublicKey,
+                    peerPhotoUrl: normalizedPeerPhotoUrl,
                     createdAt: now,
                     lastUpdated: now
                 )
                 next.append(record)
                 updatedRecord = record
+                insertedNewRecord = true
             }
             storedContacts = next
             snapshot = next
+        }
+        // Merges/migrations of an existing contact are not adds — only a genuinely new row counts.
+        if insertedNewRecord, let analyticsSource, updatedRecord.isAuthorityBridge != true {
+            if analyticsReceived {
+                AppAnalytics.contactReceived(via: analyticsSource, transport: "ble_gatt")
+            } else {
+                AppAnalytics.contactAdded(method: analyticsSource, transport: "ble_gatt")
+            }
+            // A successfully added contact is a calm, positive milestone — the same moment the
+            // Android app counts toward its in-app review gating.
+            Task { @MainActor in InAppReview.onPositiveEvent() }
         }
 
         migrateSessionsIfNeeded(migratedSessionPairs)
         publish(snapshot)
         return updatedRecord
+    }
+
+    func contactForPeerUid(_ peerUid: String) -> ContactRecord? {
+        let normalized = peerUid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+        return stateQueue.sync {
+            storedContacts.first { $0.peerUid?.caseInsensitiveCompare(normalized) == .orderedSame }
+        }
+    }
+
+    /// Records the E2E internet identity of a peer on the matching contact (found by conversation
+    /// session code or by peerUid), creating a minimal internet-only contact when none exists yet.
+    /// Used by the QR-add path and by the message receiver (trust-on-first-use). Mirrors the
+    /// auto-create in Android's CrisisConnectMessagingService.receiveMessage.
+    @discardableResult
+    func applyInternetIdentity(
+        conversationSessionCode: String,
+        peerUid: String,
+        peerPublicKey: String,
+        displayName: String? = nil,
+        peerPhotoUrl: String? = nil,
+        peerIsChild: Bool? = nil,
+        peerPhone: String? = nil,
+        isAuthorityBridge: Bool = false,
+        analyticsSource: String? = nil,
+        analyticsReceived: Bool = false
+    ) -> ContactRecord? {
+        let normalizedSession = normalizeSessionCode(conversationSessionCode)
+        let normalizedPeerUid = peerUid.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPeerKey = peerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedPeerUid.isEmpty, !normalizedPeerKey.isEmpty else { return nil }
+        let normalizedPhoto = peerPhotoUrl?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let incomingName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let now = Date()
+
+        var result: ContactRecord?
+        var snapshot: [ContactRecord] = []
+        var insertedNewRecord = false
+        stateQueue.sync {
+            var next = storedContacts
+            let index = next.firstIndex {
+                $0.peerUid?.caseInsensitiveCompare(normalizedPeerUid) == .orderedSame
+            } ?? next.firstIndex {
+                $0.sessionCode.caseInsensitiveCompare(normalizedSession) == .orderedSame
+                    || ($0.remoteSessionCode?.caseInsensitiveCompare(normalizedSession) == .orderedSame)
+            } ?? next.firstIndex { candidate in
+                // Heal a QR/manual/legacy-BLE contact that has NO internet identity yet by matching
+                // on name (Android saveInternetContactFromQr parity). Without this the receiver
+                // spawned a duplicate "Contact" for the peer's uid, and the user's original thread —
+                // the one they type in — stayed supportsInternet=false forever. Only ever adopts a
+                // contact whose peerUid is blank, so it can never hijack an established identity.
+                guard let incomingName,
+                      (candidate.peerUid?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty,
+                      candidate.isAuthorityBridge != true else { return false }
+                return candidate.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(incomingName) == .orderedSame
+            }
+            if let index {
+                let previousKey = next[index].peerPublicKey?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !previousKey.isEmpty, previousKey != normalizedPeerKey {
+                    // A re-discovered key differs from the pinned one: could be a reinstall or a
+                    // new phone — or impersonation. Flag it for the safety-number warning.
+                    next[index].peerKeyChanged = true
+                }
+                next[index].peerUid = normalizedPeerUid
+                next[index].peerPublicKey = normalizedPeerKey
+                if let normalizedPhoto { next[index].peerPhotoUrl = normalizedPhoto }
+                if let peerIsChild { next[index].peerIsChild = peerIsChild }
+                // Offline-bridge input stays sticky: only backfill a missing number, and a
+                // deliberately added contact never becomes a hidden bridge.
+                if let peerPhone, (next[index].peerPhone ?? "").isEmpty { next[index].peerPhone = peerPhone }
+                if let incomingName, shouldAdoptContactName(current: next[index].name, incoming: incomingName) {
+                    next[index].name = incomingName
+                }
+                next[index].lastUpdated = now
+                result = next[index]
+            } else {
+                let record = ContactRecord(
+                    id: BroadcastSessionId.fromRawIdentifier(normalizedPeerUid),
+                    name: incomingName ?? "Contact",
+                    broadcastId: "",
+                    sessionCode: normalizedSession,
+                    aesKeyBase64: "",
+                    preferredTransport: .legacyBroadcast,
+                    remotePlatform: .unknown,
+                    peerUid: normalizedPeerUid,
+                    peerPublicKey: normalizedPeerKey,
+                    peerPhotoUrl: normalizedPhoto,
+                    peerIsChild: peerIsChild,
+                    peerPhone: peerPhone,
+                    isAuthorityBridge: isAuthorityBridge ? true : nil,
+                    createdAt: now,
+                    lastUpdated: now
+                )
+                next.append(record)
+                result = record
+                insertedNewRecord = true
+            }
+            storedContacts = next
+            snapshot = next
+        }
+        if insertedNewRecord, let analyticsSource, !isAuthorityBridge {
+            if analyticsReceived {
+                AppAnalytics.contactReceived(via: analyticsSource, transport: "internet")
+            } else {
+                AppAnalytics.contactAdded(method: analyticsSource, transport: "internet")
+            }
+            Task { @MainActor in InAppReview.onPositiveEvent() }
+        }
+        publish(snapshot)
+        return result
+    }
+
+    /// The user compared the safety number and confirmed the new key — clear the warning.
+    func acknowledgePeerKeyChange(contactId: UUID) {
+        var snapshot: [ContactRecord] = []
+        stateQueue.sync {
+            var next = storedContacts
+            guard let index = next.firstIndex(where: { $0.id == contactId }) else { return }
+            next[index].peerKeyChanged = nil
+            next[index].lastUpdated = Date()
+            storedContacts = next
+            snapshot = next
+        }
+        guard !snapshot.isEmpty else { return }
+        publish(snapshot)
     }
 
     @discardableResult
@@ -828,6 +1119,15 @@ final class ContactStore: ObservableObject {
         }
         if merged.remoteDeviceId?.nilIfEmpty == nil {
             merged.remoteDeviceId = secondary.remoteDeviceId?.nilIfEmpty
+        }
+        if merged.peerUid?.nilIfEmpty == nil {
+            merged.peerUid = secondary.peerUid?.nilIfEmpty
+        }
+        if merged.peerPublicKey?.nilIfEmpty == nil {
+            merged.peerPublicKey = secondary.peerPublicKey?.nilIfEmpty
+        }
+        if merged.peerPhotoUrl?.nilIfEmpty == nil {
+            merged.peerPhotoUrl = secondary.peerPhotoUrl?.nilIfEmpty
         }
 
         let preservedTrust = sanitizedTrustState(

@@ -15,6 +15,8 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,35 +25,52 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.ChildCare
 import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.LightMode
+import androidx.compose.material.icons.outlined.MailOutline
 import androidx.compose.material.icons.outlined.SettingsSuggest
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Sos
+import androidx.compose.material.icons.outlined.StarRate
+import androidx.compose.material.icons.outlined.SupportAgent
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -62,11 +81,19 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -79,6 +106,109 @@ import com.auralis.crisisconnect.data.local.ProfileImageStorage
 import com.auralis.crisisconnect.ui.components.AppBackTopBar
 import com.auralis.crisisconnect.ui.components.AppBottomBar
 import com.auralis.crisisconnect.ui.components.ContactAvatar
+import java.text.Normalizer
+import java.util.Locale
+
+/**
+ * A picker entry: [endonym] is the language's own name for itself ("Türkçe", "日本語") and never
+ * changes with the UI language, so users can always find their language; [localizedName] is the
+ * name in the current UI language, shown as a secondary hint.
+ */
+private data class LanguageOption(
+    val code: String,
+    val endonym: String,
+    val localizedName: String
+)
+
+/**
+ * Accent-insensitive search key so the picker finds languages however the user types them:
+ * "turkce" matches "Türkçe", "viet" matches "Tiếng Việt", "espanol" matches "Español".
+ * Dotless ı folds to i by hand because NFD leaves it untouched.
+ */
+private fun String.languageSearchKey(): String {
+    val normalized = Normalizer.normalize(trim().lowercase(Locale.ROOT), Normalizer.Form.NFD)
+    return buildString(normalized.length) {
+        normalized.forEach { character ->
+            when {
+                Character.getType(character) == Character.NON_SPACING_MARK.toInt() -> Unit
+                character == 'ı' -> append('i')
+                else -> append(character)
+            }
+        }
+    }
+}
+
+/** Pill search field for the language sheet, styled after the main screen search bar. */
+@Composable
+private fun LanguageSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val shape = RoundedCornerShape(22.dp)
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+                .padding(start = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = MaterialTheme.colorScheme.onSurface
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
+                decorationBox = { innerTextField ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (query.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.language_search_placeholder),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        innerTextField()
+                    }
+                }
+            )
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.main_search_clear),
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -135,8 +265,52 @@ fun SettingsScreen(navController: NavController) {
         }
     }
 
+    val english = stringResource(R.string.english)
+    val turkish = stringResource(R.string.turkish)
+    val japanese = stringResource(R.string.japanese)
+    val spanish = stringResource(R.string.spanish)
+    val hindi = stringResource(R.string.hindi)
+    val french = stringResource(R.string.french)
+    val arabic = stringResource(R.string.arabic)
+    val kurdish = stringResource(R.string.kurdish)
+    val persian = stringResource(R.string.persian)
+    val indonesian = stringResource(R.string.indonesian)
+    val bengali = stringResource(R.string.bengali)
+    val russian = stringResource(R.string.russian)
+    val german = stringResource(R.string.german)
+    val urdu = stringResource(R.string.urdu)
+    val chinese = stringResource(R.string.chinese)
+    val ukrainian = stringResource(R.string.ukrainian)
+    val portuguese = stringResource(R.string.portuguese)
+    val filipino = stringResource(R.string.filipino)
+    val vietnamese = stringResource(R.string.vietnamese)
+    val languages = listOf(
+        LanguageOption("en", "English", english),
+        LanguageOption("tr", "Türkçe", turkish),
+        LanguageOption("ja", "日本語", japanese),
+        LanguageOption("es", "Español", spanish),
+        LanguageOption("hi", "हिन्दी", hindi),
+        LanguageOption("fr", "Français", french),
+        LanguageOption("ar", "العربية", arabic),
+        LanguageOption("ku", "Kurdî", kurdish),
+        LanguageOption("fa", "فارسی", persian),
+        LanguageOption("id", "Bahasa Indonesia", indonesian),
+        LanguageOption("bn", "বাংলা", bengali),
+        LanguageOption("ru", "Русский", russian),
+        LanguageOption("de", "Deutsch", german),
+        LanguageOption("ur", "اردو", urdu),
+        LanguageOption("zh", "中文", chinese),
+        LanguageOption("uk", "Українська", ukrainian),
+        LanguageOption("pt", "Português", portuguese),
+        LanguageOption("fil", "Filipino", filipino),
+        LanguageOption("vi", "Tiếng Việt", vietnamese),
+    )
+    val selectedCode = viewModel.selectedCode
+    val selectedOption = languages.firstOrNull { it.code == selectedCode } ?: languages.first()
+    var showLanguageSheet by remember { mutableStateOf(false) }
+
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = Color.Transparent,
         topBar = {
             AppBackTopBar(
                 titleRes = R.string.Settings,
@@ -150,14 +324,19 @@ fun SettingsScreen(navController: NavController) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .background(MaterialTheme.colorScheme.background)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .padding(innerPadding)
                     .verticalScroll(rememberScrollState())
-                    .padding(start = 16.dp, top = 10.dp, end = 16.dp, bottom = 16.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // Top Spacer for nice alignment under top bar
+                Spacer(modifier = Modifier.height(4.dp))
+
                 if (missingPermissionRequirements.isNotEmpty()) {
                     MissingPermissionsCard(
                         missingPermissionRequirements = missingPermissionRequirements,
@@ -190,8 +369,6 @@ fun SettingsScreen(navController: NavController) {
                             }
                         }
                     )
-
-                    Spacer(modifier = Modifier.height(16.dp))
                 }
 
                 if (showFullScreenIntentCard && !hasFullScreenIntentAccess) {
@@ -205,133 +382,95 @@ fun SettingsScreen(navController: NavController) {
                             }
                         }
                     )
-
-                    Spacer(modifier = Modifier.height(16.dp))
                 }
 
-                OutlinedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { navController.navigate("profile") }
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(modifier = Modifier.size(40.dp)) {
-                            ContactAvatar(
-                                displayName = viewModel.userName,
-                                stableKey = "local_profile_avatar",
-                                bitmap = profileBitmap,
-                                modifier = Modifier.size(40.dp),
-                                textStyle = MaterialTheme.typography.labelLarge
-                            )
-                        }
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.settings_profile_title),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = stringResource(R.string.settings_profile_description),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                // Section: Account
+                Column {
+                    SettingsSectionHeader(title = stringResource(R.string.settings_section_account))
+                    GroupedSettingsCard {
+                        SettingsNavRow(
+                            title = stringResource(R.string.settings_profile_title),
+                            description = stringResource(R.string.settings_profile_description),
+                            onClick = { navController.navigate("profile") },
+                            leadingContent = {
+                                ContactAvatar(
+                                    displayName = viewModel.userName,
+                                    stableKey = "local_profile_avatar",
+                                    bitmap = profileBitmap,
+                                    modifier = Modifier.size(40.dp),
+                                    textStyle = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        )
+
+                        SettingsRowDivider()
+
+                        SettingsNavRow(
+                            icon = Icons.Outlined.ChildCare,
+                            iconTint = MaterialTheme.colorScheme.primary,
+                            title = stringResource(R.string.child_profile_title),
+                            description = stringResource(
+                                if (viewModel.childProfileEnabled) {
+                                    R.string.child_profile_status_on
+                                } else {
+                                    R.string.child_profile_status_off
+                                }
+                            ),
+                            descriptionColor = if (viewModel.childProfileEnabled) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            onClick = { navController.navigate("child_profile_settings") }
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
-
-                val english = stringResource(R.string.english)
-                val turkish = stringResource(R.string.turkish)
-                val japanese = stringResource(R.string.japanese)
-                val spanish = stringResource(R.string.spanish)
-                val hindi = stringResource(R.string.hindi)
-                val languages = listOf(
-                    "en" to english,
-                    "tr" to turkish,
-                    "ja" to japanese,
-                    "es" to spanish,
-                    "hi" to hindi,
-                )
-                val selectedCode = viewModel.selectedCode
-                val selectedLabel = languages.firstOrNull { it.first == selectedCode }?.second ?: english
-                var showLanguageSheet by remember { mutableStateOf(false) }
-
-                Text(
-                    text = stringResource(R.string.select_language),
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = stringResource(R.string.language_description),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.large
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        OutlinedCard(
-                            modifier = Modifier.fillMaxWidth(),
+                // Section: Language
+                Column {
+                    SettingsSectionHeader(title = stringResource(R.string.select_language))
+                    GroupedSettingsCard {
+                        SettingsNavRow(
+                            icon = Icons.Outlined.Language,
+                            iconTint = MaterialTheme.colorScheme.secondary,
+                            title = selectedOption.endonym,
+                            description = selectedOption.localizedName
+                                .takeIf { it != selectedOption.endonym }
+                                ?: selectedOption.code.uppercase(),
+                            trailingIcon = Icons.Filled.ArrowDropDown,
                             onClick = { showLanguageSheet = true }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Text(
-                                        text = selectedLabel,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = selectedCode.uppercase(),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Icon(
-                                    imageVector = Icons.Filled.ArrowDropDown,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+                        )
                     }
                 }
 
                 if (showLanguageSheet) {
+                    // Full-height sheet: with 19 languages plus the keyboard, a half sheet
+                    // leaves too little room for the list to be useful while searching.
+                    val languageSheetState = rememberModalBottomSheetState(
+                        skipPartiallyExpanded = true
+                    )
+                    // Declared inside the sheet block so the query resets on every reopen.
+                    var languageQuery by remember { mutableStateOf("") }
+                    val filteredLanguages = remember(languageQuery, languages) {
+                        val key = languageQuery.languageSearchKey()
+                        if (key.isBlank()) {
+                            languages
+                        } else {
+                            languages.filter { option ->
+                                option.endonym.languageSearchKey().contains(key) ||
+                                    option.localizedName.languageSearchKey().contains(key) ||
+                                    option.code.languageSearchKey().contains(key)
+                            }
+                        }
+                    }
                     ModalBottomSheet(
-                        onDismissRequest = { showLanguageSheet = false }
+                        onDismissRequest = { showLanguageSheet = false },
+                        sheetState = languageSheetState
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .imePadding()
                                 .padding(horizontal = 16.dp)
                                 .padding(bottom = 24.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -346,59 +485,95 @@ fun SettingsScreen(navController: NavController) {
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
+                            LanguageSearchField(
+                                query = languageQuery,
+                                onQueryChange = { languageQuery = it }
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
 
-                            languages.forEach { (code, label) ->
-                                val isSelected = selectedCode == code
-                                OutlinedCard(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    onClick = {
-                                        if (!isSelected) {
-                                            viewModel.updateLanguage(context, code)
-                                        }
-                                        showLanguageSheet = false
-                                    },
-                                    border = BorderStroke(
-                                        width = if (isSelected) 2.dp else 1.dp,
-                                        color = if (isSelected) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.outlineVariant
-                                        }
-                                    ),
-                                    colors = CardDefaults.outlinedCardColors(
-                                        containerColor = if (isSelected) {
-                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                                        } else {
-                                            MaterialTheme.colorScheme.surface
-                                        }
-                                    )
+                            if (filteredLanguages.isEmpty()) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 40.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                            Text(
-                                                text = label,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
+                                    Icon(
+                                        imageVector = Icons.Filled.SearchOff,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(36.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.language_search_no_results),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            } else {
+                                // fill = false: short result lists keep the sheet compact
+                                // instead of stretching it to full height.
+                                LazyColumn(
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    items(filteredLanguages, key = { it.code }) { option ->
+                                        val isSelected = selectedCode == option.code
+                                        OutlinedCard(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            onClick = {
+                                                if (!isSelected) {
+                                                    viewModel.updateLanguage(context, option.code)
+                                                }
+                                                showLanguageSheet = false
+                                            },
+                                            border = BorderStroke(
+                                                width = if (isSelected) 2.dp else 1.dp,
+                                                color = if (isSelected) {
+                                                    MaterialTheme.colorScheme.primary
+                                                } else {
+                                                    MaterialTheme.colorScheme.outlineVariant
+                                                }
+                                            ),
+                                            colors = CardDefaults.outlinedCardColors(
+                                                containerColor = if (isSelected) {
+                                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                                } else {
+                                                    MaterialTheme.colorScheme.surface
+                                                }
                                             )
-                                            Text(
-                                                text = code.uppercase(),
-                                                style = MaterialTheme.typography.labelMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        if (isSelected) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Check,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary
-                                            )
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Text(
+                                                        text = option.endonym,
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
+                                                    )
+                                                    Text(
+                                                        text = option.localizedName
+                                                            .takeIf { it != option.endonym }
+                                                            ?: option.code.uppercase(),
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                if (isSelected) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Check,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -406,20 +581,6 @@ fun SettingsScreen(navController: NavController) {
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Text(
-                    text = stringResource(R.string.select_theme),
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = stringResource(R.string.theme_description),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(12.dp))
 
                 val themeOptions = listOf(
                     ThemeOption.SYSTEM to Triple(
@@ -439,111 +600,147 @@ fun SettingsScreen(navController: NavController) {
                     )
                 )
 
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.large
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        SingleChoiceSegmentedButtonRow(
+                // Section: Theme
+                Column {
+                    SettingsSectionHeader(title = stringResource(R.string.select_theme))
+                    GroupedSettingsCard {
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            themeOptions.forEachIndexed { index, (option, info) ->
-                                SegmentedButton(
-                                    modifier = Modifier.weight(1f),
-                                    shape = SegmentedButtonDefaults.itemShape(index, themeOptions.size),
-                                    onClick = {
-                                        viewModel.updateTheme(option) {
-                                            (context as? Activity)?.recreate()
+                            SingleChoiceSegmentedButtonRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                            ) {
+                                themeOptions.forEachIndexed { index, (option, info) ->
+                                    SegmentedButton(
+                                        modifier = Modifier.weight(1f),
+                                        shape = SegmentedButtonDefaults.itemShape(index, themeOptions.size),
+                                        onClick = {
+                                            viewModel.updateTheme(option) {
+                                                (context as? Activity)?.recreate()
+                                            }
+                                        },
+                                        selected = viewModel.themeOption == option,
+                                        icon = {
+                                            Icon(
+                                                imageVector = info.second,
+                                                contentDescription = null
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                text = info.first,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
                                         }
-                                    },
-                                    selected = viewModel.themeOption == option,
-                                    icon = {
-                                        Icon(
-                                            imageVector = info.second,
-                                            contentDescription = null
-                                        )
-                                    },
-                                    label = {
-                                        Text(
-                                            text = info.first,
-                                            style = MaterialTheme.typography.labelLarge,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
+                                    )
+                                }
+                            }
+
+                            val selectedTheme = themeOptions.firstOrNull { it.first == viewModel.themeOption }
+                            selectedTheme?.let { (_, info) ->
+                                Text(
+                                    text = info.third,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        }
-
-                        val selectedTheme = themeOptions.firstOrNull { it.first == viewModel.themeOption }
-                        selectedTheme?.let { (_, info) ->
-                            Text(
-                                text = info.third,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
-
-                OutlinedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { navController.navigate("advanced_settings") }
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.SettingsSuggest,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+                // Section: General
+                Column {
+                    SettingsSectionHeader(title = stringResource(R.string.settings_section_general))
+                    GroupedSettingsCard {
+                        SettingsNavRow(
+                            icon = Icons.Outlined.Sos,
+                            iconTint = MaterialTheme.colorScheme.error,
+                            title = stringResource(R.string.settings_sos_contacts_title),
+                            description = stringResource(R.string.settings_sos_contacts_subtitle),
+                            onClick = { navController.navigate("sos_emergency_contacts") }
                         )
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.settings_advanced_title),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = stringResource(R.string.settings_advanced_description),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+
+                        SettingsRowDivider()
+
+                        SettingsNavRow(
+                            icon = Icons.Outlined.SettingsSuggest,
+                            iconTint = MaterialTheme.colorScheme.tertiary,
+                            title = stringResource(R.string.settings_advanced_title),
+                            description = stringResource(R.string.settings_advanced_description),
+                            onClick = { navController.navigate("advanced_settings") }
                         )
                     }
                 }
 
                 if (viewModel.isDeveloperOptionsAvailable) {
-                    Spacer(modifier = Modifier.height(24.dp))
-                    DeveloperDebugSection(
-                        screenshotDemoMode = viewModel.screenshotDemoMode,
-                        onScreenshotDemoModeChange = { enabled ->
-                            viewModel.updateScreenshotDemoMode(enabled)
+                    // Debug-only section; hardcoded strings are intentional (developer-facing,
+                    // never ships in release builds).
+                    Column {
+                        SettingsSectionHeader(title = "Developer / Debug")
+                        GroupedSettingsCard {
+                            SettingsRow(
+                                icon = Icons.Outlined.BugReport,
+                                iconTint = MaterialTheme.colorScheme.secondary,
+                                title = stringResource(R.string.screenshot_demo_setting_title),
+                                description = stringResource(R.string.screenshot_demo_setting_description),
+                                checked = viewModel.screenshotDemoMode,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updateScreenshotDemoMode(enabled)
+                                }
+                            )
                         }
-                    )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                // Section: Support & Feedback
+                Column {
+                    SettingsSectionHeader(title = stringResource(R.string.settings_section_support))
+                    GroupedSettingsCard {
+                        SettingsNavRow(
+                            icon = Icons.Outlined.StarRate,
+                            iconTint = MaterialTheme.colorScheme.tertiary,
+                            title = stringResource(R.string.settings_rate_app_title),
+                            description = stringResource(R.string.settings_rate_app_description),
+                            onClick = { openPlayStoreListing(context) }
+                        )
+
+                        SettingsRowDivider()
+
+                        SettingsNavRow(
+                            icon = Icons.Outlined.Share,
+                            iconTint = MaterialTheme.colorScheme.primary,
+                            title = stringResource(R.string.settings_share_app_title),
+                            description = stringResource(R.string.settings_share_app_description),
+                            onClick = { shareApp(context) }
+                        )
+
+                        SettingsRowDivider()
+
+                        SettingsNavRow(
+                            icon = Icons.Outlined.MailOutline,
+                            iconTint = MaterialTheme.colorScheme.secondary,
+                            title = stringResource(R.string.settings_feedback_title),
+                            description = stringResource(R.string.settings_feedback_description),
+                            onClick = { sendFeedbackEmail(context, appVersionName, appVersionCode) }
+                        )
+
+                        SettingsRowDivider()
+
+                        SettingsNavRow(
+                            icon = Icons.Outlined.SupportAgent,
+                            iconTint = MaterialTheme.colorScheme.primary,
+                            title = stringResource(R.string.settings_help_title),
+                            description = stringResource(R.string.settings_help_description),
+                            onClick = { openUrl(context, SUPPORT_CONTACT_URL) }
+                        )
+                    }
+                }
 
                 Text(
                     text = stringResource(
@@ -553,7 +750,8 @@ fun SettingsScreen(navController: NavController) {
                     ),
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
                 )
             }
         }
@@ -561,70 +759,89 @@ fun SettingsScreen(navController: NavController) {
 }
 
 /**
- * Debug-only UI block. Only composed when [SettingsViewModel.isDeveloperOptionsAvailable]
- * is true, which itself is gated on `BuildConfig.DEBUG`, so none of this ever ships
- * in a release build.
- *
- * Strings are hardcoded (not stringResource) on purpose: this surface is for the
- * developer only and does not need to be localized.
+ * Navigation counterpart of [SettingsRow]: identical layout and typography, but with a
+ * trailing chevron instead of a switch. [leadingContent] replaces the icon badge for rows
+ * that need a custom leading visual (e.g. the profile avatar).
  */
 @Composable
-private fun DeveloperDebugSection(
-    screenshotDemoMode: Boolean,
-    onScreenshotDemoModeChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
+private fun SettingsNavRow(
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    iconTint: Color = MaterialTheme.colorScheme.primary,
+    descriptionColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    trailingIcon: ImageVector = Icons.AutoMirrored.Filled.ArrowForward,
+    leadingContent: (@Composable () -> Unit)? = null
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            text = "Developer / Debug",
-            style = MaterialTheme.typography.titleMedium
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = "Only visible in debug builds.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.large
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 4.dp) // Safe outer margin inside the card
+            .clip(RoundedCornerShape(12.dp)) // Ripple will match this clean rounded shape
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp), // Inner padding
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        if (leadingContent != null) {
+            Box(modifier = Modifier.size(40.dp)) {
+                leadingContent()
+            }
+        } else if (icon != null) {
+            Surface(
+                modifier = Modifier.size(40.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = iconTint.copy(alpha = 0.12f)
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.BugReport,
+                    imageVector = icon,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Screenshot Demo Mode",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "Replaces the chat screen with a scripted messaging scenario and shows the device as connected. Re-open the chat after toggling.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = screenshotDemoMode,
-                    onCheckedChange = onScreenshotDemoModeChange
+                    tint = iconTint,
+                    modifier = Modifier
+                        .padding(10.dp)
+                        .size(20.dp)
                 )
             }
         }
+
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp
+                ),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp
+                ),
+                color = descriptionColor
+            )
+        }
+
+        Icon(
+            imageVector = trailingIcon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
+}
+
+@Composable
+private fun SettingsRowDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(horizontal = 20.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+    )
 }
 
 @Composable
@@ -641,13 +858,21 @@ private fun CallAlertAccessCard(
 
     OutlinedCard(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         border = BorderStroke(
             width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
+            color = if (hasAccess) {
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+            } else {
+                MaterialTheme.colorScheme.error.copy(alpha = 0.24f)
+            }
         ),
         colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            containerColor = if (hasAccess) {
+                MaterialTheme.colorScheme.surface
+            } else {
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.18f)
+            }
         )
     ) {
         Column(
@@ -733,13 +958,13 @@ private fun MissingPermissionsCard(
 
     OutlinedCard(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         border = BorderStroke(
             width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
+            color = MaterialTheme.colorScheme.error.copy(alpha = 0.24f)
         ),
         colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.18f)
         )
     ) {
         Column(
@@ -965,3 +1190,72 @@ private fun markPermissionsAsRequested(context: Context, permissions: List<Strin
 
 private const val PERMISSION_REQUEST_PREFS = "settings_permission_requests"
 private const val PERMISSION_REQUESTED_KEY_PREFIX = "requested_"
+
+private const val SUPPORT_EMAIL = "contact@crisisconnect.network"
+private const val SUPPORT_CONTACT_URL = "https://crisisconnect.network/contact"
+
+/**
+ * Opens the app's Play Store listing. Prefers the Play Store app via the `market://` scheme and
+ * falls back to the web listing when the store app is unavailable (e.g. emulators, sideloaded
+ * builds). This is a plain store-listing deep link, not the In-App Review API, so it always works
+ * and is safe to trigger from a button.
+ */
+private fun openPlayStoreListing(context: Context) {
+    val packageName = context.packageName
+    val marketIntent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("market://details?id=$packageName")
+    ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+    val opened = runCatching {
+        context.startActivity(marketIntent)
+        true
+    }.getOrDefault(false)
+    if (!opened) {
+        openUrl(context, "https://play.google.com/store/apps/details?id=$packageName")
+    }
+}
+
+private fun shareApp(context: Context) {
+    val playUrl = "https://play.google.com/store/apps/details?id=${context.packageName}"
+    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, context.getString(R.string.settings_share_app_text, playUrl))
+    }
+    runCatching {
+        context.startActivity(Intent.createChooser(sendIntent, null))
+    }.onFailure {
+        Toast.makeText(context, R.string.settings_no_app_to_handle, Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun sendFeedbackEmail(context: Context, versionName: String, versionCode: Long) {
+    val subject = context.getString(R.string.settings_feedback_email_subject, versionName)
+    val body = context.getString(
+        R.string.settings_feedback_email_body,
+        "$versionName ($versionCode)",
+        "${Build.MANUFACTURER} ${Build.MODEL}",
+        Build.VERSION.RELEASE ?: "?"
+    )
+    // ACTION_SENDTO with a mailto: URI so only email apps match the chooser.
+    val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+        data = Uri.parse("mailto:$SUPPORT_EMAIL")
+        putExtra(Intent.EXTRA_SUBJECT, subject)
+        putExtra(Intent.EXTRA_TEXT, body)
+    }
+    runCatching {
+        context.startActivity(emailIntent)
+    }.onFailure {
+        Toast.makeText(context, R.string.settings_no_app_to_handle, Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun openUrl(context: Context, url: String) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching {
+        context.startActivity(intent)
+    }.onFailure {
+        Toast.makeText(context, R.string.settings_no_app_to_handle, Toast.LENGTH_SHORT).show()
+    }
+}

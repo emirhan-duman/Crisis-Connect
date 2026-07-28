@@ -5,6 +5,7 @@
 //  Created by Assistant on 27.03.2026.
 //
 
+import Combine
 import CoreLocation
 import Foundation
 import MapKit
@@ -20,6 +21,9 @@ struct SOSChatBubble: View, Equatable {
     let onImageTap: ((SOSChatMessage) -> Void)?
     let onLocationTap: ((SOSChatMessage) -> Void)?
     let onFileTap: ((SOSChatMessage) -> Void)?
+    // Tapping the quoted reply jumps to the original message (nil = not tappable). Closures are
+    // excluded from Equatable — identity is (message, layout), which is what drives re-render.
+    var onReplyTap: ((String) -> Void)? = nil
 
     static func == (lhs: SOSChatBubble, rhs: SOSChatBubble) -> Bool {
         lhs.message == rhs.message && lhs.layout == rhs.layout
@@ -97,7 +101,8 @@ struct SOSChatBubble: View, Equatable {
                         ChatReplyQuotedPreview(
                             preview: reply.preview,
                             authorLabel: reply.authorLabel,
-                            isLocal: message.isLocal
+                            isLocal: message.isLocal,
+                            onTap: reply.targetMessageId.map { targetId in { onReplyTap?(targetId) } }
                         )
                     }
                     ChatSharedFileBubbleContent(
@@ -114,7 +119,8 @@ struct SOSChatBubble: View, Equatable {
                         ChatReplyQuotedPreview(
                             preview: reply.preview,
                             authorLabel: reply.authorLabel,
-                            isLocal: message.isLocal
+                            isLocal: message.isLocal,
+                            onTap: reply.targetMessageId.map { targetId in { onReplyTap?(targetId) } }
                         )
                     }
 
@@ -168,7 +174,56 @@ struct SOSChatBubble: View, Equatable {
                 ChatCallBubbleContent(message: message)
                 bubbleFooter
             }
+        case .sosAlert:
+            // Emergency alert (wire template 202): unmistakable red treatment, mirroring
+            // Android's SOS_ALERT message type.
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.appDanger)
+                    Text(verbatim: "SOS")
+                        .font(.subheadline.weight(.heavy))
+                        .foregroundStyle(Color.appDanger)
+                }
+
+                Text(message.text)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let mapsURL = Self.firstURL(in: message.text) {
+                    Button {
+                        UIApplication.shared.open(mapsURL)
+                    } label: {
+                        Label("SOS_ALERT_OPEN_MAP", systemImage: "map.fill")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.appDanger)
+                }
+
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    bubbleFooter
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.appDanger.opacity(0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.appDanger.opacity(0.5), lineWidth: 1)
+            )
         }
+    }
+
+    private static func firstURL(in text: String) -> URL? {
+        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        let range = NSRange(text.startIndex..., in: text)
+        return detector?.firstMatch(in: text, options: [], range: range)?.url
     }
 
     @ViewBuilder
@@ -234,6 +289,8 @@ struct SOSChatBubble: View, Equatable {
             return "checkmark.circle"
         case .read:
             return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.circle"
         }
     }
 
@@ -245,6 +302,8 @@ struct SOSChatBubble: View, Equatable {
             return .secondary
         case .read:
             return .whatsAppAccent
+        case .failed:
+            return .red
         }
     }
 }
@@ -573,6 +632,43 @@ struct ChatCallBubbleContent: View {
     }
 }
 
+/// Android's ScrollToBottomButton: a small circular FAB with a down chevron and an unread badge,
+/// floated over the transcript while it is scrolled away from the newest message. Shared by the
+/// citizen chat and the authority (kurum) thread.
+struct ChatScrollToBottomButton: View {
+    let count: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(Color.appSurfaceElevated)
+                    .frame(width: 40, height: 40)
+                    .overlay(Circle().stroke(Color.appBorder, lineWidth: 1))
+                    .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.appPrimary)
+            }
+            .overlay(alignment: .topTrailing) {
+                if count > 0 {
+                    Text("\(min(count, 99))")
+                        .font(.caption2.weight(.bold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule(style: .continuous).fill(Color.appPrimary))
+                        .offset(x: 6, y: -6)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("CHAT_SCROLL_TO_BOTTOM"))
+    }
+}
+
 struct PendingChatImage {
     let sourceData: Data
     let previewImage: UIImage
@@ -596,7 +692,11 @@ enum ChatLocationPresentation {
               let longitude = message.locationLongitude else {
             return nil
         }
-        return String(
+        return coordinateText(latitude: latitude, longitude: longitude)
+    }
+
+    static func coordinateText(latitude: Double, longitude: Double) -> String {
+        String(
             format: NSLocalizedString("SOS_CHAT_LOCATION_COORDINATES_FORMAT", comment: ""),
             String(format: "%.5f", latitude),
             String(format: "%.5f", longitude)
@@ -623,21 +723,105 @@ enum ChatLocationPresentation {
     }
 }
 
+/// Streams the device's own location while the open chat has a live Bluetooth link, so the
+/// user's OWN shared-location bubble tracks where they are NOW (Android's live-location bubble:
+/// `shouldShowLiveLocation = isLocal && isBluetoothConnected && ownLocation != null`). Runs only
+/// while a chat screen explicitly activates it; deactivating stops the GPS immediately.
+final class ChatLiveOwnLocationTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
+    static let shared = ChatLiveOwnLocationTracker()
+
+    @Published private(set) var activeSessionId: UUID?
+    @Published private(set) var location: CLLocation?
+
+    private let manager = CLLocationManager()
+    private var pollTask: Task<Void, Never>?
+    private var isUpdating = false
+
+    private override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+    }
+
+    /// Arms the tracker for the open chat: `linkProbe` is polled every few seconds and the GPS
+    /// only runs while it reports a live Bluetooth link — exactly Android's
+    /// `isLocal && isBluetoothConnected && ownLocation != null` condition, self-contained.
+    @MainActor
+    func activate(sessionId: UUID, linkProbe: @escaping () -> Bool) {
+        deactivate()
+        activeSessionId = sessionId
+        pollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                self?.setUpdating(linkProbe())
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
+
+    @MainActor
+    func deactivate() {
+        pollTask?.cancel()
+        pollTask = nil
+        activeSessionId = nil
+        setUpdating(false)
+    }
+
+    @MainActor
+    private func setUpdating(_ on: Bool) {
+        if on {
+            guard !isUpdating else { return }
+            let status = manager.authorizationStatus
+            guard status == .authorizedWhenInUse || status == .authorizedAlways else { return }
+            isUpdating = true
+            manager.startUpdatingLocation()
+        } else {
+            guard isUpdating else { return }
+            isUpdating = false
+            manager.stopUpdatingLocation()
+            location = nil
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let latest = locations.last else { return }
+        Task { @MainActor in
+            guard self.isUpdating else { return }
+            self.location = latest
+        }
+    }
+}
+
 struct ChatLocationBubbleContent: View {
     let message: SOSChatMessage
     let maxWidth: CGFloat
     let onTap: (() -> Void)?
 
+    @ObservedObject private var liveTracker = ChatLiveOwnLocationTracker.shared
+
+    /// Android parity: while this chat holds a live Bluetooth link, my own location bubble tracks
+    /// my CURRENT position (and says "Live location") instead of the point captured at send time.
+    private var liveOwnLocation: CLLocation? {
+        guard message.isLocal, liveTracker.activeSessionId != nil else { return nil }
+        return liveTracker.location
+    }
+
     private var coordinate: CLLocationCoordinate2D? {
-        ChatLocationPresentation.coordinate(for: message)
+        liveOwnLocation?.coordinate ?? ChatLocationPresentation.coordinate(for: message)
     }
 
     private var coordinateText: String? {
-        ChatLocationPresentation.coordinateText(for: message)
+        if let live = liveOwnLocation {
+            return ChatLocationPresentation.coordinateText(
+                latitude: live.coordinate.latitude, longitude: live.coordinate.longitude
+            )
+        }
+        return ChatLocationPresentation.coordinateText(for: message)
     }
 
     private var accuracyText: String? {
-        ChatLocationPresentation.accuracyText(for: message.locationHorizontalAccuracyMeters)
+        ChatLocationPresentation.accuracyText(
+            for: liveOwnLocation.map { $0.horizontalAccuracy } ?? message.locationHorizontalAccuracyMeters
+        )
     }
 
     @ViewBuilder
@@ -646,7 +830,8 @@ struct ChatLocationBubbleContent: View {
             if let coordinate {
                 ChatLocationMapCard(
                     coordinate: coordinate,
-                    accuracyMeters: message.locationHorizontalAccuracyMeters,
+                    accuracyMeters: liveOwnLocation.map { $0.horizontalAccuracy }
+                        ?? message.locationHorizontalAccuracyMeters,
                     interactive: false,
                     height: 154,
                     cornerRadius: 16
@@ -664,7 +849,9 @@ struct ChatLocationBubbleContent: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(SOSChatStore.locationPreviewText())
+                    Text(liveOwnLocation != nil
+                        ? NSLocalizedString("CHAT_LOCATION_PREVIEW_LABEL_LIVE", comment: "")
+                        : SOSChatStore.locationPreviewText())
                         .font(.headline)
                         .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1482,6 +1669,63 @@ struct ChatImagePicker: UIViewControllerRepresentable {
                 return
             }
             onSelect(nil)
+        }
+    }
+}
+
+/// WhatsApp-style day divider between messages from different calendar days (Android parity).
+struct ChatDaySeparator: View {
+    let label: String
+
+    var body: some View {
+        HStack {
+            Spacer()
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule(style: .continuous).fill(Color.appSurface.opacity(0.9))
+                )
+            Spacer()
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+/// Incoming-styled "peer is typing" bubble with three pulsing dots — the timeline twin of
+/// Android's TypingIndicatorBubble, shown as the last transcript row while a typing pulse is live.
+/// TimelineView drives the animation (self-cleaning: no Timer to leak when the row disappears).
+struct ChatTypingBubble: View {
+    var body: some View {
+        HStack {
+            TimelineView(.periodic(from: .now, by: 0.35)) { context in
+                let step = Int(context.date.timeIntervalSinceReferenceDate / 0.35) % 3
+                HStack(spacing: 5) {
+                    ForEach(0..<3, id: \.self) { index in
+                        Circle()
+                            .fill(Color.secondary)
+                            .frame(width: 7, height: 7)
+                            .opacity(step == index ? 1.0 : 0.35)
+                            .scaleEffect(step == index ? 1.15 : 0.85)
+                            .animation(.easeInOut(duration: 0.3), value: step)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 8,
+                        bottomLeadingRadius: 20,
+                        bottomTrailingRadius: 20,
+                        topTrailingRadius: 20,
+                        style: .continuous
+                    )
+                    .fill(Color.appSurface)
+                )
+            }
+            Spacer(minLength: 40)
         }
     }
 }

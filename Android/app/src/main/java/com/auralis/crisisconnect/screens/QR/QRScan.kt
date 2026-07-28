@@ -97,7 +97,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.screens.Chat.ChatScreenViewModel
 import com.auralis.crisisconnect.screens.Chat.EncryptionSetupResult
@@ -110,11 +110,11 @@ fun QrScannerScreen(navController: NavController) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val viewModel: QrScannerViewModel = viewModel()
-    val hasCameraPermission by viewModel.hasCameraPermission.collectAsState()
-    val showNameDialog by viewModel.showNameDialog.collectAsState()
-    val manualName by viewModel.manualName.collectAsState()
-    val error by viewModel.error.collectAsState()
-    val statusMessage by viewModel.statusMessage.collectAsState()
+    val hasCameraPermission by viewModel.hasCameraPermission.collectAsStateWithLifecycle()
+    val showNameDialog by viewModel.showNameDialog.collectAsStateWithLifecycle()
+    val manualName by viewModel.manualName.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
+    val statusMessage by viewModel.statusMessage.collectAsStateWithLifecycle()
 
     val previewView = remember {
         PreviewView(context).apply {

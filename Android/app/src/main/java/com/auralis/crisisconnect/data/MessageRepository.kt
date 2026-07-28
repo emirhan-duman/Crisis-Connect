@@ -130,6 +130,62 @@ fun loadRecentMessages(
         .map { it.toMessage() }
 }
 
+/** Total message count per conversation — the "most talked-with" ranking for SOS notifications. */
+suspend fun getSessionMessageCounts(context: Context): Map<String, Int> =
+    withContext(Dispatchers.IO) {
+        messageDao(context)
+            .getSessionMessageCounts()
+            .associate { it.sessionCode to it.messageCount }
+    }
+
+/** First message timestamp of one conversation; null when the thread has no messages yet. */
+suspend fun getFirstMessageTimeForSession(context: Context, sessionCode: String): Long? =
+    withContext(Dispatchers.IO) {
+        messageDao(context).getFirstMessageTimeForSession(sessionCode)
+    }
+
+/** First message timestamp per conversation — the "oldest contact" ranking for SOS notifications. */
+suspend fun getSessionFirstMessageTimes(context: Context): Map<String, Long> =
+    withContext(Dispatchers.IO) {
+        messageDao(context)
+            .getSessionFirstMessageTimes()
+            .associate { it.sessionCode to it.firstMessageAtMillis }
+    }
+
+/**
+ * Rewrites the body of an existing SOS alert (live location update). Returns true when a matching
+ * SOS message row existed and was updated.
+ */
+suspend fun updateSosAlertText(context: Context, uuid: String, text: String): Boolean =
+    withContext(Dispatchers.IO) {
+        messageDao(context).updateSosAlertText(messageUuid = uuid, text = text) > 0
+    }
+
+/** Persists the local copy of an auto-sent SOS alert so the conversation thread shows it. */
+suspend fun saveLocalSosMessage(context: Context, sessionCode: String, uuid: String, text: String) {
+    val entity = MessageEntity(
+        sessionCode = sessionCode,
+        messageUuid = uuid,
+        text = text,
+        messageType = MessageType.SOS_ALERT,
+        audioFilePath = null,
+        audioDurationMillis = null,
+        imageFilePath = null,
+        imageThumbnailPath = null,
+        imageWidth = null,
+        imageHeight = null,
+        imageMimeType = null,
+        isLocal = true,
+        isRead = true,
+        timestampMillis = System.currentTimeMillis(),
+        originalTimestampMillis = null,
+        deliveryStatus = MessageDeliveryStatus.SENT
+    )
+    withContext(Dispatchers.IO) {
+        messageDao(context).insertIgnore(entity)
+    }
+}
+
 suspend fun saveLocalMessage(context: Context, sessionCode: String, uuid: String, text: String) {
     upsertLocalTextMessage(
         context = context,
@@ -347,14 +403,15 @@ suspend fun saveRemoteMessage(
     senderDisplayName: String? = null,
     senderAddress: String? = null,
     originVerifiedRole: String? = null,
-    originVerifiedAtMillis: Long? = null
+    originVerifiedAtMillis: Long? = null,
+    messageType: MessageType = MessageType.TEXT
 ): Boolean {
     val safeReceivedAtMillis = receivedAtMillis.takeIf { it > 0L } ?: System.currentTimeMillis()
     val entity = MessageEntity(
         sessionCode = sessionCode,
         messageUuid = uuid,
         text = text,
-        messageType = MessageType.TEXT,
+        messageType = messageType,
         audioFilePath = null,
         audioDurationMillis = null,
         imageFilePath = null,

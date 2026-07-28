@@ -30,7 +30,7 @@
             android:name="com.auralis.crisisconnect.service.mesh.AuthorityMeshForegroundService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice"
+            android:foregroundServiceType="connectedDevice|microphone"
             android:stopWithTask="false" />
         <service
             android:name="com.auralis.crisisconnect.service.CrisisLinkForegroundService"

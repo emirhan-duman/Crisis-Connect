@@ -68,6 +68,10 @@ enum RescueSessionMergePlanner {
             if sourceEntry.rssi != nil && (merged.rssi == nil || sourceEntry.lastSeen >= originalLastSeen) {
                 merged.rssi = sourceEntry.rssi
             }
+            if sourceEntry.victimBatteryPercent != nil &&
+                (merged.victimBatteryPercent == nil || sourceEntry.lastSeen >= originalLastSeen) {
+                merged.victimBatteryPercent = sourceEntry.victimBatteryPercent
+            }
             if merged.peripheralName == NSLocalizedString("RESCUE_UNKNOWN_DEVICE", comment: ""),
                sourceEntry.peripheralName != NSLocalizedString("RESCUE_UNKNOWN_DEVICE", comment: "") {
                 merged.peripheralName = sourceEntry.peripheralName

@@ -43,6 +43,20 @@ object BleScanCoordinator {
     private val requests = LinkedHashMap<String, Request>()
     private var callback: ScanCallback? = null
     private var activeConfig: ActiveConfig? = null
+    // Master override: when held, the physical scan is stopped regardless of owner state. Used by
+    // telsiz to free the radio for real-time audio (active scanning causes audio dropouts).
+    private var globalHold = false
+
+    /** Stop/allow the physical scan globally, independent of per-owner pause state. */
+    fun setGlobalHold(hold: Boolean): Boolean {
+        synchronized(lock) {
+            if (globalHold == hold) {
+                return true
+            }
+            globalHold = hold
+            return rebuildLocked()
+        }
+    }
 
     fun registerOrUpdate(
         owner: String,
@@ -107,6 +121,10 @@ object BleScanCoordinator {
 
     @SuppressLint("MissingPermission")
     private fun rebuildLocked(): Boolean {
+        if (globalHold) {
+            stopScanLocked()
+            return true
+        }
         val activeRequests = requests.values.filter { !it.paused }
         if (activeRequests.isEmpty()) {
             stopScanLocked()

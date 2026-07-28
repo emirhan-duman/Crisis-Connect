@@ -20,6 +20,7 @@ internal class RfcommCallFrameDelegate(
     private val sanitizeCfg: (Int, Int, Int, Int, Boolean, Boolean) -> Pair<Profile, AudioCfg>?,
     private val trackIncomingCallStart: (String, String, Long) -> Unit,
     private val sendRing: (RfcommForegroundService.ConnectedThread, String) -> Boolean,
+    private val sendReject: (RfcommForegroundService.ConnectedThread, String, String) -> Boolean,
     private val scheduleCallTimeout: (CallSession) -> Unit,
     private val updateCallState: (CallSession, CallState) -> Unit,
     private val showIncomingCallNotification: (CallSession) -> Unit,
@@ -53,8 +54,21 @@ internal class RfcommCallFrameDelegate(
                 if (callId == null) {
                     return true
                 }
+                // A re-offer on the same session replaces its previous (zombie) call first, so
+                // tearing it down releases the registry slot before we try to claim it again.
                 callSessions.remove(sessionCode)?.let { previous ->
                     teardownCall(previous, "hangup", false, null)
+                }
+                if (!ActiveCallRegistry.tryAcquire(
+                        ActiveCallRegistry.Transport.RFCOMM,
+                        sessionCode,
+                        callId
+                    )
+                ) {
+                    // A call is already active on another session or transport (GATT P2P);
+                    // politely reject instead of ringing a second call.
+                    thread?.let { sendReject(it, callId, "busy") }
+                    return true
                 }
                 val sampleRate = json.optInt("sampleRate", VoipConfig.SAMPLE_RATE_HZ)
                 val frameMs = json.optInt("frameMs", VoipConfig.FRAME_DURATION_MS)

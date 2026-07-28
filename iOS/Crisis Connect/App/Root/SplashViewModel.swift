@@ -8,6 +8,7 @@
 import SwiftUI
 import Combine
 
+@MainActor
 final class SplashViewModel: ObservableObject {
     @Published var detailsOpacity: Double = 0.0
     @Published var detailsOffset: CGFloat = 10

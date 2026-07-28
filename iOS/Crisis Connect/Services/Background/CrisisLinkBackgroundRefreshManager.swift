@@ -60,7 +60,12 @@ final class CrisisLinkBackgroundRefreshManager {
         scheduleIfNeeded()
 
         let worker = Task { @MainActor in
-            await RescueLiveLocationCoordinator.shared.handleBackgroundRefresh()
+            // The system woke us anyway — spend a slice of the window on queued outgoing messages.
+            // Three background managers already wake this app and NONE kicked the send queue, so a
+            // message composed offline waited for the user to foreground the app even when iOS had
+            // given us runtime with the network back.
+            InternetSendRetryQueue.shared.kick(reason: "bg-refresh")
+            return await RescueLiveLocationCoordinator.shared.handleBackgroundRefresh()
         }
         task.expirationHandler = {
             worker.cancel()

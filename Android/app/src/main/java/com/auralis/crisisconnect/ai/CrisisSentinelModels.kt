@@ -10,7 +10,17 @@ enum class CrisisSentinelUserMode {
 
 enum class CrisisSentinelResponseSource {
     OfflineRules,
-    LocalModel
+    LocalModel,
+    OnlineModel
+}
+
+/**
+ * Which inference backend answers a chat turn. [Online] is the field-team-only cloud engine
+ * (web dashboard's Crisis Sentinel); [Edge] is the on-device LiteRT-LM model.
+ */
+enum class CrisisSentinelEngine {
+    Online,
+    Edge
 }
 
 enum class CrisisSentinelQueryDomain {

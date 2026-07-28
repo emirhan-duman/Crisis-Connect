@@ -20,6 +20,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.media.MediaMetadataRetriever
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.CancellationSignal
@@ -94,6 +95,7 @@ import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
@@ -178,6 +180,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -263,7 +266,10 @@ internal fun ChatBubble(
     onInfoRequested: (ChatMessage) -> Unit,
     onReplyNavigate: (String) -> Unit,
     isBluetoothConnected: Boolean,
-    bluetoothSignalInfo: SignalStrengthInfo?,
+    // Deferred read: the monitor publishes a fresh SignalStrengthInfo per RSSI hit; taking it as a
+    // plain value recomposed every visible bubble on each hit. Callers pass a stable lambda and the
+    // read happens only where the value is actually consumed (distance text / location dialog).
+    bluetoothSignalInfo: () -> SignalStrengthInfo?,
     signalPermissionMissing: Boolean,
     conversationDisplayName: String,
     conversationStableKey: String,
@@ -274,10 +280,13 @@ internal fun ChatBubble(
     latestRemoteSharedLocation: SharedLocationPayload?,
     highlight: Boolean
 ) {
-    val (bubbleColor, contentColor) = if (message.isLocal) {
-        outgoingChatBubbleColors()
-    } else {
-        incomingChatBubbleColors()
+    val (bubbleColor, contentColor) = when {
+        // SOS alerts get the error container on BOTH sides — an emergency must never look like
+        // ordinary chatter.
+        message.messageType == MessageType.SOS_ALERT ->
+            MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+        message.isLocal -> outgoingChatBubbleColors()
+        else -> incomingChatBubbleColors()
     }
     val bubbleShape = RoundedCornerShape(
         topStart = 16.dp,
@@ -385,22 +394,26 @@ internal fun ChatBubble(
             sharedLocation
         }
     }
-    val bubbleDistanceText = remember(
+    // derivedStateOf so a signal update only invalidates the bubble when the (coarsely bucketed)
+    // distance text actually changes — not on every RSSI jitter.
+    val bubbleDistanceText by remember(
         proximityPayload,
         currentOwnLocation,
         context,
         isBluetoothConnected,
         bluetoothSignalInfo
     ) {
-        val payload = proximityPayload ?: return@remember null
-        val ownLocation = currentOwnLocation ?: return@remember null
-        buildDistanceRangeText(
-            context = context,
-            ownLocation = ownLocation,
-            payload = payload,
-            isBluetoothConnected = isBluetoothConnected,
-            bluetoothSignalInfo = bluetoothSignalInfo
-        )
+        derivedStateOf {
+            val payload = proximityPayload ?: return@derivedStateOf null
+            val ownLocation = currentOwnLocation ?: return@derivedStateOf null
+            buildDistanceRangeText(
+                context = context,
+                ownLocation = ownLocation,
+                payload = payload,
+                isBluetoothConnected = isBluetoothConnected,
+                bluetoothSignalInfo = bluetoothSignalInfo()
+            )
+        }
     }
     val localSharedDisplayName = remember(localUserDisplayName, context) {
         localUserDisplayName.trim().ifEmpty {
@@ -422,10 +435,12 @@ internal fun ChatBubble(
                 color = bubbleColor,
                 contentColor = contentColor,
                 shape = bubbleShape,
-                border = if (message.isLocal) {
-                    BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-                } else {
-                    null
+                border = when {
+                    message.messageType == MessageType.SOS_ALERT ->
+                        BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f))
+                    message.isLocal ->
+                        BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                    else -> null
                 },
                 tonalElevation = if (highlight) 1.dp else 0.dp,
                 shadowElevation = 0.dp
@@ -482,6 +497,11 @@ internal fun ChatBubble(
                         )
                 ) {
                     when (message.messageType) {
+                        MessageType.SOS_ALERT -> SosAlertMessageContent(
+                            text = displayText,
+                            contentColor = contentColor
+                        )
+
                         MessageType.AUDIO -> AudioMessageContent(
                             message = message,
                             contentColor = contentColor,
@@ -666,7 +686,9 @@ internal fun ChatBubble(
             payload = locationPayloadForDisplay ?: sharedLocation,
             trackedOwnLocation = currentOwnLocation,
             isBluetoothConnected = isBluetoothConnected,
-            bluetoothSignalInfo = bluetoothSignalInfo,
+            // The dialog branch only composes while the dialog is open, so this materialized read
+            // costs nothing for the 99% of bubbles that never open it.
+            bluetoothSignalInfo = bluetoothSignalInfo(),
             signalPermissionMissing = signalPermissionMissing,
             sharedDisplayName = if (message.isLocal) {
                 localSharedDisplayName
@@ -839,6 +861,116 @@ private fun LocationMessageContent(
                     tint = contentColor.copy(alpha = 0.7f),
                     modifier = Modifier.size(18.dp)
                 )
+            }
+        }
+    }
+}
+
+/**
+ * The dedicated SOS alert bubble, styled after wireless-emergency-alert conventions: a solid
+ * high-contrast emergency badge and title, a divider, the plain message body (the raw maps URL is
+ * stripped — the location lives in the action block), and a full-width solid "open location"
+ * action. Deliberately louder than any other bubble; an SOS must never blend into conversation.
+ */
+@Composable
+private fun SosAlertMessageContent(
+    text: String,
+    contentColor: Color
+) {
+    val context = LocalContext.current
+    val locationUrl = remember(text) {
+        Regex("""https://maps\.google\.com/\?q=[-0-9.]+,[-0-9.]+""").find(text)?.value
+    }
+    // Body without the URL, and without the dangling "My location:" label that preceded it.
+    val bodyText = remember(text, locationUrl) {
+        if (locationUrl == null) {
+            text
+        } else {
+            text.replace(locationUrl, "")
+                .trimEnd()
+                .replace(Regex("""[^.!?。]*[:：]\s*$"""), "")
+                .trim()
+                .ifBlank { text }
+        }
+    }
+    val errorColor = MaterialTheme.colorScheme.error
+    val onErrorColor = MaterialTheme.colorScheme.onError
+
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .background(errorColor, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = onErrorColor,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Column {
+                Text(
+                    text = stringResource(R.string.sos_bubble_title),
+                    style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 0.8.sp),
+                    fontWeight = FontWeight.Bold,
+                    color = errorColor
+                )
+                Text(
+                    text = stringResource(R.string.sos_bubble_subtitle),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = contentColor.copy(alpha = 0.7f)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(errorColor.copy(alpha = 0.25f))
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = bodyText,
+            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+            color = contentColor
+        )
+        if (locationUrl != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = errorColor,
+                contentColor = onErrorColor,
+                onClick = {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(locationUrl)))
+                    }
+                }
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.sos_bubble_open_location),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }

@@ -47,6 +47,11 @@ struct GattMeshChatMessage: Identifiable, Codable, Equatable {
     var status: GattMeshMessageStatus
     var deliveredTo: [String]
     var readBy: [String]
+    var imageFileName: String? = nil
+    var imageWidth: Int? = nil
+    var imageHeight: Int? = nil
+    var voiceFileName: String? = nil
+    var voiceDurationMillis: Int64? = nil
 }
 
 extension GattMeshChatMessage {
@@ -75,8 +80,21 @@ extension GattMeshChatMessage {
 
 @MainActor
 final class GattMeshChatStore: ObservableObject {
-    static let shared = GattMeshChatStore()
+    /// Public, open mesh chat store.
+    static let shared = GattMeshChatStore(
+        sessionId: BroadcastSessionId.fromRawIdentifier("gattmesh:general"),
+        persistenceFileName: "gatt_mesh_chat.json"
+    )
+    /// Authority-only mesh chat store, kept fully separate from the public chat.
+    static let authority = GattMeshChatStore(
+        sessionId: BroadcastSessionId.fromRawIdentifier("authority:general"),
+        persistenceFileName: "authority_mesh_chat.json"
+    )
+    /// Public session id (existing, non-isolated call sites such as GattMeshManager).
     static let sessionId = BroadcastSessionId.fromRawIdentifier("gattmesh:general")
+
+    let sessionId: UUID
+    private let persistenceURL: URL
 
     @Published private(set) var messages: [GattMeshChatMessage] = []
     @Published private(set) var unreadCount = 0
@@ -84,19 +102,18 @@ final class GattMeshChatStore: ObservableObject {
     private static let maxMessages = 500
     private static let maxMessageLength = 1_024
     private static let maxVerifiedRoleLength = 24
-    private static let persistenceURL: URL = {
-        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        return baseURL
-            .appendingPathComponent("CrisisConnect", isDirectory: true)
-            .appendingPathComponent("gatt_mesh_chat.json", isDirectory: false)
-    }()
 
     private var isChatOpen = false
     private let persistenceQueue = DispatchQueue(label: "gattmesh.chat.persistence", qos: .utility)
     private var pendingPersistWorkItem: DispatchWorkItem?
 
-    private init() {
+    private init(sessionId: UUID, persistenceFileName: String) {
+        self.sessionId = sessionId
+        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        self.persistenceURL = baseURL
+            .appendingPathComponent("CrisisConnect", isDirectory: true)
+            .appendingPathComponent(persistenceFileName, isDirectory: false)
         loadPersistedState()
     }
 
@@ -138,6 +155,154 @@ final class GattMeshChatStore: ObservableObject {
         messages = normalizeMessages(messages + [message])
         persistState()
         return message
+    }
+
+    @discardableResult
+    func appendLocalImageMessage(
+        messageId: String,
+        imageFileName: String,
+        imageWidth: Int?,
+        imageHeight: Int?,
+        status: GattMeshMessageStatus
+    ) -> GattMeshChatMessage {
+        let resolvedId = GattMeshProtocol.normalizeMessageId(messageId) ?? UUID().uuidString
+        if let existing = messages.first(where: { $0.id == resolvedId }) {
+            return existing
+        }
+        let message = GattMeshChatMessage(
+            id: resolvedId,
+            text: "",
+            senderLabel: nil,
+            sourcePeerId: nil,
+            originVerifiedRole: nil,
+            originVerifiedAtMillis: nil,
+            isLocal: true,
+            timestampMillis: Int64(Date().timeIntervalSince1970 * 1_000),
+            receivedTimestampMillis: nil,
+            status: status,
+            deliveredTo: [],
+            readBy: [],
+            imageFileName: imageFileName,
+            imageWidth: imageWidth,
+            imageHeight: imageHeight
+        )
+        messages = normalizeMessages(messages + [message])
+        persistState()
+        return message
+    }
+
+    @discardableResult
+    func appendRemoteImageMessage(
+        messageId: String,
+        senderLabel: String?,
+        sourcePeerId: String?,
+        imageFileName: String,
+        imageWidth: Int?,
+        imageHeight: Int?,
+        timestampMillis: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)
+    ) -> Bool {
+        guard let resolvedId = GattMeshProtocol.normalizeMessageId(messageId) else { return false }
+        guard messages.contains(where: { $0.id == resolvedId }) == false else { return false }
+
+        let message = GattMeshChatMessage(
+            id: resolvedId,
+            text: "",
+            senderLabel: senderLabel
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .nilIfEmpty,
+            sourcePeerId: sourcePeerId
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .nilIfEmpty,
+            originVerifiedRole: nil,
+            originVerifiedAtMillis: nil,
+            isLocal: false,
+            timestampMillis: timestampMillis,
+            receivedTimestampMillis: Int64(Date().timeIntervalSince1970 * 1_000),
+            status: isChatOpen ? .read : .delivered,
+            deliveredTo: [],
+            readBy: [],
+            imageFileName: imageFileName,
+            imageWidth: imageWidth,
+            imageHeight: imageHeight
+        )
+        messages = normalizeMessages(messages + [message])
+        if !isChatOpen {
+            unreadCount = min(Int.max, unreadCount + 1)
+        }
+        persistState()
+        return true
+    }
+
+    @discardableResult
+    func appendLocalVoiceMessage(
+        messageId: String,
+        voiceFileName: String,
+        voiceDurationMillis: Int64?,
+        status: GattMeshMessageStatus
+    ) -> GattMeshChatMessage {
+        let resolvedId = GattMeshProtocol.normalizeMessageId(messageId) ?? UUID().uuidString
+        if let existing = messages.first(where: { $0.id == resolvedId }) {
+            return existing
+        }
+        let message = GattMeshChatMessage(
+            id: resolvedId,
+            text: "",
+            senderLabel: nil,
+            sourcePeerId: nil,
+            originVerifiedRole: nil,
+            originVerifiedAtMillis: nil,
+            isLocal: true,
+            timestampMillis: Int64(Date().timeIntervalSince1970 * 1_000),
+            receivedTimestampMillis: nil,
+            status: status,
+            deliveredTo: [],
+            readBy: [],
+            voiceFileName: voiceFileName,
+            voiceDurationMillis: voiceDurationMillis
+        )
+        messages = normalizeMessages(messages + [message])
+        persistState()
+        return message
+    }
+
+    @discardableResult
+    func appendRemoteVoiceMessage(
+        messageId: String,
+        senderLabel: String?,
+        sourcePeerId: String?,
+        voiceFileName: String,
+        voiceDurationMillis: Int64?,
+        timestampMillis: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)
+    ) -> Bool {
+        guard let resolvedId = GattMeshProtocol.normalizeMessageId(messageId) else { return false }
+        guard messages.contains(where: { $0.id == resolvedId }) == false else { return false }
+
+        let message = GattMeshChatMessage(
+            id: resolvedId,
+            text: "",
+            senderLabel: senderLabel
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .nilIfEmpty,
+            sourcePeerId: sourcePeerId
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .nilIfEmpty,
+            originVerifiedRole: nil,
+            originVerifiedAtMillis: nil,
+            isLocal: false,
+            timestampMillis: timestampMillis,
+            receivedTimestampMillis: Int64(Date().timeIntervalSince1970 * 1_000),
+            status: isChatOpen ? .read : .delivered,
+            deliveredTo: [],
+            readBy: [],
+            voiceFileName: voiceFileName,
+            voiceDurationMillis: voiceDurationMillis
+        )
+        messages = normalizeMessages(messages + [message])
+        if !isChatOpen {
+            unreadCount = min(Int.max, unreadCount + 1)
+        }
+        persistState()
+        return true
     }
 
     func updateLocalMessageStatus(_ messageId: String, status: GattMeshMessageStatus) {
@@ -435,7 +600,7 @@ final class GattMeshChatStore: ObservableObject {
     }
 
     private func loadPersistedState() {
-        guard let payload = try? LocalEncryptedFileStore.read(from: Self.persistenceURL) else {
+        guard let payload = try? LocalEncryptedFileStore.read(from: persistenceURL) else {
             return
         }
         guard let snapshot = try? JSONDecoder().decode(Snapshot.self, from: payload.data) else {
@@ -453,7 +618,7 @@ final class GattMeshChatStore: ObservableObject {
         pendingPersistWorkItem?.cancel()
         let workItem = DispatchWorkItem {
             guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            try? LocalEncryptedFileStore.write(data, to: Self.persistenceURL)
+            try? LocalEncryptedFileStore.write(data, to: self.persistenceURL)
         }
         pendingPersistWorkItem = workItem
         persistenceQueue.asyncAfter(deadline: .now() + 0.2, execute: workItem)

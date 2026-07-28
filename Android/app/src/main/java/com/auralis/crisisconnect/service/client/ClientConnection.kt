@@ -56,6 +56,9 @@ import com.auralis.crisisconnect.service.BleChatEnvelope
 import com.auralis.crisisconnect.service.BleDirectChatCompat
 import com.auralis.crisisconnect.service.BlePeerIdentityUtils
 import com.auralis.crisisconnect.service.BleRadioPolicy
+import com.auralis.crisisconnect.service.RescueCallLinkCodec
+import com.auralis.crisisconnect.service.p2p.call.P2pCallController
+import com.auralis.crisisconnect.service.p2p.call.P2pCallProtocol
 import com.auralis.crisisconnect.service.client.BleClientManager.ConnectionState
 import com.auralis.crisisconnect.service.client.BleClientManager.ConnectionStatus
 import com.auralis.crisisconnect.util.UUIDGenerator
@@ -161,6 +164,10 @@ class ClientConnection(
     private val secureAckCharacteristicUuid: UUID = UUIDGenerator.fromAssignedNumber(CHAR_SECURE_ACK_NUMBER)
     private val secureChatInCharacteristicUuid: UUID = UUIDGenerator.fromAssignedNumber(CHAR_SECURE_CHAT_IN_NUMBER)
     private val secureChatOutCharacteristicUuid: UUID = UUIDGenerator.fromAssignedNumber(CHAR_SECURE_CHAT_OUT_NUMBER)
+    private val callIoInCharacteristicUuid: UUID =
+        UUIDGenerator.fromAssignedNumber(RescueCallLinkCodec.CHAR_CALL_IO_IN_NUMBER)
+    private val callIoOutCharacteristicUuid: UUID =
+        UUIDGenerator.fromAssignedNumber(RescueCallLinkCodec.CHAR_CALL_IO_OUT_NUMBER)
 
     private var idCharacteristic: BluetoothGattCharacteristic? = null
     private var authChallengeCharacteristic: BluetoothGattCharacteristic? = null
@@ -169,6 +176,8 @@ class ClientConnection(
     private var secureAckCharacteristic: BluetoothGattCharacteristic? = null
     private var secureChatInCharacteristic: BluetoothGattCharacteristic? = null
     private var secureChatOutCharacteristic: BluetoothGattCharacteristic? = null
+    private var callIoInCharacteristic: BluetoothGattCharacteristic? = null
+    private var callIoOutCharacteristic: BluetoothGattCharacteristic? = null
     @Volatile
     private var secureAckNotificationsEnabled: Boolean = false
     @Volatile
@@ -340,6 +349,7 @@ class ClientConnection(
             when (characteristic.uuid) {
                 secureAckCharacteristicUuid -> processAck(characteristic.value ?: ByteArray(0))
                 secureChatOutCharacteristicUuid -> characteristic.value?.let { chatReceiver.onChunk(it) }
+                callIoOutCharacteristicUuid -> characteristic.value?.let { handleCallIoNotify(it) }
             }
         }
 
@@ -460,6 +470,7 @@ class ClientConnection(
         closedByClient = closedByClient || manual
         reconnectJob?.cancel()
         cancelConnectTimeout()
+        runCatching { P2pCallController.shared(context).unregisterExtraLink(rescueCallLink) }
         connectionScope.launch {
             closeGatt()
             emitState(if (manual) ConnectionStatus.Disconnected else ConnectionStatus.Failed)
@@ -585,6 +596,13 @@ class ClientConnection(
             gatt = gatt,
             characteristic = secureChatOutCharacteristic!!,
         )
+        // Optional call-IO pair (0xCC40/0xCC41): only newer peers expose it, and its absence
+        // simply disables live voice calls — never fail the connection over it.
+        callIoInCharacteristic = service.getCharacteristic(callIoInCharacteristicUuid)
+        callIoOutCharacteristic = service.getCharacteristic(callIoOutCharacteristicUuid)
+        callIoOutCharacteristic?.let { characteristic ->
+            configureNotificationsIfSupported(gatt = gatt, characteristic = characteristic)
+        }
         if (!secureAckNotificationsEnabled) {
             Log.w(
                 TAG,
@@ -772,6 +790,7 @@ class ClientConnection(
                 reason = "ready"
             )
             emitState(ConnectionStatus.Ready, userId = userId)
+            P2pCallController.shared(context).registerExtraLink(rescueCallLink)
             connectionScope.launch {
                 fetchPeerIdBestEffort(gatt)
             }
@@ -1075,7 +1094,8 @@ class ClientConnection(
         BlePeerIdentityUtils.SignalLocationRegistry.updateVictimIdentity(
             address = normalizedAddress,
             displayName = displayName,
-            batteryPercent = identity.batteryPercent
+            batteryPercent = identity.batteryPercent,
+            medical = identity.medical
         )
         BleChatStore.ensureSession(sessionCode)
         withContext(Dispatchers.IO) {
@@ -1558,6 +1578,81 @@ class ClientConnection(
             }
         }
         return confidence.coerceIn(0.1f, 0.9f)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Voice call over the rescue link (central role): dedicated 0xCC40/0xCC41 characteristic
+    // pair, session-key crypto — see RescueCallLinkCodec for the wire spec.
+    // ---------------------------------------------------------------------------------------
+
+    private val rescueCallLink = object : P2pCallController.CallLink {
+        override val linkName: String = RescueCallLinkCodec.LINK_NAME_RESCUER
+
+        override fun isReadyForSession(sessionCode: String): Boolean {
+            if (sessionKey == null || callIoInCharacteristic == null || gatt == null) {
+                return false
+            }
+            if (lastStatus != ConnectionStatus.Ready && lastStatus != ConnectionStatus.Connected) {
+                return false
+            }
+            val target = sessionCode.trim().takeIf { it.isNotEmpty() } ?: return false
+            return resolveSessionCodeForAddress(address).equals(target, ignoreCase = true)
+        }
+
+        override suspend fun sendCallSignal(sessionCode: String, payload: JSONObject): Boolean {
+            if (!isReadyForSession(sessionCode)) return false
+            val key = sessionKey ?: return false
+            val characteristic = callIoInCharacteristic ?: return false
+            val currentGatt = gatt ?: return false
+            val packet = RescueCallLinkCodec.encodeSignalPacket(key, payload) ?: return false
+            return writeCharacteristic(currentGatt, characteristic, packet)
+        }
+
+        override fun trySendCallAudio(sessionCode: String, packet: ByteArray): Boolean {
+            val characteristic = callIoInCharacteristic ?: return false
+            val currentGatt = gatt ?: return false
+            return runCatching {
+                currentGatt.writeCharacteristicCompat(
+                    characteristic = characteristic,
+                    value = packet,
+                    writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE,
+                )
+            }.getOrDefault(false)
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun setCallHold(active: Boolean) {
+            val currentGatt = gatt ?: return
+            runCatching {
+                currentGatt.requestConnectionPriority(
+                    if (active) {
+                        BluetoothGatt.CONNECTION_PRIORITY_HIGH
+                    } else {
+                        BluetoothGatt.CONNECTION_PRIORITY_BALANCED
+                    }
+                )
+            }
+        }
+
+        override fun callKeyForSession(sessionCode: String): ByteArray? {
+            return sessionKey?.takeIf { isReadyForSession(sessionCode) }
+        }
+    }
+
+    private fun handleCallIoNotify(packet: ByteArray) {
+        if (packet.isEmpty()) return
+        if (P2pCallProtocol.isCallAudioFrame(packet)) {
+            P2pCallController.shared(context).onInboundCallAudio(packet)
+            return
+        }
+        val key = sessionKey ?: return
+        val payload = RescueCallLinkCodec.decodeSignalPacket(key, packet) ?: return
+        val contact = RescueCallLinkCodec.syntheticContact(
+            sessionCode = resolveSessionCodeForAddress(address),
+            displayName = userId,
+            sessionKey = key
+        )
+        P2pCallController.shared(context).onInboundCallSignal(contact, payload, rescueCallLink)
     }
 
     private fun resolveSessionCodeForAddress(addressUpper: String): String {

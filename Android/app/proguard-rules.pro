@@ -45,3 +45,13 @@
     public static *** d(...);
     public static *** v(...);
 }
+
+# MLS E2EE native bridges: JNI resolves Java_com_auralis_..._MlsWorker_nativeXxx symbols BY NAME —
+# the class names and external-fun names must survive minification or every release-build authority
+# call loses E2EE (the natives throw UnsatisfiedLinkError and MlsWorker.available turns false).
+-keepclasseswithmembernames class com.auralis.crisisconnect.messaging.call.sfu.MlsWorker {
+    native <methods>;
+}
+-keepclasseswithmembernames class com.auralis.crisisconnect.messaging.call.sfu.MlsFrameCrypto {
+    native <methods>;
+}

@@ -9,6 +9,33 @@ import Foundation
 import FirebaseAuth
 import FirebaseFirestore
 
+/// Live counters the responder documents report to the dashboard. Android has always synced real
+/// numbers; iOS hardcoded every one of these to 0, so the panel showed a roster of rescuers who had
+/// apparently never seen a single signal. Updated by RescueClientManager as adverts arrive.
+final class ResponderSignalStats: @unchecked Sendable {
+    static let shared = ResponderSignalStats()
+    private let lock = NSLock()
+    private var uniqueSignalIds: Set<String> = []
+    private var active = 0
+    private var scanEvents = 0
+
+    func recordScanEvent() {
+        lock.lock(); scanEvents += 1; lock.unlock()
+    }
+
+    func update(activeCount: Int, signalIds: [String]) {
+        lock.lock()
+        active = activeCount
+        uniqueSignalIds.formUnion(signalIds)
+        lock.unlock()
+    }
+
+    var snapshot: (active: Int, totalUnique: Int, scanEvents: Int) {
+        lock.lock(); defer { lock.unlock() }
+        return (active, uniqueSignalIds.count, scanEvents)
+    }
+}
+
 struct CrisisLinkDashboardLocationPayload: Sendable, Codable, Equatable {
     let latitude: Double
     let longitude: Double
@@ -70,8 +97,8 @@ final class CrisisLinkDashboardSyncService {
             "agencySlug": profile.agencySlug,
             "schemaVersion": Self.panelSchemaVersion,
             "source": Self.panelSource,
-            "activeSignals": 0,
-            "totalSignalsObserved": 0,
+            "activeSignals": ResponderSignalStats.shared.snapshot.active,
+            "totalSignalsObserved": ResponderSignalStats.shared.snapshot.totalUnique,
             "updatedByDeviceId": responderDeviceId,
             "updatedByUid": profile.uid,
             "updatedAt": FieldValue.serverTimestamp()
@@ -84,9 +111,9 @@ final class CrisisLinkDashboardSyncService {
             "role": profile.role,
             "schemaVersion": Self.responderSchemaVersion,
             "crisisLinkEnabled": true,
-            "activeSignalCount": 0,
-            "totalUniqueSignalCount": 0,
-            "totalScanEventCount": 0,
+            "activeSignalCount": ResponderSignalStats.shared.snapshot.active,
+            "totalUniqueSignalCount": ResponderSignalStats.shared.snapshot.totalUnique,
+            "totalScanEventCount": ResponderSignalStats.shared.snapshot.scanEvents,
             "updatedAt": FieldValue.serverTimestamp(),
             "gps": gpsMap(for: payload)
         ]
@@ -112,16 +139,23 @@ final class CrisisLinkDashboardSyncService {
         return true
     }
 
+    /// Syncs one victim sighting. `signalLocation` nil = an UNLOCATED sighting: Android has always
+    /// synced those (firstSeen/lastSeen still tell the dashboard a live victim exists); iOS dropped
+    /// them entirely, so a rescuer without a fix contributed nothing to the panel. Returns whether
+    /// the write committed, so the caller can queue the observation instead of losing it.
+    @discardableResult
     func syncSignalLocation(
         signalId: String,
-        signalLocation: SOSSignalLocationPayload,
-        reporterLocation: LocationPayload?
-    ) async {
+        signalLocation: SOSSignalLocationPayload?,
+        reporterLocation: LocationPayload?,
+        victimName: String? = nil,
+        victimBatteryPercent: Int? = nil
+    ) async -> Bool {
         guard let normalizedSignalId = normalizedSignalId(signalId),
-              let resolvedGPS = signalLocation.gps,
               let profile = await resolveRescuerProfile() else {
-            return
+            return false
         }
+        let resolvedGPS = signalLocation?.gps
 
         let responderDeviceId = secureStore.getOrCreateRescueDeviceId()
         let rescueDeviceRef = firestore.collection(Self.rescueDevicesCollection).document(responderDeviceId)
@@ -133,7 +167,7 @@ final class CrisisLinkDashboardSyncService {
             ], merge: true)
         } catch {
             NSLog("Failed to register Crisis Link rescue device for signal sync: %@", String(describing: error))
-            return
+            return false
         }
 
         let nowMillis = Int64(Date().timeIntervalSince1970 * 1_000)
@@ -149,7 +183,7 @@ final class CrisisLinkDashboardSyncService {
             .collection(Self.reportersCollection)
             .document(responderDeviceId)
 
-        let signalLocationSource = signalLocation.relativeEstimate == nil
+        let signalLocationSource = signalLocation?.relativeEstimate == nil
             ? Self.signalLocationSourceVictimGPS
             : Self.signalLocationSourceRelativeEstimate
 
@@ -162,23 +196,33 @@ final class CrisisLinkDashboardSyncService {
             "lastSeenMillis": nowMillis,
             "lastReporterUid": profile.uid,
             "lastReporterDeviceId": responderDeviceId,
+            "victimRole": "victim",
             "reporterIds": FieldValue.arrayUnion([responderDeviceId]),
-            "lastSeenAt": FieldValue.serverTimestamp(),
-            "gps": gpsMap(for: resolvedGPS),
-            "locationSource": signalLocationSource
+            "lastSeenAt": FieldValue.serverTimestamp()
         ]
-
-        if signalLocation.relativeEstimate == nil {
-            signalData["victimGps"] = gpsMap(for: resolvedGPS)
-        } else {
-            signalData["estimatedVictimGps"] = gpsMap(for: resolvedGPS)
+        if let victimName = victimName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !victimName.isEmpty {
+            signalData["victimName"] = victimName
+            signalData["victimDisplayName"] = victimName
         }
-        if let relativeEstimate = signalLocation.relativeEstimate {
+        if let victimBatteryPercent, (0...100).contains(victimBatteryPercent) {
+            signalData["victimBatteryPercent"] = victimBatteryPercent
+        }
+        if let resolvedGPS {
+            signalData["gps"] = gpsMap(for: resolvedGPS)
+            signalData["locationSource"] = signalLocationSource
+            if signalLocation?.relativeEstimate == nil {
+                signalData["victimGps"] = gpsMap(for: resolvedGPS)
+            } else {
+                signalData["estimatedVictimGps"] = gpsMap(for: resolvedGPS)
+            }
+        }
+        if let relativeEstimate = signalLocation?.relativeEstimate {
             signalData["relativeEstimate"] = relativeEstimateMap(for: relativeEstimate)
         }
         if let reporterLocation = reporterLocation {
             signalData["lastReporterLocation"] = gpsMap(for: reporterLocation)
-        } else if let anchorGPS = signalLocation.relativeEstimate?.anchorGPS {
+        } else if let anchorGPS = signalLocation?.relativeEstimate?.anchorGPS {
             signalData["lastReporterLocation"] = gpsMap(for: anchorGPS)
         }
 
@@ -187,16 +231,26 @@ final class CrisisLinkDashboardSyncService {
             "uid": profile.uid,
             "agency": profile.agency,
             "lastSeenMillis": nowMillis,
-            "lastSeenAt": FieldValue.serverTimestamp(),
-            "signalLocationSource": signalLocationSource,
-            "signalGps": gpsMap(for: resolvedGPS)
+            "lastSeenAt": FieldValue.serverTimestamp()
         ]
+        if let resolvedGPS {
+            reporterData["signalLocationSource"] = signalLocationSource
+            reporterData["signalGps"] = gpsMap(for: resolvedGPS)
+        }
+        if let victimName = victimName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !victimName.isEmpty {
+            reporterData["signalVictimName"] = victimName
+            reporterData["signalVictimDisplayName"] = victimName
+        }
+        if let victimBatteryPercent, (0...100).contains(victimBatteryPercent) {
+            reporterData["signalVictimBatteryPercent"] = victimBatteryPercent
+        }
         if let reporterLocation = reporterLocation {
             reporterData["gps"] = gpsMap(for: reporterLocation)
-        } else if let anchorGPS = signalLocation.relativeEstimate?.anchorGPS {
+        } else if let anchorGPS = signalLocation?.relativeEstimate?.anchorGPS {
             reporterData["gps"] = gpsMap(for: anchorGPS)
         }
-        if let relativeEstimate = signalLocation.relativeEstimate {
+        if let relativeEstimate = signalLocation?.relativeEstimate {
             reporterData["relativeEstimate"] = relativeEstimateMap(for: relativeEstimate)
         }
         if !profile.operatorName.isEmpty {
@@ -215,8 +269,10 @@ final class CrisisLinkDashboardSyncService {
 
         do {
             try await batch.commitAsync()
+            return true
         } catch {
             NSLog("Crisis Link signal sync failed: %@", String(describing: error))
+            return false
         }
     }
 
@@ -237,9 +293,11 @@ final class CrisisLinkDashboardSyncService {
             "schemaVersion": Self.responderSchemaVersion,
             "responderDeviceId": responderDeviceId,
             "crisisLinkEnabled": false,
+            // Going inactive zeroes the ACTIVE count by definition, but the totals are history —
+            // zeroing them erased the shift's work from the panel the moment the rescuer clocked off.
             "activeSignalCount": 0,
-            "totalUniqueSignalCount": 0,
-            "totalScanEventCount": 0,
+            "totalUniqueSignalCount": ResponderSignalStats.shared.snapshot.totalUnique,
+            "totalScanEventCount": ResponderSignalStats.shared.snapshot.scanEvents,
             "updatedAt": FieldValue.serverTimestamp()
         ]
 
@@ -441,15 +499,17 @@ final class CrisisLinkDashboardSyncService {
     }
 
     private static let profileCacheTTL: TimeInterval = 10 * 60
-    private static let panelCollection = "afadpanel"
+    // The web dashboard reads agencyPanels only ("afadpanel" is a dead legacy constant there), so
+    // writing anywhere else makes iOS rescuer sightings invisible on the map.
+    private static let panelCollection = "agencyPanels"
     private static let respondersCollection = "responders"
     private static let signalsCollection = "signals"
     private static let reportersCollection = "reporters"
     private static let rescueDevicesCollection = "rescueDevices"
-    private static let panelSource = "android-crisislink"
+    private static let panelSource = "ios-crisislink"
     private static let panelSchemaVersion = 3
     private static let responderSchemaVersion = 1
-    private static let signalSchemaVersion = 2
+    private static let signalSchemaVersion = 3
     private static let signalLocationSourceVictimGPS = "victim_gps"
     private static let signalLocationSourceRelativeEstimate = "rescuer_relative_estimate"
 }
@@ -458,11 +518,19 @@ struct PendingDashboardSyncOperation: Codable, Equatable, Identifiable {
     enum Kind: String, Codable, Equatable {
         case liveLocation
         case responderInactive
+        /// A victim sighting whose Firestore write failed. Android queues these; iOS logged and
+        /// LOST them — an offline rescuer's sightings died if the app suspended before reconnect,
+        /// which is the realistic field case.
+        case signalObservation
     }
 
     let id: UUID
     let kind: Kind
     let payload: CrisisLinkDashboardLocationPayload?
+    // signalObservation only. Optionals, so operations persisted by older builds decode as nil.
+    var signalId: String?
+    var signalLocation: SOSSignalLocationPayload?
+    var signalReporterLocation: CrisisLinkDashboardLocationPayload?
     var attemptCount: Int
     var nextRetryAt: Date
     let createdAt: Date
@@ -475,11 +543,17 @@ struct PendingDashboardSyncOperation: Codable, Equatable, Identifiable {
         attemptCount: Int,
         nextRetryAt: Date,
         createdAt: Date,
-        lastError: String?
+        lastError: String?,
+        signalId: String? = nil,
+        signalLocation: SOSSignalLocationPayload? = nil,
+        signalReporterLocation: CrisisLinkDashboardLocationPayload? = nil
     ) {
         self.id = id
         self.kind = kind
         self.payload = payload
+        self.signalId = signalId
+        self.signalLocation = signalLocation
+        self.signalReporterLocation = signalReporterLocation
         self.attemptCount = attemptCount
         self.nextRetryAt = nextRetryAt
         self.createdAt = createdAt

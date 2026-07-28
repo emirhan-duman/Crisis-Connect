@@ -21,7 +21,16 @@ struct MessagesHomeView: View {
     @ObservedObject private var sosChatStore = SOSChatStore.shared
     @ObservedObject private var contactStore = ContactStore.shared
     @ObservedObject private var gattMeshStore = GattMeshChatStore.shared
+    @ObservedObject private var authorityMeshStore = GattMeshChatStore.authority
     @ObservedObject private var advancedSettings = AdvancedSettingsStore.shared
+    // Kurum channel conversations surfaced as normal-looking rows on the home list (Android
+    // parity) — the same store also powers the full directory behind New Chat → Add from agency.
+    @StateObject private var authorityChannelRows = AuthorityChannelsListStore()
+    @State private var isCrisisSentinelReady = false
+    // Full-history message search (Android's "Messages" results section): debounced sweep over
+    // every session's transcript, newest first, capped.
+    @State private var messageSearchRows: [MessageSearchRow] = []
+    @State private var messageSearchTask: Task<Void, Never>?
 
     private let messagesHeaderAnchor = "messages-header-anchor"
     private let messagesHeaderAnimation = Animation.spring(response: 0.3, dampingFraction: 0.86)
@@ -38,20 +47,37 @@ struct MessagesHomeView: View {
                             .id(messagesHeaderAnchor)
 
                         messagesHeroHeader
+                        // Android parity: rescue-certified users always get the Sentinel entry —
+                        // they can use the CLOUD engine without downloading the on-device model.
+                        // Everyone else sees it only once the model is installed.
+                        if isCrisisSentinelReady || showRescueTools {
+                            crisisSentinelEntryCard
+                        }
                         if advancedSettings.publicMeshEnabled {
                             publicMeshEntryCard
                         }
+                        if showRescueTools && advancedSettings.authorityMeshEnabled {
+                            authorityMeshEntryCard
+                        }
 
-                        if sosChatStore.sessions.isEmpty {
+                        if sosChatStore.sessions.isEmpty && messagedAuthorityRows.isEmpty {
                             emptyMessagesCard
                         } else if !listState.isPrepared {
                             messagesLoadingCard
-                        } else if sessionBuckets.searchResults.isEmpty {
-                            filteredEmptyCard
-                        } else if sessionBuckets.visibleItems.isEmpty {
-                            filterEmptyCard
+                        } else if sessionBuckets.sections.isEmpty {
+                            if !messageSearchRows.isEmpty {
+                                messagesSearchSection
+                            } else if sessionBuckets.searchResults.isEmpty && messagedAuthorityRows.isEmpty {
+                                // Something is present but the current filter/search hides it all.
+                                filteredEmptyCard
+                            } else {
+                                filterEmptyCard
+                            }
                         } else {
                             messageSessionsSection
+                            if !messageSearchRows.isEmpty {
+                                messagesSearchSection
+                            }
                         }
                     }
                     .padding(.horizontal, AppTheme.screenPadding)
@@ -94,16 +120,7 @@ struct MessagesHomeView: View {
         .toolbarRole(.navigationStack)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                NavigationLink(destination: LazyNavigationDestination {
-                    ProfileView()
-                }) {
-                    if ProcessInfo.processInfo.isiOSAppOnMac {
-                        ProfileToolbarCompactView()
-                    } else {
-                        ProfileToolbarLabelView()
-                    }
-                }
-                .buttonStyle(.plain)
+                profileToolbarLink
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -116,7 +133,16 @@ struct MessagesHomeView: View {
             }
         }
         .onAppear {
+            isCrisisSentinelReady = checkCrisisSentinelReady()
             refreshFilteredSessions()
+            if showRescueTools {
+                Task {
+                    await AuthorityMeshGroupKeyProvisioner.ensureGroupKey()
+                }
+                // Populate/refresh the kurum conversation rows on every appearance — returning
+                // from a thread must clear its unread badge (the thread advanced the read cursor).
+                Task { await authorityChannelRows.refresh() }
+            }
             if AppStoreScreenshotSupport.isMessagesSearchSceneEnabled {
                 searchText = AppStoreScreenshotSupport.screenshotSearchQuery
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -132,12 +158,41 @@ struct MessagesHomeView: View {
         }
         .onChange(of: searchText) { _, newValue in
             refreshFilteredSessions(query: newValue)
+            scheduleMessageSearch(query: newValue)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .crisisSentinelModelDidInstall).receive(on: RunLoop.main)) { _ in
+            isCrisisSentinelReady = checkCrisisSentinelReady()
+        }
+    }
+
+    private func checkCrisisSentinelReady() -> Bool {
+        if ProcessInfo.processInfo.arguments.contains("UITEST_MOCK_CRISIS_SENTINEL_READY") {
+            return true
+        }
+        let release = CrisisSentinelModelManifestCache().load() ?? .defaultRelease
+        return CrisisSentinelModelFileStore().status(for: release, validateChecksum: false).isReady
+    }
+
+    private var profileToolbarLink: some View {
+        NavigationLink(destination: LazyNavigationDestination {
+            ProfileView()
+        }) {
+            if ProcessInfo.processInfo.isiOSAppOnMac {
+                ProfileToolbarCompactView()
+            } else {
+                ProfileToolbarLabelView()
+            }
+        }
+        // No `.buttonStyle(.plain)`: that opts the item out of iOS 26's native
+        // Liquid Glass platter. Keep the system glass and just pin the tint so
+        // the avatar/name stay neutral instead of accent-blue.
+        .tint(Color.primary)
     }
 
     private var sessionBuckets: MessagesSessionBuckets {
         MessagesSessionBuckets(
             searchResults: listState.filteredSessions,
+            authorityRows: messagedAuthorityRows,
             selectedFilter: selectedMessagesFilter
         )
     }
@@ -278,6 +333,101 @@ struct MessagesHomeView: View {
         .buttonStyle(.plain)
     }
 
+    private var crisisSentinelEntryCard: some View {
+        NavigationLink(destination: LazyNavigationDestination {
+            CrisisSentinelHomeView()
+        }) {
+            HStack(spacing: 14) {
+                AppCustomIconBadge(tint: .appPrimary, size: 54) {
+                    CrisisSentinelSparklesIcon()
+                }
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("CRISIS_SENTINEL_TITLE")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("CRISIS_SENTINEL_MAIN_ENTRY_PREVIEW")
+                        .font(.footnote)
+                        .foregroundStyle(Color.appTextSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(Color.appTextSecondary)
+            }
+            .appSurface(style: .regular, padding: 16)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("messages-crisis-sentinel-entry")
+    }
+
+    private var authorityMeshEntryCard: some View {
+        NavigationLink(destination: LazyNavigationDestination {
+            GattMeshView(profile: .authority)
+        }) {
+            HStack(spacing: 14) {
+                AppIconBadge(systemName: "checkmark.shield.fill", tint: .appPrimary, size: 54)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text("AUTHORITY_CHAT_ENTRY_TITLE")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+
+                        if authorityMeshStore.unreadCount > 0 {
+                            Text("\(authorityMeshStore.unreadCount)")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Color.appPrimary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(Color.appPrimarySoft)
+                                )
+                        }
+                    }
+
+                    Text("AUTHORITY_CHAT_ENTRY_SUMMARY")
+                        .font(.footnote)
+                        .foregroundStyle(Color.appTextSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(Color.appTextSecondary)
+            }
+            .appSurface(style: .regular, padding: 16)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Messaged kurum channel peers as normal-looking conversation rows (Android parity): peer
+    /// name, panel, decrypted last-message preview, timestamp; tap opens the thread directly.
+    /// Never-messaged peers stay in the full directory behind New Chat → Add from agency.
+    @ViewBuilder
+    /// Messaged kurum channel conversations, ready to interleave into the main sectioned list.
+    private var messagedAuthorityRows: [AuthorityHomeRow] {
+        guard showRescueTools else { return [] }
+        let query = MessagesSessionListState.searchFold(
+            searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        return authorityChannelRows.groups
+            .flatMap(\.rows)
+            .filter { $0.previewAt != nil }
+            .filter { row in
+                query.isEmpty
+                    || MessagesSessionListState.searchFold(row.peer.name).contains(query)
+                    || MessagesSessionListState.searchFold(row.preview ?? "").contains(query)
+            }
+            .map { AuthorityHomeRow(row: $0, preloadedKey: authorityChannelRows.channelKey(for: $0.channel.channelId)) }
+    }
+
     private var messagesLoadingCard: some View {
         VStack(spacing: 12) {
             ProgressView()
@@ -291,6 +441,120 @@ struct MessagesHomeView: View {
         }
         .frame(maxWidth: .infinity)
         .appSurface(style: .regular, padding: 20)
+    }
+
+    /// One matched transcript message in the home search results (Android's SearchMessageRowUi).
+    private struct MessageSearchRow: Identifiable {
+        let id: UUID
+        let sessionId: UUID
+        let displayName: String
+        let body: String
+        let at: Date
+    }
+
+    /// Debounced full-history sweep: every session's messages, folded matching, newest first.
+    private func scheduleMessageSearch(query: String) {
+        messageSearchTask?.cancel()
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            messageSearchRows = []
+            return
+        }
+        messageSearchTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            let folded = MessagesSessionListState.searchFold(trimmed)
+            var rows: [MessageSearchRow] = []
+            for session in SOSChatStore.shared.sessions {
+                for message in SOSChatStore.shared.messages(for: session.id) {
+                    guard message.kind == .text else { continue }
+                    let raw = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !raw.isEmpty, !raw.hasPrefix("CC_") else { continue }
+                    let display = P2pSharedTransferSupport.previewText(for: raw)
+                    guard MessagesSessionListState.searchFold(display).contains(folded) else { continue }
+                    rows.append(MessageSearchRow(
+                        id: message.id,
+                        sessionId: session.id,
+                        displayName: session.displayName,
+                        body: display,
+                        at: message.timestamp
+                    ))
+                }
+            }
+            guard !Task.isCancelled else { return }
+            messageSearchRows = Array(rows.sorted { $0.at > $1.at }.prefix(50))
+        }
+    }
+
+    /// Android's "Messages" search section: matched transcript messages as tappable rows.
+    private var messagesSearchSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("MAIN_SEARCH_SECTION_MESSAGES")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.appPrimary)
+                .padding(.horizontal, 4)
+
+            VStack(spacing: 0) {
+                ForEach(Array(messageSearchRows.enumerated()), id: \.element.id) { index, row in
+                    NavigationLink(destination: LazyNavigationDestination {
+                        SOSChatDetailScreen(sessionId: row.sessionId)
+                    }) {
+                        HStack(spacing: 12) {
+                            ChatAvatarCircleView(
+                                avatarImageRelativePath: nil,
+                                initials: AvatarGenerator.initials(from: row.displayName),
+                                avatarHue: AvatarGenerator.hue(for: row.sessionId),
+                                size: 42,
+                                peerPhotoUrl: ContactStore.shared.contact(for: row.sessionId)?.peerPhotoUrl
+                            )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.displayName)
+                                    .font(.body.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                Text(highlightedBody(row.body))
+                                    .font(.footnote)
+                                    .foregroundStyle(Color.appTextSecondary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                            }
+                            Spacer(minLength: 8)
+                            Text(row.at, style: .time)
+                                .font(.caption2)
+                                .foregroundStyle(Color.appTextSecondary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.plain)
+
+                    if index < messageSearchRows.count - 1 {
+                        Divider()
+                            .padding(.leading, 70)
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                    .fill(Color.appSurfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                    .stroke(Color.appBorder, lineWidth: 1)
+            )
+        }
+    }
+
+    /// Bolds + tints the first query hit inside a result body (Android highlights matches too).
+    private func highlightedBody(_ body: String) -> AttributedString {
+        var attributed = AttributedString(body)
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty,
+           let range = attributed.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) {
+            attributed[range].font = .footnote.weight(.bold)
+            attributed[range].foregroundColor = .appPrimary
+        }
+        return attributed
     }
 
     private var filteredEmptyCard: some View {
@@ -440,7 +704,8 @@ struct MessagesHomeView: View {
         contacts: [ContactRecord]? = nil
     ) {
         let sourceSessions = sessions ?? sosChatStore.sessions
-        let sourceContacts = contacts ?? contactStore.contacts
+        // Authority bridge contacts are transport-only; their conversation is the channel row.
+        let sourceContacts = (contacts ?? contactStore.contacts).filter { $0.isAuthorityBridge != true }
         let lastMessages: [UUID: SOSChatMessage] = Dictionary(uniqueKeysWithValues: sourceSessions.compactMap { session in
             guard let message = sosChatStore.lastMessage(for: session.id) else { return nil }
             return (session.id, message)
@@ -496,60 +761,104 @@ private struct MessagesSessionListItem: Identifiable, Equatable {
     }
 }
 
+/// A messaged authority (kurum) channel conversation as a home-list row, carrying the preloaded
+/// channel key for a tap-through with no wait.
+private struct AuthorityHomeRow: Identifiable {
+    let row: AuthorityChannelsListStore.PeerRow
+    let preloadedKey: HierarchyChannelKey?
+    var id: String { row.id }
+}
+
+/// A single home-list conversation — a citizen chat OR a kurum channel — so the two interleave in
+/// one recency-sorted list (Android parity) instead of living in separate blocks.
+private enum MessagesRowEntry: Identifiable {
+    case citizen(MessagesSessionListItem)
+    case authority(AuthorityHomeRow)
+
+    var id: String {
+        switch self {
+        case .citizen(let item): return "citizen:\(item.session.id.uuidString)"
+        case .authority(let a): return "authority:\(a.id)"
+        }
+    }
+
+    var updatedAt: Date {
+        switch self {
+        case .citizen(let item): return item.session.lastUpdated
+        case .authority(let a): return a.row.previewAt ?? .distantPast
+        }
+    }
+
+    var isUnread: Bool {
+        switch self {
+        case .citizen(let item): return item.session.unreadCount > 0
+        case .authority(let a): return a.row.unread
+        }
+    }
+
+    var isRescue: Bool {
+        if case .citizen(let item) = self { return item.isRescueConversation }
+        return false
+    }
+
+    var isDirect: Bool {
+        if case .citizen(let item) = self { return item.isDirectConversation }
+        return false
+    }
+}
+
 private struct MessagesSessionBuckets {
     let searchResults: [MessagesSessionListItem]
-    let visibleItems: [MessagesSessionListItem]
+    let visibleItems: [MessagesRowEntry]
     let sections: [MessagesSessionSection]
     private let counts: [MessagesInboxFilter: Int]
 
-    init(searchResults: [MessagesSessionListItem], selectedFilter: MessagesInboxFilter) {
+    init(
+        searchResults: [MessagesSessionListItem],
+        authorityRows: [AuthorityHomeRow],
+        selectedFilter: MessagesInboxFilter
+    ) {
         self.searchResults = searchResults
 
-        var counts: [MessagesInboxFilter: Int] = [.all: searchResults.count]
+        // One merged pool: citizen chats + kurum channel rows.
+        let allEntries: [MessagesRowEntry] =
+            searchResults.map(MessagesRowEntry.citizen) + authorityRows.map(MessagesRowEntry.authority)
+
+        var counts: [MessagesInboxFilter: Int] = [.all: allEntries.count]
         counts[.unread] = 0
         counts[.direct] = 0
         counts[.rescue] = 0
-
-        for item in searchResults {
-            if item.session.unreadCount > 0 {
-                counts[.unread, default: 0] += 1
-            }
-            if item.isDirectConversation {
-                counts[.direct, default: 0] += 1
-            }
-            if item.isRescueConversation {
-                counts[.rescue, default: 0] += 1
-            }
+        for entry in allEntries {
+            if entry.isUnread { counts[.unread, default: 0] += 1 }
+            if entry.isDirect { counts[.direct, default: 0] += 1 }
+            if entry.isRescue { counts[.rescue, default: 0] += 1 }
         }
-
         self.counts = counts
-        if selectedFilter == .all {
-            visibleItems = searchResults
-        } else {
-            visibleItems = searchResults.filter { selectedFilter.matches($0) }
-        }
 
-        var attentionItems: [MessagesSessionListItem] = []
-        var rescueItems: [MessagesSessionListItem] = []
-        var recentItems: [MessagesSessionListItem] = []
-        attentionItems.reserveCapacity(visibleItems.count)
-        rescueItems.reserveCapacity(visibleItems.count)
-        recentItems.reserveCapacity(visibleItems.count)
-
-        for item in visibleItems {
-            if item.session.unreadCount > 0 {
-                attentionItems.append(item)
-            } else if item.isRescueConversation {
-                rescueItems.append(item)
-            } else {
-                recentItems.append(item)
+        let filtered = selectedFilter == .all ? allEntries : allEntries.filter { entry in
+            switch selectedFilter {
+            case .all: return true
+            case .unread: return entry.isUnread
+            case .direct: return entry.isDirect
+            case .rescue: return entry.isRescue
             }
         }
+        visibleItems = filtered
 
+        var attention: [MessagesRowEntry] = []
+        var rescue: [MessagesRowEntry] = []
+        var recent: [MessagesRowEntry] = []
+        for entry in filtered {
+            if entry.isUnread { attention.append(entry) }
+            else if entry.isRescue { rescue.append(entry) }
+            else { recent.append(entry) }
+        }
+        // Within each section, newest first — authority rows interleave with citizen ones by recency.
+        let byRecency: (MessagesRowEntry, MessagesRowEntry) -> Bool = { $0.updatedAt > $1.updatedAt }
         sections = [
-            MessagesSessionSection(kind: .attention, items: attentionItems),
-            MessagesSessionSection(kind: .rescue, items: rescueItems),
-            MessagesSessionSection(kind: .recent, items: recentItems)
+            MessagesSessionSection(kind: .attention, items: attention.sorted(by: byRecency)),
+            MessagesSessionSection(kind: .rescue, items: rescue.sorted(by: byRecency)),
+            MessagesSessionSection(kind: .recent, items: recent.sorted(by: byRecency))
         ]
         .filter { !$0.items.isEmpty }
     }
@@ -594,7 +903,9 @@ private final class MessagesSessionListState: ObservableObject {
             if trimmedQuery.isEmpty {
                 result = allItems
             } else {
-                let lowercasedQuery = trimmedQuery.lowercased()
+                // Locale-aware fold (Android's normalizeForSearch): plain lowercased() breaks on
+                // Turkish dotted/dotless i — "İstanbul" would never match a query of "istanbul".
+                let foldedQuery = Self.searchFold(trimmedQuery)
                 result = allItems.filter { item in
                     let session = item.session
                     let contactDisplayName: String?
@@ -612,8 +923,8 @@ private final class MessagesSessionListState: ObservableObject {
                     ]
 
                     return candidates
-                        .compactMap { $0?.lowercased() }
-                        .contains { $0.contains(lowercasedQuery) }
+                        .compactMap { $0.map(Self.searchFold) }
+                        .contains { $0.contains(foldedQuery) }
                 }
             }
 
@@ -623,6 +934,11 @@ private final class MessagesSessionListState: ObservableObject {
                 self.isPrepared = true
             }
         }
+    }
+
+    /// Case-, diacritic- and locale-insensitive normalization for search matching.
+    static func searchFold(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 }
 
@@ -717,7 +1033,7 @@ private struct MessagesSessionSection: Identifiable {
     }
 
     let kind: Kind
-    let items: [MessagesSessionListItem]
+    let items: [MessagesRowEntry]
 
     var id: Kind { kind }
 }
@@ -755,28 +1071,42 @@ private struct MessagesSessionSectionCard: View {
 
             VStack(spacing: 0) {
                 ForEach(section.items.indices, id: \.self) { index in
-                    let item = section.items[index]
-
-                    NavigationLink(destination: LazyNavigationDestination {
-                        SOSChatDetailScreen(sessionId: item.session.id)
-                    }) {
-                        SOSChatSessionRow(
-                            session: item.session,
-                            contactRecord: item.contactRecord,
-                            lastMessage: item.lastMessage
-                        )
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        if item.session.unreadCount > 0 {
-                            Button {
-                                onMarkRead(item.session.id)
-                            } label: {
-                                Label("MESSAGES_MARK_READ", systemImage: "checkmark.circle")
+                    switch section.items[index] {
+                    case .citizen(let item):
+                        NavigationLink(destination: LazyNavigationDestination {
+                            SOSChatDetailScreen(sessionId: item.session.id)
+                        }) {
+                            SOSChatSessionRow(
+                                session: item.session,
+                                contactRecord: item.contactRecord,
+                                lastMessage: item.lastMessage
+                            )
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            if item.session.unreadCount > 0 {
+                                Button {
+                                    onMarkRead(item.session.id)
+                                } label: {
+                                    Label("MESSAGES_MARK_READ", systemImage: "checkmark.circle")
+                                }
                             }
                         }
+                    case .authority(let authority):
+                        NavigationLink(destination: LazyNavigationDestination {
+                            HierarchyThreadView(
+                                channel: authority.row.channel,
+                                peer: authority.row.peer,
+                                preloadedKey: authority.preloadedKey
+                            )
+                        }) {
+                            AuthorityHomeRowView(row: authority.row)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     if index < section.items.count - 1 {
@@ -799,6 +1129,87 @@ private struct MessagesSessionSectionCard: View {
                 y: 4
             )
         }
+    }
+}
+
+/// A kurum channel conversation as a normal home-list row — the SAME visual language as a citizen
+/// chat row (SOSChatSessionRow) and Android's ContactListItem: 56pt initials/photo avatar, name +
+/// agency chip, decrypted preview, timestamp, unread badge, live-bridge radio.
+private struct AuthorityHomeRowView: View {
+    let row: AuthorityChannelsListStore.PeerRow
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var hasUnread: Bool { row.unread }
+
+    private var avatarColor: Color {
+        let hue = AvatarGenerator.hue(for: BroadcastSessionId.fromRawIdentifier(row.peer.uid))
+        let saturation = colorScheme == .dark ? 0.55 : 0.6
+        let brightness = colorScheme == .dark ? 0.75 : 0.9
+        return Color(hue: hue, saturation: saturation, brightness: brightness)
+    }
+
+    private var agencyLabel: String {
+        let name = row.peer.agency ?? row.channel.peerPanelName
+        return name.isEmpty
+            ? NSLocalizedString("AUTHORITY_CHANNEL_ROW_LABEL", comment: "")
+            : name
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            AuthorityAvatarView(
+                name: row.peer.name,
+                uid: row.peer.uid,
+                photoUrl: row.peer.photoUrl,
+                size: 56,
+                borderColor: hasUnread ? avatarColor.opacity(colorScheme == .dark ? 0.55 : 0.34) : .clear,
+                borderWidth: 2
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(row.peer.name.isEmpty ? row.peer.uid : row.peer.name)
+                                .font(.headline.weight(hasUnread ? .semibold : .medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .layoutPriority(1)
+                            if row.bluetoothLinked {
+                                Image(systemName: "dot.radiowaves.left.and.right")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        AppStatusPill(title: LocalizedStringKey(agencyLabel), tint: .appPrimary)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    VStack(alignment: .trailing, spacing: 8) {
+                        if let at = row.previewAt {
+                            Text(at, style: .time)
+                                .font(.caption.weight(hasUnread ? .semibold : .medium))
+                                .foregroundStyle(hasUnread ? Color.appPrimary : Color.appTextSecondary)
+                        }
+                        if hasUnread {
+                            Circle().fill(Color.appPrimary).frame(width: 10, height: 10)
+                        }
+                    }
+                }
+
+                Text(row.preview ?? "")
+                    .font(.subheadline.weight(hasUnread ? .semibold : .regular))
+                    .foregroundStyle(hasUnread ? Color.primary : Color.appTextSecondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
 }
 

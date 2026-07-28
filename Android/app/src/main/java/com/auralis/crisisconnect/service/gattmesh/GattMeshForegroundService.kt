@@ -38,6 +38,7 @@ import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import androidx.annotation.RequiresApi
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import com.auralis.crisisconnect.R
@@ -78,6 +79,11 @@ import com.auralis.crisisconnect.security.RoleProofPayload
 import com.auralis.crisisconnect.security.RoleProofVerificationResult
 import com.auralis.crisisconnect.security.RoleProofVerifier
 import com.auralis.crisisconnect.security.SecurityRepository
+import com.auralis.crisisconnect.feature.RescueFeatureManager
+import com.auralis.crisisconnect.service.gattmesh.ptt.PttControlKind
+import com.auralis.crisisconnect.service.gattmesh.ptt.PttController
+import com.auralis.crisisconnect.service.gattmesh.ptt.PttFloorState
+import com.auralis.crisisconnect.service.gattmesh.ptt.PttSessionState
 import com.auralis.crisisconnect.service.BleRadioPolicy
 import com.auralis.crisisconnect.service.BluetoothClassicDiscoveryGuard
 import com.auralis.crisisconnect.service.BleMessageNotifier
@@ -113,7 +119,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -138,6 +146,40 @@ open class GattMeshForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stateFlow = MutableStateFlow(GattMeshServiceState())
     val state: StateFlow<GattMeshServiceState> = stateFlow.asStateFlow()
+
+    // Telsiz (push-to-talk) — authority mesh only. Lazily created so the public mesh never spins up
+    // an audio controller. [pttState] falls back to an inert flow on non-authority profiles.
+    private val emptyPttState = MutableStateFlow(PttSessionState())
+    private val pttController: PttController? by lazy {
+        if (profile.admission is AdmissionPolicy.RequireVerifiedRole) {
+            PttController(
+                context = applicationContext,
+                scope = serviceScope,
+                profileId = profile.id,
+                localDisplayName = { localSenderLabel },
+                localAgency = { localTelsizAgency },
+                resolvePeerName = { address -> resolveConnectedPeerDisplayName(address) },
+                onSendControl = { kind, claimId -> broadcastPttControl(kind, claimId) },
+                onSendAudio = { talkTag, baseSeq, frames -> broadcastPttAudio(talkTag, baseSeq, frames) },
+                onAudioActiveChanged = { active -> setTelsizAudioActive(active) }
+            )
+        } else {
+            null
+        }
+    }
+    val pttState: StateFlow<PttSessionState> get() = pttController?.state ?: emptyPttState
+
+    // Stable per-process origin id stamped into every telsiz packet so multi-hop relays identify the
+    // originator independent of which peer forwarded it. 8 hex chars (regex-safe, collision-negligible).
+    private val localPttOriginId: String by lazy {
+        Integer.toHexString(java.util.UUID.randomUUID().hashCode()).padStart(8, '0').takeLast(8)
+    }
+    // Dedicated dedup window for telsiz packets (kept off the chat seenMessageIds map so a long talk's
+    // ~25 frames/s can't evict chat ids). Bounds both relay loops and duplicate playback.
+    private val seenPttPacketIds = LinkedHashMap<String, Long>()
+    // This device's verified institution (kurum), stamped onto telsiz control packets so peers can show
+    // it next to our name. Resolved once from the stored role certificate; null until a v3 cert exists.
+    @Volatile private var localTelsizAgency: String? = null
 
     private val lock = Any()
     private val discoveredPeers = mutableMapOf<String, Long>()
@@ -167,7 +209,7 @@ open class GattMeshForegroundService : Service() {
         mutableMapOf<String, MutableMap<InboundTransportChannel, BleChunkReceiver>>()
     private val outboundSendLocks = mutableMapOf<String, Any>()
     private val inboundImageBlobs = mutableMapOf<String, InboundImageBlobState>()
-    private var awareAccelerator: AuthorityMeshAwareAccelerator? = null
+    private var acceleratorCoordinator: MeshAcceleratorCoordinator? = null
     private val clientNotificationSettleJobs = mutableMapOf<String, Job>()
     private val clientNotificationBypassPeers = mutableSetOf<String>()
     private val clientNoResponsePreferredPeers = mutableSetOf<String>()
@@ -200,6 +242,9 @@ open class GattMeshForegroundService : Service() {
     private var advertiser: BluetoothLeAdvertiser? = null
     private var gattServer: BluetoothGattServer? = null
     private var scanResumeJob: Job? = null
+    // While a telsiz call is active, BLE scanning is held off so the radio stays dedicated to the
+    // audio connection (active scanning time-shares the radio and causes audio dropouts).
+    @Volatile private var telsizScanHold = false
     private var cleanupJob: Job? = null
     private var startupTimeoutJob: Job? = null
     private var postAddServiceRecoveryJob: Job? = null
@@ -911,7 +956,12 @@ open class GattMeshForegroundService : Service() {
             }
             ensureGattMeshGeneralContact()
             observeGattMeshNotificationSettings()
+            observeTelsizForNotification()
             localSenderLabel = resolveLocalSenderLabel()
+            if (profile.admission is AdmissionPolicy.RequireVerifiedRole) {
+                localTelsizAgency = runCatching { securityRepository.getUsableStoredCertificateAgency() }
+                    .getOrNull()?.takeIf { it.isNotBlank() }
+            }
             localInitiatorSalt = resolveLocalInitiatorSalt()
             localInitiatorRank = deriveLocalInitiatorRank(localInitiatorSalt)
             startMeshRuntime()
@@ -919,6 +969,17 @@ open class GattMeshForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Telsiz notification controls operate on the already-running session; handle and return.
+        when (intent?.action) {
+            ACTION_PTT_TOGGLE -> {
+                pttToggleTalk()
+                return START_STICKY
+            }
+            ACTION_PTT_LEAVE -> {
+                leaveTelsiz()
+                return START_STICKY
+            }
+        }
         val command = when (intent?.action) {
             ACTION_STOP -> GattMeshRuntimeCommand.STOP
             ACTION_RECONCILE_SOS_MODE -> GattMeshRuntimeCommand.RECONCILE
@@ -932,13 +993,25 @@ open class GattMeshForegroundService : Service() {
         // (e.g. reconcile) and onCreate returned early due settings/state races.
         ensureForegroundStarted()
         serviceScope.launch {
+            val settingsEnabled = isGattMeshRuntimeEnabledInSettings()
             val decision = GattMeshCommandDecider.decide(
                 command = command,
-                settingsEnabled = isGattMeshRuntimeEnabledInSettings(),
+                settingsEnabled = settingsEnabled,
                 runtimeActive = runtimeActive
             )
             when (decision) {
-                GattMeshRuntimeDecision.STOP_SERVICE -> stopSelfSafely()
+                GattMeshRuntimeDecision.STOP_SERVICE -> {
+                    Log.d(
+                        TAG,
+                        "onStartCommand STOP_SERVICE command=$command settingsEnabled=$settingsEnabled " +
+                            "runtimeActive=$runtimeActive"
+                    )
+                    MeshDiagnostics.log(
+                        profile.id,
+                        "decider STOP cmd=$command settingsEnabled=$settingsEnabled active=$runtimeActive"
+                    )
+                    stopSelfSafely()
+                }
                 GattMeshRuntimeDecision.START_RUNTIME -> {
                     if (isUsingDefaultSenderLabel(localSenderLabel)) {
                         localSenderLabel = resolveLocalSenderLabel()
@@ -973,6 +1046,10 @@ open class GattMeshForegroundService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder {
+        // Recovers a dead runtime when a client binds (it self-guards on !runtimeActive, so it never
+        // restarts a healthy runtime). NOTE: the real churn culprit is something STOPPING a running
+        // runtime — see the diagnostic in stopMeshRuntime; once that trigger is fixed this never fires
+        // during normal operation.
         requestRuntimeSelfHeal(reason = "bind")
         return binder
     }
@@ -982,6 +1059,12 @@ open class GattMeshForegroundService : Service() {
         persistPendingOutboundQueueSnapshot()
         pendingOutboundQueuePersistJob?.cancel()
         pendingOutboundQueuePersistJob = null
+        pttController?.shutdown()
+        // Safety: never leave the global scan hold stuck on if a call was active at teardown.
+        if (telsizScanHold) {
+            telsizScanHold = false
+            runCatching { BleScanCoordinator.setGlobalHold(false) }
+        }
         stopMeshRuntime(clearError = true)
         serviceScope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -995,18 +1078,89 @@ open class GattMeshForegroundService : Service() {
             return
         }
         ensureNotificationChannel()
-        startForeground(
-            profile.notificationId,
-            GattMeshNotificationFactory.build(
-                context = this,
-                connectedCount = stateFlow.value.connectedPeerCount,
-                notificationChannelId = profile.notificationChannelId,
-                requestCode = GATT_MESH_NOTIFICATION_REQUEST_CODE,
-                sessionCode = chatStore.sessionCode
-            )
-        )
-        foregroundStarted = true
+        startMeshForegroundRobust(buildForegroundNotification())
     }
+
+    private fun buildForegroundNotification(): android.app.Notification =
+        GattMeshNotificationFactory.build(
+            context = this,
+            profile = profile,
+            connectedCount = stateFlow.value.connectedPeerCount,
+            requestCode = GATT_MESH_NOTIFICATION_REQUEST_CODE,
+            sessionCode = chatStore.sessionCode,
+            telsizText = telsizNotificationText(),
+            actions = telsizNotificationActions()
+        )
+
+    /**
+     * The telsiz needs the `microphone` foreground-service type, but the mesh starts foreground long
+     * before any mic use — and possibly from the background — where the microphone type is rejected
+     * with a SecurityException (which used to crash the service on open). So we only request the
+     * microphone type when RECORD_AUDIO is granted, and always fall back to connected-device.
+     */
+    private fun startMeshForegroundRobust(notification: android.app.Notification) {
+        val wantMic = profile.admission is AdmissionPolicy.RequireVerifiedRole && hasRecordAudioPermission()
+        val connectedDeviceType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        val primaryTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (wantMic) {
+                connectedDeviceType or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            } else {
+                connectedDeviceType
+            }
+        } else {
+            0
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(profile.notificationId, notification, primaryTypes)
+            } else {
+                startForeground(profile.notificationId, notification)
+            }
+            foregroundStarted = true
+            return
+        } catch (securityException: SecurityException) {
+            Log.w(TAG, "Mesh startForeground rejected (mic=$wantMic), retrying connectedDevice-only", securityException)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && primaryTypes != connectedDeviceType) {
+                try {
+                    startForeground(profile.notificationId, notification, connectedDeviceType)
+                    foregroundStarted = true
+                    return
+                } catch (fallbackException: Exception) {
+                    Log.w(TAG, "Mesh fallback startForeground failed", fallbackException)
+                }
+            }
+        } catch (startException: Exception) {
+            Log.w(TAG, "Mesh startForeground failed", startException)
+        }
+        // Could not enter the foreground (e.g. started from the background on Android 12+). Stop now
+        // instead of lingering: a started-but-not-foregrounded service is killed by the system with
+        // ForegroundServiceDidNotStartInTimeException.
+        foregroundStarted = false
+        stopSelfSafely()
+    }
+
+    /**
+     * Re-assert the foreground type to include `microphone` once the user has granted mic and joined
+     * the telsiz, so talking keeps working with the screen off. Safe/no-op when not eligible.
+     */
+    private fun refreshForegroundServiceTypeForTelsiz() {
+        if (!foregroundStarted || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        if (profile.admission !is AdmissionPolicy.RequireVerifiedRole || !hasRecordAudioPermission()) return
+        runCatching {
+            startForeground(
+                profile.notificationId,
+                buildForegroundNotification(),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        }.onFailure { Log.w(TAG, "refreshForegroundServiceTypeForTelsiz failed", it) }
+    }
+
+    private fun hasRecordAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
 
     fun sendGroupMessage(
         message: String,
@@ -1310,12 +1464,14 @@ open class GattMeshForegroundService : Service() {
                     publishState()
                     return
                 }
+                val verifiedAgency = resolveVerifiedAgency(verificationResult.proof)
                 val verifiedAtMillis = System.currentTimeMillis()
                 val changed = synchronized(lock) {
                     pendingPeerVerificationNonces.remove(sourceAddress)
                     val previous = peerVerificationByAddress[sourceAddress]
                     val next = PeerVerificationState(
                         role = verifiedRole,
+                        agency = verifiedAgency,
                         verifiedAtMillis = verifiedAtMillis
                     )
                     if (previous == next) {
@@ -1354,10 +1510,18 @@ open class GattMeshForegroundService : Service() {
     }
 
     private fun resolveVerifiedRole(proof: RoleProofPayload): String? {
+        return resolveVerifiedCertificate(proof)?.role
+    }
+
+    private fun resolveVerifiedAgency(proof: RoleProofPayload): String {
+        return resolveVerifiedCertificate(proof)?.agency.orEmpty()
+    }
+
+    private fun resolveVerifiedCertificate(proof: RoleProofPayload): RoleCertificate? {
         val certificateBytes = runCatching {
             Base64.decode(proof.certificate, Base64.NO_WRAP or Base64.NO_PADDING)
         }.getOrNull() ?: return null
-        return RoleCertificate.fromStorageBytes(certificateBytes)?.role
+        return RoleCertificate.fromStorageBytes(certificateBytes)
     }
 
     private fun updateRemoteChatMessageMetadata(
@@ -2573,6 +2737,7 @@ open class GattMeshForegroundService : Service() {
                 // key. Civilian/unprovisioned devices never hold it, so they never broadcast or
                 // join the authority network. The public profile always returns a key here.
                 Log.w(TAG, "[${profile.id}] mesh payload key unavailable; not starting runtime")
+                MeshDiagnostics.log(profile.id, "key-guard: payload key null -> stop")
                 stopSelfSafely()
                 return
             }
@@ -2586,14 +2751,12 @@ open class GattMeshForegroundService : Service() {
             MeshServiceRegistry.setRuntimeActive(profile.id, true)
             registerClassicDiscoveryReceiver()
             if (profile.admission is AdmissionPolicy.RequireVerifiedRole) {
-                if (awareAccelerator == null) {
-                    awareAccelerator = AuthorityMeshAwareAccelerator(
-                        context = this,
-                        groupKeyProvider = { profile.derivePayloadKey(this) },
-                        onBlobReceived = ::handleAcceleratorBlob
+                if (acceleratorCoordinator == null) {
+                    acceleratorCoordinator = MeshAcceleratorCoordinator(
+                        buildAuthorityAccelerators()
                     )
                 }
-                awareAccelerator?.start()
+                acceleratorCoordinator?.start()
             }
             val existingP2pSharedServer = P2pGattServerService.sharedGattServerOrNull()
             if (existingP2pSharedServer != null && attachToP2pGattServer()) {
@@ -2734,6 +2897,12 @@ open class GattMeshForegroundService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun stopMeshRuntime(clearError: Boolean) {
+        // DIAGNOSTIC (on-screen, bypasses Samsung logcat suppression): capture WHO stops a running
+        // runtime — the connect churn is a running runtime being stopped unexpectedly.
+        MeshDiagnostics.log(
+            profile.id,
+            "STOP runtimeActive=$runtimeActive via ${MeshDiagnostics.callerHint()}"
+        )
         val sharedServerDisconnectCandidates = LinkedHashSet<String>()
         BleScanCoordinator.unregister(profile.scanCoordinatorOwner)
 
@@ -2792,6 +2961,7 @@ open class GattMeshForegroundService : Service() {
             discoveredPeerInitiatorRanks.clear()
             inboundRateWindows.clear()
             seenMessageIds.clear()
+            seenPttPacketIds.clear()
             peerSenderLabels.clear()
             peerVerificationByAddress.clear()
             pendingPeerVerificationNonces.clear()
@@ -2852,7 +3022,7 @@ open class GattMeshForegroundService : Service() {
             runCatching { gattServer?.close() }
             gattServer = null
         }
-        awareAccelerator?.stop()
+        acceleratorCoordinator?.stop()
         runtimeActive = false
         MeshServiceRegistry.setRuntimeActive(profile.id, false)
         sosSharedGattServerMode = false
@@ -3500,6 +3670,14 @@ open class GattMeshForegroundService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun startScanLoop() {
+        if (telsizScanHold) {
+            // A telsiz call is in progress — keep the radio dedicated to the audio link instead of
+            // (re)starting discovery scans, which would steal radio time and cause audio dropouts.
+            if (hasBluetoothScanPermission()) {
+                BleScanCoordinator.setPaused(profile.scanCoordinatorOwner, paused = true)
+            }
+            return
+        }
         val localScanner = scanner ?: run {
             publishErrorAndStop(R.string.gatt_mesh_error_bluetooth_unavailable)
             return
@@ -4205,7 +4383,19 @@ open class GattMeshForegroundService : Service() {
                         !hasPendingUserTraffic &&
                         !hasFreshPresence &&
                         Build.VERSION.SDK_INT > Build.VERSION_CODES.O_MR1
-                    shouldUseAutoConnectRecovery || (
+                    // Persistent status-147 (connection-establish) failures on a peer that IS in range:
+                    // direct connectGatt simply won't take for this peripheral (e.g. a flaky low-end
+                    // stack), so switch to a patient background autoConnect even though it's freshly
+                    // seen — the recovery paths above otherwise require the peer to be absent.
+                    val lastFailure = clientFailureBackoff[address]
+                    val persistentEstablishFailure = knownPeer &&
+                        !allowFailureBackoffBypass &&
+                        !hasPendingUserTraffic &&
+                        Build.VERSION.SDK_INT > Build.VERSION_CODES.O_MR1 &&
+                        lastFailure != null &&
+                        lastFailure.status == 147 &&
+                        lastFailure.attempt >= AUTO_CONNECT_RECOVERY_FAILURE_THRESHOLD
+                    shouldUseAutoConnectRecovery || persistentEstablishFailure || (
                         knownPeer &&
                         backoffAttempt > 0 &&
                         !allowFailureBackoffBypass &&
@@ -4502,8 +4692,13 @@ open class GattMeshForegroundService : Service() {
             } else {
                 (previous.attempt + 1).coerceAtMost(MAX_CLIENT_FAILURE_BACKOFF_STEP)
             }
-            val baseDelay = when (status) {
-                147 -> CLIENT_FAILURE_BASE_DELAY_STATUS_147_MS
+            val baseDelay = when {
+                // status 147 (connection-establish failure) typically fails on the first try and
+                // succeeds on the second on flaky peripherals, so retry the FIRST failure quickly;
+                // only back off to the conservative delay once it keeps failing (avoids hammering a
+                // genuinely congested peer).
+                status == 147 && nextAttempt <= 1 -> CLIENT_FAILURE_FIRST_RETRY_STATUS_147_MS
+                status == 147 -> CLIENT_FAILURE_BASE_DELAY_STATUS_147_MS
                 else -> CLIENT_FAILURE_BASE_DELAY_GENERIC_MS
             }
             // Per-peer deterministic jitter prevents both sides retrying in lockstep collisions.
@@ -4850,6 +5045,12 @@ open class GattMeshForegroundService : Service() {
     }
 
     private fun processDecodedPacket(packet: MeshPacket, sourceAddress: String): Boolean {
+        // Telsiz (PTT) frames bypass the chat pipeline (rate budget / timestamp gating would throttle
+        // live audio). handlePttPacket does its own lightweight dedup + hop-limited relay for multi-hop.
+        if (isPttPacketType(packet.type)) {
+            handlePttPacket(packet, sourceAddress)
+            return true
+        }
         if (!isPacketTimestampValid(packet.timestampMillis)) {
             Log.w(
                 TAG,
@@ -4996,6 +5197,9 @@ open class GattMeshForegroundService : Service() {
             MeshPacketType.IMAGE_CHUNK -> handleInboundImageChunk(packet, sourceAddress)
 
             MeshPacketType.IMAGE_DONE -> handleInboundImageDone(packet, sourceAddress)
+
+            // Telsiz packets are handled earlier in processDecodedPacket and never reach here.
+            else -> {}
         }
         if (senderLabelChanged) {
             publishState()
@@ -5015,6 +5219,383 @@ open class GattMeshForegroundService : Service() {
         }
         queueRelayPacket(packet.copy(hop = packet.hop + 1), excludeAddress = sourceAddress)
         return true
+    }
+
+    // ---- Telsiz (push-to-talk) ----
+
+    private fun isPttPacketType(type: MeshPacketType): Boolean = when (type) {
+        MeshPacketType.PTT_JOIN,
+        MeshPacketType.PTT_LEAVE,
+        MeshPacketType.PTT_FLOOR_CLAIM,
+        MeshPacketType.PTT_FLOOR_RELEASE,
+        MeshPacketType.PTT_AUDIO -> true
+        else -> false
+    }
+
+    private fun handlePttPacket(packet: MeshPacket, sourceAddress: String) {
+        val controller = pttController ?: return
+        // Dedup across the mesh so each telsiz packet is processed AND relayed exactly once (prevents
+        // relay loops and duplicate playback when a packet arrives via more than one path).
+        if (!rememberPttPacketId(packet.id, packet.timestampMillis)) return
+        // The origin id (stable, hop-independent) rides in blobId; fall back to the immediate sender.
+        val origin = packet.blobId?.takeIf { it.isNotBlank() } ?: sourceAddress
+        val agency = packet.blobKind?.takeIf { it.isNotBlank() }
+        when (packet.type) {
+            MeshPacketType.PTT_JOIN ->
+                controller.onPeerControl(origin, packet.senderLabel, agency, PttControlKind.JOIN, null)
+            MeshPacketType.PTT_LEAVE ->
+                controller.onPeerControl(origin, packet.senderLabel, agency, PttControlKind.LEAVE, null)
+            MeshPacketType.PTT_FLOOR_CLAIM ->
+                controller.onPeerControl(
+                    origin, packet.senderLabel, agency, PttControlKind.FLOOR_CLAIM, packet.message.toLongOrNull()
+                )
+            MeshPacketType.PTT_FLOOR_RELEASE ->
+                controller.onPeerControl(origin, packet.senderLabel, agency, PttControlKind.FLOOR_RELEASE, null)
+            MeshPacketType.PTT_AUDIO -> {
+                val encoded = packet.blobDataBase64
+                val bundle = encoded?.let { runCatching { Base64.decode(it, Base64.NO_WRAP) }.getOrNull() }
+                if (bundle != null) {
+                    // Split the [u16 length][bytes]… bundle back into per-frame seqs (baseSeq, +1, …).
+                    var off = 0
+                    var seq = packet.blobIndex
+                    while (off + 2 <= bundle.size) {
+                        val len = ((bundle[off].toInt() and 0xFF) shl 8) or (bundle[off + 1].toInt() and 0xFF)
+                        off += 2
+                        if (len <= 0 || off + len > bundle.size) break
+                        controller.onPeerAudio(origin, packet.senderLabel, seq, bundle.copyOfRange(off, off + len))
+                        off += len
+                        seq++
+                    }
+                }
+            }
+            else -> {}
+        }
+        // Multi-hop: forward to this node's OTHER peers (never back to the sender), bounded by hops.
+        if (packet.hop < MAX_PTT_HOPS) {
+            relayPttPacket(packet.copy(hop = packet.hop + 1), excludeAddress = sourceAddress)
+        }
+    }
+
+    /** Returns true if [id] is new (and records it); false if it was already seen. Bounded + ordered. */
+    private fun rememberPttPacketId(id: String, timestampMillis: Long): Boolean {
+        synchronized(lock) {
+            if (seenPttPacketIds.containsKey(id)) return false
+            seenPttPacketIds[id] = timestampMillis
+            while (seenPttPacketIds.size > MAX_TRACKED_PTT_IDS) {
+                val first = seenPttPacketIds.keys.firstOrNull() ?: break
+                seenPttPacketIds.remove(first)
+            }
+            return true
+        }
+    }
+
+    /** Lightweight forward of a telsiz packet to all ready peers except the one it came from. */
+    private fun relayPttPacket(packet: MeshPacket, excludeAddress: String?) {
+        val encoded = runCatching { encodePacket(packet) }.getOrNull() ?: return
+        if (encoded.size > MAX_PACKET_BYTES) return
+        sendPttAudioFast(encoded, excludeAddress)
+    }
+
+    private fun broadcastPttControl(kind: PttControlKind, claimId: Long?) {
+        val type = when (kind) {
+            PttControlKind.JOIN -> MeshPacketType.PTT_JOIN
+            PttControlKind.LEAVE -> MeshPacketType.PTT_LEAVE
+            PttControlKind.FLOOR_CLAIM -> MeshPacketType.PTT_FLOOR_CLAIM
+            PttControlKind.FLOOR_RELEASE -> MeshPacketType.PTT_FLOOR_RELEASE
+        }
+        val packet = MeshPacket(
+            id = newPttPacketId(),
+            senderLabel = localSenderLabel,
+            timestampMillis = System.currentTimeMillis(),
+            message = claimId?.toString() ?: "",
+            type = type,
+            hop = 0,
+            protocol = PACKET_PROTOCOL_VALUE_V5,
+            blobId = localPttOriginId,
+            // Carry our verified kurum so peers can show it next to our name in the participant list.
+            blobKind = localTelsizAgency
+        )
+        // Remember our own id so a relayed copy looping back to us is deduped (not re-relayed).
+        rememberPttPacketId(packet.id, packet.timestampMillis)
+        runCatching { sendOrQueuePacket(packet, queueWhenFailed = false) }
+    }
+
+    private fun broadcastPttAudio(talkTag: String, baseSeq: Int, frames: List<ByteArray>) {
+        if (frames.isEmpty()) return
+        // Pack the bundled Opus frames as [u16 length][bytes]… so the receiver can split them back
+        // into individual per-frame sequence numbers for the jitter buffer.
+        val payload = java.io.ByteArrayOutputStream(frames.sumOf { it.size + 2 })
+        frames.forEach { f ->
+            payload.write((f.size ushr 8) and 0xFF)
+            payload.write(f.size and 0xFF)
+            payload.write(f)
+        }
+        // Short, regex-valid id (>=8 chars): "pa" + per-transmission talkTag + base seq. Unique per
+        // (talk, frame) across the mesh so relays dedup correctly, and small enough to keep the
+        // bundled packet inside one ATT write (a full UUID id would bloat every frame).
+        val frameId = "pa" + talkTag + baseSeq.toString().padStart(6, '0')
+        val packet = MeshPacket(
+            id = frameId,
+            // Audio sender label is cosmetic (the speaker is identified by origin id); trim it so a
+            // bundled (2-frame) packet still fits in one ATT write.
+            senderLabel = localSenderLabel.take(PTT_AUDIO_SENDER_MAX).ifBlank { "telsiz" },
+            timestampMillis = System.currentTimeMillis(),
+            message = "",
+            type = MeshPacketType.PTT_AUDIO,
+            hop = 0,
+            protocol = PACKET_PROTOCOL_VALUE_V5,
+            blobId = localPttOriginId,
+            blobIndex = baseSeq,
+            blobDataBase64 = Base64.encodeToString(payload.toByteArray(), Base64.NO_WRAP)
+        )
+        // Remember our own id so a relayed copy looping back to us is deduped (not re-played/relayed).
+        rememberPttPacketId(packet.id, packet.timestampMillis)
+        val encoded = runCatching { encodePacket(packet) }.getOrNull() ?: return
+        if (encoded.size > MAX_PACKET_BYTES) return
+        sendPttAudioFast(encoded, excludeAddress = null)
+    }
+
+    private fun newPttPacketId(): String = "ptt-${UUID.randomUUID()}"
+
+    /**
+     * Real-time audio fast path. Unlike [sendOrQueuePacket]/[relayPacket] (built for reliable chat
+     * delivery: per-chunk ACK waits, retries, quiet/inter-chunk pacing), each 20 ms frame is written
+     * once, WRITE_NO_RESPONSE, single chunk, no pacing or retry. Frames that don't fit one ATT write
+     * are dropped (the receiver's jitter buffer conceals loss). Requires the boosted MTU negotiated
+     * on telsiz join — see [boostAuthorityLinksForTelsiz].
+     */
+    @SuppressLint("MissingPermission")
+    private fun sendPttAudioFast(encoded: ByteArray, excludeAddress: String?) {
+        if (!hasBluetoothConnectPermission()) return
+
+        // Size chunks against the boosted MTU we requested on telsiz join (PTT_PREFERRED_MTU), not
+        // the per-route cap or a possibly-stale tracked MTU. The connection MTU is symmetric, so once
+        // either side negotiates it up the whole frame fits one ATT op in BOTH directions — but a
+        // legacy peer's server-side onMtuChanged may never fire to update serverPeerMtu, which would
+        // otherwise chunk the notify route into many tiny packets and get the frame dropped below.
+        // excludeAddress is the peer a relayed packet came from (don't echo it straight back).
+        val clientTargets = synchronized(lock) {
+            clientPeers.values
+                .filter {
+                    it.ready && it.connected && it.gatt != null && it.messageIn != null &&
+                        it.address != excludeAddress
+                }
+                .map { it.copy() }
+        }
+        clientTargets.forEach { peer ->
+            val gatt = peer.gatt ?: return@forEach
+            val characteristic = peer.messageIn ?: return@forEach
+            val maxPayload = maxPayloadForMtu(maxOf(peer.mtu, PTT_PREFERRED_MTU))
+            val chunks = prepareOutboundChunks(encoded, maxPayload)?.second ?: return@forEach
+            if (chunks.size != 1) {
+                Log.w(TAG, "ptt audio client frame dropped chunks=${chunks.size} bytes=${encoded.size} mtu=${peer.mtu}")
+                return@forEach
+            }
+            writePttChunkNoResponse(gatt, characteristic, chunks[0])
+        }
+
+        val serverTargets = synchronized(lock) {
+            serverDevices.keys.filter { serverNotifyEnabled[it] == true && it != excludeAddress }
+        }
+        if (serverTargets.isEmpty()) return
+        val server = gattServer ?: return
+        val characteristic = server.getService(profile.serviceUuid)
+            ?.getCharacteristic(profile.messageOutUuid) ?: return
+        serverTargets.forEach { address ->
+            val device = synchronized(lock) { serverDevices[address] } ?: return@forEach
+            val mtu = synchronized(lock) { serverPeerMtu[address] ?: DEFAULT_ATT_MTU }
+            val maxPayload = maxPayloadForMtu(maxOf(mtu, PTT_PREFERRED_MTU))
+            val chunks = prepareOutboundChunks(encoded, maxPayload)?.second ?: return@forEach
+            if (chunks.size != 1) {
+                Log.w(TAG, "ptt audio server frame dropped chunks=${chunks.size} bytes=${encoded.size} mtu=$mtu")
+                return@forEach
+            }
+            notifyPttChunk(server, device, characteristic, chunks[0])
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun writePttChunkNoResponse(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        chunk: ByteArray
+    ): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gattWriteChunkApi33(
+                gatt = gatt,
+                characteristic = characteristic,
+                chunk = chunk,
+                writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            ) == BluetoothStatusCodes.SUCCESS
+        } else {
+            gatt.writeCharacteristicCompat(
+                characteristic = characteristic,
+                value = chunk,
+                writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun notifyPttChunk(
+        server: BluetoothGattServer,
+        device: BluetoothDevice,
+        characteristic: BluetoothGattCharacteristic,
+        chunk: ByteArray
+    ): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            runCatching {
+                server.notifyCharacteristicChanged(device, characteristic, false, chunk) ==
+                    BluetoothStatusCodes.SUCCESS
+            }.getOrDefault(false)
+        } else {
+            @Suppress("DEPRECATION")
+            runCatching {
+                characteristic.value = chunk
+                server.notifyCharacteristicChanged(device, characteristic, false)
+            }.getOrDefault(false)
+        }
+    }
+
+    /**
+     * On telsiz join, push every authority client link to a large MTU (so a whole audio frame is one
+     * ATT write) and a high connection priority (~11–15 ms interval) for real-time latency. Issued
+     * while the link is idle (at join), so it doesn't collide with in-flight chat writes. Restored to
+     * BALANCED on leave to save power.
+     */
+    @SuppressLint("MissingPermission")
+    private fun boostAuthorityLinksForTelsiz() {
+        // Boost the links for the whole session (cheap, set once): large MTU so a frame is one ATT
+        // write, high connection priority for low latency. The scan hold is NOT set here — it's tied
+        // to actual audio activity via setTelsizAudioActive so idle membership doesn't block discovery.
+        if (!hasBluetoothConnectPermission()) return
+        val gatts = synchronized(lock) {
+            clientPeers.values.filter { it.connected }.mapNotNull { it.gatt }
+        }
+        gatts.forEach { gatt ->
+            runCatching { gatt.requestMtu(PTT_PREFERRED_MTU) }
+            runCatching { gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH) }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun restoreAuthorityLinksAfterTelsiz() {
+        // Make sure the scan hold is lifted on leave, then drop the links back to balanced power.
+        setTelsizAudioActive(false)
+        if (!hasBluetoothConnectPermission()) return
+        val gatts = synchronized(lock) {
+            clientPeers.values.filter { it.connected }.mapNotNull { it.gatt }
+        }
+        gatts.forEach { gatt ->
+            runCatching { gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED) }
+        }
+    }
+
+    /**
+     * Pause/resume BLE discovery scanning around an active telsiz transmission. Active scanning
+     * time-shares the radio with the audio connection and causes dropouts, so we hold it only while
+     * someone is actually speaking (driven by [PttController]'s floor transitions) — never for the
+     * whole idle-but-joined session, which would otherwise block peer discovery/reconnect.
+     */
+    @SuppressLint("MissingPermission")
+    private fun setTelsizAudioActive(active: Boolean) {
+        if (telsizScanHold == active) return
+        telsizScanHold = active
+        if (active) {
+            // Free the radio for the audio link: stop discovery scanning AND advertising for the
+            // duration of the transmission (both steal radio time and cause audio dropouts).
+            scanResumeJob?.cancel()
+            scanResumeJob = null
+            runCatching { BleScanCoordinator.setGlobalHold(true) }
+            if (hasBluetoothAdvertisePermission()) {
+                runCatching { advertiser?.stopAdvertising(advertiseCallback) }
+            }
+        } else {
+            runCatching { BleScanCoordinator.setGlobalHold(false) }
+            if (runtimeActive && hasBluetoothScanPermission()) {
+                startScanLoop()
+            }
+            if (runtimeActive && hasBluetoothAdvertisePermission()) {
+                runCatching { startAdvertising() }
+            }
+        }
+    }
+
+    fun joinTelsiz() {
+        refreshForegroundServiceTypeForTelsiz()
+        boostAuthorityLinksForTelsiz()
+        pttController?.join()
+    }
+
+    fun leaveTelsiz() {
+        pttController?.leave()
+        restoreAuthorityLinksAfterTelsiz()
+    }
+
+    fun pttPressTalk() {
+        pttController?.pressTalk()
+    }
+
+    fun pttReleaseTalk() {
+        pttController?.releaseTalk()
+    }
+
+    /** Toggle-style talk for the notification button (tap to start, tap again to stop). */
+    fun pttToggleTalk() {
+        val controller = pttController ?: return
+        if (controller.state.value.floor == PttFloorState.LOCAL_SPEAKING) {
+            controller.releaseTalk()
+        } else {
+            controller.pressTalk()
+        }
+    }
+
+    // ---- Telsiz notification decorations (shown on the FGS notification while a call is active) ----
+
+    private fun telsizNotificationText(): String? {
+        val state = pttController?.state?.value ?: return null
+        if (!state.joined) return null
+        return when (state.floor) {
+            PttFloorState.LOCAL_SPEAKING -> getString(R.string.telsiz_notif_speaking)
+            PttFloorState.REMOTE_SPEAKING ->
+                getString(R.string.telsiz_notif_remote, state.speakerName?.takeIf { it.isNotBlank() } ?: "—")
+            PttFloorState.IDLE -> getString(R.string.telsiz_notif_idle, state.participantCount)
+        }
+    }
+
+    private fun telsizNotificationActions(): List<NotificationCompat.Action> {
+        val state = pttController?.state?.value ?: return emptyList()
+        if (!state.joined) return emptyList()
+        val toggleLabel = if (state.floor == PttFloorState.LOCAL_SPEAKING) {
+            getString(R.string.telsiz_notif_stop)
+        } else {
+            getString(R.string.telsiz_notif_talk)
+        }
+        return listOf(
+            NotificationCompat.Action(0, toggleLabel, pendingTelsizServiceAction(ACTION_PTT_TOGGLE, PTT_TOGGLE_REQUEST_CODE)),
+            NotificationCompat.Action(0, getString(R.string.telsiz_notif_leave), pendingTelsizServiceAction(ACTION_PTT_LEAVE, PTT_LEAVE_REQUEST_CODE))
+        )
+    }
+
+    private fun pendingTelsizServiceAction(action: String, requestCode: Int): android.app.PendingIntent {
+        val intent = Intent(this, this.javaClass).setAction(action)
+        return android.app.PendingIntent.getService(
+            this,
+            requestCode,
+            intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /** Refresh the FGS notification whenever the telsiz session/floor changes (action labels, body). */
+    private fun observeTelsizForNotification() {
+        val controller = pttController ?: return
+        serviceScope.launch {
+            controller.state
+                .map { "${it.joined}|${it.floor}|${it.speakerName}|${it.participantCount}" }
+                .distinctUntilChanged()
+                .collect { refreshForegroundNotification() }
+        }
     }
 
     private fun observeGattMeshNotificationSettings() {
@@ -5046,9 +5627,35 @@ open class GattMeshForegroundService : Service() {
         BleMessageNotifier.notifyIncoming(
             context = applicationContext,
             sessionCode = chatStore.sessionCode,
-            contactName = getString(R.string.mesh_chat_general_title),
-            body = notificationBody
+            contactName = getString(profile.chatTitleRes),
+            body = notificationBody,
+            contentIntent = buildIncomingMessageContentIntent()
         )
+    }
+
+    /**
+     * Deep-link a tapped authority-mesh message notification to the authority chat (RescueActivity →
+     * mesh_chat) instead of MainActivity's conversation view. Built by class name so the app module
+     * doesn't depend on the feature_rescue Activity. Null on the public mesh (default MainActivity).
+     */
+    private fun buildIncomingMessageContentIntent(): android.app.PendingIntent? {
+        if (profile.id != MeshProfiles.AUTHORITY.id) {
+            return null
+        }
+        val intent = android.content.Intent()
+            .setClassName(packageName, RescueFeatureManager.RESCUE_ACTIVITY_CLASS_NAME)
+            .apply {
+                putExtra(
+                    RescueFeatureManager.EXTRA_START_DESTINATION,
+                    RescueFeatureManager.START_DESTINATION_MESH_CHAT
+                )
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+        val flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) android.app.PendingIntent.FLAG_IMMUTABLE else 0
+        return runCatching {
+            android.app.PendingIntent.getActivity(this, profile.notificationId, intent, flags)
+        }.getOrNull()
     }
 
     private fun persistRemoteChatPacket(
@@ -5191,7 +5798,7 @@ open class GattMeshForegroundService : Service() {
         saveContact(
             applicationContext,
             Contact(
-                name = getString(R.string.mesh_chat_general_title),
+                name = getString(profile.chatTitleRes),
                 aesKey = "",
                 sessionCode = chatStore.sessionCode,
                 address = ""
@@ -6331,9 +6938,10 @@ open class GattMeshForegroundService : Service() {
             blobWidth = prepared.width,
             blobHeight = prepared.height
         )
-        // Fast lane: also push the whole blob over Wi-Fi Aware when peers support it; receivers
-        // dedupe by blob id, so the BLE copy below stays the universal baseline.
-        awareAccelerator?.offerBlob(encodePacket(initPacket), cipher)
+        // Fast lane: also push the whole blob over any available Wi-Fi accelerator (Aware/Direct)
+        // when peers support it; receivers dedupe by blob id, so the BLE copy below stays the
+        // universal baseline.
+        acceleratorCoordinator?.offerBlob(encodePacket(initPacket), cipher)
         if (sendOrQueuePacket(initPacket, queueWhenFailed = false) == DispatchOutcome.FAILED) {
             finalizeOutboundImageBlob(blobId, prepared, success = false)
             return
@@ -6487,9 +7095,10 @@ open class GattMeshForegroundService : Service() {
             blobKind = BLOB_KIND_VOICE,
             blobDurationMillis = safeDuration
         )
-        // Fast lane: also push the whole blob over Wi-Fi Aware when peers support it; receivers
-        // dedupe by blob id, so the BLE copy below stays the universal baseline.
-        awareAccelerator?.offerBlob(encodePacket(initPacket), cipher)
+        // Fast lane: also push the whole blob over any available Wi-Fi accelerator (Aware/Direct)
+        // when peers support it; receivers dedupe by blob id, so the BLE copy below stays the
+        // universal baseline.
+        acceleratorCoordinator?.offerBlob(encodePacket(initPacket), cipher)
         if (sendOrQueuePacket(initPacket, queueWhenFailed = false) == DispatchOutcome.FAILED) {
             finalizeOutboundVoiceBlob(blobId, voiceFileName, safeDuration, success = false)
             return
@@ -6645,6 +7254,29 @@ open class GattMeshForegroundService : Service() {
         if (completedState != null) {
             assembleInboundImageBlob(blobId, completedState)
         }
+    }
+
+    /**
+     * Builds the ordered set of optional Wi-Fi fast lanes for the authority mesh. BLE GATT stays the
+     * universal baseline outside this list. Aware is listed first (coexists with internet, faster
+     * setup); the coordinator applies any lane selection/mutual-exclusion policy on top.
+     */
+    private fun buildAuthorityAccelerators(): List<MeshAccelerator> {
+        val groupKeyProvider = { profile.derivePayloadKey(this) }
+        return listOf(
+            // Aware first (coexists with internet, faster setup). Wi-Fi Direct is the broad-coverage
+            // fallback that self-disables when Aware is usable, so the two never run at once.
+            AuthorityMeshAwareAccelerator(
+                context = this,
+                groupKeyProvider = groupKeyProvider,
+                onBlobReceived = ::handleAcceleratorBlob
+            ),
+            WifiDirectAccelerator(
+                context = this,
+                groupKeyProvider = groupKeyProvider,
+                onBlobReceived = ::handleAcceleratorBlob
+            )
+        )
     }
 
     private fun handleAcceleratorBlob(initPacketPayload: ByteArray, cipher: ByteArray) {
@@ -7080,6 +7712,49 @@ open class GattMeshForegroundService : Service() {
                         blobId = blobId
                     )
                 }
+
+                MeshPacketType.PTT_AUDIO -> {
+                    if (protocol != PACKET_PROTOCOL_VALUE_V5) {
+                        return null
+                    }
+                    val seq = json.optInt(PACKET_FIELD_BLOB_INDEX, -1)
+                    val dataBase64 = json.optString(PACKET_FIELD_BLOB_DATA).trim()
+                    if (seq < 0 || dataBase64.isEmpty() || dataBase64.length > MAX_ENCRYPTED_FIELD_LENGTH) {
+                        return null
+                    }
+                    MeshPacket(
+                        id = id,
+                        senderLabel = sender,
+                        timestampMillis = timestamp,
+                        message = "",
+                        type = MeshPacketType.PTT_AUDIO,
+                        hop = hop,
+                        protocol = protocol,
+                        blobId = json.optString(PACKET_FIELD_BLOB_ID).trim().take(32).takeIf { it.isNotEmpty() },
+                        blobIndex = seq,
+                        blobDataBase64 = dataBase64
+                    )
+                }
+
+                MeshPacketType.PTT_JOIN,
+                MeshPacketType.PTT_LEAVE,
+                MeshPacketType.PTT_FLOOR_CLAIM,
+                MeshPacketType.PTT_FLOOR_RELEASE -> {
+                    if (protocol != PACKET_PROTOCOL_VALUE_V5) {
+                        return null
+                    }
+                    MeshPacket(
+                        id = id,
+                        senderLabel = sender,
+                        timestampMillis = timestamp,
+                        message = json.optString(PACKET_FIELD_MESSAGE).trim().take(32),
+                        type = packetType,
+                        hop = hop,
+                        protocol = protocol,
+                        blobId = json.optString(PACKET_FIELD_BLOB_ID).trim().take(32).takeIf { it.isNotEmpty() },
+                        blobKind = json.optString(PACKET_FIELD_BLOB_KIND).trim().take(48).takeIf { it.isNotEmpty() }
+                    )
+                }
             }
         }.getOrNull()
     }
@@ -7163,6 +7838,26 @@ open class GattMeshForegroundService : Service() {
                 MeshPacketType.IMAGE_DONE -> {
                     put(PACKET_FIELD_MESSAGE, packet.message)
                     put(PACKET_FIELD_BLOB_ID, packet.blobId)
+                }
+
+                MeshPacketType.PTT_AUDIO -> {
+                    // Opus frame bytes in BLOB_DATA, sequence number in BLOB_INDEX, stable origin id
+                    // in BLOB_ID (so multi-hop relays identify the speaker independent of the hop).
+                    put(PACKET_FIELD_BLOB_INDEX, packet.blobIndex)
+                    put(PACKET_FIELD_BLOB_DATA, packet.blobDataBase64)
+                    packet.blobId?.let { put(PACKET_FIELD_BLOB_ID, it) }
+                }
+
+                MeshPacketType.PTT_JOIN,
+                MeshPacketType.PTT_LEAVE,
+                MeshPacketType.PTT_FLOOR_CLAIM,
+                MeshPacketType.PTT_FLOOR_RELEASE -> {
+                    // Control payload (e.g. floor-claim id) rides in MESSAGE; empty is allowed.
+                    // Stable origin id in BLOB_ID for hop-independent presence/floor identity;
+                    // verified kurum in BLOB_KIND for the participant list.
+                    put(PACKET_FIELD_MESSAGE, packet.message)
+                    packet.blobId?.let { put(PACKET_FIELD_BLOB_ID, it) }
+                    packet.blobKind?.let { put(PACKET_FIELD_BLOB_KIND, it) }
                 }
             }
         }
@@ -7285,6 +7980,21 @@ open class GattMeshForegroundService : Service() {
 
             rawType.equals(MeshPacketType.IMAGE_DONE.wireValue, ignoreCase = true) &&
                 protocol == PACKET_PROTOCOL_VALUE_V5 -> MeshPacketType.IMAGE_DONE
+
+            protocol == PACKET_PROTOCOL_VALUE_V5 &&
+                rawType.equals(MeshPacketType.PTT_JOIN.wireValue, ignoreCase = true) -> MeshPacketType.PTT_JOIN
+
+            protocol == PACKET_PROTOCOL_VALUE_V5 &&
+                rawType.equals(MeshPacketType.PTT_LEAVE.wireValue, ignoreCase = true) -> MeshPacketType.PTT_LEAVE
+
+            protocol == PACKET_PROTOCOL_VALUE_V5 &&
+                rawType.equals(MeshPacketType.PTT_FLOOR_CLAIM.wireValue, ignoreCase = true) -> MeshPacketType.PTT_FLOOR_CLAIM
+
+            protocol == PACKET_PROTOCOL_VALUE_V5 &&
+                rawType.equals(MeshPacketType.PTT_FLOOR_RELEASE.wireValue, ignoreCase = true) -> MeshPacketType.PTT_FLOOR_RELEASE
+
+            protocol == PACKET_PROTOCOL_VALUE_V5 &&
+                rawType.equals(MeshPacketType.PTT_AUDIO.wireValue, ignoreCase = true) -> MeshPacketType.PTT_AUDIO
 
             else -> MeshPacketType.CHAT
         }
@@ -7812,6 +8522,7 @@ open class GattMeshForegroundService : Service() {
                         GattMeshPeerVerificationStatus.UNVERIFIED
                     },
                     verifiedRole = verification?.role,
+                    verifiedAgency = verification?.agency,
                     verifiedAtMillis = verification?.verifiedAtMillis
                 )
             }
@@ -7842,6 +8553,10 @@ open class GattMeshForegroundService : Service() {
                 TAG,
                 "State updated: connected=$connectedCount ready=$sendReadyCount discovered=$discoveredCount active=$runtimeActive"
             )
+            MeshDiagnostics.log(
+                profile.id,
+                "state connected=$connectedCount ready=$sendReadyCount discovered=$discoveredCount active=$runtimeActive"
+            )
         }
 
         stateFlow.update {
@@ -7854,6 +8569,9 @@ open class GattMeshForegroundService : Service() {
                 connectedPeers = snapshot.connectedPeers,
             )
         }
+        // Keep the telsiz participant list in sync with mesh connectivity (covers every disconnect
+        // path through this single chokepoint): a peer that drops mid-talk releases the floor here.
+        pttController?.reconcileConnectedPeers(snapshot.connectedPeers.map { it.address }.toSet())
         if (
             connectedCount != lastNotifiedConnectedCount ||
             sendReadyCount != lastNotifiedReadyCount ||
@@ -7966,6 +8684,7 @@ open class GattMeshForegroundService : Service() {
                 return@launch
             }
             Log.w(TAG, "Self-healing gatt mesh runtime reason=$reason")
+            MeshDiagnostics.log(profile.id, "self-heal reason=$reason")
             startMeshRuntime()
         }
     }
@@ -8092,18 +8811,30 @@ open class GattMeshForegroundService : Service() {
             profile.notificationId,
             GattMeshNotificationFactory.build(
                 context = this,
+                profile = profile,
                 connectedCount = connectedCount,
-                notificationChannelId = profile.notificationChannelId,
                 requestCode = GATT_MESH_NOTIFICATION_REQUEST_CODE,
-                sessionCode = chatStore.sessionCode
+                sessionCode = chatStore.sessionCode,
+                telsizText = telsizNotificationText(),
+                actions = telsizNotificationActions()
             )
+        )
+    }
+
+    /** Re-render the foreground notification from current state (used when telsiz state changes). */
+    private fun refreshForegroundNotification() {
+        if (!runtimeActive || !foregroundStarted) return
+        updateForegroundNotification(
+            connectedCount = stateFlow.value.connectedPeerCount,
+            sendReadyCount = 0,
+            discoveredCount = 0
         )
     }
 
     private fun ensureNotificationChannel() {
         GattMeshNotificationFactory.ensureChannel(
             context = this,
-            notificationChannelId = profile.notificationChannelId
+            profile = profile
         )
     }
 
@@ -8138,6 +8869,7 @@ open class GattMeshForegroundService : Service() {
                 return
             }
             Log.w(TAG, "Gatt mesh advertising failed code=$errorCode")
+            MeshDiagnostics.log(profile.id, "advertise FAILED code=$errorCode -> stop")
             publishErrorAndStop(R.string.gatt_mesh_error_advertise_failed)
         }
     }
@@ -8189,6 +8921,12 @@ open class GattMeshForegroundService : Service() {
         private const val ACTION_START = "com.auralis.crisisconnect.action.gattmesh.START"
         private const val ACTION_STOP = "com.auralis.crisisconnect.action.gattmesh.STOP"
         private const val ACTION_RECONCILE_SOS_MODE = "com.auralis.crisisconnect.action.gattmesh.RECONCILE_SOS_MODE"
+        // Telsiz notification controls (toggle talk / leave) so the user can operate it from the lock
+        // screen with the app screen off.
+        private const val ACTION_PTT_TOGGLE = "com.auralis.crisisconnect.action.gattmesh.PTT_TOGGLE"
+        private const val ACTION_PTT_LEAVE = "com.auralis.crisisconnect.action.gattmesh.PTT_LEAVE"
+        private const val PTT_TOGGLE_REQUEST_CODE = 7201
+        private const val PTT_LEAVE_REQUEST_CODE = 7202
 
         private const val GATT_MESH_NOTIFICATION_REQUEST_CODE = 3056
 
@@ -8229,6 +8967,14 @@ open class GattMeshForegroundService : Service() {
         private const val DEFAULT_ATT_MTU = 23
         private const val DESIRED_MTU = 517
         private const val ATT_WRITE_OVERHEAD_BYTES = 3
+        // Telsiz: request a large MTU on join so a whole Opus frame is a single ATT write.
+        private const val PTT_PREFERRED_MTU = 247
+        // Cap the (cosmetic) sender label on bundled audio packets so 2 frames still fit one ATT write.
+        private const val PTT_AUDIO_SENDER_MAX = 16
+        // Multi-hop telsiz: max relay hops for audio/control, and the dedup window size (≈40 s of
+        // audio at 25 packets/s — ample to suppress relay loops and duplicate playback).
+        private const val MAX_PTT_HOPS = 3
+        private const val MAX_TRACKED_PTT_IDS = 1024
         private const val MAX_TRACKED_MESSAGE_IDS = 4096
         private const val MAX_MESSAGE_ID_LENGTH = 128
         private const val MAX_SENDER_LABEL_LENGTH = 48
@@ -8282,6 +9028,8 @@ open class GattMeshForegroundService : Service() {
         private const val SHARED_GATT_ATTACH_MAX_ATTEMPTS = 8
         private const val CLIENT_FAILURE_BASE_DELAY_GENERIC_MS = 3_000L
         private const val CLIENT_FAILURE_BASE_DELAY_STATUS_147_MS = 8_000L
+        // First retry after a status-147 failure is quick (most flaky peripherals connect on attempt 2).
+        private const val CLIENT_FAILURE_FIRST_RETRY_STATUS_147_MS = 3_000L
         private const val CLIENT_FAILURE_MAX_DELAY_MS = 60_000L
         // Keep jitter non-zero so peers do not reconnect in synchronized loops.
         private const val CLIENT_FAILURE_GENERIC_JITTER_MS = 900L

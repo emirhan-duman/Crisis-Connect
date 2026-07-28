@@ -22,7 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -43,8 +43,8 @@ import com.auralis.crisisconnect.screens.generateQrBitmap
 @Composable
 fun ChatSessionCodeScreen(navController: NavController, sessionCode: String) {
     val viewModel: ChatScreenViewModel = viewModel()
-    val contactName by viewModel.contactName.collectAsState()
-    val storedAesKey by viewModel.sessionAesKey.collectAsState()
+    val contactName by viewModel.contactName.collectAsStateWithLifecycle()
+    val storedAesKey by viewModel.sessionAesKey.collectAsStateWithLifecycle()
 
     LaunchedEffect(sessionCode) {
         viewModel.initialize(sessionCode)

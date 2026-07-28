@@ -7,12 +7,14 @@ import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.data.observeHasBleContacts
+import com.auralis.crisisconnect.messaging.PresenceReporter
 import com.auralis.crisisconnect.service.gattmesh.GattMeshForegroundService
 import com.auralis.crisisconnect.settingsDataStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import android.util.Log
@@ -26,6 +28,7 @@ class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(app
     }
 
     data class AdvancedSettingsUiState(
+        val shareLastSeenEnabled: Boolean = true,
         val publicMeshEnabled: Boolean = false,
         val gattMeshNotificationsEnabled: Boolean = true,
         val highRangeModeEnabled: Boolean = false,
@@ -50,10 +53,13 @@ class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(app
             }
         }
         viewModelScope.launch(exceptionHandler) {
-            appContext.settingsDataStore.data.collect { prefs ->
-                val isBleForced = bleContactsPresent.value
+            combine(
+                appContext.settingsDataStore.data,
+                bleContactsPresent
+            ) { prefs, isBleForced ->
                 val highRangeModeEnabled = (prefs[HIGH_RANGE_MODE_ENABLED] ?: false) || isBleForced
-                _uiState.value = AdvancedSettingsUiState(
+                AdvancedSettingsUiState(
+                    shareLastSeenEnabled = prefs[PresenceReporter.SHARE_LAST_SEEN_KEY] ?: true,
                     publicMeshEnabled = prefs[PUBLIC_MESH_ENABLED] ?: false,
                     gattMeshNotificationsEnabled = prefs[GATT_MESH_NOTIFICATIONS_ENABLED] ?: true,
                     highRangeModeEnabled = highRangeModeEnabled,
@@ -64,7 +70,19 @@ class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(app
                     experimentalFeaturesEnabled = prefs[EXPERIMENTAL_FEATURES_ENABLED] ?: false,
                     isLoaded = true
                 )
+            }.collect { state ->
+                _uiState.value = state
             }
+        }
+    }
+
+    fun setShareLastSeenEnabled(enabled: Boolean) {
+        viewModelScope.launch(exceptionHandler) {
+            appContext.settingsDataStore.edit { prefs ->
+                prefs[PresenceReporter.SHARE_LAST_SEEN_KEY] = enabled
+            }
+            // Apply immediately: ON stamps presence now, OFF deletes the doc entirely.
+            PresenceReporter.onSharingPreferenceChanged(appContext, enabled)
         }
     }
 

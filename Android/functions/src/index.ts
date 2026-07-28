@@ -11,3 +11,18 @@ export {
   getCrisisSentinelModelDownloadUrl,
   getCrisisSentinelModelManifest,
 } from "./crisisSentinel/modelManifest";
+export { publishIdentityKey, lookupIdentityKey } from "./messaging/identityKeys";
+export { findContactsOnCrisisConnect } from "./messaging/contactDiscovery";
+export { registerPushToken, unregisterPushToken } from "./messaging/pushTokens";
+export { relayMessage } from "./messaging/relay";
+export { onMessageCreated } from "./messaging/onMessageCreated";
+export { onAgencyMessageCreated, onHierarchyMessageCreated } from "./messaging/onChannelMessageCreated";
+export { acknowledgeMessage } from "./messaging/messageAck";
+export { purgeExpiredMessages } from "./messaging/purgeExpiredMessages";
+export { issueAgencyMessagingKey } from "./messaging/agencyKey";
+export { listAuthorityRoster } from "./messaging/authorityRoster";
+export { turnCredentials } from "./messaging/turnCredentials";
+export { requestPhoneOtp, verifyPhoneOtp, twilioSpendAlert } from "./messaging/phoneOtp";
+export { otpConversionAlarm } from "./messaging/otpConversionAlarm";
+export { publishSignalPreKeys, checkSignalPreKeys, fetchSignalPreKeyBundle } from "./messaging/signalPreKeys";
+export { reportSosSignal } from "./sos/reportSignal";

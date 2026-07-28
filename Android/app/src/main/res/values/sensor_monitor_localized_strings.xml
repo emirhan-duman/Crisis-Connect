@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="en">
-    <string name="sensor_monitor_dashboard_title">Disaster Sensor Dashboard</string>
+    <string name="sensor_monitor_dashboard_title">Sensor Dashboard</string>
     <string name="sensor_monitor_dashboard_subtitle">Track environmental shifts in real time to identify risk faster.</string>
     <string name="sensor_monitor_dashboard_status_active_title">Live monitoring active</string>
     <string name="sensor_monitor_dashboard_status_paused_title">Monitoring paused</string>

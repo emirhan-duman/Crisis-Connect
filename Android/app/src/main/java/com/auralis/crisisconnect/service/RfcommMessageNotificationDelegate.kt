@@ -214,6 +214,8 @@ internal class RfcommMessageNotificationDelegate(
 
             MessageType.AUDIO -> localizedContext.getString(R.string.notification_voice_message_body)
             MessageType.IMAGE -> localizedContext.getString(R.string.notification_photo_message_body)
+            MessageType.SOS_ALERT ->
+                visibleBody ?: localizedContext.getString(R.string.conversation_preview_sos)
         }
     }
 

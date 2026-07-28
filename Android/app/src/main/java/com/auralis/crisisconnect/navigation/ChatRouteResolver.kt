@@ -2,10 +2,12 @@ package com.auralis.crisisconnect.navigation
 
 import android.content.Context
 import android.net.Uri
+import com.auralis.crisisconnect.data.AppDatabase
 import com.auralis.crisisconnect.data.getContact
 import com.auralis.crisisconnect.data.normalizePreferredTransport
 import com.auralis.crisisconnect.data.PREFERRED_TRANSPORT_BLE_GATT
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 internal fun buildConversationRoute(
@@ -42,16 +44,32 @@ internal suspend fun resolveConversationRoute(
     sessionCode: String,
     preferredDisplayName: String? = null
 ): String {
-    val preferredTransport = if (sessionCode.startsWith("ble:", ignoreCase = true)) {
-        withContext(Dispatchers.IO) {
-            getContact(context, sessionCode)?.preferredTransport
+    val contact = withContext(Dispatchers.IO) {
+        runCatching { getContact(context, sessionCode) }.getOrNull()
+    }
+    // A hidden authority-bridge contact has no citizen chat of its own — its conversation IS the
+    // kurum channel thread. A Bluetooth message notification must land there, not on the citizen
+    // ChatScreen of a contact the home list deliberately hides.
+    if (contact?.isAuthorityBridge == true && contact.peerUid.isNotBlank()) {
+        val conversation = withContext(Dispatchers.IO) {
+            runCatching {
+                AppDatabase.getInstance(context).authorityMessageDao()
+                    .observeConversations().first()
+                    .filter { it.peerUid == contact.peerUid }
+                    .maxByOrNull { it.lastAtMillis }
+            }.getOrNull()
         }
-    } else {
-        null
+        if (conversation != null) {
+            return "authority_channel/${Uri.encode(conversation.channelId)}/" +
+                "${Uri.encode(conversation.peerUid)}" +
+                "?title=${Uri.encode(conversation.peerName)}" +
+                "&agency=${Uri.encode(conversation.peerPanelName)}" +
+                "&role=${Uri.encode(conversation.peerRole)}"
+        }
     }
     return buildConversationRoute(
         sessionCode = sessionCode,
         preferredDisplayName = preferredDisplayName,
-        preferredTransport = preferredTransport
+        preferredTransport = contact?.preferredTransport
     )
 }

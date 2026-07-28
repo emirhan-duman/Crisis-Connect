@@ -196,7 +196,12 @@ export async function decodeAndVerifyIntegrity(
   ) {
     throw new IntegrityVerificationError(
       "app-not-play-recognized",
-      `appRecognitionVerdict=${decoded.appRecognitionVerdict}`
+      `appRecognitionVerdict=${decoded.appRecognitionVerdict}`,
+      `appRecognitionVerdict=${decoded.appRecognitionVerdict} ` +
+        `appLicensingVerdict=${decoded.licensingVerdict ?? "n/a"} ` +
+        `appPackage=${decoded.packageName} appVersion=${decoded.appVersion ?? "n/a"} ` +
+        `certDigests=[${decoded.certificateSha256Digests.join(",")}] ` +
+        `deviceVerdicts=[${decoded.deviceRecognitionVerdict.join(",")}]`
     );
   }
 

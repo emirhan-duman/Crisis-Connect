@@ -19,6 +19,11 @@ import com.auralis.crisisconnect.saveThemeOption
 import com.auralis.crisisconnect.saveUserName
 import com.auralis.crisisconnect.setLocale
 import com.auralis.crisisconnect.setScreenshotDemoMode
+import com.auralis.crisisconnect.data.Contact
+import com.auralis.crisisconnect.messaging.InternetChatTransport
+import com.auralis.crisisconnect.messaging.MessagingBootstrap
+import com.auralis.crisisconnect.security.ChildPinResult
+import com.auralis.crisisconnect.security.ChildProfileManager
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.launch
@@ -45,7 +50,34 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     var screenshotDemoMode by mutableStateOf(false)
         private set
 
+    var childProfileEnabled by mutableStateOf(false)
+        private set
+
+    /** Session codes of the CONFIRMED parents (the contact approved the request). */
+    var childParents by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    /** Session codes with a parent request sent but not yet answered. */
+    var childPendingParents by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    /** Session codes of the children this device is a parent of (accepted their request). */
+    var childProfileChildren by mutableStateOf<Set<String>>(emptySet())
+        private set
+
     init {
+        viewModelScope.launch(exceptionHandler) {
+            ChildProfileManager.enabledFlow(appContext).collect { childProfileEnabled = it }
+        }
+        viewModelScope.launch(exceptionHandler) {
+            ChildProfileManager.parentsFlow(appContext).collect { childParents = it }
+        }
+        viewModelScope.launch(exceptionHandler) {
+            ChildProfileManager.pendingParentsFlow(appContext).collect { childPendingParents = it }
+        }
+        viewModelScope.launch(exceptionHandler) {
+            ChildProfileManager.childrenFlow(appContext).collect { childProfileChildren = it }
+        }
         viewModelScope.launch(exceptionHandler) {
             getSavedLanguage(appContext).collect { selectedCode = it }
         }
@@ -66,7 +98,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(exceptionHandler) {
             selectedCode = code
             saveLanguage(appContext, code)
-            setLocale(context, code)
+            setLocale(context, code, syncToSystem = true)
         }
     }
 
@@ -82,6 +114,69 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             themeOption = option
             saveThemeOption(appContext, option)
             onApplied()
+        }
+    }
+
+    fun enableChildProfile(pin: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch(exceptionHandler) {
+            val enabled = ChildProfileManager.enable(appContext, pin)
+            onResult(enabled)
+            if (enabled) republishDirectoryEntry()
+        }
+    }
+
+    fun disableChildProfile(pin: String, onResult: (ChildPinResult) -> Unit) {
+        viewModelScope.launch(exceptionHandler) {
+            val result = ChildProfileManager.disable(appContext, pin)
+            onResult(result)
+            if (result is ChildPinResult.Success) republishDirectoryEntry()
+        }
+    }
+
+    fun verifyChildPin(pin: String, onResult: (ChildPinResult) -> Unit) {
+        viewModelScope.launch(exceptionHandler) {
+            onResult(ChildProfileManager.verifyPin(appContext, pin))
+        }
+    }
+
+    /**
+     * Sends a parent request to [contact] and tracks it as pending. The contact becomes a
+     * confirmed parent only after accepting on their own device (template 207 → confirmParent).
+     * On send failure the pending entry is rolled back and [onResult] gets false.
+     */
+    fun requestChildParent(contact: Contact, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch(exceptionHandler) {
+            ChildProfileManager.addPendingParent(appContext, contact.sessionCode)
+            val sent = runCatching {
+                InternetChatTransport(appContext).sendParentRequest(contact)
+            }.getOrDefault(false)
+            if (!sent) {
+                ChildProfileManager.removePendingParent(appContext, contact.sessionCode)
+            }
+            onResult(sent)
+        }
+    }
+
+    /** Removes [sessionCode] from the confirmed parents and any pending request. */
+    fun removeChildParent(sessionCode: String) {
+        viewModelScope.launch(exceptionHandler) {
+            ChildProfileManager.removeParent(appContext, sessionCode)
+            ChildProfileManager.removePendingParent(appContext, sessionCode)
+        }
+    }
+
+    /** Removes a child from this parent device's "my children" list. */
+    fun removeChildProfileChild(sessionCode: String) {
+        viewModelScope.launch(exceptionHandler) {
+            ChildProfileManager.removeChild(appContext, sessionCode)
+        }
+    }
+
+    /** Pushes the changed child-profile flag to the messaging directory (best effort). */
+    private fun republishDirectoryEntry() {
+        viewModelScope.launch(exceptionHandler) {
+            runCatching { MessagingBootstrap.republishIdentity(appContext) }
+                .onFailure { Log.w(TAG, "Failed to republish directory entry", it) }
         }
     }
 

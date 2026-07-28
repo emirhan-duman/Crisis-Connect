@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:locale="hi">
-    <string name="sensor_monitor_dashboard_title">आपदा सेंसर डैशबोर्ड</string>
+    <string name="sensor_monitor_dashboard_title">सेंसर डैशबोर्ड</string>
     <string name="sensor_monitor_dashboard_subtitle">जोखिम जल्दी पहचानने के लिए वास्तविक समय में पर्यावरणीय बदलाव ट्रैक करें।</string>
     <string name="sensor_monitor_dashboard_status_active_title">लाइव निगरानी सक्रिय</string>
     <string name="sensor_monitor_dashboard_status_paused_title">निगरानी रोकी गई</string>

@@ -334,6 +334,15 @@ private suspend fun readBootstrapFromDevice(
     if (!hasBleConnectPermission(context)) {
         return null
     }
+    // Our internet-messaging identity, carried (separately authenticated) in the client-hello so
+    // the QR-displaying peer can reach us online too — the reverse of what their QR already gave
+    // us. Null when not registered; then we pair BLE-only exactly as before.
+    val localPeerUid = com.google.firebase.auth.FirebaseAuth.getInstance()
+        .currentUser?.uid?.trim()?.takeIf { it.isNotBlank() }
+    val localPeerPublicKey = runCatching {
+        com.auralis.crisisconnect.messaging.MessagingIdentity(context).publicKeyBase64()
+    }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+    val hasInternetIdentity = localPeerUid != null && localPeerPublicKey != null
     return withTimeoutOrNull(P2P_BOOTSTRAP_TIMEOUT_MS) {
         suspendCancellableCoroutine { continuation ->
             val completed = AtomicBoolean(false)
@@ -417,15 +426,30 @@ private suspend fun readBootstrapFromDevice(
 
             data class ClientHelloOptions(
                 val includeName: Boolean,
-                val includeAvatar: Boolean
+                val includeAvatar: Boolean,
+                val includeIdentity: Boolean = false
             )
 
             fun buildClientHelloPayload(payload: P2pBootstrapPayload): ByteArray? {
                 val maxControlPayloadBytes = (negotiatedMtu - 3).coerceAtLeast(20)
+                // Ordered from richest to leanest: name+avatar+identity down to bare. The internet
+                // identity outranks name/avatar (it's what enables the online fallback), so it's the
+                // last thing dropped before the no-identity last resort.
                 val options = linkedSetOf(
                     ClientHelloOptions(
                         includeName = localUserName.isNotBlank(),
-                        includeAvatar = !localAvatarBase64.isNullOrBlank()
+                        includeAvatar = !localAvatarBase64.isNullOrBlank(),
+                        includeIdentity = hasInternetIdentity
+                    ),
+                    ClientHelloOptions(
+                        includeName = localUserName.isNotBlank(),
+                        includeAvatar = false,
+                        includeIdentity = hasInternetIdentity
+                    ),
+                    ClientHelloOptions(
+                        includeName = false,
+                        includeAvatar = false,
+                        includeIdentity = hasInternetIdentity
                     ),
                     ClientHelloOptions(
                         includeName = localUserName.isNotBlank(),
@@ -469,6 +493,25 @@ private suspend fun readBootstrapFromDevice(
                         put("clientPlatform", "android")
                         if (option.includeAvatar) {
                             put("avatarB64", localAvatarBase64)
+                        }
+                        // Our internet identity + its own HMAC (canonical form, so byte-identical
+                        // with iOS). The server only trusts it if this proof verifies.
+                        if (option.includeIdentity && localPeerUid != null && localPeerPublicKey != null) {
+                            val identityProof = P2pBleProtocol.hmacBase64(
+                                aesKey,
+                                P2pBleProtocol.buildClientIdentityProofPayload(
+                                    shareId = payload.shareId,
+                                    serverNonce = payload.serverNonce,
+                                    clientNonce = clientNonce.orEmpty(),
+                                    peerUid = localPeerUid,
+                                    peerPublicKey = localPeerPublicKey
+                                )
+                            )
+                            if (identityProof != null) {
+                                put("clientPeerUid", localPeerUid)
+                                put("clientPeerPublicKey", localPeerPublicKey)
+                                put("clientIdentityProof", identityProof)
+                            }
                         }
                         put("proof", helloProof)
                     }

@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.androidx.baselineprofile)
     kotlin("kapt")
     id("com.google.gms.google-services")
     id("com.google.firebase.crashlytics")
@@ -44,6 +45,12 @@ fun buildConfigString(value: String): String {
 val googleWebClientId = secretConfigValue("GOOGLE_WEB_CLIENT_ID", "GOOGLE_WEB_CLIENT_ID")
 val mobileSyncBaseUrl = secretConfigValue("MOBILE_SYNC_BASE_URL", "MOBILE_SYNC_BASE_URL")
 val mobileSyncPanelId = secretConfigValue("MOBILE_SYNC_PANEL_ID", "MOBILE_SYNC_PANEL_ID")
+// The dashboard's Cloud Run origin, not the hosting domain: Firebase Hosting buffers SSE, so the
+// chat stream must hit Cloud Run directly (same reason the web client hard-codes this origin).
+val crisisSentinelOnlineBaseUrl = secretConfigValue(
+    "CRISIS_SENTINEL_ONLINE_BASE_URL",
+    "CRISIS_SENTINEL_ONLINE_BASE_URL"
+).ifBlank { "https://ssrcrisisconnect1-jxxgznalnq-uc.a.run.app" }
 val enterpriseSsoProviderId = secretConfigValue(
     "ENTERPRISE_SSO_PROVIDER_ID",
     "ENTERPRISE_SSO_PROVIDER_ID"
@@ -87,16 +94,26 @@ val isInternalTaskRequested = gradle.startParameter.taskNames.any { taskName ->
 
 android {
     namespace = "com.auralis.crisisconnect"
-    compileSdk = 35
+    compileSdk = 36
+    ndkVersion = "27.0.12077973"
     testBuildType = if (hasReleaseSigning) "internal" else "debug"
     dynamicFeatures += setOf(":feature_rescue")
+
+    // Native MLS FrameEncryptor/FrameDecryptor bridge (libmls_frame_crypto.so) — the per-frame E2EE
+    // hook org.webrtc only exposes via native pointers. See app/src/main/cpp/mls_frame_crypto.cpp.
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     defaultConfig {
         applicationId = "com.auralis.crisisconnect"
         minSdk = 24
-        targetSdk = 35
-        versionCode = 46
-        versionName = "1.1.1"
+        targetSdk = 36
+        versionCode = 59
+        versionName = "1.1.8"
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
@@ -120,6 +137,11 @@ android {
             "String",
             "MOBILE_SYNC_PANEL_ID",
             buildConfigString(mobileSyncPanelId)
+        )
+        buildConfigField(
+            "String",
+            "CRISIS_SENTINEL_ONLINE_BASE_URL",
+            buildConfigString(crisisSentinelOnlineBaseUrl)
         )
         buildConfigField(
             "int",
@@ -218,6 +240,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+        // libsignal-android requires java.time & friends on minSdk 24.
+        isCoreLibraryDesugaringEnabled = true
     }
     kotlinOptions {
         jvmTarget = "11"
@@ -225,6 +249,35 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    packaging {
+        jniLibs {
+            // libsignal's AAR bundles a second, test-only JNI lib (~75 MB/ABI). Never ship it.
+            excludes += "**/libsignal_jni_testing.so"
+        }
+        resources {
+            // libsignal-client (pulled in for the Java API) carries DESKTOP natives as jar
+            // resources (~86 MB of .dylib/.so for macOS/Linux JVMs). Android never loads these —
+            // the AAR's lib/<abi>/libsignal_jni.so is the real one. Excluding them keeps the APK
+            // at ~+11 MB for both ABIs instead of ~+97 MB.
+            excludes += "libsignal_jni*.dylib"
+            excludes += "libsignal_jni*.so"
+            excludes += "signal_jni*.dll"
+        }
+    }
+
+    lint {
+        // The app deliberately ships with partial translations and falls back to the default English
+        // resources while localization is completed. Keep runtime/security lint fatal, but do not
+        // block APK smoke builds on incomplete locale coverage.
+        disable += "MissingTranslation"
+    }
+
+    // The test phone's Secure Folder (user 150) holds a stale, differently-signed package record
+    // that adb can't touch; all-users installs hit INSTALL_FAILED_UPDATE_INCOMPATIBLE. Installing
+    // for the main user only sidesteps it.
+    installation {
+        installOptions += listOf("--user", "0")
     }
 
     // Keep all app languages in the base bundle. The app exposes an in-app language picker, so
@@ -257,6 +310,20 @@ if (!hasReleaseSigning && isInternalTaskRequested) {
 dependencies {
 
     implementation(libs.androidx.core.ktx)
+    // AOT-compiles the baseline profiles shipped in our APK + library AARs (Compose ships its own)
+    // right at install time, instead of waiting for the JIT to warm up on first launches.
+    implementation(libs.androidx.profileinstaller)
+    "baselineProfile"(project(":baselineprofile"))
+    // WebRTC (maintained community build of Google's libwebrtc) for real-time internet voice calls.
+    // Signaling (SDP/ICE) rides our existing E2E relay; media flows P2P via STUN (TURN added later).
+    implementation("io.getstream:stream-webrtc-android:1.3.8")
+    // Signal Protocol (X3DH/PQXDH + Double Ratchet) for forward-secret internet messaging (FS milestone).
+    // AGPL-3.0 — the app is open source, license accepted for the spike; revisit before release.
+    // The -android artifact carries the JNI .so per ABI; the -client jar (test scope) carries desktop
+    // natives so the ratchet can run in plain JVM unit tests.
+    implementation("org.signal:libsignal-android:0.86.5")
+    testImplementation("org.signal:libsignal-client:0.86.5")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation("androidx.core:core-telecom:1.0.1")
     implementation("androidx.core:core-splashscreen:1.0.1")
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -286,13 +353,15 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
     // JetPack Compose Ek Kütüphaneler
-    implementation("androidx.compose.material:material-icons-extended:1.5.4")
-    implementation("androidx.navigation:navigation-compose:2.8.0")
-    implementation(platform("androidx.compose:compose-bom:2025.05.01"))
-    implementation("androidx.compose.animation:animation")
+    // icons-extended's last release is 1.7.8 (data-only ImageVectors, works with any newer Compose)
+    implementation("androidx.compose.material:material-icons-extended:1.7.8")
+    implementation("androidx.navigation:navigation-compose:2.9.4")
     implementation("androidx.compose.foundation:foundation")
     implementation("com.airbnb.android:lottie-compose:6.4.0")  // Lottie animasyonları
     implementation("androidx.compose.material:material-ripple")
+
+    // Glance — home-screen widgets with a Compose-style API (SOS quick-access widget)
+    implementation("androidx.glance:glance-appwidget:1.2.0-rc01")
 
     // Media & imaging
     implementation("io.coil-kt:coil-compose:2.6.0")
@@ -309,7 +378,6 @@ dependencies {
 
     // QR
     implementation("com.google.zxing:core:3.5.1")
-    implementation("androidx.compose.ui:ui-graphics:1.5.4")
 
     // QR Tarama
     implementation("androidx.camera:camera-core:1.4.0")
@@ -340,6 +408,18 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-functions")
     implementation("com.google.firebase:firebase-storage")
+    implementation("com.google.firebase:firebase-messaging")
+
+    // Dial codes, example numbers, parsing/validation for the phone-auth country picker
+    implementation("com.googlecode.libphonenumber:libphonenumber:8.13.55")
+    // Flat rectangular (vector) country flags, looked up by ISO code
+    implementation("com.github.murgupluoglu:flagkit-android:1.2.0")
+    // SMS User Consent API — one-tap auto-fill of the phone verification code
+    implementation("com.google.android.gms:play-services-auth-api-phone:18.2.0")
+    // reCAPTCHA Enterprise client — invisible in-app assessment for phone auth
+    // (SMS bot score, AUDIT mode), replacing the browser reCAPTCHA fallback that
+    // breaks on old devices (e.g. Android 8 Go with Samsung Internet Lite).
+    implementation("com.google.android.recaptcha:recaptcha:18.9.1")
 
     // Offline profile photo upload queue
     implementation("androidx.work:work-runtime-ktx:2.9.1")
@@ -348,6 +428,10 @@ dependencies {
 
     // Standalone Play Integrity for raw integrity tokens used by attestation flow
     implementation("com.google.android.play:integrity:1.4.0")
+
+    // Google Play In-App Review (rating card shown at positive moments)
+    implementation("com.google.android.play:review:2.0.2")
+    implementation("com.google.android.play:review-ktx:2.0.2")
 
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
@@ -363,5 +447,4 @@ dependencies {
 
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.compose.material3:material3:1.3.1")
 }

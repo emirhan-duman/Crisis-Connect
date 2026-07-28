@@ -119,7 +119,7 @@ fun SensorToolScreen(navController: NavController, viewModel: SensorToolViewMode
     }
 
     val colorScheme = MaterialTheme.colorScheme
-    val cards by rememberDisasterSensorCards(
+    val cards by rememberSensorCards(
         sensors = uiState.sensors,
         gpsSnapshot = gpsSnapshot
     )
@@ -145,13 +145,13 @@ fun SensorToolScreen(navController: NavController, viewModel: SensorToolViewMode
                     .padding(horizontal = 20.dp, vertical = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                DisasterDashboardHeader(
+                SensorDashboardHeader(
                     isMonitoring = uiState.isMonitoring,
                     gpsSnapshot = gpsSnapshot
                 )
 
                 cards.forEach { data ->
-                    DisasterSensorCard(data = data)
+                    SensorCard(data = data)
                 }
             }
         }
@@ -159,10 +159,10 @@ fun SensorToolScreen(navController: NavController, viewModel: SensorToolViewMode
 }
 
 @Composable
-private fun rememberDisasterSensorCards(
+private fun rememberSensorCards(
     sensors: List<SensorDisplayState>,
     gpsSnapshot: GpsSnapshot
-): State<List<DisasterSensorCardData>> {
+): State<List<SensorCardData>> {
     val context = LocalContext.current
     val batterySnapshot by rememberBatteryTemperatureSnapshot()
     return produceState(initialValue = emptyList(), sensors, gpsSnapshot, batterySnapshot, context) {
@@ -320,7 +320,7 @@ private fun rememberGpsSnapshot(hasLocationPermission: Boolean, refreshToken: In
 }
 
 @Composable
-private fun DisasterDashboardHeader(isMonitoring: Boolean, gpsSnapshot: GpsSnapshot) {
+private fun SensorDashboardHeader(isMonitoring: Boolean, gpsSnapshot: GpsSnapshot) {
     val colorScheme = MaterialTheme.colorScheme
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -419,7 +419,7 @@ private fun gpsHeaderStatusText(snapshot: GpsSnapshot): String {
 }
 
 @Composable
-private fun DisasterSensorCard(data: DisasterSensorCardData) {
+private fun SensorCard(data: SensorCardData) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -472,7 +472,7 @@ private fun DisasterSensorCard(data: DisasterSensorCardData) {
     }
 }
 
-private fun gpsCard(snapshot: GpsSnapshot, context: Context): DisasterSensorCardData {
+private fun gpsCard(snapshot: GpsSnapshot, context: Context): SensorCardData {
     val measurement = if (
         snapshot.status == SensorStatus.AVAILABLE &&
         snapshot.latitude != null &&
@@ -515,7 +515,7 @@ private fun gpsCard(snapshot: GpsSnapshot, context: Context): DisasterSensorCard
             null ->
                 context.getString(R.string.sensor_monitor_gps_comment_waiting)
         }
-        return DisasterSensorCardData(
+        return SensorCardData(
             key = "gps",
             title = context.getString(R.string.sensor_monitor_gps_title),
             measurement = measurement,
@@ -551,7 +551,7 @@ private fun gpsCard(snapshot: GpsSnapshot, context: Context): DisasterSensorCard
         }
     }
 
-    return DisasterSensorCardData(
+    return SensorCardData(
         key = "gps",
         title = context.getString(R.string.sensor_monitor_gps_title),
         measurement = measurement,
@@ -561,7 +561,7 @@ private fun gpsCard(snapshot: GpsSnapshot, context: Context): DisasterSensorCard
     )
 }
 
-private fun pressureCard(state: SensorDisplayState?, context: Context): DisasterSensorCardData {
+private fun pressureCard(state: SensorDisplayState?, context: Context): SensorCardData {
     val status = state?.status ?: SensorStatus.NOT_AVAILABLE
     val value = state?.formattedValue?.toFloatOrNull()
     val unit = state?.unit?.takeIf { it.isNotBlank() } ?: context.getString(R.string.sensor_unit_barometer)
@@ -575,7 +575,7 @@ private fun pressureCard(state: SensorDisplayState?, context: Context): Disaster
         ?: (state?.formattedValue?.takeIf { it.isNotBlank() } ?: context.getString(R.string.sensor_monitor_waiting_data))
 
     if (status != SensorStatus.AVAILABLE || value == null) {
-        return DisasterSensorCardData(
+        return SensorCardData(
             key = "pressure",
             title = state?.title ?: context.getString(R.string.sensor_title_barometer),
             measurement = measurement,
@@ -584,7 +584,7 @@ private fun pressureCard(state: SensorDisplayState?, context: Context): Disaster
         )
     }
 
-    return DisasterSensorCardData(
+    return SensorCardData(
         key = "pressure",
         title = state.title,
         measurement = measurement,
@@ -593,7 +593,7 @@ private fun pressureCard(state: SensorDisplayState?, context: Context): Disaster
     )
 }
 
-private fun accelerometerCard(state: SensorDisplayState?, context: Context): DisasterSensorCardData {
+private fun accelerometerCard(state: SensorDisplayState?, context: Context): SensorCardData {
     val status = state?.status ?: SensorStatus.NOT_AVAILABLE
     val axes = state?.formattedValue
     val parsed = axes?.let { parseTriple(it) }
@@ -606,7 +606,7 @@ private fun accelerometerCard(state: SensorDisplayState?, context: Context): Dis
     }
 
     if (status != SensorStatus.AVAILABLE || gForce == null) {
-        return DisasterSensorCardData(
+        return SensorCardData(
             key = "accelerometer",
             title = state?.title ?: context.getString(R.string.sensor_title_accelerometer),
             measurement = measurement,
@@ -616,7 +616,7 @@ private fun accelerometerCard(state: SensorDisplayState?, context: Context): Dis
         )
     }
 
-    return DisasterSensorCardData(
+    return SensorCardData(
         key = "accelerometer",
         title = state?.title ?: context.getString(R.string.sensor_title_accelerometer),
         measurement = measurement,
@@ -626,7 +626,7 @@ private fun accelerometerCard(state: SensorDisplayState?, context: Context): Dis
     )
 }
 
-private fun gyroscopeCard(state: SensorDisplayState?, context: Context): DisasterSensorCardData {
+private fun gyroscopeCard(state: SensorDisplayState?, context: Context): SensorCardData {
     val status = state?.status ?: SensorStatus.NOT_AVAILABLE
     val axes = state?.formattedValue
     val parsed = axes?.let { parseTriple(it) }
@@ -637,7 +637,7 @@ private fun gyroscopeCard(state: SensorDisplayState?, context: Context): Disaste
         ?: axes ?: context.getString(R.string.sensor_monitor_waiting_data)
 
     if (status != SensorStatus.AVAILABLE || rotationSpeed == null) {
-        return DisasterSensorCardData(
+        return SensorCardData(
             key = "gyroscope",
             title = state?.title ?: context.getString(R.string.sensor_title_gyroscope),
             measurement = measurement,
@@ -647,7 +647,7 @@ private fun gyroscopeCard(state: SensorDisplayState?, context: Context): Disaste
         )
     }
 
-    return DisasterSensorCardData(
+    return SensorCardData(
         key = "gyroscope",
         title = state?.title ?: context.getString(R.string.sensor_title_gyroscope),
         measurement = measurement,
@@ -657,7 +657,7 @@ private fun gyroscopeCard(state: SensorDisplayState?, context: Context): Disaste
     )
 }
 
-private fun lightCard(state: SensorDisplayState?, context: Context): DisasterSensorCardData {
+private fun lightCard(state: SensorDisplayState?, context: Context): SensorCardData {
     val status = state?.status ?: SensorStatus.NOT_AVAILABLE
     val value = state?.formattedValue?.toFloatOrNull()
     val unit = state?.unit?.takeIf { it.isNotBlank() } ?: context.getString(R.string.sensor_unit_light)
@@ -671,7 +671,7 @@ private fun lightCard(state: SensorDisplayState?, context: Context): DisasterSen
         ?: (state?.formattedValue?.takeIf { it.isNotBlank() } ?: context.getString(R.string.sensor_monitor_waiting_data))
 
     if (status != SensorStatus.AVAILABLE || value == null) {
-        return DisasterSensorCardData(
+        return SensorCardData(
             key = "light",
             title = state?.title ?: context.getString(R.string.sensor_title_light),
             measurement = measurement,
@@ -680,7 +680,7 @@ private fun lightCard(state: SensorDisplayState?, context: Context): DisasterSen
         )
     }
 
-    return DisasterSensorCardData(
+    return SensorCardData(
         key = "light",
         title = state?.title ?: context.getString(R.string.sensor_title_light),
         measurement = measurement,
@@ -689,7 +689,7 @@ private fun lightCard(state: SensorDisplayState?, context: Context): DisasterSen
     )
 }
 
-private fun batteryCard(snapshot: BatterySnapshot, context: Context): DisasterSensorCardData {
+private fun batteryCard(snapshot: BatterySnapshot, context: Context): SensorCardData {
     val temperature = snapshot.temperatureCelsius
     val measurement = temperature?.let {
         context.getString(R.string.sensor_monitor_measurement_temperature_celsius, it)
@@ -697,7 +697,7 @@ private fun batteryCard(snapshot: BatterySnapshot, context: Context): DisasterSe
         ?: context.getString(R.string.sensor_monitor_waiting_data)
 
     if (snapshot.status != SensorStatus.AVAILABLE || temperature == null) {
-        return DisasterSensorCardData(
+        return SensorCardData(
             key = "battery",
             title = context.getString(R.string.sensor_monitor_battery_title),
             measurement = measurement,
@@ -706,7 +706,7 @@ private fun batteryCard(snapshot: BatterySnapshot, context: Context): DisasterSe
         )
     }
 
-    return DisasterSensorCardData(
+    return SensorCardData(
         key = "battery",
         title = context.getString(R.string.sensor_monitor_battery_title),
         measurement = measurement,
@@ -772,7 +772,7 @@ private fun parseTriple(value: String): Triple<Float, Float, Float>? {
     }
 }
 
-private data class DisasterSensorCardData(
+private data class SensorCardData(
     val key: String,
     val title: String,
     val measurement: String,
@@ -827,7 +827,7 @@ private fun SensorToolScreenPreview() {
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                DisasterDashboardHeader(
+                SensorDashboardHeader(
                     isMonitoring = true,
                     gpsSnapshot = GpsSnapshot(
                         latitude = 41.01514,
@@ -838,7 +838,7 @@ private fun SensorToolScreenPreview() {
                     )
                 )
                 val previewCards = listOf(
-                    DisasterSensorCardData(
+                    SensorCardData(
                         key = "gps",
                         title = stringResource(R.string.sensor_monitor_gps_title),
                         measurement = context.getString(
@@ -850,7 +850,7 @@ private fun SensorToolScreenPreview() {
                         status = SensorStatus.AVAILABLE,
                         detail = gpsPreviewDetail
                     ),
-                    DisasterSensorCardData(
+                    SensorCardData(
                         key = "pressure",
                         title = stringResource(R.string.sensor_title_barometer),
                         measurement = context.getString(
@@ -861,7 +861,7 @@ private fun SensorToolScreenPreview() {
                         commentary = stringResource(R.string.sensor_monitor_pressure_comment_live),
                         status = SensorStatus.AVAILABLE
                     ),
-                    DisasterSensorCardData(
+                    SensorCardData(
                         key = "accelerometer",
                         title = stringResource(R.string.sensor_title_accelerometer),
                         measurement = context.getString(
@@ -872,7 +872,7 @@ private fun SensorToolScreenPreview() {
                         status = SensorStatus.AVAILABLE,
                         detail = accelerometerPreviewDetail
                     ),
-                    DisasterSensorCardData(
+                    SensorCardData(
                         key = "light",
                         title = stringResource(R.string.sensor_title_light),
                         measurement = context.getString(
@@ -883,7 +883,7 @@ private fun SensorToolScreenPreview() {
                         commentary = stringResource(R.string.sensor_monitor_light_comment_live),
                         status = SensorStatus.AVAILABLE
                     ),
-                    DisasterSensorCardData(
+                    SensorCardData(
                         key = "battery",
                         title = stringResource(R.string.sensor_monitor_battery_title),
                         measurement = context.getString(
@@ -895,7 +895,7 @@ private fun SensorToolScreenPreview() {
                     )
                 )
                 previewCards.forEach { card ->
-                    DisasterSensorCard(data = card)
+                    SensorCard(data = card)
                 }
             }
         }

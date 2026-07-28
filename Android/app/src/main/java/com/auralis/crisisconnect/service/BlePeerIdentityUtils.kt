@@ -19,6 +19,8 @@ object BlePeerIdentityUtils {
 
     private const val PEER_INFO_KIND = "peer_info"
     private const val MAX_AVATAR_B64_LENGTH = 8_192
+    private const val MAX_MEDICAL_BLOOD_LENGTH = 8
+    private const val MAX_MEDICAL_FIELD_LENGTH = 200
     private val RESCUER_LABELS = setOf(RESCUER_LABEL, RESCUER_LABEL_EN, RESCUER_LABEL_ES)
     private val VICTIM_LABELS = setOf(VICTIM_LABEL, VICTIM_LABEL_EN, VICTIM_LABEL_ES)
     private val ALL_ROLE_LABELS = (RESCUER_LABELS + VICTIM_LABELS)
@@ -123,12 +125,25 @@ object BlePeerIdentityUtils {
                 .takeIf { it.isNotEmpty() && it.length <= MAX_AVATAR_B64_LENGTH }
             val location = parsePeerLocation(json.optJSONObject("location"))
                 ?: parseSignalLocation(json.optJSONObject("signalLocation"))
+            val medical = json.optJSONObject("medical")?.let { medicalJson ->
+                PeerMedicalInfo(
+                    bloodType = medicalJson.optString("blood").trim()
+                        .takeIf { it.isNotEmpty() }?.take(MAX_MEDICAL_BLOOD_LENGTH),
+                    allergies = medicalJson.optString("allergies").trim()
+                        .takeIf { it.isNotEmpty() }?.take(MAX_MEDICAL_FIELD_LENGTH),
+                    medication = medicalJson.optString("meds").trim()
+                        .takeIf { it.isNotEmpty() }?.take(MAX_MEDICAL_FIELD_LENGTH),
+                    notes = medicalJson.optString("notes").trim()
+                        .takeIf { it.isNotEmpty() }?.take(MAX_MEDICAL_FIELD_LENGTH)
+                ).takeIf { it.hasContent() }
+            }
             PeerIdentity(
                 name = name,
                 role = role,
                 batteryPercent = battery,
                 avatarBase64 = avatar,
-                location = location
+                location = location,
+                medical = medical
             )
         }.getOrNull()
     }
@@ -138,7 +153,8 @@ object BlePeerIdentityUtils {
         role: String,
         batteryPercent: Int? = null,
         avatarBase64: String? = null,
-        location: PeerLocationSnapshot? = null
+        location: PeerLocationSnapshot? = null,
+        medical: PeerMedicalInfo? = null
     ): String {
         return JSONObject().apply {
             put("kind", PEER_INFO_KIND)
@@ -146,6 +162,21 @@ object BlePeerIdentityUtils {
             put("role", role)
             if (batteryPercent != null && batteryPercent in 0..100) {
                 put("batteryPct", batteryPercent)
+            }
+            if (medical != null && medical.hasContent()) {
+                put(
+                    "medical",
+                    JSONObject().apply {
+                        medical.bloodType?.takeIf { it.isNotBlank() }
+                            ?.let { put("blood", it.take(MAX_MEDICAL_BLOOD_LENGTH)) }
+                        medical.allergies?.takeIf { it.isNotBlank() }
+                            ?.let { put("allergies", it.take(MAX_MEDICAL_FIELD_LENGTH)) }
+                        medical.medication?.takeIf { it.isNotBlank() }
+                            ?.let { put("meds", it.take(MAX_MEDICAL_FIELD_LENGTH)) }
+                        medical.notes?.takeIf { it.isNotBlank() }
+                            ?.let { put("notes", it.take(MAX_MEDICAL_FIELD_LENGTH)) }
+                    }
+                )
             }
             val avatar = avatarBase64?.trim().takeIf { !it.isNullOrBlank() }
             if (avatar != null) {
@@ -634,11 +665,13 @@ object BlePeerIdentityUtils {
         fun updateVictimIdentity(
             address: String,
             displayName: String?,
-            batteryPercent: Int?
+            batteryPercent: Int?,
+            medical: PeerMedicalInfo? = null
         ) {
             val normalizedAddress = normalizeRegistryAddress(address) ?: return
             val normalizedDisplayName = normalizeSignalDisplayName(displayName)
             val normalizedBatteryPercent = batteryPercent?.takeIf { it in 0..100 }
+            val normalizedMedical = medical?.takeIf { it.hasContent() }
             updateForAddress(normalizedAddress) { current ->
                 val base = current ?: SignalLocationMetadata()
                 val next = base.copy(
@@ -646,7 +679,8 @@ object BlePeerIdentityUtils {
                         incoming = normalizedDisplayName,
                         existing = base.victimDisplayName
                     ),
-                    victimBatteryPercent = normalizedBatteryPercent ?: base.victimBatteryPercent
+                    victimBatteryPercent = normalizedBatteryPercent ?: base.victimBatteryPercent,
+                    victimMedical = normalizedMedical ?: base.victimMedical
                 )
                 next.takeIf { it.hasUsefulData() }
             }
@@ -788,8 +822,22 @@ object BlePeerIdentityUtils {
         val role: String,
         val batteryPercent: Int? = null,
         val avatarBase64: String? = null,
-        val location: PeerLocationSnapshot? = null
+        val location: PeerLocationSnapshot? = null,
+        val medical: PeerMedicalInfo? = null
     )
+
+    /** Optional emergency medical details a victim shares over the encrypted rescue link. */
+    data class PeerMedicalInfo(
+        val bloodType: String? = null,
+        val allergies: String? = null,
+        val medication: String? = null,
+        val notes: String? = null
+    ) {
+        fun hasContent(): Boolean {
+            return !bloodType.isNullOrBlank() || !allergies.isNullOrBlank() ||
+                !medication.isNullOrBlank() || !notes.isNullOrBlank()
+        }
+    }
 
     data class PeerLocationSnapshot(
         val latitude: Double,
@@ -818,6 +866,8 @@ object BlePeerIdentityUtils {
         val relativeEstimate: RelativeVictimEstimate? = null,
         val victimDisplayName: String? = null,
         val victimBatteryPercent: Int? = null,
+        // Shown to the rescuer on the phone only — deliberately NOT uploaded by CrisisLink.
+        val victimMedical: PeerMedicalInfo? = null,
         val updatedAtMillis: Long = 0L
     ) {
         fun hasUsefulData(): Boolean {
@@ -825,7 +875,8 @@ object BlePeerIdentityUtils {
                 estimatedVictimLocation != null ||
                 relativeEstimate != null ||
                 !victimDisplayName.isNullOrBlank() ||
-                victimBatteryPercent != null
+                victimBatteryPercent != null ||
+                victimMedical != null
         }
 
         fun normalizedForComparison(): SignalLocationMetadata {

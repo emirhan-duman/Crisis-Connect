@@ -233,6 +233,6 @@ final class ContactLinkManager: NSObject, ObservableObject, CBCentralManagerDele
 
     private func ensureCentralInitialized() {
         guard central == nil else { return }
-        central = CBCentralManager(delegate: self, queue: queue)
+        central = CBCentralManager(delegate: self, queue: queue, options: [CBCentralManagerOptionShowPowerAlertKey: false])
     }
 }

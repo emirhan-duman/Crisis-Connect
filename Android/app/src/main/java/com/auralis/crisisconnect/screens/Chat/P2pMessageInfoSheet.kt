@@ -273,6 +273,9 @@ private fun rememberChatMessageInfoBody(message: ChatMessage): String {
                     context.getString(R.string.chat_reply_unknown_placeholder)
                 }
             }
+            MessageType.SOS_ALERT -> message.text.ifBlank {
+                context.getString(R.string.chat_reply_unknown_placeholder)
+            }
         }
     }
 }
@@ -288,6 +291,9 @@ private fun rememberBleMessageInfoBody(message: BleChatMessage): String {
                 val parsedBody = parseReplyMetadata(message.text)?.body?.takeIf { it.isNotBlank() }
                     ?: message.text
                 parsedBody.ifBlank { context.getString(R.string.chat_reply_unknown_placeholder) }
+            }
+            MessageType.SOS_ALERT -> message.text.ifBlank {
+                context.getString(R.string.chat_reply_unknown_placeholder)
             }
         }
     }

@@ -1,6 +1,7 @@
 package com.auralis.crisisconnect.service.gattmesh
 
 import android.content.Context
+import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.security.AuthorityMeshKeyStore
 import com.auralis.crisisconnect.util.UUIDGenerator
 import java.nio.charset.StandardCharsets
@@ -55,6 +56,20 @@ class MeshProfile(
     val scanCoordinatorOwner: String,
     val notificationChannelId: String,
     val notificationId: Int,
+    /**
+     * User-facing notification/channel labels. Profile-specific so the authority mesh never shows
+     * the public mesh's "General chat" strings (which made the rescue mesh look like the open mesh).
+     */
+    val notificationTitleRes: Int,
+    val notificationTextConnectedRes: Int,
+    val notificationTextWaitingRes: Int,
+    val channelNameRes: Int,
+    val channelDescriptionRes: Int,
+    /**
+     * Display name for this mesh's general chat — used for the saved conversation/contact row and the
+     * chat screen title. Authority uses its own label so it never shows up as the public "Genel" chat.
+     */
+    val chatTitleRes: Int,
 )
 
 object MeshProfiles {
@@ -73,6 +88,12 @@ object MeshProfiles {
         scanCoordinatorOwner = "gattmesh-foreground-service",
         notificationChannelId = "gatt_mesh_channel",
         notificationId = 3055,
+        notificationTitleRes = R.string.gatt_mesh_notification_title,
+        notificationTextConnectedRes = R.string.gatt_mesh_notification_text_connected,
+        notificationTextWaitingRes = R.string.gatt_mesh_notification_text_waiting,
+        channelNameRes = R.string.gatt_mesh_channel_name,
+        channelDescriptionRes = R.string.gatt_mesh_channel_description,
+        chatTitleRes = R.string.mesh_chat_general_title,
     )
 
     /**
@@ -96,6 +117,12 @@ object MeshProfiles {
         scanCoordinatorOwner = "authoritymesh-foreground-service",
         notificationChannelId = "authority_mesh_channel",
         notificationId = 3065,
+        notificationTitleRes = R.string.authority_mesh_notification_title,
+        notificationTextConnectedRes = R.string.authority_mesh_notification_text_connected,
+        notificationTextWaitingRes = R.string.authority_mesh_notification_text_waiting,
+        channelNameRes = R.string.authority_mesh_channel_name,
+        channelDescriptionRes = R.string.authority_mesh_channel_description,
+        chatTitleRes = R.string.authority_mesh_chat_title,
     )
 
     private fun derivePublicPayloadKey(context: Context): ByteArray {

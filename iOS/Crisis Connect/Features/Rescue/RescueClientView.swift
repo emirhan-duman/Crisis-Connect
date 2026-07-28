@@ -17,6 +17,9 @@ struct RescueClientView: View {
     @ObservedObject private var manager = RescueClientManager.shared
     @StateObject private var settings = RescueSettingsStore.shared
     @ObservedObject private var chatStore = SOSChatStore.shared
+    @ObservedObject private var advancedSettings = AdvancedSettingsStore.shared
+    @State private var authorityKeyReady = AuthorityMeshKeyStore.hasGroupKey()
+    @State private var showsRemoteSignals = false
 
     var body: some View {
         let activeSignals = activeBroadcasts
@@ -40,8 +43,14 @@ struct RescueClientView: View {
                     },
                     secondaryAction: {
                         manager.refresh()
-                    }
+                    },
+                    authorityMeshEnabled: $advancedSettings.authorityMeshEnabled,
+                    authorityMeshToggleEnabled: authorityKeyReady && advancedSettings.canUsePublicMesh
                 )
+
+                RemoteSignalsEntryCard {
+                    showsRemoteSignals = true
+                }
 
                 if let errorKey = manager.errorMessageKey {
                     RescueErrorBanner(messageKey: errorKey)
@@ -137,6 +146,9 @@ struct RescueClientView: View {
             .padding(.vertical, 12)
         }
         .background(Color.appBackground)
+        .sheet(isPresented: $showsRemoteSignals) {
+            RemoteSignalsView()
+        }
         .navigationTitle("RESCUE_SCREEN_TITLE")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -164,6 +176,10 @@ struct RescueClientView: View {
         }
         .onAppear {
             manager.bootstrapRuntime()
+            Task {
+                let ready = await AuthorityMeshGroupKeyProvisioner.ensureGroupKey()
+                await MainActor.run { authorityKeyReady = ready }
+            }
         }
     }
 
@@ -248,6 +264,8 @@ private struct RescueOverviewCard: View {
     let primaryActionKey: String
     let primaryAction: () -> Void
     let secondaryAction: () -> Void
+    var authorityMeshEnabled: Binding<Bool>? = nil
+    var authorityMeshToggleEnabled: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -274,6 +292,26 @@ private struct RescueOverviewCard: View {
                 Text(lastUpdatedLabel(for: lastUpdated))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            if let authorityMeshEnabled {
+                Divider()
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.appPrimary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("AUTHORITY_CHAT_ENTRY_TITLE")
+                            .font(.subheadline.weight(.semibold))
+                        Text(authorityMeshToggleEnabled ? "RESCUE_AUTHORITY_MESH_TOGGLE_FOOTER" : "RESCUE_AUTHORITY_MESH_TOGGLE_NO_KEY")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: authorityMeshEnabled)
+                        .labelsHidden()
+                        .disabled(!authorityMeshToggleEnabled)
+                }
             }
 
             HStack(spacing: 10) {
@@ -409,6 +447,12 @@ private struct RescueSignalCard: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 infoRow(icon: "antenna.radiowaves.left.and.right", text: signalText)
+                if let batteryText {
+                    infoRow(icon: batteryIcon, text: batteryText)
+                }
+                if let medicalText {
+                    infoRow(icon: "cross.case.fill", text: medicalText)
+                }
                 infoRow(icon: "clock", text: lastSeenLabel)
                 if showDeviceIdentifier {
                     infoRow(icon: "number", text: deviceIdentifierText)
@@ -444,6 +488,50 @@ private struct RescueSignalCard: View {
             return String(format: format, rssi)
         }
         return NSLocalizedString("RESCUE_SIGNAL_STRENGTH_UNKNOWN", comment: "")
+    }
+
+    private var batteryText: String? {
+        guard let percent = broadcast.victimBatteryPercent else { return nil }
+        let format = NSLocalizedString("RESCUE_VICTIM_BATTERY_FORMAT", comment: "")
+        return String(format: format, percent)
+    }
+
+    private var batteryIcon: String {
+        guard let percent = broadcast.victimBatteryPercent else { return "battery.50" }
+        switch percent {
+        case ..<15: return "battery.0"
+        case ..<40: return "battery.25"
+        case ..<65: return "battery.50"
+        case ..<90: return "battery.75"
+        default: return "battery.100"
+        }
+    }
+
+    private var medicalText: String? {
+        guard let medical = broadcast.victimMedical, medical.hasContent else { return nil }
+        var parts: [String] = []
+        if let blood = medical.bloodType {
+            parts.append(String(
+                format: NSLocalizedString("RESCUE_MEDICAL_BLOOD_FORMAT", comment: ""),
+                blood
+            ))
+        }
+        if let allergies = medical.allergies {
+            parts.append(String(
+                format: NSLocalizedString("RESCUE_MEDICAL_ALLERGIES_FORMAT", comment: ""),
+                allergies
+            ))
+        }
+        if let medication = medical.medication {
+            parts.append(String(
+                format: NSLocalizedString("RESCUE_MEDICAL_MEDICATION_FORMAT", comment: ""),
+                medication
+            ))
+        }
+        if let notes = medical.notes {
+            parts.append(notes)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
     }
 
     private var lastSeenLabel: String {

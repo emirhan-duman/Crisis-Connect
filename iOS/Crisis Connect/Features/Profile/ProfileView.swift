@@ -9,12 +9,16 @@ import SwiftUI
 import PhotosUI
 import SwiftData
 import AuthenticationServices
+import UIKit
+import Combine
 
 struct ProfileView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var viewModel = ProfileViewModel()
     @State private var isEmailSignInSheetPresented = false
     @State private var isNameEditorPresented = false
+    @State private var isDeleteAccountConfirmPresented = false
     @State private var draftFullName = ""
 
     var body: some View {
@@ -26,11 +30,15 @@ struct ProfileView: View {
                     profileIdentitySection
                     accountDetailsSection
                     nameEditorSection
+                    MedicalInfoSection()
                     if isSignedIn {
                         signedInStateBanner
                     }
                     if shouldShowManagedVerificationNotice {
                         managedVerificationNotice
+                    }
+                    if isSignedIn {
+                        ProfileCertificateCard(viewModel: viewModel)
                     }
                     authActionsSection
                 }
@@ -63,6 +71,16 @@ struct ProfileView: View {
         } message: {
             Text("PROFILE_EDIT_NAME_MESSAGE")
         }
+        .alert("PROFILE_DELETE_ACCOUNT_CONFIRM_TITLE", isPresented: $isDeleteAccountConfirmPresented) {
+            Button("COMMON_CANCEL", role: .cancel) {}
+            Button("PROFILE_DELETE_ACCOUNT_CONFIRM_ACTION", role: .destructive) {
+                viewModel.deleteAccount()
+            }
+        } message: {
+            Text("PROFILE_DELETE_ACCOUNT_CONFIRM_MESSAGE")
+        }
+        .overlay(alignment: .bottom) { transientMessageBanner }
+        .analyticsScreen("profile")
         .onAppear { viewModel.loadIfNeeded(context: context) }
         .onDisappear {
             viewModel.handleDisappear(context: context)
@@ -70,7 +88,15 @@ struct ProfileView: View {
         .onChange(of: viewModel.pickerItem) { _, newValue in
             Task {
                 await viewModel.loadImage(from: newValue)
-                await MainActor.run { viewModel.scheduleAutosave(context: context) }
+                await MainActor.run {
+                    viewModel.scheduleAutosave(context: context)
+                    if newValue != nil {
+                        viewModel.transientMessage = NSLocalizedString(
+                            viewModel.avatarImage != nil ? "PROFILE_PHOTO_SAVED" : "PROFILE_PHOTO_ERROR",
+                            comment: ""
+                        )
+                    }
+                }
             }
         }
         .onChange(of: viewModel.fullName) { _, _ in viewModel.scheduleAutosave(context: context) }
@@ -88,7 +114,11 @@ struct ProfileView: View {
 
     private var profileIdentitySection: some View {
         VStack(spacing: 16) {
-            avatarView
+            PhotosPicker(selection: $viewModel.pickerItem, matching: .images) {
+                avatarView
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("PROFILE_PHOTO_CONTENT_DESCRIPTION"))
 
             VStack(spacing: 6) {
                 Text(displayName)
@@ -154,32 +184,38 @@ struct ProfileView: View {
 
     private var accountDetailsSection: some View {
         sectionCard(
-            title: "Account Details",
-            subtitle: "Core profile fields synced across contact sharing and rescue coordination.",
+            title: NSLocalizedString("Account Details", comment: ""),
+            subtitle: NSLocalizedString("Core profile fields synced across contact sharing and rescue coordination.", comment: ""),
             systemImage: "person.text.rectangle",
             tint: .appPrimary
         ) {
             VStack(spacing: 14) {
                 profileInfoRow(
-                    label: "Username",
+                    label: NSLocalizedString("Username", comment: ""),
                     value: currentNameDisplay
                 )
                 profileInfoRow(
-                    label: "Email",
+                    label: NSLocalizedString("Email", comment: ""),
                     value: currentEmailDisplay
                 )
+                if !viewModel.displayPhoneNumber.isEmpty {
+                    profileInfoRow(
+                        label: NSLocalizedString("PROFILE_PHONE_LABEL", comment: ""),
+                        value: viewModel.displayPhoneNumber
+                    )
+                }
                 profileInfoRow(
-                    label: "Country",
+                    label: NSLocalizedString("Country", comment: ""),
                     value: currentCountryDisplay
                 )
 
                 if showsManagedDetails {
                     profileInfoRow(
-                        label: "Agency",
+                        label: NSLocalizedString("Agency", comment: ""),
                         value: currentAgencyDisplay
                     )
                     profileInfoRow(
-                        label: "Role",
+                        label: NSLocalizedString("Role", comment: ""),
                         value: normalizedRole.uppercased()
                     )
                     profileVerificationRow(
@@ -193,8 +229,8 @@ struct ProfileView: View {
 
     private var nameEditorSection: some View {
         sectionCard(
-            title: "Display Name",
-            subtitle: "Use a clear name that other people see in chats and QR adds.",
+            title: NSLocalizedString("Display Name", comment: ""),
+            subtitle: NSLocalizedString("Use a clear name that other people see in chats and QR adds.", comment: ""),
             systemImage: "square.and.pencil",
             tint: .appPrimary
         ) {
@@ -234,65 +270,72 @@ struct ProfileView: View {
     private var managedVerificationNotice: some View {
         compactStatusBanner(
             systemImage: "checkmark.shield",
-            label: "Verification is managed by the server.",
+            label: NSLocalizedString("Verification is managed by the server.", comment: ""),
             tint: .appPrimary,
             background: Color.appPrimary.opacity(0.12)
         )
     }
 
+    private var authorizedOnlyNotice: some View {
+        HStack(alignment: .center, spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.appPrimary, Color.appPrimary.opacity(0.62)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+
+                Image(systemName: "building.columns.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 48, height: 48)
+            .shadow(color: Color.appPrimary.opacity(colorScheme == .dark ? 0 : 0.28), radius: 9, y: 5)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("PROFILE_LOGIN_AUTHORIZED_ONLY_TITLE")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.primary)
+
+                Text("PROFILE_LOGIN_AUTHORIZED_ONLY_MESSAGE")
+                    .font(.caption)
+                    .foregroundStyle(Color.appTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.appPrimary.opacity(0.12), Color.appPrimary.opacity(0.04)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                .stroke(Color.appPrimary.opacity(0.2), lineWidth: 1)
+        )
+    }
+
     private var authActionsSection: some View {
         sectionCard(
-            title: "Access",
-            subtitle: "Connect or disconnect the account used for verified profile sync.",
+            title: NSLocalizedString("Access", comment: ""),
+            subtitle: NSLocalizedString("Connect or disconnect the account used for verified profile sync.", comment: ""),
             systemImage: "person.crop.circle.badge.checkmark",
             tint: .appPrimary
         ) {
             if viewModel.isAnonymous || viewModel.authStatusText == "PROFILE_AUTH_SIGNED_OUT" {
-                if let authErrorMessage = viewModel.authErrorMessage,
-                   authErrorMessage.isEmpty == false,
-                   !isEmailSignInSheetPresented {
-                    ProfileAuthErrorBanner(message: authErrorMessage) {
-                        viewModel.clearAuthError()
-                    }
-                }
-
-                Button {
-                    presentEmailSignInSheet()
-                } label: {
-                    Label("PROFILE_LOGIN_EMAIL", systemImage: "envelope")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(AppSecondaryButtonStyle())
-                .disabled(viewModel.isAuthLoading)
-
-                Button {
-                    viewModel.signInWithGoogle()
-                } label: {
-                    Label("PROFILE_LOGIN_GOOGLE", systemImage: "globe")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(AppPrimaryButtonStyle())
-                .disabled(viewModel.isAuthLoading)
-
-                SignInWithAppleButton(.signIn) { request in
-                    viewModel.prepareAppleSignInRequest(request)
-                } onCompletion: { result in
-                    viewModel.handleAppleSignInCompletion(result)
-                }
-                .signInWithAppleButtonStyle(.black)
-                .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous))
-                .disabled(viewModel.isAuthLoading)
+                signedOutAuthContent
             } else {
-                Button {
-                    viewModel.signOut()
-                } label: {
-                    Label("PROFILE_LOGOUT", systemImage: "rectangle.portrait.and.arrow.right")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(AppSecondaryButtonStyle())
-                .disabled(viewModel.isAuthLoading)
+                signedInAuthContent
             }
 
             if viewModel.isAuthLoading || viewModel.isProfileRefreshing {
@@ -306,13 +349,173 @@ struct ProfileView: View {
         }
     }
 
+    private var signedOutAuthContent: some View {
+        VStack(spacing: 16) {
+            authorizedOnlyNotice
+
+            if let authErrorMessage = viewModel.authErrorMessage,
+               authErrorMessage.isEmpty == false,
+               !isEmailSignInSheetPresented {
+                ProfileAuthErrorBanner(message: authErrorMessage) {
+                    viewModel.clearAuthError()
+                }
+            }
+
+            VStack(spacing: 10) {
+                AuthProviderButton(
+                    title: "PROFILE_LOGIN_EMAIL",
+                    emphasis: .primary,
+                    isDisabled: viewModel.isAuthLoading,
+                    action: { presentEmailSignInSheet() }
+                ) {
+                    Image(systemName: "envelope.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+
+                AuthProviderButton(
+                    title: "PROFILE_LOGIN_ENTERPRISE_SSO",
+                    emphasis: .tinted,
+                    isDisabled: viewModel.isAuthLoading,
+                    action: { viewModel.signInWithEnterpriseSso() }
+                ) {
+                    Image(systemName: "building.2.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.appPrimary)
+                }
+            }
+
+            authDivider("PROFILE_LOGIN_DIVIDER")
+
+            VStack(spacing: 10) {
+                SignInWithAppleButton(.signIn) { request in
+                    viewModel.prepareAppleSignInRequest(request)
+                } onCompletion: { result in
+                    viewModel.handleAppleSignInCompletion(result)
+                }
+                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                .frame(maxWidth: .infinity)
+                .frame(height: 54)
+                .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous)
+                        .stroke(Color.appBorder.opacity(colorScheme == .dark ? 0 : 0.5), lineWidth: 1)
+                )
+                .disabled(viewModel.isAuthLoading)
+                .opacity(viewModel.isAuthLoading ? 0.55 : 1)
+
+                AuthProviderButton(
+                    title: "PROFILE_LOGIN_GOOGLE",
+                    emphasis: .neutral,
+                    isDisabled: viewModel.isAuthLoading,
+                    action: { viewModel.signInWithGoogle() }
+                ) {
+                    GoogleGMark()
+                }
+
+                AuthProviderButton(
+                    title: "PROFILE_LOGIN_MICROSOFT",
+                    emphasis: .neutral,
+                    isDisabled: viewModel.isAuthLoading,
+                    action: { viewModel.signInWithMicrosoft() }
+                ) {
+                    MicrosoftLogoMark()
+                }
+            }
+
+            PhoneVerificationPanel(viewModel: viewModel)
+        }
+    }
+
+    private var signedInAuthContent: some View {
+        VStack(spacing: 10) {
+            if let authErrorMessage = viewModel.authErrorMessage,
+               authErrorMessage.isEmpty == false {
+                ProfileAuthErrorBanner(message: authErrorMessage) {
+                    viewModel.clearAuthError()
+                }
+            }
+
+            Button {
+                viewModel.signOut()
+            } label: {
+                Label("PROFILE_LOGOUT", systemImage: "rectangle.portrait.and.arrow.right")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(AppSecondaryButtonStyle())
+            .disabled(viewModel.isAuthLoading)
+
+            Button(role: .destructive) {
+                isDeleteAccountConfirmPresented = true
+            } label: {
+                Label("PROFILE_DELETE_ACCOUNT", systemImage: "trash")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(AppSecondaryButtonStyle(tint: .appDanger))
+            .disabled(viewModel.isAuthLoading)
+        }
+    }
+
+    private func authDivider(_ key: LocalizedStringKey) -> some View {
+        HStack(spacing: 12) {
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.appBorder.opacity(0), Color.appBorder],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 1)
+
+            Text(key)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.appTextSecondary)
+                .textCase(.uppercase)
+                .fixedSize()
+
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.appBorder, Color.appBorder.opacity(0)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 1)
+        }
+        .padding(.vertical, 2)
+    }
+
+
     private func presentNameEditor() {
         draftFullName = viewModel.fullName
         isNameEditorPresented = true
     }
 
+    /// Android's snackbar equivalent: a small bottom capsule that names the outcome and dismisses
+    /// itself. Without any feedback channel, a failed rename looked identical to a successful one.
+    @ViewBuilder private var transientMessageBanner: some View {
+        if let message = viewModel.transientMessage {
+            Text(message)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Capsule().fill(Color.black.opacity(0.8)))
+                .padding(.bottom, 24)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .task {
+                    try? await Task.sleep(nanoseconds: 2_500_000_000)
+                    if viewModel.transientMessage == message {
+                        viewModel.transientMessage = nil
+                    }
+                }
+        }
+    }
+
     private func saveEditedName() {
-        viewModel.fullName = draftFullName.trimmingCharacters(in: .whitespacesAndNewlines)
+        viewModel.commitUsername(draftFullName)
     }
 
     private func presentEmailSignInSheet() {
@@ -354,27 +557,31 @@ struct ProfileView: View {
 
     private var currentNameDisplay: String {
         let trimmed = viewModel.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Not set" : trimmed
+        return trimmed.isEmpty ? NSLocalizedString("Not set", comment: "") : trimmed
     }
 
     private var currentEmailDisplay: String {
         let trimmed = viewModel.email.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Not set" : trimmed
+        return trimmed.isEmpty ? NSLocalizedString("Not set", comment: "") : trimmed
     }
 
     private var currentCountryDisplay: String {
         let trimmed = viewModel.country.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Not set" : trimmed
+        return trimmed.isEmpty ? NSLocalizedString("Not set", comment: "") : trimmed
     }
 
     private var currentAgencyDisplay: String {
         let trimmed = viewModel.agency.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Not set" : trimmed
+        return trimmed.isEmpty ? NSLocalizedString("Not set", comment: "") : trimmed
     }
 
     private var headerSecondaryText: String {
         let trimmedEmail = viewModel.email.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedEmail.isEmpty ? authStatusDisplay : trimmedEmail
+        if !trimmedEmail.isEmpty { return trimmedEmail }
+        // Android falls back email → phone → auth status; a phone-only account (the common
+        // disaster-app case) showed a bare status line here instead of its own number.
+        let phone = viewModel.displayPhoneNumber
+        return phone.isEmpty ? authStatusDisplay : phone
     }
 
     private var displayName: String {
@@ -825,6 +1032,439 @@ private struct ProfileAuthErrorBanner: View {
             RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous)
                 .stroke(Color.appDanger.opacity(0.18), lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Sign-in provider components
+
+/// A full-width, modern sign-in row that pairs a leading brand mark with a
+/// centered title. Marks (Google, Microsoft, …) keep their own colors while
+/// the chrome adapts to the requested emphasis.
+private struct AuthProviderButton<Leading: View>: View {
+    let title: LocalizedStringKey
+    var emphasis: AuthProviderButtonStyle.Emphasis = .neutral
+    var isDisabled: Bool = false
+    let action: () -> Void
+    private let leading: Leading
+
+    init(
+        title: LocalizedStringKey,
+        emphasis: AuthProviderButtonStyle.Emphasis = .neutral,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void,
+        @ViewBuilder leading: () -> Leading
+    ) {
+        self.title = title
+        self.emphasis = emphasis
+        self.isDisabled = isDisabled
+        self.action = action
+        self.leading = leading()
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                leading
+                    .frame(width: 22, height: 22)
+
+                Spacer(minLength: 8)
+
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(titleColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+
+                Spacer(minLength: 8)
+
+                // Balances the leading mark so the title stays optically centered.
+                Color.clear.frame(width: 22, height: 22)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 16)
+        }
+        .buttonStyle(AuthProviderButtonStyle(emphasis: emphasis))
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.55 : 1)
+    }
+
+    private var titleColor: Color {
+        switch emphasis {
+        case .primary: return .white
+        case .neutral: return .primary
+        case .tinted: return .appPrimary
+        }
+    }
+}
+
+private struct AuthProviderButtonStyle: ButtonStyle {
+    enum Emphasis {
+        case primary
+        case neutral
+        case tinted
+    }
+
+    var emphasis: Emphasis
+
+    func makeBody(configuration: Configuration) -> some View {
+        // Wrap in a View so `@Environment(\.colorScheme)` resolves reliably
+        // (reading it directly inside a ButtonStyle is not dependable).
+        Chrome(emphasis: emphasis, isPressed: configuration.isPressed) {
+            configuration.label
+        }
+    }
+
+    private struct Chrome<Label: View>: View {
+        let emphasis: Emphasis
+        let isPressed: Bool
+        @ViewBuilder var label: Label
+        @Environment(\.colorScheme) private var colorScheme
+
+        var body: some View {
+            label
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .background(
+                    RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous)
+                        .fill(fillStyle)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous)
+                        .stroke(strokeColor, lineWidth: 1)
+                )
+                .shadow(color: shadowColor, radius: 10, y: 5)
+                .scaleEffect(isPressed ? 0.985 : 1)
+                .opacity(isPressed ? 0.95 : 1)
+                .animation(.easeOut(duration: 0.16), value: isPressed)
+        }
+
+        private var fillStyle: AnyShapeStyle {
+            switch emphasis {
+            case .primary:
+                return AnyShapeStyle(
+                    LinearGradient(
+                        colors: [Color.appPrimary, Color.appPrimary.opacity(0.86)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            case .neutral:
+                return AnyShapeStyle(Color.appSurfaceElevated)
+            case .tinted:
+                return AnyShapeStyle(Color.appPrimary.opacity(colorScheme == .dark ? 0.16 : 0.10))
+            }
+        }
+
+        private var strokeColor: Color {
+            switch emphasis {
+            case .primary: return .clear
+            case .neutral: return Color.appBorder
+            case .tinted: return Color.appPrimary.opacity(0.28)
+            }
+        }
+
+        private var shadowColor: Color {
+            guard emphasis == .primary, colorScheme == .light else { return .clear }
+            return Color.appPrimary.opacity(0.28)
+        }
+    }
+}
+
+/// The official multi-color Google "G" logo, shipped as a vector asset
+/// ("GoogleG" in Assets.xcassets). `.original` keeps the brand colors.
+private struct GoogleGMark: View {
+    var body: some View {
+        Image("GoogleG")
+            .renderingMode(.original)
+            .resizable()
+            .scaledToFit()
+    }
+}
+
+/// The Microsoft four-square mark in its official tile colors.
+private struct MicrosoftLogoMark: View {
+    private let red = Color(red: 0.949, green: 0.314, blue: 0.133)
+    private let green = Color(red: 0.498, green: 0.729, blue: 0.0)
+    private let blue = Color(red: 0.0, green: 0.643, blue: 0.937)
+    private let yellow = Color(red: 1.0, green: 0.725, blue: 0.0)
+
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 2) {
+                Rectangle().fill(red)
+                Rectangle().fill(green)
+            }
+            HStack(spacing: 2) {
+                Rectangle().fill(blue)
+                Rectangle().fill(yellow)
+            }
+        }
+    }
+}
+
+// MARK: - Phone verification
+
+/// Two-step phone sign-in: number entry → segmented one-time-code entry with a
+/// live resend countdown. Owns its own timer/focus state.
+private struct PhoneVerificationPanel: View {
+    @ObservedObject var viewModel: ProfileViewModel
+    @State private var resendCountdown = 0
+    // Onboarding/Android parity: pick a country dial code and normalize to E.164 locally before
+    // handing the number to ProfileViewModel, so "0555…" no longer becomes an invalid E.164.
+    @State private var country: PhoneCountry = PhoneCountry.defaultCountry()
+    @State private var nationalNumber = ""
+
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private var trimmedNumber: String {
+        viewModel.phoneSignInNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The entered national number in E.164. A leading "+" overrides the country selection (matches
+    /// a pasted contact-card number); the national trunk '0' is dropped. Mirrors
+    /// OnboardingPhoneVerification.e164Number.
+    private var composedE164: String {
+        let raw = nationalNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.hasPrefix("+") {
+            return "+" + raw.dropFirst().filter(\.isNumber)
+        }
+        var digits = raw.filter(\.isNumber)
+        if digits.hasPrefix("0") { digits.removeFirst() }
+        return "+\(country.dialCode)\(digits)"
+    }
+
+    private var codeSentText: String {
+        String(
+            format: NSLocalizedString("PROFILE_PHONE_CODE_SENT_FORMAT", comment: ""),
+            trimmedNumber
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "phone.fill")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.appPrimary)
+                Text("PROFILE_LOGIN_PHONE_TITLE")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.appTextSecondary)
+                Spacer(minLength: 0)
+            }
+
+            if viewModel.isAwaitingPhoneCode {
+                awaitingState
+            } else {
+                entryState
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                .fill(Color.appSurfaceMuted)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                .stroke(Color.appBorder, lineWidth: 1)
+        )
+        .onChange(of: viewModel.isAwaitingPhoneCode) { _, awaiting in
+            if awaiting { resendCountdown = 30 }
+        }
+        .onReceive(ticker) { _ in
+            if resendCountdown > 0 { resendCountdown -= 1 }
+        }
+    }
+
+    private var entryState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(PhoneCountry.all) { entry in
+                        Button("\(entry.flag) \(entry.name) (+\(entry.dialCode))") {
+                            country = entry
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(country.flag)
+                        Text("+\(country.dialCode)")
+                            .font(.body.monospacedDigit())
+                            .foregroundStyle(.primary)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2)
+                            .foregroundStyle(Color.appTextSecondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 14)
+                    .background(numberFieldBackground)
+                }
+
+                TextField("PROFILE_PHONE_PLACEHOLDER", text: $nationalNumber)
+                    .keyboardType(.phonePad)
+                    .textContentType(.telephoneNumber)
+                    .autocorrectionDisabled()
+                    .font(.body)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 14)
+                    .background(numberFieldBackground)
+            }
+
+            Text("PROFILE_PHONE_HELP")
+                .font(.caption2)
+                .foregroundStyle(Color.appTextSecondary)
+
+            Button {
+                // Compose E.164 locally, then hand it to the existing sign-in path (which reads
+                // viewModel.phoneSignInNumber verbatim). Resend/confirm reuse this stored value.
+                viewModel.phoneSignInNumber = composedE164
+                viewModel.startPhoneSignIn()
+            } label: {
+                Label("PROFILE_PHONE_SEND_CODE", systemImage: "paperplane.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(AppPrimaryButtonStyle())
+            .disabled(viewModel.isAuthLoading || nationalNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    private var numberFieldBackground: some View {
+        RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous)
+            .fill(Color.appSurfaceElevated)
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous)
+                    .stroke(Color.appBorder, lineWidth: 1)
+            )
+    }
+
+    private var awaitingState: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(codeSentText)
+                .font(.caption)
+                .foregroundStyle(Color.appTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            OTPCodeField(code: $viewModel.phoneVerificationCode, length: 6)
+
+            Button {
+                viewModel.confirmPhoneCode()
+            } label: {
+                HStack(spacing: 8) {
+                    if viewModel.isAuthLoading {
+                        ProgressView().tint(.white)
+                    }
+                    Label("PROFILE_PHONE_VERIFY", systemImage: "checkmark.shield.fill")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(AppPrimaryButtonStyle())
+            .disabled(viewModel.isAuthLoading || viewModel.phoneVerificationCode.count < 6)
+
+            HStack(spacing: 0) {
+                resendControl
+                Spacer(minLength: 12)
+                Button {
+                    viewModel.cancelPhoneSignIn()
+                } label: {
+                    Text("PROFILE_PHONE_CHANGE_NUMBER")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.appTextSecondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isAuthLoading)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var resendControl: some View {
+        if resendCountdown > 0 {
+            Text(
+                String(
+                    format: NSLocalizedString("PROFILE_PHONE_RESEND_IN_FORMAT", comment: ""),
+                    resendCountdown
+                )
+            )
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(Color.appTextSecondary)
+            .monospacedDigit()
+        } else {
+            Button {
+                viewModel.startPhoneSignIn()
+                resendCountdown = 30
+            } label: {
+                Text("PROFILE_PHONE_RESEND")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(Color.appPrimary)
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.isAuthLoading)
+        }
+    }
+}
+
+/// Segmented one-time-code entry. An invisible text field captures keyboard,
+/// paste, and SMS autofill while the boxes below render each digit.
+private struct OTPCodeField: View {
+    @Binding var code: String
+    var length: Int = 6
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 8) {
+                ForEach(0..<length, id: \.self) { index in
+                    digitBox(at: index)
+                }
+            }
+            .allowsHitTesting(false)
+
+            // Real input lives here but is rendered (near-)invisible; the boxes
+            // above are the visible representation of `code`.
+            TextField("", text: $code)
+                .keyboardType(.numberPad)
+                .textContentType(.oneTimeCode)
+                .focused($isFocused)
+                .tint(.clear)
+                .opacity(0.02)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onChange(of: code) { _, newValue in
+                    let filtered = String(newValue.filter(\.isNumber).prefix(length))
+                    if filtered != newValue { code = filtered }
+                }
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { isFocused = true }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { isFocused = true }
+        }
+    }
+
+    private func digitBox(at index: Int) -> some View {
+        let digits = Array(code)
+        let isFilled = index < digits.count
+        let isActive = isFocused
+            && (index == digits.count || (index == length - 1 && digits.count == length))
+
+        return Text(isFilled ? String(digits[index]) : "")
+            .font(.title2.weight(.bold))
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 54)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.appSurfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(
+                        isActive
+                            ? Color.appPrimary
+                            : (isFilled ? Color.appPrimary.opacity(0.4) : Color.appBorder),
+                        lineWidth: isActive ? 2 : 1
+                    )
+            )
+            .animation(.easeOut(duration: 0.15), value: isActive)
     }
 }
 

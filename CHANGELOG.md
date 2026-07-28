@@ -4,6 +4,75 @@ All notable changes to Crisis Connect are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.8] - 2026-07-25
+
+Consolidates the 1.1.2 through 1.1.8 store releases. Android `versionCode` 59, iOS `MARKETING_VERSION` 1.1.8.
+
+### Added
+
+**Internet layer (end-to-end encrypted)**
+- Signal Protocol internet messaging on both platforms via libsignal (PQXDH session establishment, Double Ratchet forward secrecy), replacing the previous ECIES envelope for new sessions
+- Anti-downgrade pinning: once a Signal session exists with a peer, older-format messages from that peer are dropped fail-closed
+- Hardware-backed messaging identity key (Android Keystore `AGREE_KEY` / iOS Keychain)
+- Static-static ECDH sender authentication, safety numbers, and TOFU warnings when a contact's identity key changes
+- Cross-platform E2E golden-vector generator shared between Android and iOS
+- 1:1 internet voice and video calls over WebRTC, with Android Telecom and iOS CallKit native call UI, lock-screen ringing, and PushKit/APNs VoIP + FCM wake-up so a force-quit app still rings
+- Full-device screen sharing during a call, through a ReplayKit broadcast upload extension on iOS
+- Encrypted attachments (images, documents, voice notes) byte-compatible across Android, iOS and the web dashboard
+- Opt-in phone-number contact discovery, gated behind phone verification, with server-side delete
+- Store-and-forward queueing that drains over whichever transport returns first
+
+**Agency and rescue**
+- Agency channel conversations and cross-agency ("hierarchy") messaging, interleaved into the normal chat list with unread badges, receipts, typing and deep-linked notifications
+- Offline Bluetooth bridge for agency channels: messages, images, files, voice notes and voice calls relayed to nearby offline devices, with backfill of Bluetooth-era history
+- Rescuer ↔ victim live voice calls, medical information hand-off, and a remote signal feed
+- Background role-certificate renewal, a provisioning banner, server-side revocation checks, and rescue `deviceId` rotation on account switch
+- Rescue dashboard telemetry and sightings that survive going offline
+
+**Offline core**
+- Cross-platform Android ↔ iOS Bluetooth voice calls over the GATT audio link (0xCD00), with `WRITE_NO_RESPONSE` on the fast path
+- SPAKE2 (RFC 9382) P-256 nearby pairing, replacing the harvestable number beacon with a targeted short-code add
+- Relay-borne identity announce so QR pairing is bidirectional and both sides end up with a usable internet identity
+- SOS arming countdown (5 seconds) before broadcast, a BLE SOS beacon that survives a background kill, region-aware emergency-call button, and cloud uplink status with background store-and-forward
+
+**Crisis Sentinel**
+- On-device offline assistant executed through Google AI Edge LiteRT-LM, with a downloadable model manifest, download worker, output validation and safety coverage
+- Optional online engine with a provider/model picker, tool cards, cloud chat sync with the web dashboard, and tool results rendered on the offline map
+
+**Platform integration**
+- Android: home-screen SOS and Recent Disasters widgets with live SOS status, and a Quick Settings tile that goes straight into the SOS countdown
+- iOS: WidgetKit SOS and Recent Disasters widgets, an SOS Live Activity, and an iOS 18 SOS control for Control Center, the lock screen and the Action Button
+- Full Android-parity onboarding on iOS: welcome flow, phone verification, avatar, permissions card, country picker
+- Parent/child account linking (child profile mode)
+- Firebase Analytics custom-event layer with explicit consent
+
+### Changed
+- Localization expanded from 5 to **19 languages** on both platforms (Arabic, Bengali, Chinese Simplified, English, Filipino, French, German, Hindi, Indonesian, Japanese, Kurdish, Persian, Portuguese, Russian, Spanish, Turkish, Ukrainian, Urdu, Vietnamese)
+- Android `compileSdk` / `targetSdk` raised to 36 (Android 16)
+- iOS CI moved to Codemagic with automatic TestFlight distribution
+- Test suite grown from 213 to **534** tests (370 Android unit + 20 instrumented, 144 iOS)
+- Android startup and scroll performance: baseline profiles, Compose 1.9.4, recomposition fixes
+- Home search overhauled with sectioned results, full-history message search and Turkish-safe matching
+- `local.properties.example` now documents every required key, including `MOBILE_SYNC_BASE_URL`
+
+### Fixed
+- Notification races and budget drops that lost message notifications; taps now open the exact thread on both platforms
+- Call regressions: cold-start audio, single app-wide `CXProvider`, earpiece routing, ICE-budget reset, network-handover restart, remote-video letterboxing, screen-share colour and resolution, duplicate call events
+- Pairing no longer strips a child flag on upgrade, and never saves the local user as a contact
+- SOS is only declared by a pressed SOS button, and non-victims are no longer listed as SOS victims
+- Cloud username no longer blanked by link/bootstrap or passive profile sync
+- Signal sessions recover from a stale server prekey pool after reinstall, curing permanently undecryptable messages
+- Agency chats show real display names instead of login emails, and notification bodies label control payloads instead of leaking raw wire data
+
+### Security
+- Release signing files, Firebase config files, local property files, generated build outputs and packaged APK/AAB artifacts remain outside the public source tree
+- Prebuilt `.xcframework` static libraries are no longer committed; `iOS/README.md` documents how to rebuild them
+
+### Known limitations
+- 1:1 internet calls are DTLS-SRTP encrypted in transit, not additionally end-to-end encrypted above the media layer
+- SOS reports delivered to an agency dashboard are transport-encrypted, not end-to-end encrypted
+- SFU group calls with MLS per-frame encryption are present in the source tree but gated off and **not shipped**
+
 ## [1.1.1] - 2026-06-14
 
 ### Added

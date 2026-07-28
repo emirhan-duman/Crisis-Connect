@@ -206,6 +206,9 @@ struct SOSChatSessionRow: View {
     let lastMessage: SOSChatMessage?
     @Environment(\.colorScheme) private var colorScheme
     @StateObject private var directStatusState: ChatNavigationDirectStatusState
+    // Live call state so an in-progress call shows on the home row (Android's
+    // buildActiveCallPreviewUi) instead of a stale last-message preview.
+    @ObservedObject private var callCoordinator = ChatPeerVoiceCallCoordinator.shared
 
     init(session: SOSChatSession, contactRecord: ContactRecord?, lastMessage: SOSChatMessage?) {
         self.session = session
@@ -259,26 +262,40 @@ struct SOSChatSessionRow: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    if let previewSymbolName {
-                        Image(systemName: previewSymbolName)
+                if let activeCall = activeCallSnapshot {
+                    // Live call on THIS session → the row narrates it, like Android.
+                    HStack(spacing: 8) {
+                        Image(systemName: activeCall.callKind.isVideo ? "video.fill" : "phone.fill")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(previewSymbolTint)
-                    }
-
-                    Text(lastMessagePreviewText)
-                        .font(.subheadline.weight(hasUnread ? .semibold : .regular))
-                        .foregroundStyle(hasUnread ? Color.primary : Color.appTextSecondary)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 8)
-
-                    if let outgoingPreviewStatus {
-                        Text(statusLabel(for: outgoingPreviewStatus))
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(statusColor(for: outgoingPreviewStatus))
+                            .foregroundStyle(Color.appPrimary)
+                        Text(activeCallStatusText(for: activeCall))
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.appPrimary)
                             .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 8)
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        if let previewSymbolName {
+                            Image(systemName: previewSymbolName)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(previewSymbolTint)
+                        }
+
+                        Text(lastMessagePreviewText)
+                            .font(.subheadline.weight(hasUnread ? .semibold : .regular))
+                            .foregroundStyle(hasUnread ? Color.primary : Color.appTextSecondary)
+                            .lineLimit(1)
+
+                        Spacer(minLength: 8)
+
+                        if let outgoingPreviewStatus {
+                            Text(statusLabel(for: outgoingPreviewStatus))
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(statusColor(for: outgoingPreviewStatus))
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
                     }
                 }
             }
@@ -288,6 +305,22 @@ struct SOSChatSessionRow: View {
         .task(id: isDirectConversation) {
             directStatusState.setEnabled(isDirectConversation)
         }
+    }
+
+    /// The coordinator's call when it belongs to this row's session and is still in flight.
+    private var activeCallSnapshot: ChatPeerVoiceCallSnapshot? {
+        guard let call = callCoordinator.activeCall, call.sessionId == session.id else { return nil }
+        switch call.phase {
+        case .dialing, .ringing, .connecting, .active:
+            return call
+        case .idle, .ended, .failed:
+            return nil
+        }
+    }
+
+    private func activeCallStatusText(for call: ChatPeerVoiceCallSnapshot) -> String {
+        let status = call.statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        return status.isEmpty ? NSLocalizedString("CHAT_CALL_ACTIVE_ROW", comment: "") : status
     }
 
     private var avatarInitials: String {
@@ -308,7 +341,8 @@ struct SOSChatSessionRow: View {
             avatarHue: session.avatarHue ?? AvatarGenerator.hue(for: session.id),
             size: 56,
             borderColor: hasUnread ? avatarColor.opacity(colorScheme == .dark ? 0.55 : 0.34) : Color.clear,
-            borderWidth: 2
+            borderWidth: 2,
+            peerPhotoUrl: contactRecord?.peerPhotoUrl
         )
         .overlay(alignment: .bottomTrailing) {
             if let avatarAccessorySymbolName {
@@ -430,6 +464,8 @@ struct SOSChatSessionRow: View {
                 return "location.fill"
             }
             return nil
+        case .sosAlert:
+            return "exclamationmark.triangle.fill"
         }
     }
 
@@ -446,6 +482,8 @@ struct SOSChatSessionRow: View {
             return SOSChatCallPresentation.iconTint(for: lastMessage)
         case .text:
             return lastMessage.isLocal ? .appPrimary : .appTextSecondary
+        case .sosAlert:
+            return .appDanger
         }
     }
 
@@ -545,6 +583,8 @@ struct SOSChatSessionRow: View {
             return .appPrimary
         case .read:
             return .appSuccess
+        case .failed:
+            return .red
         }
     }
 
@@ -558,6 +598,8 @@ struct SOSChatSessionRow: View {
             return "SOS_CHAT_STATUS_DELIVERED"
         case .read:
             return "SOS_CHAT_STATUS_READ"
+        case .failed:
+            return "SOS_CHAT_STATUS_FAILED"
         }
     }
 }
@@ -668,7 +710,18 @@ struct SOSChatDetailView: View {
     @StateObject private var voiceCallController: ChatPeerVoiceCallController
     @StateObject private var voiceComposer = ChatVoiceComposer()
     @StateObject private var locationCoordinator = ChatAttachmentLocationCoordinator()
+    @ObservedObject private var typingBus = TypingIndicatorBus.shared
+    // Observed so the toolbar call button re-enables the moment a prior call clears (otherwise the
+    // .disabled state was read once and left the button greyed out).
+    @ObservedObject private var internetCall = InternetCallManager.shared
+    @ObservedObject private var rescueCallEngine = RescueCallEngine.shared
     @State private var draft: String = ""
+    /// Drives the one-time "save as emergency contact?" prompt (parity with Android's chat screen).
+    @State private var showEmergencyContactPrompt = false
+    @State private var lastTypingPulseAt: Date = .distantPast
+    // A quoted-reply tap flashes the jumped-to bubble briefly.
+    @State private var highlightedMessageId: UUID?
+    @State private var highlightClearTask: DispatchWorkItem?
     @State private var pendingReadWorkItem: DispatchWorkItem?
     @State private var isSendingVoice = false
     @State private var isSendingImage = false
@@ -682,9 +735,14 @@ struct SOSChatDetailView: View {
     @State private var previewedLocationMessage: SOSChatMessage?
     @State private var previewedSharedFile: PreviewedSharedFile?
     @State private var replyTargetMessageId: UUID?
+    @State private var showsChatInfo = false
+    /// In-chat message search (Android ChatScreenRoute parity): filter + jump-and-highlight.
     @State private var operationAlert: ChatOperationAlert?
     @State private var isTranscriptReady = false
     @State private var scrollTargetMessageId: UUID?
+    // Newest message the user has actually had on screen — drives the scroll-to-bottom badge.
+    // ID-based (not a count) so loading OLDER pages, which prepends, can't inflate it.
+    @State private var lastSeenMessageId: UUID?
     @State private var transcriptStartupTask: Task<Void, Never>?
     @State private var transportStartupTask: Task<Void, Never>?
     @State private var statusTrackingTask: Task<Void, Never>?
@@ -759,17 +817,61 @@ struct SOSChatDetailView: View {
                 .accessibilityLabel(Text("Back"))
             }
             ToolbarItem(placement: .principal) {
-                ChatNavigationTitleContainer(
-                    sessionId: sessionId,
-                    title: sessionTitle,
-                    subtitle: navigationSubtitle,
-                    initials: avatarInitials,
-                    avatarHue: avatarHue,
-                    avatarImageRelativePath: currentSession?.avatarImageRelativePath,
-                    showsVerifiedTrust: (currentSession?.showsVerificationBadge ?? false) || (contactRecord?.isVerified == true),
-                    allowVerifiedTitleIcon: counterpartyIsFieldTeam,
-                    showsDirectStatus: statusTrackingEnabled
-                )
+                // Tapping the header opens the contact-info screen (avatar, session code and the
+                // safety-number card) — same navigation as Android's chat header.
+                Button {
+                    showsChatInfo = true
+                } label: {
+                    ChatNavigationTitleContainer(
+                        sessionId: sessionId,
+                        title: sessionTitle,
+                        subtitle: navigationSubtitle,
+                        initials: avatarInitials,
+                        avatarHue: avatarHue,
+                        avatarImageRelativePath: currentSession?.avatarImageRelativePath,
+                        showsVerifiedTrust: (currentSession?.showsVerificationBadge ?? false) || (contactRecord?.isVerified == true),
+                        allowVerifiedTitleIcon: counterpartyIsFieldTeam,
+                        showsDirectStatus: statusTrackingEnabled,
+                        peerUid: contactRecord?.peerUid,
+                        internetCapable: contactRecord?.supportsInternet == true
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            // Internet (WebRTC) voice call for internet-identified contacts when the BLE call
+            // stack isn't offering its own button — mirrors Android preferring the live link.
+            if !showsVoiceCallAction, contactRecord?.supportsInternet == true {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        if let contactRecord {
+                            InternetCallManager.shared.startCall(contact: contactRecord)
+                        }
+                    } label: {
+                        Image(systemName: "phone")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Color.appPrimary)
+                    }
+                    .disabled(internetCall.call != nil)
+                    .accessibilityLabel(Text(LocalizedStringKey("VOICE_CALL_ACTION")))
+                }
+            }
+            if showsRescueCallAction {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        AVAudioApplication.requestRecordPermission { granted in
+                            guard granted else { return }
+                            DispatchQueue.main.async {
+                                _ = RescueCallEngine.shared.startCall(sessionId: sessionId)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "phone")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Color.appPrimary)
+                    }
+                    .disabled(rescueCallEngine.call != nil)
+                    .accessibilityLabel(Text(LocalizedStringKey("VOICE_CALL_ACTION")))
+                }
             }
             if showsVoiceCallAction {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -801,6 +903,19 @@ struct SOSChatDetailView: View {
             }
         }
         .appNavigationBarStyle()
+        .overlay {
+            if let rescueCall = rescueCallEngine.call, rescueCall.sessionId == sessionId {
+                RescueCallOverlayView(
+                    call: rescueCall,
+                    fallbackName: sessionTitle,
+                    onAccept: { RescueCallEngine.shared.accept() },
+                    onReject: { RescueCallEngine.shared.reject() },
+                    onEnd: { RescueCallEngine.shared.endCall() },
+                    onToggleMute: { RescueCallEngine.shared.setMuted(!rescueCall.muted) },
+                    onToggleSpeaker: { RescueCallEngine.shared.setSpeaker(!rescueCall.speakerOn) }
+                )
+            }
+        }
         .background(chatBackground)
         .sheet(item: $mediaPickerSource) { source in
             ChatImagePicker(source: source) { selection in
@@ -816,6 +931,18 @@ struct SOSChatDetailView: View {
             ChatLocationDetailSheet(message: message)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .analyticsScreen("chat_detail")
+        .navigationDestination(isPresented: $showsChatInfo) {
+            ChatInfoView(
+                sessionId: sessionId,
+                title: sessionTitle,
+                subtitle: navigationSubtitle,
+                initials: avatarInitials,
+                avatarHue: avatarHue,
+                avatarImageRelativePath: currentSession?.avatarImageRelativePath,
+                contact: contactRecord
+            )
         }
         .sheet(item: $previewedSharedFile) { preview in
             ChatSharedFilePreview(url: preview.url)
@@ -855,6 +982,45 @@ struct SOSChatDetailView: View {
             scheduleTranscriptPresentation()
             scheduleLocalReadStateUpdate()
             ensureRealtimeServicesStarted()
+            maybeAutoLinkBluetooth()
+            // Android asks once, on a freshly established internet conversation, whether this person
+            // should be alerted automatically when the user starts an SOS. iOS had the store and the
+            // settings screen but never the question, so unless the user went hunting in Settings the
+            // list stayed empty — and an empty list is what makes SosContactNotifier fall back to
+            // auto-picking whoever it ranks highest.
+            if let contactRecord, SosEmergencyContactsStore.shouldPrompt(for: contactRecord) {
+                showEmergencyContactPrompt = true
+            }
+            // Own shared-location bubbles go live while this chat holds a Bluetooth link
+            // (Android's live-location bubble); the tracker polls the link and gates the GPS.
+            if usesBleGattDirectChat {
+                let sessionId = sessionId
+                ChatLiveOwnLocationTracker.shared.activate(sessionId: sessionId) {
+                    contactBroadcastManager.isSessionConnected(sessionId)
+                        || p2pGattChat.isReady()
+                }
+            }
+        }
+        .alert(
+            "SOS_EC_PROMPT_TITLE",
+            isPresented: $showEmergencyContactPrompt
+        ) {
+            Button("SOS_EC_PROMPT_CONFIRM") {
+                if let contactRecord {
+                    SosEmergencyContactsStore.addEmergencyContact(contactRecord.id)
+                }
+            }
+            // Declining still records that we asked — the question is one-time either way.
+            Button("SOS_EC_PROMPT_DECLINE", role: .cancel) {
+                if let contactRecord {
+                    SosEmergencyContactsStore.markPrompted(contactRecord.id)
+                }
+            }
+        } message: {
+            Text(String(
+                format: NSLocalizedString("SOS_EC_PROMPT_MESSAGE", comment: ""),
+                contactRecord?.name ?? ""
+            ))
         }
         .onChange(of: usesBleGattDirectChat) { _, _ in
             voiceCallController.updateContact(contactRecord)
@@ -862,6 +1028,9 @@ struct SOSChatDetailView: View {
         }
         .onChange(of: contactRecord) { _, nextContact in
             voiceCallController.updateContact(nextContact)
+        }
+        .onChange(of: draft) { _, text in
+            sendTypingPulseIfNeeded(for: text)
         }
         .onChange(of: isFocused) { _, focused in
             guard focused else { return }
@@ -875,6 +1044,7 @@ struct SOSChatDetailView: View {
             }
         }
         .onDisappear {
+            ChatLiveOwnLocationTracker.shared.deactivate()
             SOSNotificationCenter.unregisterVisibleSession(sessionId)
             transcriptStartupTask?.cancel()
             transcriptStartupTask = nil
@@ -981,6 +1151,9 @@ struct SOSChatDetailView: View {
                             }
 
                             ForEach(messages) { message in
+                                if let separatorDate = daySeparatorDates[message.id] {
+                                    ChatDaySeparator(label: daySeparatorLabel(for: separatorDate))
+                                }
                                 SOSChatBubble(
                                     message: message,
                                     layout: layout,
@@ -992,13 +1165,34 @@ struct SOSChatDetailView: View {
                                     },
                                     onFileTap: { tappedMessage in
                                         presentSharedFilePreview(for: tappedMessage)
+                                    },
+                                    onReplyTap: { transportId in
+                                        jumpToRepliedMessage(transportMessageId: transportId)
                                     }
                                 )
                                 .equatable()
+                                .background(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(Color.whatsAppAccent.opacity(highlightedMessageId == message.id ? 0.18 : 0))
+                                        .padding(.horizontal, -6)
+                                        .padding(.vertical, -3)
+                                )
                                 .chatSwipeReply {
                                     activateReply(to: message)
                                 }
                                 .contextMenu {
+                                    // Only TEXT has a store-and-forward retry path (the queue re-sends
+                                    // text bubbles by their transportMessageId). An attachment's bytes
+                                    // aren't re-queued, so we never offer retry for one — matching
+                                    // Android, and avoiding a bubble stuck forever at .pending.
+                                    if message.isLocal, message.status == .failed, message.kind == .text {
+                                        Button(action: { retrySend(message) }) {
+                                            Label(
+                                                LocalizedStringKey("SOS_CHAT_ACTION_RETRY_SEND"),
+                                                systemImage: "arrow.clockwise"
+                                            )
+                                        }
+                                    }
                                     Button(action: {
                                         activateReply(to: message)
                                     }) {
@@ -1018,7 +1212,12 @@ struct SOSChatDetailView: View {
                                     .disabled(message.copyableText == nil)
                                 }
                             }
+                            if isPeerTyping {
+                                ChatTypingBubble()
+                                    .transition(.opacity)
+                            }
                         }
+                        .animation(.easeInOut(duration: 0.2), value: isPeerTyping)
                         .scrollTargetLayout()
                         .padding(.horizontal, layout.columnHorizontalPadding)
                         .padding(.top, 12)
@@ -1034,10 +1233,37 @@ struct SOSChatDetailView: View {
         .scrollPosition(id: $scrollTargetMessageId, anchor: .bottom)
         .scrollDismissesKeyboard(.interactively)
         .background(chatBackground)
-        .onChange(of: messages.last?.id) { _, lastId in
+        .overlay(alignment: .bottom) {
+            if let lastId = messages.last?.id,
+               let target = scrollTargetMessageId,
+               target != lastId {
+                ChatScrollToBottomButton(count: unseenTailCount) {
+                    lastSeenMessageId = lastId
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        scrollTargetMessageId = lastId
+                    }
+                }
+                .padding(.bottom, 12)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .onChange(of: messages.last?.id) { previousLastId, lastId in
             guard let lastId else { return }
-            if scrollTargetMessageId != lastId {
-                scrollTargetMessageId = lastId
+            // Follow the conversation only while the user is at the bottom — or when the new
+            // message is their own. Scrolled up, the floating button badges arrivals instead
+            // (Android parity).
+            let wasAtBottom = scrollTargetMessageId == nil || scrollTargetMessageId == previousLastId
+            if messages.last?.isLocal == true || wasAtBottom {
+                lastSeenMessageId = lastId
+                if scrollTargetMessageId != lastId {
+                    scrollTargetMessageId = lastId
+                }
+            }
+        }
+        .onChange(of: scrollTargetMessageId) { _, target in
+            // Scrolled back down by hand → everything is seen.
+            if let target, target == messages.last?.id {
+                lastSeenMessageId = target
             }
         }
         .onChange(of: totalMessageCount) { _, _ in
@@ -1161,6 +1387,82 @@ struct SOSChatDetailView: View {
         detailState.messages
     }
 
+    /// True while the peer is actively typing (internet typing pulse, kept alive ~6s per pulse).
+    private var isPeerTyping: Bool {
+        (typingBus.typing[sessionId] ?? .distantPast) > Date()
+    }
+
+    /// message.id → the day-start Date to render as a separator ABOVE it: the first message of each
+    /// calendar day. Keeps the transcript keyed by message UUIDs (scroll position stays intact)
+    /// while giving WhatsApp-style "Today / Yesterday / date" dividers (Android parity).
+    private var daySeparatorDates: [UUID: Date] {
+        var result: [UUID: Date] = [:]
+        let calendar = Calendar.current
+        var previousDay: Date?
+        for message in messages {
+            let day = calendar.startOfDay(for: message.timestamp)
+            if previousDay == nil || day != previousDay {
+                result[message.id] = day
+            }
+            previousDay = day
+        }
+        return result
+    }
+
+    private static let daySeparatorFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
+    private func daySeparatorLabel(for date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return NSLocalizedString("CHAT_DATE_TODAY", comment: "")
+        }
+        if calendar.isDateInYesterday(date) {
+            return NSLocalizedString("CHAT_DATE_YESTERDAY", comment: "")
+        }
+        return Self.daySeparatorFormatter.string(from: date)
+    }
+
+    /// Quoted-reply tap: find the original bubble by its transport id, scroll to it, flash it.
+    private func jumpToRepliedMessage(transportMessageId: String) {
+        let normalized = transportMessageId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty,
+              let target = messages.last(where: {
+                  ($0.transportMessageId ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == normalized
+              }) else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            scrollTargetMessageId = target.id
+            highlightedMessageId = target.id
+        }
+        UISelectionFeedbackGenerator().selectionChanged()
+        highlightClearTask?.cancel()
+        let work = DispatchWorkItem {
+            withAnimation(.easeOut(duration: 0.4)) { self.highlightedMessageId = nil }
+        }
+        highlightClearTask = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: work)
+    }
+
+    /// Scroll-and-flash for a message picked in the search sheet — the same jump the reply-quote
+    /// tap uses, keyed by row id instead of transport id.
+    private func jumpToMessage(_ message: SOSChatMessage) {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            scrollTargetMessageId = message.id
+            highlightedMessageId = message.id
+        }
+        UISelectionFeedbackGenerator().selectionChanged()
+        highlightClearTask?.cancel()
+        let work = DispatchWorkItem {
+            withAnimation(.easeOut(duration: 0.4)) { self.highlightedMessageId = nil }
+        }
+        highlightClearTask = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: work)
+    }
+
     private var totalMessageCount: Int {
         detailState.totalMessageCount
     }
@@ -1203,6 +1505,19 @@ struct SOSChatDetailView: View {
 
     private var showsVoiceCallAction: Bool {
         AppStoreScreenshotSupport.isAnySceneEnabled || voiceCallController.shouldShowToolbarAction
+    }
+
+    /// Live rescue-link call (rescuer↔victim over 0xCC40/0xCC41): shown only for rescue
+    /// sessions with a call-capable link, and never next to the contact-call button.
+    /// Reads the PUBLISHED ready-set (not canCall()) so the button appears reactively the
+    /// moment the rescue link finishes its handshake.
+    private var showsRescueCallAction: Bool {
+        guard !showsVoiceCallAction else { return false }
+        guard currentSession?.role == .fieldTeam || currentSession?.role == .victim else {
+            return false
+        }
+        return rescueCallEngine.call != nil
+            || rescueCallEngine.readySessionIds.contains(sessionId)
     }
 
     private var emptyStateTitleKey: LocalizedStringKey {
@@ -1313,7 +1628,10 @@ struct SOSChatDetailView: View {
             ChatAttachmentOptionsSheet(
                 cameraAvailable: cameraAvailable,
                 showsDocument: canSendDocumentAttachments,
-                showsLocation: usesBleGattDirectChat,
+                // Android allows location whenever BT OR the internet path exists; iOS gated it
+                // on BLE alone, so the growth path — internet-added contacts — couldn't answer the
+                // one question a disaster app exists for: "where are you?"
+                showsLocation: usesBleGattDirectChat || contactRecord?.supportsInternet == true,
                 onSelect: { action in
                     handleAttachmentSelection(action)
                 }
@@ -1336,6 +1654,15 @@ struct SOSChatDetailView: View {
     private func scrollToLatestMessage() {
         guard let lastMessageId = messages.last?.id else { return }
         scrollTargetMessageId = lastMessageId
+        lastSeenMessageId = lastMessageId
+    }
+
+    /// How many messages arrived after the newest one the user has seen (0 when the seen anchor
+    /// is gone — only very old ids fall out of the window, and those imply nothing unseen).
+    private var unseenTailCount: Int {
+        guard let lastSeenMessageId,
+              let index = messages.lastIndex(where: { $0.id == lastSeenMessageId }) else { return 0 }
+        return messages.count - 1 - index
     }
 
     private func presentAttachmentPicker(_ source: ChatMediaPickerSource) {
@@ -1434,11 +1761,20 @@ struct SOSChatDetailView: View {
         return voiceComposer.canStartRecording
     }
 
+    /// True when this thread can reach the peer over the E2E internet transport — an internet
+    /// contact can send/receive attachments even with no live Bluetooth link (Android parity).
+    private var canSendViaInternet: Bool {
+        sendMessageHandler == nil && (contactRecord?.supportsInternet ?? false)
+    }
+
     private var canAttachImage: Bool {
         if sendImageHandler != nil {
             return true
         }
         if usesBleGattDirectChat && sendMessageHandler == nil {
+            return true
+        }
+        if canSendViaInternet {
             return true
         }
         return sendMessageHandler == nil && currentSession?.role == .fieldTeam
@@ -1448,7 +1784,7 @@ struct SOSChatDetailView: View {
         if sendFileHandler != nil {
             return true
         }
-        return usesBleGattDirectChat
+        return usesBleGattDirectChat || canSendViaInternet
     }
 
     private var canShareOfflineMap: Bool {
@@ -1458,6 +1794,10 @@ struct SOSChatDetailView: View {
     private var maxDocumentTransferBytes: Int {
         if sendFileHandler != nil {
             return BleFilePayload.maxOutgoingTotalBytes
+        }
+        // Internet transport (chunked relay) matches Android's 25 MB cap; BLE stays at its lower cap.
+        if canSendViaInternet && !usesBleGattDirectChat {
+            return 25 * 1_024 * 1_024
         }
         return P2pBleProtocol.fileMaxTotalBytes
     }
@@ -1473,7 +1813,9 @@ struct SOSChatDetailView: View {
 
     private func startBroadcastIfNeeded() {
         guard shouldAutoStartBroadcast, !broadcastManager.isBroadcasting else { return }
-        SOSBroadcastManager.shared.start()
+        // Transport only. This runs merely because a chat was PRESENTED — it is not a statement that
+        // anyone is in danger, and it used to declare a full emergency 720ms after the view appeared.
+        SOSBroadcastManager.shared.start(declaringEmergency: false)
     }
 
     private func startContactLinkIfNeeded() {
@@ -1510,25 +1852,51 @@ struct SOSChatDetailView: View {
             replyAuthorLabel: replyTargetMessage.map(replyAuthorLabel(for:))
         )
         let transportMessageId = makeTransportMessageId()
-        let contactSuccess = sendViaContactLink(outgoingText)
-        let gattSuccess = sendViaP2pGatt(outgoingText, transportMessageId: transportMessageId)
-        let success = sendMessageHandler?(sessionId, outgoingText, transportMessageId)
-            ?? contactSuccess
-            ?? gattSuccess
-            ?? SOSBroadcastManager.shared.sendChatMessage(
-                to: sessionId,
-                text: outgoingText,
-                transportMessageId: transportMessageId
-            )
-        let status: SOSChatMessageStatus = success ? .sent : .pending
+        // Prefer the internet transport when the contact has an internet identity and we're online;
+        // it continues seamlessly if Bluetooth drops. Falls through to BLE/broadcast when offline.
+        // The internet path is ASYNC — it returns whether it took ownership (contact is internet
+        // capable + online), NOT whether the relay accepted. When it owns the send, the bubble
+        // starts .pending and its real result drives markSent/markFailed (with store-and-forward
+        // retry). Only the synchronous BLE/broadcast paths report an immediate boolean.
+        let internetOwned = sendViaInternet(outgoingText, transportMessageId: transportMessageId) ?? false
+        let syncSuccess: Bool? = internetOwned
+            ? nil
+            : (sendMessageHandler?(sessionId, outgoingText, transportMessageId)
+                ?? sendViaContactLink(outgoingText)
+                ?? sendViaP2pGatt(outgoingText, transportMessageId: transportMessageId)
+                ?? SOSBroadcastManager.shared.sendChatMessage(
+                    to: sessionId,
+                    text: outgoingText,
+                    transportMessageId: transportMessageId
+                ))
+        AppAnalytics.messageSent(
+            kind: "text",
+            transport: internetOwned ? "internet" : "bluetooth"
+        )
+        // internet → .pending (async result upgrades it); sync transport → its own verdict.
+        let status: SOSChatMessageStatus = internetOwned ? .pending : ((syncSuccess ?? false) ? .sent : .pending)
         store.appendLocalMessage(
             sessionId: sessionId,
             text: outgoingText,
             status: status,
             transportMessageId: transportMessageId
         )
+        if internetOwned || (syncSuccess ?? false) {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        } else {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        }
         draft = ""
         replyTargetMessageId = nil
+    }
+
+    /// Re-sends a bubble the user tapped after it failed (or is stuck pending). Resets it to
+    /// pending and kicks the store-and-forward queue; the receiver dedups on transportMessageId.
+    func retrySend(_ message: SOSChatMessage) {
+        guard message.isLocal, let tid = message.transportMessageId,
+              message.status == .failed || message.status == .pending else { return }
+        store.requeueMessage(sessionId: sessionId, transportMessageId: tid)
+        InternetSendRetryQueue.shared.kick(reason: "manual retry")
     }
 
     private func sendVoiceMessage() {
@@ -1548,9 +1916,53 @@ struct SOSChatDetailView: View {
             return
         }
 
-        isSendingVoice = true
         let hostConnected = contactBroadcastManager.isSessionConnected(sessionId)
         let centralReady = p2pGattChat.isReady()
+
+        // Internet transport: relay the clip (chunked E2E) when Bluetooth is not linked but the
+        // peer's identity is known and the internet is reachable — Android's exact priority.
+        if sendVoiceHandler == nil, !hostConnected, !centralReady,
+           let internetContact = contactRecord,
+           internetContact.supportsInternet,
+           InternetChatTransport.shared.isAvailable() {
+            AppAnalytics.messageSent(kind: "voice", transport: "internet")
+            _ = store.appendLocalAudioMessage(
+                sessionId: sessionId,
+                audioRelativePath: audioRelativePath,
+                durationMillis: durationMillis,
+                status: .pending,
+                transportMessageId: transportMessageId
+            )
+            voiceComposer.discardRecording()
+            let sessionId = self.sessionId
+            Task { @MainActor in
+                let data = await Task.detached(priority: .utility) {
+                    SOSChatStore.loadVoiceData(fileName: audioRelativePath)
+                }.value
+                guard let data, !data.isEmpty else {
+                    store.markFailed(sessionId: sessionId, transportMessageId: transportMessageId)
+                    return
+                }
+                let ok = await InternetChatTransport.shared.sendAttachment(
+                    transferId: transportMessageId,
+                    kind: InternetE2eEnvelope.attachmentKindAudio,
+                    mime: mimeType,
+                    name: audioRelativePath,
+                    durationMs: durationMillis,
+                    data: data,
+                    contact: internetContact
+                )
+                if ok {
+                    store.markSent(sessionId: sessionId, transportMessageId: transportMessageId)
+                } else {
+                    store.markFailed(sessionId: sessionId, transportMessageId: transportMessageId)
+                }
+            }
+            return
+        }
+
+        isSendingVoice = true
+        AppAnalytics.messageSent(kind: "voice", transport: "bluetooth")
 
         Self.transportQueue.async {
             let success: Bool
@@ -1585,7 +1997,15 @@ struct SOSChatDetailView: View {
                     messageId: transportMessageId,
                     sessionId: self.sessionId
                 )
+                // Final fallback mirrors the text chain: a victim chatting with a rescuer sends
+                // over the SOS GATT server (this used to be missing, so victim voice died here).
                 success = hostSuccess || self.p2pGattChat.sendVoiceMessage(
+                    audioFileName: audioRelativePath,
+                    mimeType: mimeType,
+                    durationMillis: durationMillis,
+                    messageId: transportMessageId
+                ) || SOSBroadcastManager.shared.sendVoiceMessage(
+                    to: self.sessionId,
                     audioFileName: audioRelativePath,
                     mimeType: mimeType,
                     durationMillis: durationMillis,
@@ -1622,11 +2042,56 @@ struct SOSChatDetailView: View {
             return
         }
 
-        isSendingImage = true
         ensureRealtimeServicesStarted()
         let hostConnected = contactBroadcastManager.isSessionConnected(sessionId)
         let centralReady = p2pGattChat.isReady()
         let canSendViaSosFieldTeam = currentSession?.role == .fieldTeam && sendMessageHandler == nil
+
+        // Internet transport: relay the image (chunked E2E) when Bluetooth is not linked but the
+        // peer's identity is known and the internet is reachable — Android's exact priority.
+        if sendImageHandler == nil, !canSendViaSosFieldTeam, !hostConnected, !centralReady,
+           let internetContact = contactRecord,
+           internetContact.supportsInternet,
+           InternetChatTransport.shared.isAvailable() {
+            _ = store.appendLocalImageMessage(
+                sessionId: sessionId,
+                imageRelativePath: prepared.imageRelativePath,
+                thumbnailRelativePath: prepared.thumbnailRelativePath,
+                imageWidth: prepared.width,
+                imageHeight: prepared.height,
+                imageMimeType: prepared.mimeType,
+                status: .pending,
+                transportMessageId: transportMessageId
+            )
+            self.pendingImage = nil
+            let sessionId = self.sessionId
+            Task { @MainActor in
+                let data = await Task.detached(priority: .utility) {
+                    SOSChatStore.loadImageData(fileName: prepared.imageRelativePath)
+                }.value
+                guard let data, !data.isEmpty else {
+                    store.markFailed(sessionId: sessionId, transportMessageId: transportMessageId)
+                    return
+                }
+                let ok = await InternetChatTransport.shared.sendAttachment(
+                    transferId: transportMessageId,
+                    kind: InternetE2eEnvelope.attachmentKindImage,
+                    mime: prepared.mimeType,
+                    name: prepared.imageRelativePath,
+                    durationMs: 0,
+                    data: data,
+                    contact: internetContact
+                )
+                if ok {
+                    store.markSent(sessionId: sessionId, transportMessageId: transportMessageId)
+                } else {
+                    store.markFailed(sessionId: sessionId, transportMessageId: transportMessageId)
+                }
+            }
+            return
+        }
+
+        isSendingImage = true
 
         Self.transportQueue.async {
             let success: Bool
@@ -1718,6 +2183,8 @@ struct SOSChatDetailView: View {
         let transportMessageId = makeTransportMessageId()
         isSendingDocument = true
         ensureRealtimeServicesStarted()
+        // Snapshot on the main thread; sendPreparedDocument runs on the transport queue.
+        let internetContact = contactRecord
 
         Self.transportQueue.async {
             guard let prepared = P2pSharedTransferSupport.prepareDocumentAttachment(
@@ -1734,17 +2201,63 @@ struct SOSChatDetailView: View {
                 }
                 return
             }
-            self.sendPreparedDocument(prepared, transportMessageId: transportMessageId)
+            self.sendPreparedDocument(
+                prepared,
+                transportMessageId: transportMessageId,
+                internetContact: internetContact
+            )
         }
     }
 
     private func sendPreparedDocument(
         _ prepared: PreparedP2pDocumentAttachment,
-        transportMessageId: String
+        transportMessageId: String,
+        internetContact: ContactRecord?
     ) {
         let previewText = P2pSharedTransferSupport.buildFilePreviewMessage(prepared)
         let hostConnected = contactBroadcastManager.isSessionConnected(sessionId)
         let centralReady = p2pGattChat.isReady()
+
+        // Internet transport when Bluetooth is not linked: the binary rides the relay as a kind-3
+        // attachment and the CC_FILE preview goes as a normal text message — both under the same
+        // uuid, exactly the pairing Android's receiver expects (and ours, symmetrically).
+        if sendFileHandler == nil, !hostConnected, !centralReady,
+           let internetContact,
+           internetContact.supportsInternet,
+           InternetChatTransport.shared.isAvailable() {
+            let sessionId = self.sessionId
+            DispatchQueue.main.async {
+                _ = self.store.appendLocalMessage(
+                    sessionId: sessionId,
+                    text: previewText,
+                    status: .pending,
+                    transportMessageId: transportMessageId
+                )
+                self.isSendingDocument = false
+            }
+            Task { @MainActor in
+                let fileSent = await InternetChatTransport.shared.sendAttachment(
+                    transferId: transportMessageId,
+                    kind: InternetE2eEnvelope.attachmentKindFile,
+                    mime: prepared.mimeType ?? "application/octet-stream",
+                    name: prepared.displayName,
+                    durationMs: 0,
+                    data: prepared.payloadData,
+                    contact: internetContact
+                )
+                if fileSent {
+                    _ = await InternetChatTransport.shared.sendText(
+                        messageId: transportMessageId,
+                        text: previewText,
+                        contact: internetContact
+                    )
+                    self.store.markSent(sessionId: sessionId, transportMessageId: transportMessageId)
+                } else {
+                    self.store.markFailed(sessionId: sessionId, transportMessageId: transportMessageId)
+                }
+            }
+            return
+        }
 
         let success: Bool
         if let sendFileHandler = self.sendFileHandler {
@@ -1838,6 +2351,8 @@ struct SOSChatDetailView: View {
         guard canShareOfflineMap, !isSendingDocument else { return }
         ensureRealtimeServicesStarted()
         isSendingDocument = true
+        // Snapshot on the main thread; sendPreparedDocument runs on the transport queue.
+        let internetContact = contactRecord
 
         Task { @MainActor in
             let location = await locationCoordinator.requestLocation(timeout: 2.5)
@@ -1853,7 +2368,11 @@ struct SOSChatDetailView: View {
                     )
                 }.value
                 Self.transportQueue.async {
-                    self.sendPreparedDocument(prepared, transportMessageId: transportMessageId)
+                    self.sendPreparedDocument(
+                prepared,
+                transportMessageId: transportMessageId,
+                internetContact: internetContact
+            )
                 }
             } catch {
                 isSendingDocument = false
@@ -1866,7 +2385,8 @@ struct SOSChatDetailView: View {
     }
 
     private func shareCurrentLocation() {
-        guard usesBleGattDirectChat, !isSharingLocation else { return }
+        guard usesBleGattDirectChat || contactRecord?.supportsInternet == true,
+              !isSharingLocation else { return }
         ensureRealtimeServicesStarted()
         isSharingLocation = true
 
@@ -1887,14 +2407,32 @@ struct SOSChatDetailView: View {
                 confidenceRadiusMeters: location.horizontalAccuracy >= 0 ? location.horizontalAccuracy : nil,
                 source: source
             )
-            let success = sendViaP2pGatt(payload, transportMessageId: transportMessageId) ?? false
+            // CC_LOC is plain text on the wire, so it rides the exact transport chain a text
+            // message uses: a live BT link wins, otherwise the internet path owns it (and its
+            // store-and-forward queue upgrades the bubble to .sent asynchronously). This used to be
+            // hardwired to the P2P GATT sender alone, so an internet-only contact could never be
+            // sent a location at all.
+            let internetOwned = sendViaInternet(payload, transportMessageId: transportMessageId) ?? false
+            let syncSuccess: Bool? = internetOwned
+                ? nil
+                : (sendMessageHandler?(sessionId, payload, transportMessageId)
+                    ?? sendViaContactLink(payload)
+                    ?? sendViaP2pGatt(payload, transportMessageId: transportMessageId)
+                    ?? SOSBroadcastManager.shared.sendChatMessage(
+                        to: sessionId,
+                        text: payload,
+                        transportMessageId: transportMessageId
+                    ))
+            let status: SOSChatMessageStatus = internetOwned
+                ? .pending
+                : ((syncSuccess ?? false) ? .sent : .pending)
             _ = store.upsertLocalLocationMessage(
                 sessionId: sessionId,
                 latitude: location.coordinate.latitude,
                 longitude: location.coordinate.longitude,
                 horizontalAccuracyMeters: location.horizontalAccuracy >= 0 ? location.horizontalAccuracy : nil,
                 capturedAt: location.timestamp,
-                status: success ? .sent : .pending,
+                status: status,
                 transportMessageId: transportMessageId
             )
         }
@@ -1909,6 +2447,18 @@ struct SOSChatDetailView: View {
     private func sendReadReceiptIfNeeded() {
         let remoteTransportMessageIds = store.transportMessageIdsForRemoteMessages(sessionId: sessionId)
         guard !remoteTransportMessageIds.isEmpty else { return }
+        // Internet contacts also get an E2E read receipt over the relay (idempotent on their
+        // side); the BLE chain below still runs for a live local link.
+        if let contactRecord, contactRecord.supportsInternet,
+           InternetChatTransport.shared.isAvailable() {
+            Task {
+                _ = await InternetChatTransport.shared.sendReceipt(
+                    contact: contactRecord,
+                    templateCode: InternetChatTransport.readReceiptTemplate,
+                    messageIds: remoteTransportMessageIds
+                )
+            }
+        }
         let gattRead = sendReadViaP2pGatt()
         _ = readReceiptHandler?(sessionId, remoteTransportMessageIds)
             ?? gattRead
@@ -1935,6 +2485,73 @@ struct SOSChatDetailView: View {
         }
         pendingReadWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    /// Returns true when the internet transport OWNS this send (contact is internet-capable). The
+    /// bubble is then .pending until the async relay result upgrades it to .sent (or the retry
+    /// queue eventually flips it to .failed). Returns nil when internet can't be used, so the
+    /// caller falls through to the BLE/broadcast transports. Note: contact must be internet-capable,
+    /// but we take ownership even when momentarily OFFLINE — the message queues and store-and-forward
+    /// delivers it when connectivity returns (a text composed offline must not silently vanish).
+    private func sendViaInternet(_ text: String, transportMessageId: String) -> Bool? {
+        guard let contactRecord else {
+            MessagingDiagLog.log("send text: NOT internet — chat has no contactRecord")
+            return nil
+        }
+        // A live Bluetooth link outranks the internet — Android's exact priority, and the one every
+        // sibling media path on this screen (voice, image, document, receipts, typing) already
+        // enforces. Text alone skipped these checks and returned true unconditionally, so any
+        // contact that ever exchanged an internet identity permanently lost its Bluetooth fallback:
+        // in a blackout, texts sat .pending in the retry queue right next to a working BT link —
+        // the one situation this app exists for. No isAvailable() gate on the else-branch though:
+        // with no BT link, internet ownership is still right even while unreachable, because the
+        // store-and-forward queue beats failing on a dead BT chain.
+        guard sendMessageHandler == nil,
+              !contactBroadcastManager.isSessionConnected(sessionId),
+              !p2pGattChat.isReady() else {
+            MessagingDiagLog.log("send text: NOT internet — a Bluetooth link is live, it wins")
+            return nil
+        }
+        guard contactRecord.supportsInternet else {
+            MessagingDiagLog.log(
+                "send text: NOT internet — contact '\(contactRecord.name)' supportsInternet=false " +
+                    "(peerUid=\(contactRecord.peerUid != nil) peerKey=\(contactRecord.peerPublicKey != nil))"
+            )
+            return nil
+        }
+        MessagingDiagLog.log("send text: via internet to peer=\(contactRecord.peerUid?.prefix(8) ?? "?") id=\(transportMessageId)")
+        let sessionId = self.sessionId
+        Task { @MainActor in
+            let ok = await InternetChatTransport.shared.sendText(
+                messageId: transportMessageId,
+                text: text,
+                contact: contactRecord
+            )
+            if ok {
+                store.markSent(sessionId: sessionId, transportMessageId: transportMessageId)
+            } else {
+                // Stays .pending; the store-and-forward queue retries and flips to .failed if it
+                // burns out. Kick it so a transient failure retries promptly.
+                InternetSendRetryQueue.shared.kick(reason: "live send failed")
+            }
+        }
+        return true
+    }
+
+    /// Composer keystrokes → a throttled, sealed "typing" pulse to the peer (internet contacts
+    /// only). One pulse per 4s while typing keeps writes cheap; the peer's indicator lives ~6s
+    /// per pulse, so continuous typing renders as a continuous indicator.
+    private func sendTypingPulseIfNeeded(for text: String) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let contactRecord,
+              contactRecord.supportsInternet,
+              InternetChatTransport.shared.isAvailable() else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastTypingPulseAt) >= 4 else { return }
+        lastTypingPulseAt = now
+        Task {
+            _ = await InternetChatTransport.shared.sendTypingSignal(contact: contactRecord)
+        }
     }
 
     private func sendViaContactLink(_ text: String) -> Bool? {
@@ -2104,6 +2721,15 @@ struct SOSChatDetailView: View {
         hasStartedRealtimeServices = true
         scheduleStatusTrackingIfNeeded()
         scheduleDeferredTransportStartup()
+    }
+
+    /// An internet contact added by number (from phone contacts) has no offline Bluetooth link yet.
+    /// While its chat is open, try once to bootstrap one over SPAKE2 if the peer is nearby, so future
+    /// messages can ride Bluetooth automatically (Android parity — ChatScreenViewModel's auto-link).
+    /// Best-effort: the internet transport keeps carrying the chat, and the peer confirms once.
+    private func maybeAutoLinkBluetooth() {
+        guard let contactRecord, NearbyAutoLink.isEligible(contactRecord) else { return }
+        NearbyAutoLink.shared.tryEstablish(contact: contactRecord)
     }
 
     private func scheduleStatusTrackingIfNeeded() {
@@ -2634,13 +3260,18 @@ private final class ChatVoiceComposer: NSObject, ObservableObject {
 
     private func startDurationTimer() {
         durationTimer?.invalidate()
-        durationTimer = Timer.scheduledTimer(
-            timeInterval: 0.25,
-            target: self,
-            selector: #selector(handleDurationTimerTick(_:)),
-            userInfo: nil,
-            repeats: true
-        )
+        // Use the closure variant with [weak self] so the timer doesn't retain the
+        // composer. With the target/selector form Timer holds self strongly, which
+        // means cleanupRecorder() is the ONLY way to release the composer — if the
+        // chat view is dismissed mid-recording the composer (and its AVAudioRecorder)
+        // would leak indefinitely while the timer keeps firing every 0.25 s.
+        // The timer is added to the main run loop (this method is @MainActor) so the
+        // closure fires on the main thread, satisfying the actor isolation of the tick.
+        durationTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleDurationTimerTick()
+            }
+        }
     }
 
     private func cleanupRecorder(deleteFile: Bool) {
@@ -2655,10 +3286,13 @@ private final class ChatVoiceComposer: NSObject, ObservableObject {
         }
     }
 
-    @objc
-    private func handleDurationTimerTick(_ timer: Timer) {
+    private func handleDurationTimerTick() {
         guard let recorder else { return }
         liveDurationLabel = Self.formatDuration(milliseconds: Int(recorder.currentTime * 1000))
+    }
+
+    deinit {
+        durationTimer?.invalidate()
     }
 
     func stopRecording() {
@@ -2738,7 +3372,11 @@ private final class ChatAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDe
             guard let audioData = SOSChatStore.loadVoiceData(fileName: fileName) else {
                 return
             }
-            let player = try AVAudioPlayer(data: audioData)
+            // Android sends internet voice clips as Ogg/Opus, which AVAudioPlayer cannot open.
+            // Route through the transcoder: a no-op for non-Ogg clips, and after the first play
+            // the m4a result is cached (encrypted) so this is a cheap lookup on replays.
+            let playableData = OggOpusTranscoder.playableAudioData(for: audioData, cacheKey: fileName)
+            let player = try AVAudioPlayer(data: playableData)
             player.delegate = self
             player.prepareToPlay()
             self.player = player
@@ -2759,17 +3397,17 @@ private final class ChatAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDe
 
     private func startProgressTimer() {
         progressTimer?.invalidate()
-        progressTimer = Timer.scheduledTimer(
-            timeInterval: 0.2,
-            target: self,
-            selector: #selector(handleProgressTimerTick(_:)),
-            userInfo: nil,
-            repeats: true
-        )
+        // Closure variant with [weak self] avoids the strong retain that
+        // Timer.scheduledTimer(target:selector:) imposes — without this the audio
+        // player object would survive past view dismissal and keep firing every 0.2 s.
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleProgressTimerTick()
+            }
+        }
     }
 
-    @objc
-    private func handleProgressTimerTick(_ timer: Timer) {
+    private func handleProgressTimerTick() {
         guard let player else { return }
         currentMillis = Int(player.currentTime * 1000)
         if player.duration > 0 {
@@ -2777,6 +3415,10 @@ private final class ChatAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDe
         } else {
             progress = 0
         }
+    }
+
+    deinit {
+        progressTimer?.invalidate()
     }
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
@@ -2805,4 +3447,63 @@ extension Color {
     static let whatsAppInputBorder = Color.appBorder
     static let whatsAppInfoBackground = Color.appSurfaceMuted
     static let whatsAppInfoText = Color.appTextSecondary
+}
+
+
+// MARK: - In-chat message search (Android ChatScreenRoute parity)
+
+private struct ChatMessageSearchSheet: View {
+    let messages: [SOSChatMessage]
+    @Binding var query: String
+    let onSelect: (SOSChatMessage) -> Void
+
+    private var results: [SOSChatMessage] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        // Text bubbles only, newest first; control payloads (CC_*) never match user searches by
+        // design — nobody is looking for "CC_LOC:41.0,29.0".
+        return messages
+            .filter { $0.kind == .text && !$0.text.hasPrefix("CC_") }
+            .filter { $0.text.localizedCaseInsensitiveContains(trimmed) }
+            .sorted { $0.timestamp > $1.timestamp }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    ContentUnavailableView(
+                        LocalizedStringKey("CHAT_SEARCH_PLACEHOLDER"),
+                        systemImage: "magnifyingglass"
+                    )
+                } else if results.isEmpty {
+                    ContentUnavailableView(
+                        LocalizedStringKey("CHAT_SEARCH_NO_RESULTS"),
+                        systemImage: "text.magnifyingglass"
+                    )
+                } else {
+                    List(results) { message in
+                        Button {
+                            onSelect(message)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(message.text)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.primary)
+                                    .lineLimit(2)
+                                Text(message.timestamp, format: .dateTime.day().month().hour().minute())
+                                    .font(.caption2)
+                                    .foregroundStyle(Color.appTextSecondary)
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .searchable(text: $query, prompt: Text(LocalizedStringKey("CHAT_SEARCH_PLACEHOLDER")))
+            .navigationTitle(LocalizedStringKey("CHAT_SEARCH_TITLE"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+    }
 }

@@ -5,6 +5,7 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -38,8 +39,10 @@ import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.auralis.crisisconnect.MainActivity
 import androidx.core.content.ContextCompat
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.analytics.Analytics
 import com.auralis.crisisconnect.core.chat.ActiveChatTracker
 import com.auralis.crisisconnect.core.media.ImageFileUtils
 import com.auralis.crisisconnect.core.media.generateImageThumbnail
@@ -66,12 +69,18 @@ import com.auralis.crisisconnect.data.voiceMessageFile
 import com.auralis.crisisconnect.data.voiceMessageFileName
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.data.local.ContactAvatarStorage
+import com.auralis.crisisconnect.data.local.MedicalInfoStore
 import com.auralis.crisisconnect.service.BleMessageNotifier
 import com.auralis.crisisconnect.getSavedUserName
 import com.auralis.crisisconnect.service.gattmesh.GattMeshForegroundService
+import com.auralis.crisisconnect.service.sos.SosCloudReporter
+import com.auralis.crisisconnect.service.sos.SosContactNotifier
 import com.auralis.crisisconnect.service.media.ImageTransferDirection
 import com.auralis.crisisconnect.service.media.ImageTransferState
 import com.auralis.crisisconnect.service.p2p.P2pBleProtocol
+import com.auralis.crisisconnect.service.p2p.call.P2pCallController
+import com.auralis.crisisconnect.service.p2p.call.P2pCallProtocol
+import org.json.JSONObject
 import com.auralis.crisisconnect.service.voice.VoiceTransferDirection
 import com.auralis.crisisconnect.service.voice.VoiceTransferState
 import com.auralis.crisisconnect.security.AesCipherHelper
@@ -156,6 +165,8 @@ class GattSOSServerService : Service() {
     private val secureAckCharacteristicUuid: UUID = UUIDGenerator.fromAssignedNumber(CHAR_SECURE_ACK_NUMBER)
     private val secureChatInCharacteristicUuid: UUID = UUIDGenerator.fromAssignedNumber(CHAR_SECURE_CHAT_IN_NUMBER)
     private val secureChatOutCharacteristicUuid: UUID = UUIDGenerator.fromAssignedNumber(CHAR_SECURE_CHAT_OUT_NUMBER)
+    private val callIoInCharacteristicUuid: UUID = UUIDGenerator.fromAssignedNumber(CHAR_CALL_IO_IN_NUMBER)
+    private val callIoOutCharacteristicUuid: UUID = UUIDGenerator.fromAssignedNumber(CHAR_CALL_IO_OUT_NUMBER)
 
     override fun onCreate() {
         super.onCreate()
@@ -170,29 +181,127 @@ class GattSOSServerService : Service() {
                 .trim()
         }
 
-        startForeground(NOTIFICATION_ID, createNotification())
+        if (!startForegroundSafely()) {
+            stopSelf()
+            return
+        }
         if (!startGattServer()) {
             return
         }
         if (!startAdvertising()) {
             return
         }
+        // Hosting only. onCreate cannot see the start Intent, so it cannot know whether this is a
+        // real emergency or a chat session bringing the shared server up — and it must not guess.
+        // The emergency effects fire from onStartCommand, which can read the intent.
         _isRunning.value = true
+        P2pCallController.shared(applicationContext).registerExtraLink(victimCallLink)
+    }
+
+    /**
+     * Everything that announces a human is in danger. Fired ONLY from the SOS button path, once.
+     *
+     * This used to run unconditionally in onCreate, so anything that started the service — including
+     * merely opening a BLE chat — reported to the agency dashboard and auto-messaged the user's
+     * contacts. The code itself is unchanged and un-gated: it is the same block, just reached only
+     * from a real declaration. Nothing here is skipped or made conditional, because a suppressed real
+     * SOS is far worse than an accidental one.
+     */
+    private fun declareEmergency() {
+        if (_isDeclared.value) {
+            return
+        }
+        _isDeclared.value = true
         _startTimestampMillis.value = System.currentTimeMillis()
+        // Swap the low-key hosting notification for the promoted "SOS active" one
+        // (Android 16 Live Update chip; plain ongoing notification on older OSes).
+        runCatching { startForeground(NOTIFICATION_ID, createNotification()) }
+            .onFailure { Log.w(TAG, "Unable to refresh SOS notification after declaration", it) }
+        // The advert went out in hosting mode; re-issue it so rescuers see a victim.
+        runCatching { restartAdvertisingForDeclaration() }
+            .onFailure { Log.w(TAG, "Unable to re-advertise after SOS declaration", it) }
+        Analytics.sosActivated()
         runCatching {
             GattMeshForegroundService.requestSosModeReconcile(applicationContext)
         }.onFailure { throwable ->
             Log.w(TAG, "Unable to request GATT mesh SOS-mode reconcile after SOS start", throwable)
         }
+        // Internet uplink is additive: it runs on its own scope and never delays the BLE broadcast.
+        runCatching {
+            SosCloudReporter.onSosStarted(
+                context = applicationContext,
+                locationProvider = { resolveVictimLocationSnapshot() },
+                batteryProvider = { currentBatteryPercent() }
+            )
+        }.onFailure { throwable ->
+            Log.w(TAG, "Unable to start SOS internet uplink", throwable)
+        }
+        // Stage 3 of the escalation: auto-message the victim's closest contacts.
+        runCatching {
+            SosContactNotifier.onSosStarted(
+                context = applicationContext,
+                locationProvider = { resolveVictimLocationSnapshot() }
+            )
+        }.onFailure { throwable ->
+            Log.w(TAG, "Unable to start SOS contact notifier", throwable)
+        }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    @SuppressLint("MissingPermission")
+    private fun restartAdvertisingForDeclaration() {
+        val advertiser = advertiser ?: return
+        runCatching { advertiser.stopAdvertising(advertiseCallback) }
+        startAdvertising()
+    }
+
+    /**
+     * Promoting to the foreground can be rejected when the service is started from the background on
+     * Android 12+ (ForegroundServiceStartNotAllowedException). Catch it, surface the failure to the
+     * UI and let the caller stop the service instead of crashing — leaving it started-but-not-
+     * foregrounded would also trigger ForegroundServiceDidNotStartInTimeException.
+     */
+    private fun startForegroundSafely(): Boolean {
+        return try {
+            startForeground(NOTIFICATION_ID, createNotification())
+            true
+        } catch (startException: Exception) {
+            publishStartupFailure(
+                getString(R.string.sos_error_foreground_start_blocked),
+                startException
+            )
+            false
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A declaration can arrive on the very first start (SOS pressed while nothing was hosting) or
+        // on a later one (SOS pressed while a chat already had the server up). Both must work, and
+        // declareEmergency() is idempotent so a repeated start can never double-report.
+        if (intent?.getBooleanExtra(EXTRA_USER_DECLARED, false) == true) {
+            declareEmergency()
+        }
+        return START_STICKY
+    }
 
     @SuppressLint("MissingPermission")
     override fun onDestroy() {
         super.onDestroy()
         _isRunning.value = false
+        _isDeclared.value = false
         _startTimestampMillis.value = null
+        runCatching {
+            P2pCallController.shared(applicationContext).unregisterExtraLink(victimCallLink)
+        }
+        // Stop the uplink heartbeat before tearing anything else down so its providers can no
+        // longer touch this dying instance; the resolved report goes out on the reporter's scope.
+        runCatching { SosCloudReporter.onSosStopped(applicationContext) }
+            .onFailure { throwable ->
+                Log.w(TAG, "Unable to stop SOS internet uplink", throwable)
+            }
+        runCatching { SosContactNotifier.onSosStopped(applicationContext) }
+            .onFailure { throwable ->
+                Log.w(TAG, "Unable to stop SOS contact notifier", throwable)
+            }
         runCatching {
             GattMeshForegroundService.requestSosModeReconcile(applicationContext)
         }.onFailure { throwable ->
@@ -384,6 +493,7 @@ class GattSOSServerService : Service() {
                     authChallengeCharacteristicUuid -> handleAuthChallengeWrite(device, value)
                     secureInCharacteristicUuid -> handleSecureInWrite(device, value)
                     secureChatInCharacteristicUuid -> handleSecureChatInWrite(device, value)
+                    callIoInCharacteristicUuid -> handleCallIoWrite(device, value)
                     secureAckCharacteristicUuid -> handleAckWrite(device, value)
                     else -> handleSharedCharacteristicWrite(
                         device = device,
@@ -526,9 +636,22 @@ class GattSOSServerService : Service() {
             BluetoothGattCharacteristic.PERMISSION_READ
         )
 
+        val callIoInCharacteristic = BluetoothGattCharacteristic(
+            callIoInCharacteristicUuid,
+            BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
+            BluetoothGattCharacteristic.PERMISSION_WRITE
+        )
+
+        val callIoOutCharacteristic = BluetoothGattCharacteristic(
+            callIoOutCharacteristicUuid,
+            BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+            BluetoothGattCharacteristic.PERMISSION_READ
+        )
+
         authResponseCharacteristic.addDescriptor(createClientConfigDescriptor())
         secureAckCharacteristic.addDescriptor(createClientConfigDescriptor())
         secureChatOutCharacteristic.addDescriptor(createClientConfigDescriptor())
+        callIoOutCharacteristic.addDescriptor(createClientConfigDescriptor())
 
         service.addCharacteristic(idCharacteristic)
         service.addCharacteristic(statusCharacteristic)
@@ -538,6 +661,8 @@ class GattSOSServerService : Service() {
         service.addCharacteristic(secureAckCharacteristic)
         service.addCharacteristic(secureChatInCharacteristic)
         service.addCharacteristic(secureChatOutCharacteristic)
+        service.addCharacteristic(callIoInCharacteristic)
+        service.addCharacteristic(callIoOutCharacteristic)
 
         if (!runCatching { gattServer!!.addService(service) }
                 .onFailure { throwable ->
@@ -873,8 +998,18 @@ class GattSOSServerService : Service() {
                 encodeMeshInitiatorRank(initiatorRank)
             )
             .build()
+        // Intent rides in the payload LENGTH so a real victim's advert is byte-for-byte what every
+        // rescuer build ever shipped already parses: 12 bytes = declared emergency, 13 bytes = the
+        // same id plus a "not a victim" flag. A device merely hosting the chat server must never be
+        // listed as a victim; on an OLD rescuer the 13-byte form simply fails to parse, so it is
+        // dropped rather than mis-listed.
+        val serviceData = if (_isDeclared.value) {
+            rescueBroadcastServiceData
+        } else {
+            rescueBroadcastServiceData + INTENT_FLAG_CHAT_HOST
+        }
         val scanResponse = AdvertiseData.Builder()
-            .addServiceData(ParcelUuid(crisisServiceUuid), rescueBroadcastServiceData)
+            .addServiceData(ParcelUuid(crisisServiceUuid), serviceData)
             .build()
 
         try {
@@ -2508,12 +2643,26 @@ class GattSOSServerService : Service() {
         }
         val avatarPayload = ContactAvatarStorage.localProfileAvatarPayload(applicationContext)
         val victimLocation = resolveVictimLocationSnapshot()
+        // Optional emergency medical details, shared only over this encrypted rescue link.
+        val medicalInfo = runCatching { MedicalInfoStore.observe(applicationContext).first() }
+            .getOrNull()
+            ?.sanitized()
+            ?.takeIf { !it.isEmpty }
+            ?.let { info ->
+                BlePeerIdentityUtils.PeerMedicalInfo(
+                    bloodType = info.bloodType.takeIf { it.isNotBlank() },
+                    allergies = info.allergies.takeIf { it.isNotBlank() },
+                    medication = info.medication.takeIf { it.isNotBlank() },
+                    notes = info.notes.takeIf { it.isNotBlank() }
+                )
+            }
         val payload = BlePeerIdentityUtils.buildPeerInfoPayload(
             name = localName,
             role = roleValue,
             batteryPercent = batteryPct,
             avatarBase64 = avatarPayload,
-            location = victimLocation
+            location = victimLocation,
+            medical = medicalInfo
         )
         val sent = notifyChat(normalizedAddress, payload)
         if (!sent) {
@@ -2810,6 +2959,98 @@ class GattSOSServerService : Service() {
         return notifyChat(normalizedAddress, text)
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Voice call over the rescue link (peripheral role). Audio + signaling ride the dedicated
+    // 0xCC40/0xCC41 pair so older peers never see call traffic; see RescueCallLinkCodec.
+    // ---------------------------------------------------------------------------------------
+
+    private val victimCallLink = object : P2pCallController.CallLink {
+        override val linkName: String = RescueCallLinkCodec.LINK_NAME_VICTIM
+
+        override fun isReadyForSession(sessionCode: String): Boolean {
+            return callAddressForSession(sessionCode) != null
+        }
+
+        override suspend fun sendCallSignal(sessionCode: String, payload: JSONObject): Boolean {
+            val normalizedAddress = callAddressForSession(sessionCode) ?: return false
+            val sessionKey = sessionKeys[normalizedAddress] ?: return false
+            val packet = RescueCallLinkCodec.encodeSignalPacket(sessionKey, payload) ?: return false
+            return notifyCallIo(normalizedAddress, packet)
+        }
+
+        override fun trySendCallAudio(sessionCode: String, packet: ByteArray): Boolean {
+            val normalizedAddress = callAddressForSession(sessionCode) ?: return false
+            return notifyCallIo(normalizedAddress, packet)
+        }
+
+        override fun callKeyForSession(sessionCode: String): ByteArray? {
+            val normalizedAddress = callAddressForSession(sessionCode) ?: return null
+            return sessionKeys[normalizedAddress]
+        }
+    }
+
+    private fun callAddressForSession(sessionCode: String): String? {
+        val target = sessionCode.trim().takeIf { it.isNotEmpty() } ?: return null
+        val candidates = synchronized(verifiedClients) { verifiedClients.toList() }
+        return candidates.firstOrNull { address ->
+            sessionKeys.containsKey(address) &&
+                isNotificationEnabled(address, callIoOutCharacteristicUuid) &&
+                resolveSessionCodeForAddress(address).equals(target, ignoreCase = true)
+        }
+    }
+
+    private fun handleCallIoWrite(device: BluetoothDevice, value: ByteArray?): Int {
+        if (value == null || value.isEmpty()) {
+            return BluetoothGatt.GATT_FAILURE
+        }
+        val normalizedAddress = device.address.uppercase(Locale.US)
+        if (!verifiedClients.contains(normalizedAddress)) {
+            return BluetoothGatt.GATT_FAILURE
+        }
+        val sessionKey = sessionKeys[normalizedAddress] ?: return BluetoothGatt.GATT_FAILURE
+        if (P2pCallProtocol.isCallAudioFrame(value)) {
+            P2pCallController.shared(applicationContext).onInboundCallAudio(value)
+            return BluetoothGatt.GATT_SUCCESS
+        }
+        val payload = RescueCallLinkCodec.decodeSignalPacket(sessionKey, value)
+            ?: return BluetoothGatt.GATT_FAILURE
+        val sessionCode = resolveSessionCodeForAddress(normalizedAddress)
+        val contact = RescueCallLinkCodec.syntheticContact(
+            sessionCode = sessionCode,
+            displayName = null,
+            sessionKey = sessionKey
+        )
+        P2pCallController.shared(applicationContext)
+            .onInboundCallSignal(contact, payload, victimCallLink)
+        return BluetoothGatt.GATT_SUCCESS
+    }
+
+    /**
+     * Single-shot call-IO notify: call packets are built to fit one ATT write, so anything that
+     * would need chunking is dropped (the jitter buffer conceals a lost audio packet; signaling
+     * retries via the offer loop).
+     */
+    @SuppressLint("MissingPermission")
+    private fun notifyCallIo(normalizedAddress: String, packet: ByteArray): Boolean {
+        if (!hasBluetoothConnectPermission()) {
+            return false
+        }
+        if (!isNotificationEnabled(normalizedAddress, callIoOutCharacteristicUuid)) {
+            return false
+        }
+        if (packet.size > notificationChunkSizeFor(normalizedAddress)) {
+            return false
+        }
+        val device = findConnectedGattDevice(normalizedAddress) ?: return false
+        val server = gattServer ?: return false
+        val service = server.getService(crisisServiceUuid) ?: return false
+        val characteristic = service.getCharacteristic(callIoOutCharacteristicUuid) ?: return false
+        characteristic.value = packet
+        return runCatching {
+            server.notifyCharacteristicChanged(device, characteristic, false)
+        }.getOrDefault(false)
+    }
+
     inner class LocalBinder : Binder() {
         fun getService(): GattSOSServerService = this@GattSOSServerService
     }
@@ -2939,6 +3180,9 @@ class GattSOSServerService : Service() {
     }
 
     private fun createNotification(): Notification {
+        if (_isDeclared.value) {
+            return createDeclaredSosNotification()
+        }
         val channelId = NOTIFICATION_CHANNEL_ID
         ensureNotificationChannel(channelId)
 
@@ -2949,6 +3193,71 @@ class GattSOSServerService : Service() {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
+
+    private val declaredSosChannelId = "sos_live_status"
+
+    /**
+     * A DECLARED SOS gets Android 16's "Live Update" treatment: a promoted ongoing
+     * notification (status-bar chip + elevated shade card) with a running chronometer.
+     * Promotion needs the POST_PROMOTED_NOTIFICATIONS manifest permission, an ongoing
+     * notification and an eligible style (BigText here); the request flag rides the
+     * documented extras key so this builds against the pre-1.17 NotificationCompat
+     * still in use. Older OS versions simply show a normal ongoing notification.
+     */
+    private fun createDeclaredSosNotification(): Notification {
+        ensureDeclaredSosChannel()
+        val startedAtMillis = _startTimestampMillis.value ?: System.currentTimeMillis()
+        val launchIntent = MainActivity.createTrustedLaunchIntent(this) {
+            putExtra(MainActivity.EXTRA_NAVIGATE_TO_ROUTE, "sos_status")
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        val contentIntent = PendingIntent.getActivity(
+            this,
+            0,
+            launchIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val body = getString(R.string.sos_live_notification_body)
+        val builder = NotificationCompat.Builder(this, declaredSosChannelId)
+            .setContentTitle(getString(R.string.sos_live_notification_title))
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setColor(0xFFD32F2F.toInt())
+            .setColorized(true)
+            .setWhen(startedAtMillis)
+            .setShowWhen(true)
+            .setUsesChronometer(true)
+            .setContentIntent(contentIntent)
+        if (Build.VERSION.SDK_INT >= 36) {
+            builder.extras.putBoolean("android.requestPromotedOngoing", true)
+        }
+        return builder.build()
+    }
+
+    private fun ensureDeclaredSosChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        val channel = NotificationChannel(
+            declaredSosChannelId,
+            getString(R.string.sos_live_channel_name),
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = getString(R.string.sos_live_channel_description)
+            setSound(null, null)
+        }
+        try {
+            manager.createNotificationChannel(channel)
+        } catch (securityException: SecurityException) {
+            Log.w(TAG, "Unable to register live SOS notification channel", securityException)
+        }
     }
 
     private fun ensureNotificationChannel(channelId: String) {
@@ -3067,6 +3376,8 @@ class GattSOSServerService : Service() {
     companion object {
         private const val TAG = "SOS_GATT"
         private const val SERVICE_ASSIGNED_NUMBER = 0xCC00
+        /** Trailing advert byte marking "server up for chat, NOT an emergency". */
+        const val INTENT_FLAG_CHAT_HOST: Byte = 0x00
         private const val CHAR_ID_ASSIGNED_NUMBER = 0xCC01
         private const val CHAR_STATUS_ASSIGNED_NUMBER = 0xCC02
         private const val CHAR_AUTH_CHALLENGE_NUMBER = 0xCC10
@@ -3075,6 +3386,8 @@ class GattSOSServerService : Service() {
         private const val CHAR_SECURE_ACK_NUMBER = 0xCC21
         private const val CHAR_SECURE_CHAT_IN_NUMBER = 0xCC30
         private const val CHAR_SECURE_CHAT_OUT_NUMBER = 0xCC31
+        private const val CHAR_CALL_IO_IN_NUMBER = RescueCallLinkCodec.CHAR_CALL_IO_IN_NUMBER
+        private const val CHAR_CALL_IO_OUT_NUMBER = RescueCallLinkCodec.CHAR_CALL_IO_OUT_NUMBER
         private const val NOTIFICATION_CHANNEL_ID = "sos_broadcast_channel"
         private const val NOTIFICATION_ID = 1001
         private const val DEFAULT_STATUS = "ACTIVE"
@@ -3107,8 +3420,26 @@ class GattSOSServerService : Service() {
             UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         val CRISIS_SERVICE_UUID: UUID = UUIDGenerator.fromAssignedNumber(SERVICE_ASSIGNED_NUMBER)
 
+        /**
+         * The GATT server is up. This does NOT mean "the user is in danger": the same server hosts
+         * the legacy BLE chat characteristics, so a chat session brings it up too. Consumers that
+         * mean "is the shared server available" (chat readiness, mesh) want this one.
+         */
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning
+
+        /**
+         * The user DECLARED an emergency by pressing SOS. Everything that tells the outside world a
+         * human is in danger — the agency dashboard heartbeat, the automatic SOS messages to
+         * contacts, the victim advertisement rescuers scan for, the in-app "SOS active" banners —
+         * must hang off THIS, never off [isRunning]. Conflating the two is what made merely opening
+         * a chat transmit a real emergency.
+         */
+        private val _isDeclared = MutableStateFlow(false)
+        val isDeclared: StateFlow<Boolean> = _isDeclared
+
+        /** Set only on the SOS-button path; its absence is what keeps a chat bring-up silent. */
+        const val EXTRA_USER_DECLARED = "extra_user_declared_emergency"
 
         private val _startTimestampMillis = MutableStateFlow<Long?>(null)
         val startTimestampMillis: StateFlow<Long?> = _startTimestampMillis
@@ -3150,6 +3481,7 @@ class GattSOSServerService : Service() {
 
         fun stopBroadcast(context: Context) {
             _isRunning.value = false
+            _isDeclared.value = false
             _startTimestampMillis.value = null
             val appContext = context.applicationContext
             val intent = Intent(appContext, GattSOSServerService::class.java)

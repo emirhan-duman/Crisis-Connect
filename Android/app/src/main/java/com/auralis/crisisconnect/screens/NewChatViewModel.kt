@@ -290,7 +290,8 @@ class NewChatViewModel(application: Application) : AndroidViewModel(application)
                             aesKey = "",
                             sessionCode = sessionCode,
                             address = mac
-                        )
+                        ),
+                        analyticsSource = "manual_mac"
                     )
                     _manualMacAddress.value = ""
                     _manualRemoteName.value = ""
@@ -312,6 +313,10 @@ class NewChatViewModel(application: Application) : AndroidViewModel(application)
 
                         DeviceError.HANDSHAKE_FAILED -> context.getString(
                             com.auralis.crisisconnect.R.string.manual_connect_error_pairing
+                        )
+
+                        DeviceError.BLUETOOTH_OFF -> context.getString(
+                            com.auralis.crisisconnect.R.string.qr_scan_error_bluetooth_off
                         )
                     }
                     _manualConnectState.value = ManualConnectState.Error(errorMessage)

@@ -9,18 +9,19 @@ import Foundation
 import Security
 import FirebaseAuth
 import FirebaseFunctions
+import FirebaseCore
 
 final class SecurityRepository {
     static let shared = SecurityRepository()
 
-    private lazy var functions: Functions = {
+    private var functions: Functions? {
         FirebaseRuntime.ensureConfigured()
-        return Functions.functions(region: "us-central1")
-    }()
-    private lazy var auth: Auth = {
+        return FirebaseApp.app() != nil ? Functions.functions(region: "us-central1") : nil
+    }
+    private var auth: Auth? {
         FirebaseRuntime.ensureConfigured()
-        return Auth.auth()
-    }()
+        return FirebaseApp.app() != nil ? Auth.auth() : nil
+    }
     private let deviceStore = DeviceIdentityStore.shared
     private let secureStore = SecureLocalStore.shared
 
@@ -30,7 +31,7 @@ final class SecurityRepository {
         let privateKey = try deviceStore.getOrCreatePrivateKey()
         let publicKeyData = try deviceStore.publicKeyDataX509(for: privateKey)
         let publicKeyBase64 = publicKeyData.base64EncodedString()
-        let currentUID = auth.currentUser?.uid.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let currentUID = auth?.currentUser?.uid.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !currentUID.isEmpty else {
             throw SecurityError.authRequired
         }
@@ -51,6 +52,7 @@ final class SecurityRepository {
         do {
             let certificate = try await requestCertificate(
                 publicKeyBase64: publicKeyBase64,
+                publicKeyData: publicKeyData,
                 currentUID: currentUID
             )
             let certificateBytes = try certificate.toStorageData()
@@ -79,6 +81,38 @@ final class SecurityRepository {
                 )
             }
             throw error
+        }
+    }
+
+    /// Proactive renewal, mirroring Android's CertificateRenewalWorker: once less than 24h of
+    /// validity remains, silently re-provision. A failed renewal keeps the still-valid cached
+    /// cert (the cache is only replaced after a successful issuance), so offline devices keep
+    /// working until actual expiry. allowExpired matches Android: a just-lapsed certificate
+    /// (still inside the offline grace window) is renewed rather than stranded.
+    func renewCertificateIfExpiringSoon() async {
+        let renewalLeadMillis: Int64 = 24 * 60 * 60 * 1000
+        guard let stored = try? getStoredCertificateSync(allowExpired: true) else { return }
+        let remainingMillis = stored.roleCertificate.expiresAtMillis - nowMillis()
+        guard remainingMillis < renewalLeadMillis else { return }
+        do {
+            let privateKey = try deviceStore.getOrCreatePrivateKey()
+            let publicKeyData = try deviceStore.publicKeyDataX509(for: privateKey)
+            let publicKeyBase64 = publicKeyData.base64EncodedString()
+            let currentUID = auth?.currentUser?.uid.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !currentUID.isEmpty else { return }
+            let certificate = try await requestCertificate(
+                publicKeyBase64: publicKeyBase64,
+                publicKeyData: publicKeyData,
+                currentUID: currentUID
+            )
+            persistCertificate(
+                publicKeyBase64: publicKeyBase64,
+                certificateBytes: try certificate.toStorageData(),
+                ownerUID: certificate.ownerUID
+            )
+            NSLog("SecurityRepository: role certificate renewed ahead of expiry")
+        } catch {
+            NSLog("SecurityRepository: certificate renewal failed (kept cached): %@", String(describing: error))
         }
     }
 
@@ -118,7 +152,51 @@ final class SecurityRepository {
     }
 
     func warmUpCertificate() async -> Bool {
-        (try? await getOrFetchCertificate()) != nil
+        // Server-side revocation check first (mirrors Android warmUpCertificate): a
+        // dashboard-revoked cert is wiped before the cache is consulted, so it can no
+        // longer be short-circuited to by getOrFetchCertificate.
+        await revalidateAgainstServer()
+        return (try? await getOrFetchCertificate()) != nil
+    }
+
+    /// Confirms the cached certificate is still active server-side by calling the
+    /// already-deployed `validateCertificate` callable (the same one Android calls).
+    /// If the server reports `revoked` or `missing`, wipes local state — the stored
+    /// certificate AND the attested device key — so the next `getOrFetchCertificate`
+    /// re-provisions from scratch. Network-tolerant: a transient failure returns nil
+    /// and never wipes the cert; only an explicit revoked/missing status does.
+    /// Mirrors Android SecurityRepository.revalidateAgainstServer.
+    @discardableResult
+    func revalidateAgainstServer() async -> String? {
+        let currentUID = resolveCurrentUID()
+        guard !currentUID.isEmpty else { return nil }
+        // Nothing to revalidate (or wipe) unless a certificate is actually stored.
+        guard KeychainStore.load(Keys.certificate) != nil else { return nil }
+        guard let functions else { return nil }
+
+        let data: [String: Any]
+        do {
+            let result = try await functions.httpsCallable("validateCertificate").call([:])
+            guard let parsed = result.data as? [String: Any] else { return nil }
+            data = parsed
+        } catch {
+            NSLog("SecurityRepository: certificate revalidation call failed (kept cached): %@", String(describing: error))
+            return nil
+        }
+
+        guard let rawStatus = data["status"] as? String else { return nil }
+        let status = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch status {
+        case "revoked", "missing":
+            let reason = (data["revokedReason"] as? String) ?? status
+            NSLog("SecurityRepository: server reported certificate status=%@ reason=%@; wiping", status, reason)
+            wipeCertificate(reason: "server-status=\(status)")
+        case "active":
+            break
+        default:
+            NSLog("SecurityRepository: server reported certificate status=%@", status)
+        }
+        return status
     }
 
     func clearStoredCertificate() {
@@ -127,12 +205,52 @@ final class SecurityRepository {
         KeychainStore.delete(Keys.certificateOwnerUID)
     }
 
+    /// Wipes both the cached certificate and the attested device key so the next
+    /// `getOrFetchCertificate` starts a fresh provisioning flow with a brand-new key.
+    /// Mirrors Android SecurityRepository.wipeCertificate.
+    private func wipeCertificate(reason: String) {
+        NSLog("SecurityRepository: wiping device-bound certificate: %@", reason)
+        clearStoredCertificate()
+        deleteAttestedDeviceKey()
+    }
+
+    /// Deletes the SecureEnclave EC device key created by DeviceIdentityStore so a
+    /// fresh key (and therefore a fresh public key) is generated on the next
+    /// provisioning attempt. The application tag MUST stay in sync with the
+    /// `tag` DeviceIdentityStore uses to create the key.
+    private func deleteAttestedDeviceKey() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: Data("com.crisisconnect.device.identity".utf8),
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
     private func requestCertificate(
         publicKeyBase64: String,
+        publicKeyData: Data,
         currentUID: String
     ) async throws -> RoleCertificate {
-        let payload: [String: Any] = ["publicKey": publicKeyBase64]
-        let result = try await functions.httpsCallable("issueRoleCertificate").callAsync(payload)
+        // Full App Attest handshake (register device -> challenge -> attest),
+        // mirroring Android's CertificateProvisioningFlow. The backend rejects
+        // a bare {publicKey} payload with invalid-argument.
+        let provisioner = AppAttestCertificateProvisioner.shared
+        let deviceId = provisioner.getOrCreateDeviceId()
+        let payload = try await provisioner.makeIssuancePayload(
+            deviceId: deviceId,
+            publicKeyBase64: publicKeyBase64,
+            publicKeyDer: publicKeyData,
+            uid: currentUID
+        )
+        // Registration may have rotated the device id (account switch on the same
+        // device), so bind the check to the id that was actually issued, not the
+        // pre-fetched one.
+        let effectiveDeviceId = (payload["deviceId"] as? String) ?? deviceId
+        guard let functions else {
+            throw SecurityError.invalidResponse
+        }
+        let result = try await functions.httpsCallable("issueRoleCertificate").call(payload)
         guard let data = result.data as? [String: Any] else {
             throw SecurityError.invalidResponse
         }
@@ -140,6 +258,9 @@ final class SecurityRepository {
         let certificate = try RoleCertificate.fromCallableResponse(data)
         guard certificate.isOwned(by: currentUID) else {
             throw SecurityError.ownerMismatch
+        }
+        guard certificate.isBound(to: effectiveDeviceId) else {
+            throw SecurityError.invalidCertificate
         }
         guard certificate.isValid(at: nowMillis()) else {
             throw SecurityError.invalidCertificate
@@ -207,7 +328,7 @@ final class SecurityRepository {
     }
 
     private func resolveCurrentUID() -> String {
-        let authUID = auth.currentUser?.uid.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let authUID = auth?.currentUser?.uid.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !authUID.isEmpty {
             return authUID
         }

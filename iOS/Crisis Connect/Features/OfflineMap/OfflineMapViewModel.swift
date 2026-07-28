@@ -104,11 +104,11 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
 
     func startDownload(force: Bool = false) {
         guard let bounds = selectionBounds else {
-            alertState = OfflineMapAlertState.error("Select a map area first.")
+            alertState = OfflineMapAlertState.error(NSLocalizedString("Select a map area first.", comment: ""))
             return
         }
         guard OfflineMapConfiguration.hasMapTilerAPIKey else {
-            alertState = OfflineMapAlertState.error("Offline map provider key is not configured.")
+            alertState = OfflineMapAlertState.error(NSLocalizedString("Offline map provider key is not configured.", comment: ""))
             return
         }
 
@@ -117,7 +117,7 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
         let tileCount = TileCalculator.tileCount(bounds: bounds, minZoom: minZoom, maxZoom: maxZoom)
 
         guard tileCount > 0 else {
-            alertState = OfflineMapAlertState.error("Region is too small for the selected zoom range.")
+            alertState = OfflineMapAlertState.error(NSLocalizedString("Region is too small for the selected zoom range.", comment: ""))
             return
         }
 
@@ -139,7 +139,7 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
         if !force && shouldWarn(tileCount: tileCount, estimatedBytes: estimatedBytes) {
             pendingRegion = region
             alertState = OfflineMapAlertState.warning(
-                "This download may be large and take time. Continue?"
+                NSLocalizedString("This download may be large and take time. Continue?", comment: "")
             )
             return
         }
@@ -167,13 +167,13 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
         updateRegion(region.id) { item in
             item.status = .paused
         }
-        showToast("Download paused", style: .info)
+        showToast(NSLocalizedString("Download paused", comment: ""), style: .info)
         saveRegions()
     }
 
     func resumeRegion(_ region: OfflineMapRegion) {
         guard region.status != .downloading else { return }
-        showToast("Download resumed", style: .info)
+        showToast(NSLocalizedString("Download resumed", comment: ""), style: .info)
         beginDownload(region, announce: false)
     }
 
@@ -201,6 +201,26 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
         activeSheet = nil
     }
 
+    // External pins (e.g. Crisis Sentinel "show on map"): drop labeled markers and fit them.
+    @Published private(set) var externalPins: [OfflineMapPin] = []
+
+    func showExternalPins(_ pins: [OfflineMapPin]) {
+        externalPins = pins
+        guard !pins.isEmpty else { return }
+        if pins.count == 1 {
+            let c = pins[0].coordinate
+            // A single point → a tight box around it so setVisibleMapRect zooms in.
+            focusBounds = MapBounds(north: c.latitude + 0.02, south: c.latitude - 0.02,
+                                    east: c.longitude + 0.02, west: c.longitude - 0.02)
+        } else {
+            let lats = pins.map { $0.coordinate.latitude }
+            let lngs = pins.map { $0.coordinate.longitude }
+            focusBounds = MapBounds(north: lats.max()!, south: lats.min()!,
+                                    east: lngs.max()!, west: lngs.min()!)
+        }
+        focusToken = UUID()
+    }
+
     func requestUserLocation() {
         switch locationManager.authorizationStatus {
         case .notDetermined:
@@ -211,9 +231,9 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
             pendingLocationFocus = true
             locationManager.requestLocation()
         case .denied, .restricted:
-            alertState = OfflineMapAlertState.error("Location permission is disabled. Enable it in Settings.")
+            alertState = OfflineMapAlertState.error(NSLocalizedString("Location permission is disabled. Enable it in Settings.", comment: ""))
         @unknown default:
-            alertState = OfflineMapAlertState.error("Unable to access location.")
+            alertState = OfflineMapAlertState.error(NSLocalizedString("Unable to access location.", comment: ""))
         }
     }
 
@@ -264,7 +284,7 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
         guard region.status == .downloading else { return }
         guard downloadTasks[region.id] == nil else { return }
         if announce {
-            showToast("Download started", style: .info)
+            showToast(NSLocalizedString("Download started", comment: ""), style: .info)
         }
 
         let plan = OfflineMapDownloadPlan(
@@ -311,13 +331,13 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
             regions[index].lastError = nil
             regions[index].downloadCursorOrdinal = nil
             tileRefreshToken = UUID()
-            showToast("Download complete: \(regions[index].name)", style: .success)
+            showToast(String(format: NSLocalizedString("Download complete: %@", comment: ""), regions[index].name), style: .success)
         case .paused:
             regions[index].status = .paused
         case .failed(let error):
             regions[index].status = .failed
             regions[index].lastError = error
-            alertState = OfflineMapAlertState.error("Download failed: \(error)")
+            alertState = OfflineMapAlertState.error(String(format: NSLocalizedString("Download failed: %@", comment: ""), "\(error)"))
         }
         saveRegions()
     }
@@ -330,7 +350,7 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
     }
 
     private func defaultRegionName() -> String {
-        "Offline Region \(regions.count + 1)"
+        String(format: NSLocalizedString("Offline Region %d", comment: ""), regions.count + 1)
     }
 
     private func resumePersistedDownloadsIfNeeded() {
@@ -367,7 +387,7 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
         regionMetadataRefreshGeneration += 1
         let generation = regionMetadataRefreshGeneration
         regionMetadataRefreshTask?.cancel()
-        regionMetadataRefreshTask = Task(priority: .utility) {
+        regionMetadataRefreshTask = Task(priority: .utility) { [weak self] in
             let store = OfflineTileStore()
             var refreshedByID: [UUID: OfflineMapRegion] = [:]
             refreshedByID.reserveCapacity(snapshot.count)
@@ -392,7 +412,8 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
                 refreshedByID[refreshedRegion.id] = refreshedRegion
             }
 
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 guard generation == self.regionMetadataRefreshGeneration else { return }
 
                 var hasChanges = false
@@ -440,7 +461,7 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        alertState = OfflineMapAlertState.error("Unable to fetch location.")
+        alertState = OfflineMapAlertState.error(NSLocalizedString("Unable to fetch location.", comment: ""))
     }
 
     private func showToast(_ message: String, style: OfflineMapToast.Style = .info) {
@@ -476,11 +497,11 @@ struct OfflineMapAlertState: Identifiable {
     let isWarning: Bool
 
     static func warning(_ message: String) -> OfflineMapAlertState {
-        OfflineMapAlertState(title: "Large Download", message: message, isWarning: true)
+        OfflineMapAlertState(title: NSLocalizedString("Large Download", comment: ""), message: message, isWarning: true)
     }
 
     static func error(_ message: String) -> OfflineMapAlertState {
-        OfflineMapAlertState(title: "Offline Maps", message: message, isWarning: false)
+        OfflineMapAlertState(title: NSLocalizedString("Offline Maps", comment: ""), message: message, isWarning: false)
     }
 }
 
@@ -555,7 +576,7 @@ enum OfflineMapDownloader {
         let session = session ?? OfflineMapNetworkSession.interactive
         let retryPolicy = retryPolicy ?? .standard
         let total = plan.region.tileCount
-        guard total > 0 else { return .failed("Tile count is zero.") }
+        guard total > 0 else { return .failed(NSLocalizedString("Tile count is zero.", comment: "")) }
         let persistedMissing = max(
             0,
             min(plan.region.missingTiles, max(0, total - plan.initialDownloaded))
@@ -575,7 +596,7 @@ enum OfflineMapDownloader {
             resolvedTemplate = nil
         }
         guard resolvedTemplate != nil || OfflineMapConfiguration.mapTilerAPIKey != nil else {
-            return .failed("Offline map provider key is not configured.")
+            return .failed(NSLocalizedString("Offline map provider key is not configured.", comment: ""))
         }
 
         let bounds = plan.region.bounds
@@ -625,7 +646,7 @@ enum OfflineMapDownloader {
                             continue
                         }
                         guard let url = tileURL(template: template, z: zoom, x: x, y: y) else {
-                            return .failed("Invalid tile URL.")
+                            return .failed(NSLocalizedString("Invalid tile URL.", comment: ""))
                         }
 
                         switch await fetchTile(
@@ -679,7 +700,7 @@ enum OfflineMapDownloader {
                     switch http.statusCode {
                     case 200...299:
                         if data.isEmpty {
-                            return .fatal("Empty tile response.")
+                            return .fatal(NSLocalizedString("Empty tile response.", comment: ""))
                         }
                         return .success(data)
                     case 404:
@@ -698,7 +719,7 @@ enum OfflineMapDownloader {
                 if !data.isEmpty {
                     return .success(data)
                 }
-                return .fatal("Invalid tile response.")
+                return .fatal(NSLocalizedString("Invalid tile response.", comment: ""))
             } catch {
                 if Task.isCancelled {
                     return .cancelled
@@ -726,7 +747,7 @@ enum OfflineMapDownloader {
                 return .fatal(error.localizedDescription)
             }
         }
-        return .fatal("Tile request failed after retrying.")
+        return .fatal(NSLocalizedString("Tile request failed after retrying.", comment: ""))
     }
 
     private static func tileURL(template: String, z: Int, x: Int, y: Int) -> URL? {

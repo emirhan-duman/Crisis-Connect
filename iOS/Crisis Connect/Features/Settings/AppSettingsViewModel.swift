@@ -45,7 +45,24 @@ final class AppSettingsViewModel: ObservableObject {
     var languageNameKey: String {
         switch appLanguage {
         case "en": return "English"
-        case "tr": return "Turkish"
+        case "tr": return "Türkçe"
+        case "ja": return "日本語"
+        case "ar": return "العربية"
+        case "bn": return "বাংলা"
+        case "de": return "Deutsch"
+        case "es": return "Español"
+        case "fa": return "فارسی"
+        case "fil": return "Filipino"
+        case "fr": return "Français"
+        case "hi": return "हिन्दी"
+        case "id": return "Bahasa Indonesia"
+        case "ku": return "Kurdî"
+        case "pt": return "Português"
+        case "ru": return "Русский"
+        case "uk": return "Українська"
+        case "ur": return "اردو"
+        case "vi": return "Tiếng Việt"
+        case "zh": return "中文"
         default: return "System Default"
         }
     }

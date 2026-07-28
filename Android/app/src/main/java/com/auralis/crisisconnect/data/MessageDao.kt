@@ -13,6 +13,16 @@ data class UnreadCountProjection(
     @ColumnInfo(name = "unreadCount") val unreadCount: Int
 )
 
+data class SessionMessageCountProjection(
+    val sessionCode: String,
+    @ColumnInfo(name = "messageCount") val messageCount: Int
+)
+
+data class SessionFirstMessageProjection(
+    val sessionCode: String,
+    @ColumnInfo(name = "firstMessageAtMillis") val firstMessageAtMillis: Long
+)
+
 @Dao
 interface MessageDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -261,4 +271,22 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages ORDER BY timestampMillis DESC")
     fun observeMessagesNewestFirst(): Flow<List<MessageEntity>>
+
+    @Query("SELECT sessionCode, COUNT(*) AS messageCount FROM messages GROUP BY sessionCode")
+    suspend fun getSessionMessageCounts(): List<SessionMessageCountProjection>
+
+    @Query(
+        "SELECT sessionCode, MIN(timestampMillis) AS firstMessageAtMillis FROM messages " +
+            "GROUP BY sessionCode"
+    )
+    suspend fun getSessionFirstMessageTimes(): List<SessionFirstMessageProjection>
+
+    @Query(
+        "UPDATE messages SET text = :text " +
+            "WHERE messageUuid = :messageUuid AND messageType = 'SOS_ALERT'"
+    )
+    suspend fun updateSosAlertText(messageUuid: String, text: String): Int
+
+    @Query("SELECT MIN(timestampMillis) FROM messages WHERE sessionCode = :sessionCode")
+    suspend fun getFirstMessageTimeForSession(sessionCode: String): Long?
 }

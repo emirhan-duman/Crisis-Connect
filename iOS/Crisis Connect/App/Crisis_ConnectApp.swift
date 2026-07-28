@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Intents
 import SwiftData
 import Foundation
 import Combine
@@ -13,6 +14,7 @@ import BackgroundTasks
 import FirebaseAppCheck
 import FirebaseCore
 import FirebaseAuth
+import FirebaseMessaging
 import GoogleSignIn
 import UIKit
 import UserNotifications
@@ -29,6 +31,7 @@ enum FirebaseRuntime {
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
     private var hasScheduledDeferredLaunchTasks = false
+    private var hasBootstrappedCoreServices = false
 
     private func shouldBootstrapBluetoothRuntimesEarly(
         launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -49,8 +52,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     ) -> Bool {
         guard !PlatformRuntime.isRunningTests else { return true }
         FirebaseRuntime.ensureConfigured()
+        // Arm PushKit + the internet message/call receivers on EVERY launch — including a
+        // background/VoIP-push wake of a force-quit app (no SwiftUI scene, so the deferred .task
+        // never runs). Without this the PKPushRegistry delegate is never set on a cold push launch
+        // and the incoming internet call is silently dropped.
+        bootstrapCoreServices()
         OfflineMapBackgroundManager.shared.register()
         CrisisLinkBackgroundRefreshManager.shared.register()
+        CertificateRenewalBackgroundManager.shared.register()
+        SosFollowUpBackgroundManager.shared.register()
         if PlatformRuntime.supportsRescueRuntime && shouldBootstrapBluetoothRuntimesEarly(launchOptions: launchOptions) {
             _ = RescueClientManager.shared
             _ = GattMeshManager.shared
@@ -63,6 +73,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         }
         OfflineMapBackgroundManager.shared.scheduleIfNeeded()
         CrisisLinkBackgroundRefreshManager.shared.scheduleIfNeeded()
+        CertificateRenewalBackgroundManager.shared.scheduleIfNeeded()
+        SosFollowUpBackgroundManager.shared.scheduleIfNeeded()
         return true
     }
 
@@ -74,8 +86,71 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         handleIncomingURL(url)
     }
 
+    // NOTE: FirebaseAuth's native phone-auth plumbing (setAPNSToken / canHandleNotification) is
+    // deliberately NOT wired here. Auth's internal phone managers never initialize on current
+    // iOS + SDK combinations, and those entry points force-unwrap that state (launch crashes).
+    // Phone verification rides the backend's Twilio OTP callables instead — no client plumbing.
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        guard !PlatformRuntime.isRunningTests else { return }
+        // FCM exchanges the APNs token for the FCM token it hands to the backend registry.
+        Messaging.messaging().apnsToken = deviceToken
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        NSLog("APNs registration failed: %@", String(describing: error))
+    }
+
+    // Silent data push carrying an E2E internet message envelope (the app was backgrounded or
+    // killed, so the Firestore listener isn't running). Decrypt, file, notify locally.
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        guard !PlatformRuntime.isRunningTests else {
+            completionHandler(.noData)
+            return
+        }
+        FirebaseRuntime.ensureConfigured()
+        Task {
+            let filedNewMessage = await InternetMessageReceiver.shared.handleRemotePush(userInfo: userInfo)
+            completionHandler(filedNewMessage ? .newData : .noData)
+        }
+    }
+
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        guard identifier == CrisisSentinelModelDownloadManager.backgroundSessionIdentifier else {
+            completionHandler()
+            return
+        }
+        CrisisSentinelModelDownloadManager.shared.handleBackgroundSessionEvents(completionHandler: completionHandler)
+    }
+
     @discardableResult
     func handleIncomingURL(_ url: URL) -> Bool {
+        // Home-screen widget deep links (crisisconnect://sos, crisisconnect://disasters).
+        if url.scheme?.lowercased() == "crisisconnect" {
+            switch url.host?.lowercased() {
+            case "sos":
+                SOSNotificationCenter.openRoute(.sosCountdown)
+                return true
+            case "disasters":
+                SOSNotificationCenter.openRoute(.recentDisasters)
+                return true
+            default:
+                break
+            }
+        }
         FirebaseRuntime.ensureConfigured()
         if GIDSignIn.sharedInstance.handle(url) {
             NSLog("Handled Google Sign-In callback URL.")
@@ -112,12 +187,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             }
         }
 
-        FirebaseBootstrapper.shared.start()
-        SOSNotificationCenter.configure()
+        // Core messaging/call/PushKit bring-up now happens in bootstrapCoreServices(), invoked from
+        // didFinishLaunchingWithOptions so it also runs on a BACKGROUND / PushKit-push launch (a
+        // force-quit app woken by a VoIP push connects no SwiftUI scene, so this deferred .task path
+        // never fires). Kept here too (idempotent) so a normal foreground launch still arms it.
+        bootstrapCoreServices()
 
         Task { @MainActor in
-            _ = ChatPeerVoiceCallCoordinator.shared
-            ChatPeerVoiceCallCoordinator.shared.bootstrap()
             OfflineMapBackgroundManager.shared.scheduleIfNeeded()
             CrisisLinkBackgroundRefreshManager.shared.scheduleIfNeeded()
             if PlatformRuntime.supportsBlePeripheralHosting {
@@ -132,6 +208,37 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         }
     }
 
+    /// The messaging + call + PushKit bring-up that MUST run on every process launch — including a
+    /// background/VoIP-push wake of a force-quit app, where no SwiftUI scene connects and the
+    /// deferred .task never fires. Arming PKPushRegistry synchronously here is the difference
+    /// between ringing an incoming internet call and silently dropping it (which also makes iOS
+    /// throttle future VoIP pushes). Idempotent; called from didFinishLaunching AND the deferred
+    /// task. Runs on the main thread (both callers are main-thread UIKit entry points).
+    func bootstrapCoreServices() {
+        guard !PlatformRuntime.isRunningTests, !hasBootstrappedCoreServices else { return }
+        hasBootstrappedCoreServices = true
+        FirebaseRuntime.ensureConfigured()
+
+        MainActor.assumeIsolated {
+            // PushKit delegate + desiredPushTypes — MUST be set before the VoIP push callback fires.
+            VoipPushRegistrar.shared.activate()
+            InternetPushRegistrar.shared.activate()
+            // Notification categories/delegate so message + call actions route correctly.
+            SOSNotificationCenter.configure()
+            // Anonymous sign-in → identity publish → internet message receiver + call wiring.
+            FirebaseBootstrapper.shared.start()
+            // Rust MLS core for SFU group calls (inert until SfuCallConfig flips on).
+            RustMlsWorkerBackend.activate()
+            // App-wide SFU authority-call receive (no-op while SfuCallConfig.enabled is false).
+            SfuAuthorityCallReceiver.start()
+            // Internet (WebRTC) call engine: hooks the call-signal bus + Firestore offer listener,
+            // so an incoming call rings even on a cold push wake.
+            InternetCallManager.shared.bootstrap()
+            _ = ChatPeerVoiceCallCoordinator.shared
+            ChatPeerVoiceCallCoordinator.shared.bootstrap()
+        }
+    }
+
     func applicationWillEnterForeground(_ application: UIApplication) {
         guard !PlatformRuntime.isRunningTests else { return }
         RescueClientManager.shared.bootstrapRuntime()
@@ -141,10 +248,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         GattMeshManager.shared.bootstrap()
         OfflineMapBackgroundManager.shared.scheduleIfNeeded()
         CrisisLinkBackgroundRefreshManager.shared.scheduleIfNeeded()
+        CertificateRenewalBackgroundManager.shared.scheduleIfNeeded()
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         guard !PlatformRuntime.isRunningTests else { return }
+        PresenceReporter.shared.onAppForeground()
+        // Deliver a "resolved" SOS report / contact all-clear that couldn't go out when the
+        // broadcast stopped offline.
+        Task { await SosCloudReporter.shared.deliverPendingResolve() }
+        Task { await SosContactNotifier.shared.deliverPendingAllClear() }
+        // Whatever the immediate foreground delivery can't clear (still offline) is left to the
+        // network-gated background task.
+        SosFollowUpBackgroundManager.shared.scheduleIfNeeded()
+        Task { await ProfilePhotoUploader.attemptPendingUpload() }
+        // Silent role-certificate renewal ahead of expiry (Android's CertificateRenewalWorker).
+        Task { await SecurityRepository.shared.renewCertificateIfExpiringSoon() }
+        SfuAuthorityCallReceiver.start()
         RescueClientManager.shared.bootstrapRuntime()
         if !AppStoreScreenshotSupport.isAnySceneEnabled {
             RescueLiveLocationCoordinator.shared.bootstrap()
@@ -152,12 +272,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         GattMeshManager.shared.bootstrap()
         OfflineMapBackgroundManager.shared.scheduleIfNeeded()
         CrisisLinkBackgroundRefreshManager.shared.scheduleIfNeeded()
+        CertificateRenewalBackgroundManager.shared.scheduleIfNeeded()
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
         guard !PlatformRuntime.isRunningTests else { return }
+        PresenceReporter.shared.onAppBackground()
         OfflineMapBackgroundManager.shared.scheduleIfNeeded()
         CrisisLinkBackgroundRefreshManager.shared.scheduleIfNeeded()
+        CertificateRenewalBackgroundManager.shared.scheduleIfNeeded()
+        SosFollowUpBackgroundManager.shared.scheduleIfNeeded()
     }
 }
 
@@ -174,6 +298,7 @@ struct Crisis_ConnectApp: App {
         Self.configureSystemAppearance()
         if !PlatformRuntime.isRunningTests {
             FirebaseRuntime.ensureConfigured()
+            AppAnalytics.applyStoredConsent()
         }
 #if DEBUG
         let localizations = Bundle.main.localizations
@@ -181,7 +306,8 @@ struct Crisis_ConnectApp: App {
         let dev = Bundle.main.developmentLocalization ?? "nil"
         let enLocalizable = Bundle.main.path(forResource: "Localizable", ofType: "strings", inDirectory: nil, forLocalization: "en") != nil
         let trLocalizable = Bundle.main.path(forResource: "Localizable", ofType: "strings", inDirectory: nil, forLocalization: "tr") != nil
-        print("🌐 Localizations -> localizations: \(localizations), preferred: \(preferred), dev: \(dev), en.strings: \(enLocalizable), tr.strings: \(trLocalizable)")
+        let jaLocalizable = Bundle.main.path(forResource: "Localizable", ofType: "strings", inDirectory: nil, forLocalization: "ja") != nil
+        print("🌐 Localizations -> localizations: \(localizations), preferred: \(preferred), dev: \(dev), en.strings: \(enLocalizable), tr.strings: \(trLocalizable), ja.strings: \(jaLocalizable)")
 #endif
     }
 
@@ -346,7 +472,33 @@ struct Crisis_ConnectApp: App {
             .onOpenURL { url in
                 _ = appDelegate.handleIncomingURL(url)
             }
+            // Tapping our entry in the system call history hands the app an INStartCallIntent.
+            // Without this handler nothing received it, so the call-back button did nothing at all.
+            .onContinueUserActivity("INStartCallIntent") { activity in
+                Self.placeCallBack(from: activity)
+            }
+            .onContinueUserActivity("INStartAudioCallIntent") { activity in
+                Self.placeCallBack(from: activity)
+            }
         }
+    }
+
+    /// Resolves the handle iOS gives back on a call-back and redials that contact.
+    ///
+    /// The handle is the contact's id (see InternetCallManager), because a display name cannot be
+    /// resolved back to anyone. Anything we cannot resolve is dropped silently rather than guessed
+    /// at — dialling the wrong person is worse than doing nothing.
+    @MainActor
+    private static func placeCallBack(from activity: NSUserActivity) {
+        let handles = (activity.interaction?.intent as? INStartCallIntent)?
+            .contacts?.compactMap { $0.personHandle?.value } ?? []
+        for handle in handles {
+            guard let id = UUID(uuidString: handle),
+                  let contact = ContactStore.shared.contact(for: id) else { continue }
+            InternetCallManager.shared.startCall(contact: contact)
+            return
+        }
+        MessagingDiagLog.log("call-back intent could not be resolved to a contact")
     }
 }
 

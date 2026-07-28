@@ -15,7 +15,27 @@ import CryptoKit
 import FirebaseAuth
 import FirebaseCore
 import FirebaseFirestore
+import FirebaseFunctions
 import GoogleSignIn
+
+/// UI representation of the device-bound role certificate. Mirrors Android's
+/// `CertificateStatus` sealed class so the profile screen and the certificate
+/// card share a single source of truth (e.g. revoking the cert immediately
+/// flips the card to its inactive state).
+enum CertificateStatus {
+    case loading
+    case missing
+    case loaded(certificate: RoleCertificate, isExpired: Bool, isRevoked: Bool)
+    case failure(message: String)
+}
+
+struct CertificateUiState {
+    var status: CertificateStatus = .loading
+    var provisioning: Bool = false
+    var revoking: Bool = false
+    var statusMessage: String?
+    var errorMessage: String?
+}
 
 final class ProfileViewModel: ObservableObject {
     @Published var pickerItem: PhotosPickerItem?
@@ -35,9 +55,17 @@ final class ProfileViewModel: ObservableObject {
     @Published var isAnonymous: Bool = true
     @Published var deviceKeySecured: Bool = false
     @Published var certificateReady: Bool = false
+    @Published var certificateState = CertificateUiState()
     @Published var signInEmail: String = ""
     @Published var signInPassword: String = ""
+    @Published var phoneSignInNumber: String = ""
+    @Published var phoneVerificationCode: String = ""
+    @Published var isAwaitingPhoneCode: Bool = false
 
+    // Firebase requires the OAuth provider to stay alive for the whole web sign-in flow.
+    private var pendingOAuthProvider: OAuthProvider?
+    private var ssoWebAuthSession: ASWebAuthenticationSession?
+    private let ssoPresentationProvider = SsoPresentationContextProvider()
     private var saveTask: Task<Void, Never>?
     private var profile: Profile?
     private var hasLoaded: Bool = false
@@ -52,6 +80,10 @@ final class ProfileViewModel: ObservableObject {
     private lazy var firestore: Firestore = {
         FirebaseRuntime.ensureConfigured()
         return Firestore.firestore()
+    }()
+    private lazy var functions: Functions = {
+        FirebaseRuntime.ensureConfigured()
+        return Functions.functions(region: "us-central1")
     }()
     private let secureStore = SecureLocalStore.shared
     private let securityRepository = SecurityRepository.shared
@@ -110,6 +142,8 @@ final class ProfileViewModel: ObservableObject {
         if let avatarImage, let data = avatarImage.jpegData(compressionQuality: 0.9) {
             current.avatarImageData = data
             ProfileMetadataStore.saveAvatarThumbnailData(avatarImage.profileMetadataThumbnailData())
+            // Cloud copy: notifications + the web panel render the photo from users/{uid}.photoURL.
+            ProfilePhotoUploader.schedule(jpegData: data)
         } else if current.avatarImageData == nil {
             ProfileMetadataStore.saveAvatarThumbnailData(nil)
         }
@@ -177,33 +211,26 @@ final class ProfileViewModel: ObservableObject {
             ]
 
             if shouldShareProfileDetails {
-                payload["username"] = trimmedName.isEmpty ? FieldValue.delete() : trimmedName
-                payload["email"] = trimmedEmail.isEmpty ? FieldValue.delete() : trimmedEmail
-                payload["country"] = normalizedCountry.isEmpty ? FieldValue.delete() : normalizedCountry
-
-                let effectiveAgency = !resolvedAgency.isEmpty ? resolvedAgency : preservedAgency
-                if effectiveAgency.isEmpty {
-                    payload["agency"] = FieldValue.delete()
-                    payload["agencySlug"] = FieldValue.delete()
-                    payload["agencyKey"] = FieldValue.delete()
-                } else {
-                    payload["agency"] = effectiveAgency
-                    let agencySlug = AgencyRouter.resolvePanelId(
-                        candidates: [
-                            existingSnapshot?.get("agencySlug") as? String,
-                            existingSnapshot?.get("agencyKey") as? String,
-                            existingSnapshot?.get("panelId") as? String,
-                            existingSnapshot?.get("agencyPanelId") as? String,
-                            existingSnapshot?.get("panelSlug") as? String,
-                            existingSnapshot?.get("panelKey") as? String,
-                        ],
-                        fallbackAgency: effectiveAgency
-                    )
-                    payload["agencySlug"] = agencySlug.isEmpty ? FieldValue.delete() : agencySlug
-                    payload["agencyKey"] = agencySlug.isEmpty ? FieldValue.delete() : agencySlug
+                // Only fields THIS DEVICE owns are written. Android client-writes username only;
+                // country and the whole agency context are set by the dashboard/backend. This
+                // autosave runs on a 700ms debounce and on screen close, so echoing local copies of
+                // server-owned fields let a stale device silently overwrite a dashboard-side agency
+                // or country change minutes after it was made. They now flow one-way via
+                // refreshFirebaseProfile.
+                //
+                // An explicit non-empty edit wins over the cloud value, but an empty local field
+                // means "no name entered on this device" — leave the cloud username (possibly set
+                // on the web panel or Android) alone: deleting on empty silently wiped names set
+                // elsewhere.
+                if !trimmedName.isEmpty {
+                    payload["username"] = trimmedName
+                }
+                if !trimmedEmail.isEmpty {
+                    payload["email"] = trimmedEmail
                 }
             } else {
-                payload["username"] = FieldValue.delete()
+                // Sharing off = stop publishing from this device, not purge the account's
+                // cross-platform username (matches FirebaseBootstrapper / PrivacyRemoteSync).
                 payload["email"] = FieldValue.delete()
                 payload["country"] = FieldValue.delete()
                 if shouldPreserveAgencyContext {
@@ -261,11 +288,274 @@ final class ProfileViewModel: ObservableObject {
                 let accessToken = result.user.accessToken.tokenString
                 let credential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: accessToken)
                 NSLog("Google Sign-In produced credential, continuing with Firebase Auth")
-                self.completeGoogleSignIn(with: credential)
+                self.completeFederatedSignIn(with: credential)
             } catch {
                 self.handleAuthError(error)
             }
         }
+    }
+
+    // MARK: - Microsoft / Enterprise SSO / Phone (mirrors Android provider set)
+
+    func signInWithMicrosoft() {
+        signInWithFederatedProvider(
+            providerID: "microsoft.com",
+            customParameters: ["prompt": "select_account"]
+        )
+    }
+
+    // Enterprise SSO = full web parity: the app drives the SAME custom-OIDC backend the dashboard
+    // uses (discover → OIDC → one-time code → Firebase custom token). Adding a tenant on the
+    // dashboard works on mobile with no rebuild and no Firebase IdP registration.
+    func signInWithEnterpriseSso() {
+        // Open the dashboard's own login page (client=mobile) so the user enters their org email
+        // there — exactly like the web sign-in — and the web resolves the tenant + redirects to the
+        // IdP. The callback returns a one-time code on the crisisconnect:// deep link.
+        let base = Self.crisisConnectWebURL
+        clearAuthError()
+        isAuthLoading = true
+
+        var components = URLComponents(
+            url: base.appendingPathComponent("/login"),
+            resolvingAgainstBaseURL: false
+        )
+        let localeCode = Locale.current.language.languageCode?.identifier == "tr" ? "tr" : "en"
+        components?.queryItems = [
+            URLQueryItem(name: "client", value: "mobile"),
+            URLQueryItem(name: "locale", value: localeCode),
+        ]
+        guard let startURL = components?.url else {
+            isAuthLoading = false
+            return
+        }
+
+        let session = ASWebAuthenticationSession(
+            url: startURL,
+            callbackURLScheme: "crisisconnect"
+        ) { [weak self] callbackURL, error in
+            // The session completion may fire off the main thread; @Published mutations need main.
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let error = error as? ASWebAuthenticationSessionError,
+                   error.code == .canceledLogin {
+                    self.isAuthLoading = false
+                    return
+                }
+                if let error {
+                    self.handleAuthError(error)
+                    return
+                }
+                guard let callbackURL,
+                      let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems else {
+                    self.isAuthLoading = false
+                    return
+                }
+                if items.first(where: { $0.name == "error" })?.value != nil {
+                    self.handleAuthError(NSError(
+                        domain: "CrisisConnect.SSO",
+                        code: -20,
+                        userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("PROFILE_SSO_FAILED", comment: "")]
+                    ))
+                    return
+                }
+                guard let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty else {
+                    self.isAuthLoading = false
+                    return
+                }
+                self.exchangeSsoCode(code, base: base)
+            }
+        }
+        session.presentationContextProvider = ssoPresentationProvider
+        session.prefersEphemeralWebBrowserSession = false
+        ssoWebAuthSession = session
+        session.start()
+    }
+
+    private func exchangeSsoCode(_ code: String, base: URL) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                var request = URLRequest(url: base.appendingPathComponent("/api/auth/sso/mobile-token"))
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try JSONSerialization.data(withJSONObject: ["code": code])
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let token = json["token"] as? String, !token.isEmpty else {
+                    throw NSError(
+                        domain: "CrisisConnect.SSO",
+                        code: -21,
+                        userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("PROFILE_SSO_EXCHANGE_FAILED", comment: "")]
+                    )
+                }
+                await MainActor.run {
+                    self.auth.signIn(withCustomToken: token) { [weak self] result, error in
+                        self?.handleAuthResult(result: result, error: error)
+                    }
+                }
+            } catch {
+                await MainActor.run { self.handleAuthError(error) }
+            }
+        }
+    }
+
+    // Dashboard origin: Info.plist override, else the deployed default so SSO works out of the box.
+    private static let defaultCrisisConnectWebURL = "https://crisis-connect-1.web.app"
+    private static var crisisConnectWebURL: URL {
+        let raw = (Bundle.main.object(forInfoDictionaryKey: "CRISIS_CONNECT_WEB_URL") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !raw.isEmpty, let url = URL(string: raw) {
+            return url
+        }
+        return URL(string: defaultCrisisConnectWebURL)!
+    }
+
+    private func signInWithFederatedProvider(
+        providerID: String,
+        customParameters: [String: String] = [:],
+        scopes: [String] = []
+    ) {
+        clearAuthError()
+        isAuthLoading = true
+        let provider = OAuthProvider(providerID: providerID)
+        if !customParameters.isEmpty {
+            provider.customParameters = customParameters
+        }
+        if !scopes.isEmpty {
+            provider.scopes = scopes
+        }
+        pendingOAuthProvider = provider
+        provider.getCredentialWith(nil) { [weak self] credential, error in
+            guard let self else { return }
+            self.pendingOAuthProvider = nil
+            if let error = error as NSError? {
+                // Treat an explicit user cancel as a no-op rather than an error banner.
+                if error.code == AuthErrorCode.webContextCancelled.rawValue {
+                    self.isAuthLoading = false
+                    return
+                }
+                self.handleAuthError(error)
+                return
+            }
+            guard let credential else {
+                self.isAuthLoading = false
+                return
+            }
+            self.completeFederatedSignIn(with: credential)
+        }
+    }
+
+    // Phone verification rides the backend's Twilio OTP callables (requestPhoneOtp /
+    // verifyPhoneOtp) — FirebaseAuth's native phone flow needs APNs/attestation plumbing that is
+    // broken on current iOS + SDK combos (Auth's internal phone managers never initialize).
+    // Server semantics match Firebase phone sign-in: "linked" attaches the proven number to this
+    // account; "signin" returns a custom token for the account that already owns the number.
+
+    func startPhoneSignIn() {
+        let number = phoneSignInNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !number.isEmpty else {
+            authErrorMessage = NSLocalizedString("PROFILE_PHONE_REQUIRED", comment: "")
+            return
+        }
+        clearAuthError()
+        isAuthLoading = true
+        Task { @MainActor [weak self] in
+            do {
+                // The backend localizes the Twilio SMS by this optional param; without it the SMS
+                // falls back to the number's country default — wrong whenever the device language
+                // differs from the number's country. Shape must be ll or ll-RR or the backend's
+                // validator silently drops it (iOS locales can carry scripts/3-letter codes).
+                var otpPayload: [String: Any] = ["phone": number]
+                if let lang = Locale.current.language.languageCode?.identifier(.alpha2) {
+                    let region = Locale.current.region?.identifier
+                    otpPayload["locale"] = (region?.count == 2) ? "\(lang)-\(region!)" : lang
+                }
+                _ = try await Functions.functions(region: "us-central1")
+                    .httpsCallable("requestPhoneOtp").call(otpPayload)
+                guard let self else { return }
+                self.isAuthLoading = false
+                self.isAwaitingPhoneCode = true
+            } catch {
+                self?.isAuthLoading = false
+                self?.authErrorMessage = self?.phoneServiceErrorMessage(error)
+            }
+        }
+    }
+
+    func confirmPhoneCode() {
+        let code = phoneVerificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty else {
+            authErrorMessage = NSLocalizedString("PROFILE_PHONE_CODE_REQUIRED", comment: "")
+            return
+        }
+        let number = phoneSignInNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        clearAuthError()
+        isAuthLoading = true
+        isAwaitingPhoneCode = false
+        phoneVerificationCode = ""
+        Task { @MainActor [weak self] in
+            do {
+                let result = try await Functions.functions(region: "us-central1")
+                    .httpsCallable("verifyPhoneOtp").call(["phone": number, "code": code])
+                let data = result.data as? [String: Any] ?? [:]
+                let outcome = data["outcome"] as? String ?? ""
+                let verifiedPhone = data["phone"] as? String ?? number
+                switch outcome {
+                case "linked":
+                    // Number attached to the current account server-side; uid unchanged.
+                    self?.handleAuthResult(result: nil, error: nil)
+                case "signin":
+                    guard let customToken = data["customToken"] as? String else {
+                        throw NSError(
+                            domain: "CrisisConnect.Firebase",
+                            code: -21,
+                            userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("PROFILE_PHONE_CODE_REQUIRED", comment: "")]
+                        )
+                    }
+                    let authResult = try await Auth.auth().signIn(withCustomToken: customToken)
+                    self?.handleAuthResult(result: authResult, error: nil)
+                default:
+                    throw NSError(
+                        domain: "CrisisConnect.Firebase",
+                        code: -22,
+                        userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("PROFILE_PHONE_CODE_REQUIRED", comment: "")]
+                    )
+                }
+                // Number ownership proven → discoverable-by-number default flips on (never
+                // overriding an explicit opt-out), and the number is remembered locally: on the
+                // "linked" outcome Auth doesn't expose it until the next token refresh, and the
+                // SPAKE2 responder keys its handshakes on it.
+                NearbyPairingSupport.recordVerifiedOwnPhone(verifiedPhone)
+                NearbyDiscoveryPreferences.enableByDefaultIfUnset()
+                // Show the number NOW: Auth only exposes it after the next token refresh on the
+                // "linked" outcome, and the profile row reads the local copy as its fallback.
+                self?.phone = verifiedPhone
+                self?.profile?.phone = verifiedPhone
+                // Republish the identity as phone-discoverable so peers' "add from contacts" can
+                // find this user (Android parity).
+                let displayName = ProfileMetadataStore.loadFullName()
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                Task.detached {
+                    guard let publicKey = try? MessagingIdentity.shared.publicKeyBase64() else { return }
+                    try? await InternetMessagingClient().publishIdentityKey(
+                        publicKeyBase64: publicKey,
+                        discoverable: true,
+                        phone: verifiedPhone,
+                        displayName: displayName.isEmpty ? nil : displayName
+                    )
+                }
+            } catch {
+                self?.isAuthLoading = false
+                self?.handleAuthError(error)
+            }
+        }
+    }
+
+    func cancelPhoneSignIn() {
+        isAwaitingPhoneCode = false
+        phoneVerificationCode = ""
+        isAuthLoading = false
     }
 
     func prepareAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
@@ -399,13 +689,173 @@ final class ProfileViewModel: ObservableObject {
         }
     }
 
+    func deleteAccount() {
+        guard let user = auth.currentUser, !user.isAnonymous else { return }
+        clearAuthError()
+        isAuthLoading = true
+        NSLog("Starting account deletion for uid=\(user.uid)")
+        let uid = user.uid
+        saveTask?.cancel()
+        saveTask = nil
+
+        Task { [weak self] in
+            guard let self else { return }
+            try? await self.firestore.collection("users").document(uid).delete()
+
+            await MainActor.run {
+                user.delete { [weak self] error in
+                    guard let self else { return }
+                    if let nsError = error as NSError?,
+                       nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+                        NSLog("Account deletion requires recent login")
+                        self.authErrorMessage = NSLocalizedString(
+                            "PROFILE_DELETE_ACCOUNT_ERROR_RECENT_LOGIN", comment: ""
+                        )
+                        self.isAuthLoading = false
+                        return
+                    }
+                    if let error {
+                        NSLog("Account deletion failed: \(error.localizedDescription)")
+                        self.authErrorMessage = NSLocalizedString(
+                            "PROFILE_DELETE_ACCOUNT_ERROR_GENERIC", comment: ""
+                        )
+                        self.isAuthLoading = false
+                        return
+                    }
+                    NSLog("Account deletion completed successfully")
+                    GIDSignIn.sharedInstance.signOut()
+                    self.secureStore.clearUid()
+                    self.secureStore.clearRole()
+                    self.securityRepository.clearStoredCertificate()
+                    self.signInEmail = ""
+                    self.signInPassword = ""
+                    self.email = ""
+                    self.applyAuthState(nil)
+                    self.firebaseRole = "user"
+                    self.isVerified = false
+                    self.certificateReady = false
+                    self.isAuthLoading = false
+                }
+            }
+        }
+    }
+
     func clearAuthError() {
         if authErrorMessage != nil {
             authErrorMessage = nil
         }
     }
 
-    private func completeGoogleSignIn(with credential: AuthCredential) {
+    // MARK: - Role certificate (mirrors Android ProfileViewModel)
+
+    /// Loads the cached role certificate (if any) for display. Uses
+    /// allowExpired=true so the user can still see an expired cert and decide to
+    /// renew/revoke. This is UI gating only; signing paths use strict checks.
+    func refreshCertificate() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.certificateState.status = .loading
+            self.certificateState.errorMessage = nil
+            do {
+                guard let stored = try await self.securityRepository.getStoredCertificate(allowExpired: true) else {
+                    self.certificateState.status = .missing
+                    return
+                }
+                let cert = stored.roleCertificate
+                let now = Int64(Date().timeIntervalSince1970 * 1000)
+                // Show the cached cert immediately so offline rescue users still see it.
+                self.certificateState.status = .loaded(
+                    certificate: cert,
+                    isExpired: cert.expiresAtMillis < now,
+                    isRevoked: false
+                )
+                // Then confirm it is still active server-side. Only an explicit revoked/missing
+                // status downgrades the card (and wipes the local copy inside revalidate);
+                // transient network failures return nil and leave the shown cert untouched.
+                let serverStatus = await self.securityRepository.revalidateAgainstServer()
+                if serverStatus == "revoked" || serverStatus == "missing" {
+                    self.certificateState.status = .loaded(
+                        certificate: cert,
+                        isExpired: cert.expiresAtMillis < now,
+                        isRevoked: true
+                    )
+                }
+            } catch {
+                self.certificateState.status = .failure(message: self.certificateOperationErrorMessage(error))
+            }
+        }
+    }
+
+    /// Runs the full provisioning flow (register device → challenge → App Attest
+    /// → backend issue) and persists the resulting certificate, then refreshes
+    /// the card state. Only rescue roles are issued a certificate by the backend.
+    func provisionCertificate() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.certificateState.provisioning = true
+            self.certificateState.errorMessage = nil
+
+            let authenticatedUser = self.auth.currentUser.flatMap { $0.isAnonymous ? nil : $0 }
+            let uid = authenticatedUser?.uid.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !uid.isEmpty else {
+                self.certificateState.provisioning = false
+                self.certificateState.errorMessage = NSLocalizedString("PROFILE_CERT_SIGNIN_REQUIRED", comment: "")
+                return
+            }
+
+            do {
+                _ = try await self.securityRepository.getOrFetchCertificate()
+                self.certificateState.provisioning = false
+                self.certificateState.statusMessage = NSLocalizedString("PROFILE_CERT_PROVISION_SUCCESS", comment: "")
+                self.certificateReady = true
+                self.refreshCertificate()
+            } catch {
+                self.certificateState.provisioning = false
+                self.certificateState.errorMessage = self.certificateOperationErrorMessage(error)
+            }
+        }
+    }
+
+    /// Revokes the certificate server-side (`revokeRoleCertificate` callable) and
+    /// wipes the locally stored copy so rescue mode is disabled immediately.
+    func revokeCertificate(reason: String?) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.certificateState.revoking = true
+            self.certificateState.errorMessage = nil
+            do {
+                let trimmedReason = reason?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let reasonValue: Any = (trimmedReason?.isEmpty == false) ? trimmedReason! : NSNull()
+                _ = try await self.functions
+                    .httpsCallable("revokeRoleCertificate")
+                    .call(["reason": reasonValue])
+                self.securityRepository.clearStoredCertificate()
+                self.certificateState.revoking = false
+                self.certificateState.statusMessage = NSLocalizedString("PROFILE_CERT_REVOKE_SUCCESS", comment: "")
+                self.certificateReady = false
+                self.refreshCertificate()
+            } catch {
+                self.certificateState.revoking = false
+                self.certificateState.errorMessage = self.certificateOperationErrorMessage(error)
+            }
+        }
+    }
+
+    func consumeCertificateMessages() {
+        certificateState.statusMessage = nil
+        certificateState.errorMessage = nil
+    }
+
+    private func certificateOperationErrorMessage(_ error: Error) -> String {
+        let message = (error as NSError).localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if message.isEmpty {
+            return NSLocalizedString("PROFILE_CERT_FAILURE_TITLE", comment: "")
+        }
+        return String(message.prefix(180))
+    }
+
+    private func completeFederatedSignIn(with credential: AuthCredential) {
         if let user = auth.currentUser, user.isAnonymous {
             user.link(with: credential) { [weak self] result, error in
                 guard let self else { return }
@@ -493,6 +943,20 @@ final class ProfileViewModel: ObservableObject {
                 self.agency = resolvedAgency
                 self.isProfileRefreshing = false
             }
+            // Same trigger Android uses (enqueueMobileProfileSync after a remote refresh): without
+            // it the dashboard roster never hears about iOS users at all.
+            if let user, !user.isAnonymous {
+                await MobileSyncClient.syncProfile(
+                    user: user,
+                    username: self.fullName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    email: self.email.trimmingCharacters(in: .whitespacesAndNewlines),
+                    phoneNumber: self.displayPhoneNumber,
+                    country: resolvedCountry,
+                    agency: resolvedAgency,
+                    role: role,
+                    verified: verified
+                )
+            }
             NSLog("Finished refreshing Firebase profile state")
         }
     }
@@ -574,6 +1038,24 @@ final class ProfileViewModel: ObservableObject {
         }
     }
 
+    /// Classifies a phone-OTP callable failure. Android splits infra-vs-policy and falls back to
+    /// native phone auth on infra errors; that fallback is not portable (the FirebaseAuth phone
+    /// flow is broken on iOS — see startPhoneSignIn), but the CLASSIFICATION still matters: an
+    /// infra outage must not read like "your number was rejected".
+    private func phoneServiceErrorMessage(_ error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == FunctionsErrorDomain,
+           let code = FunctionsErrorCode(rawValue: nsError.code) {
+            switch code {
+            case .resourceExhausted, .invalidArgument, .permissionDenied, .failedPrecondition:
+                return error.localizedDescription // genuine policy rejection — show the real reason
+            default:
+                return NSLocalizedString("PROFILE_PHONE_SERVICE_UNAVAILABLE", comment: "")
+            }
+        }
+        return NSLocalizedString("PROFILE_PHONE_SERVICE_UNAVAILABLE", comment: "")
+    }
+
     private func handleAuthError(_ error: Error) {
         let nsError = error as NSError
         NSLog(
@@ -623,8 +1105,76 @@ final class ProfileViewModel: ObservableObject {
         }
     }
 
+    /// One-shot user feedback (Android's snackbar equivalent — iOS had NO feedback channel at all,
+    /// so a failed rename or photo save looked identical to a successful one). Rendered as a
+    /// bottom banner by ProfileView; auto-cleared there.
+    @Published var transientMessage: String?
+
+    /// The verified phone for display. Auth exposes phoneNumber lazily after the "linked" OTP
+    /// outcome (only on the next token refresh), so fall back to the locally stored number or the
+    /// row never appears in the very session the user verified in.
+    var displayPhoneNumber: String {
+        let authPhone = (auth.currentUser?.phoneNumber ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !authPhone.isEmpty { return authPhone }
+        return phone.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Commits a rename with Android's semantics: reject blank up front (the autosave deliberately
+    /// skips blank names, so the old path silently "renamed" locally while the cloud kept the old
+    /// value — the user thought it worked), write with a REAL error path instead of try?, and only
+    /// report success on a confirmed cloud write.
+    func commitUsername(_ raw: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            transientMessage = NSLocalizedString("PROFILE_USERNAME_REQUIRED", comment: "")
+            return
+        }
+        fullName = trimmed
+        guard let user = auth.currentUser, !user.isAnonymous else { return }
+        let uid = user.uid
+        Task { @MainActor [weak self] in
+            do {
+                try await self?.firestore.collection("users").document(uid)
+                    .setDataAsync(["username": trimmed, "updatedAt": FieldValue.serverTimestamp()], merge: true)
+                self?.transientMessage = NSLocalizedString("PROFILE_USERNAME_UPDATE_SUCCESS", comment: "")
+                if let self, let user = self.auth.currentUser, !user.isAnonymous {
+                    await MobileSyncClient.syncProfile(
+                        user: user,
+                        username: trimmed,
+                        email: self.email,
+                        phoneNumber: self.displayPhoneNumber,
+                        country: self.country,
+                        agency: self.agency,
+                        role: self.firebaseRole,
+                        verified: self.isVerified
+                    )
+                }
+            } catch {
+                self?.transientMessage = NSLocalizedString("PROFILE_USERNAME_UPDATE_ERROR", comment: "")
+            }
+        }
+    }
+
+    private var certificateEventCancellable: AnyCancellable?
+
     private func startPrivacyListener() {
         guard privacyChangeObserver == nil else { return }
+        // The background cert warm-up can finish while this screen is open; without this the card
+        // kept showing "missing" plus a Request button and invited a redundant manual provision.
+        if certificateEventCancellable == nil {
+            Task { @MainActor [weak self] in
+                guard let self, self.certificateEventCancellable == nil else { return }
+                self.certificateEventCancellable = CertificateProvisioningNotifier.shared.$event
+                    .receive(on: DispatchQueue.main)
+                    .sink { [weak self] event in
+                        switch event {
+                        case .success, .failure: self?.refreshCertificate()
+                        default: break
+                        }
+                    }
+            }
+        }
         privacyChangeObserver = NotificationCenter.default.addObserver(
             forName: .privacyPreferencesDidChange,
             object: nil,
@@ -682,5 +1232,15 @@ private extension UIImage {
             cropped.draw(in: CGRect(origin: .zero, size: targetSize))
         }
         return thumbnail.jpegData(compressionQuality: 0.78)
+    }
+}
+
+/// Anchors the enterprise-SSO web auth session to the foreground key window.
+private final class SsoPresentationContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow } ?? ASPresentationAnchor()
     }
 }

@@ -120,6 +120,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.TextSnippet
+import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -265,20 +266,27 @@ internal fun ImageMessageContent(
     onImageClick: (Uri) -> Unit
 ) {
     val context = LocalContext.current
-    val primaryUri = message.imageFilePath?.let { path ->
-        val file = File(path)
-        if (file.exists()) Uri.fromFile(file) else null
+    // File.exists() is a disk stat; unremembered it ran on every recomposition of every image
+    // bubble (i.e. every transfer progress tick). Re-check only when the paths change or the
+    // transfer reaches a new state (e.g. Completed drops the file onto disk).
+    val viewableUri = remember(message.imageFilePath, message.imageThumbnailPath, progress?.state) {
+        val primaryUri = message.imageFilePath?.let { path ->
+            val file = File(path)
+            if (file.exists()) Uri.fromFile(file) else null
+        }
+        val thumbnailUri = message.imageThumbnailPath?.let { path ->
+            val file = File(path)
+            if (file.exists()) Uri.fromFile(file) else null
+        }
+        primaryUri ?: thumbnailUri
     }
-    val thumbnailUri = message.imageThumbnailPath?.let { path ->
-        val file = File(path)
-        if (file.exists()) Uri.fromFile(file) else null
-    }
-    val viewableUri = primaryUri ?: thumbnailUri
-    val imageRequest = viewableUri?.let { uri ->
-        ImageRequest.Builder(context)
-            .data(uri)
-            .crossfade(false)
-            .build()
+    val imageRequest = remember(viewableUri, context) {
+        viewableUri?.let { uri ->
+            ImageRequest.Builder(context)
+                .data(uri)
+                .crossfade(false)
+                .build()
+        }
     }
     val aspectRatio = remember(message.imageWidth, message.imageHeight) {
         val width = message.imageWidth
@@ -915,7 +923,9 @@ internal fun MessageComposer(
     isRecording: Boolean,
     hasRecordedVoice: Boolean,
     isSendingVoice: Boolean,
-    recordingDurationMillis: Long,
+    // Deferred read: ticks every 200 ms while recording; taking it as a plain value recomposed the
+    // whole composer per tick. Only the duration label deep inside reads it now.
+    recordingDurationMillis: () -> Long,
     canRecordVoice: Boolean,
     onAttachmentClick: () -> Unit,
     onAttachmentMenuDismiss: () -> Unit,
@@ -929,7 +939,7 @@ internal fun MessageComposer(
     contactName: String,
     onDismissReply: () -> Unit
 ) {
-    val durationLabel = formatElapsedDuration(recordingDurationMillis)
+    val durationLabel = { formatElapsedDuration(recordingDurationMillis()) }
     val showImagePreview = pendingImage != null && !isSendingImage
     val showVoiceConfirmation = hasRecordedVoice && !isSendingVoice
     Surface(tonalElevation = 3.dp) {
@@ -1163,6 +1173,7 @@ private fun ReplyPreview(
             }
             MessageType.AUDIO -> Icons.Outlined.Mic
             MessageType.IMAGE -> Icons.Outlined.Image
+            MessageType.SOS_ALERT -> Icons.Outlined.Warning
         }
         Row(
             modifier = Modifier
@@ -1344,7 +1355,7 @@ private fun rememberPendingImageAspectRatio(pendingImage: PendingImage): Float? 
 
 @Composable
 private fun RecordingIndicator(
-    durationLabel: String,
+    durationLabel: () -> String,
     onStop: () -> Unit,
     onCancel: () -> Unit
 ) {
@@ -1380,7 +1391,7 @@ private fun RecordingIndicator(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = durationLabel,
+                        text = durationLabel(),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1416,7 +1427,7 @@ private fun RecordingIndicator(
 
 @Composable
 private fun RecordingConfirmation(
-    durationLabel: String,
+    durationLabel: () -> String,
     onSendVoice: () -> Unit,
     onDiscardRecording: () -> Unit,
     isSending: Boolean,
@@ -1451,7 +1462,7 @@ private fun RecordingConfirmation(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = durationLabel,
+                    text = durationLabel(),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

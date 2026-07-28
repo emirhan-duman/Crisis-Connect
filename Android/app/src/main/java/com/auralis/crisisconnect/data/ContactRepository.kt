@@ -16,6 +16,7 @@ import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.room.withTransaction
+import com.auralis.crisisconnect.analytics.Analytics
 import com.auralis.crisisconnect.data.local.ContactAvatarStorage
 import com.auralis.crisisconnect.service.p2p.P2pGattServerService
 import com.auralis.crisisconnect.settingsDataStore
@@ -54,8 +55,26 @@ data class Contact(
     val remotePlatform: String = REMOTE_PLATFORM_UNKNOWN,
     val bleShareId: String = "",
     val lastKnownBleAddress: String = "",
-    val remoteDeviceId: String = ""
-)
+    val remoteDeviceId: String = "",
+    val peerUid: String = "",
+    val peerPublicKey: String = "",
+    val peerPhotoUrl: String = "",
+    val peerKeyChanged: Boolean = false,
+    // The peer's E.164 number (set when added by number over the internet). Used as the SPAKE2
+    // password to auto-bootstrap an offline Bluetooth link when nearby. Empty otherwise.
+    val peerPhone: String = "",
+    // Whether the peer's device reported running in child profile mode when the contact was
+    // exchanged. Child contacts are never offered/used as SOS emergency contacts.
+    val peerIsChild: Boolean = false,
+    // A hidden transport-only contact auto-created for an authority (kurum) channel peer so the
+    // citizen dual-mode pipeline can carry that chat offline over Bluetooth. Never shown in the
+    // home list or pickers; deliberately-added contacts never get this flag.
+    val isAuthorityBridge: Boolean = false
+) {
+    /** True when this contact can be reached over the E2E internet transport. */
+    val supportsInternet: Boolean
+        get() = peerUid.isNotBlank() && peerPublicKey.isNotBlank()
+}
 
 sealed class DeviceResult<out T> {
     data class Success<T>(val data: T) : DeviceResult<T>()
@@ -66,7 +85,8 @@ enum class DeviceError {
     MISSING_PERMISSIONS,
     DEVICE_NOT_FOUND,
     PAIRING_FAILED,
-    HANDSHAKE_FAILED
+    HANDSHAKE_FAILED,
+    BLUETOOTH_OFF
 }
 
 private fun contactDao(context: Context) = AppDatabase.getInstance(context).contactDao()
@@ -104,6 +124,16 @@ fun getContactByRemoteDeviceId(context: Context, remoteDeviceId: String): Contac
     return contactDao(context).getContactByRemoteDeviceId(normalized)?.toContact()
 }
 
+/** The local contact we hold for a peer's internet identity (Firebase uid), regardless of the
+ *  per-peer Bluetooth session code. Lets internet messages file into the existing thread. */
+fun getContactByPeerUid(context: Context, peerUid: String): Contact? {
+    val normalized = peerUid.trim()
+    if (normalized.isEmpty()) {
+        return null
+    }
+    return contactDao(context).getContactByPeerUid(normalized)?.toContact()
+}
+
 fun observeContacts(context: Context): Flow<List<Contact>> =
     contactDao(context).observeContacts().map { list ->
         list.map { it.toContact() }
@@ -114,7 +144,18 @@ fun observeContact(context: Context, sessionCode: String): Flow<Contact?> =
         entity?.toContact()
     }
 
-fun saveContact(context: Context, contact: Contact) {
+/**
+ * [analyticsSource] marks a deliberate user add ("qr", "directory", …) for the contact_added
+ * metric; with [analyticsReceived] it instead marks the passive side (a peer added this user →
+ * contact_received). Leave null on bookkeeping saves (identity restores, synthetic contacts,
+ * auto-saves) so they never count. Only a save that creates a new row logs the event.
+ */
+fun saveContact(
+    context: Context,
+    contact: Contact,
+    analyticsSource: String? = null,
+    analyticsReceived: Boolean = false
+) {
     val appContext = context.applicationContext
     val normalizedTransport = normalizePreferredTransport(contact.preferredTransport)
     val normalizedAddress = normalizeMacAddress(contact.address)
@@ -137,8 +178,24 @@ fun saveContact(context: Context, contact: Contact) {
     val mergedContact = mergeVerifiedTrust(
         incoming = normalizedContact,
         existing = existing
-    )
+    ).let { merged ->
+        // Keep the peer's number sticky: writes that construct a fresh Contact (e.g. a nearby
+        // SPAKE2 pairing overwriting an online contact at the same sessionCode) don't carry it, and
+        // we don't want to lose the SPAKE2 password we used to auto-link.
+        if (merged.peerPhone.isBlank() && !existing?.peerPhone.isNullOrBlank()) {
+            merged.copy(peerPhone = existing!!.peerPhone)
+        } else {
+            merged
+        }
+    }
     contactDao(appContext).saveContact(mergedContact.toEntity())
+    if (analyticsSource != null && existing == null && !mergedContact.isAuthorityBridge) {
+        if (analyticsReceived) {
+            Analytics.contactReceived(via = analyticsSource, transport = normalizedTransport)
+        } else {
+            Analytics.contactAdded(method = analyticsSource, transport = normalizedTransport)
+        }
+    }
     if (requiresLockedHighRange(normalizedContact)) {
         P2pGattServerService.ensureHosting(appContext)
     }
@@ -175,10 +232,29 @@ fun markContactVerified(
     return true
 }
 
+/**
+ * Clears the "identity key changed" (TOFU) warning after the user re-confirms the peer.
+ * No-op if the contact is missing or the flag is already down.
+ */
+fun acknowledgePeerKeyChange(context: Context, sessionCode: String): Boolean {
+    val normalized = sessionCode.trim()
+    if (normalized.isEmpty()) {
+        return false
+    }
+    val existing = getContact(context, normalized) ?: return false
+    if (!existing.peerKeyChanged) {
+        return true
+    }
+    saveContact(context, existing.copy(peerKeyChanged = false))
+    return true
+}
+
 suspend fun saveBleContactAndMigrateLegacySession(
     context: Context,
     contact: Contact,
-    migrateFromSessionCode: String? = null
+    migrateFromSessionCode: String? = null,
+    analyticsSource: String? = null,
+    analyticsReceived: Boolean = false
 ): Contact {
     val appContext = context.applicationContext
     val normalizedTransport = normalizePreferredTransport(contact.preferredTransport)
@@ -210,6 +286,7 @@ suspend fun saveBleContactAndMigrateLegacySession(
 
     var finalizedContact = normalizedTarget
     val migratedSessions = mutableListOf<String>()
+    var isNewContact = false
     db.withTransaction {
         val dao = db.contactDao()
         val existingTarget = dao.getContactBySessionCode(normalizedTarget.sessionCode)?.toContact()
@@ -220,6 +297,8 @@ suspend fun saveBleContactAndMigrateLegacySession(
             .filterNot { source ->
                 source.sessionCode.equals(normalizedTarget.sessionCode, ignoreCase = true)
             }
+        // A migrated legacy contact is not a new add — only a save with no prior row anywhere counts.
+        isNewContact = existingTarget == null && sourceContacts.isEmpty()
 
         finalizedContact = mergePreferredContact(
             target = normalizedTarget,
@@ -244,6 +323,13 @@ suspend fun saveBleContactAndMigrateLegacySession(
             fromSessionCode = oldSessionCode,
             toSessionCode = finalizedContact.sessionCode
         )
+    }
+    if (analyticsSource != null && isNewContact && !finalizedContact.isAuthorityBridge) {
+        if (analyticsReceived) {
+            Analytics.contactReceived(via = analyticsSource, transport = normalizedTransport)
+        } else {
+            Analytics.contactAdded(method = analyticsSource, transport = normalizedTransport)
+        }
     }
     if (requiresLockedHighRange(finalizedContact)) {
         P2pGattServerService.ensureHosting(appContext)
@@ -303,6 +389,39 @@ fun updateContactAesKey(context: Context, sessionCode: String, aesKey: String) {
 
 fun updateContactName(context: Context, sessionCode: String, name: String) {
     contactDao(context).updateContactName(sessionCode, name.trim())
+}
+
+/**
+ * Stamps the peer's internet identity (Firebase uid + long-term public key) onto an existing
+ * contact. Called when a Bluetooth-connected peer announces its identity over the link, so a
+ * Bluetooth-added contact automatically becomes internet-capable (supportsInternet) without a QR
+ * re-scan — and self-heals if the peer's uid changed (e.g. after a data wipe), since it refreshes
+ * on every Bluetooth connection. No-op when the values are blank or already up to date.
+ */
+fun updateContactPeerIdentity(
+    context: Context,
+    sessionCode: String,
+    peerUid: String,
+    peerPublicKey: String
+) {
+    val newUid = peerUid.trim()
+    val newKey = peerPublicKey.trim()
+    if (newUid.isEmpty() || newKey.isEmpty()) return
+    val normalizedSession = sessionCode.trim()
+    val existing = contactDao(context).getContactBySessionCode(normalizedSession)?.toContact() ?: return
+    if (existing.peerUid.trim() == newUid && existing.peerPublicKey.trim() == newKey) return
+    saveContact(context, existing.copy(peerUid = newUid, peerPublicKey = newKey))
+}
+
+/**
+ * Records whether the peer's device reported running in child profile mode during a contact
+ * exchange (Bluetooth CONTACT_INFO, QR, or directory lookup). No-op when unchanged.
+ */
+fun updateContactChildFlag(context: Context, sessionCode: String, isChild: Boolean) {
+    val normalizedSession = sessionCode.trim()
+    val existing = contactDao(context).getContactBySessionCode(normalizedSession)?.toContact() ?: return
+    if (existing.peerIsChild == isChild) return
+    saveContact(context, existing.copy(peerIsChild = isChild))
 }
 
 private fun isPlaceholderBleDisplayName(name: String, sessionCode: String): Boolean {
@@ -544,6 +663,21 @@ private fun mergePreferredContact(
         )
     )
 
+    // Internet identity: prefer the incoming value, else keep whatever we already had. This makes a
+    // BLE/QR-paired contact internet-capable once the peer supplies its identity (client-hello), and
+    // never wipes an existing identity on a later re-pair that omits it.
+    val peerUid = firstNonBlank(
+        target.peerUid,
+        existingTarget?.peerUid,
+        *sourceContacts.map(Contact::peerUid).toTypedArray()
+    ).orEmpty()
+
+    val peerPublicKey = firstNonBlank(
+        target.peerPublicKey,
+        existingTarget?.peerPublicKey,
+        *sourceContacts.map(Contact::peerPublicKey).toTypedArray()
+    ).orEmpty()
+
     val bleShareId = normalizeBleShareId(
         firstNonBlank(
             target.bleShareId,
@@ -612,7 +746,9 @@ private fun mergePreferredContact(
         remotePlatform = remotePlatform,
         bleShareId = bleShareId,
         lastKnownBleAddress = lastKnownBleAddress,
-        remoteDeviceId = remoteDeviceId
+        remoteDeviceId = remoteDeviceId,
+        peerUid = peerUid,
+        peerPublicKey = peerPublicKey
     )
 }
 

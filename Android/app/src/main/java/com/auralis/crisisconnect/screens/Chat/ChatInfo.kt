@@ -17,6 +17,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -34,7 +37,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -45,6 +48,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,15 +67,20 @@ import kotlin.math.max
 fun ChatInfoScreen(navController: NavController, sessionCode: String) {
     val context = LocalContext.current
     val viewModel: ChatScreenViewModel = viewModel()
-    val contactName by viewModel.contactName.collectAsState()
-    val bluetoothAddress by viewModel.contactAddressState.collectAsState()
-    val connectionState by viewModel.connectionState.collectAsState()
-    val signalInfo by viewModel.signalInfo.collectAsState()
-    val signalPermissionMissing by viewModel.signalPermissionMissing.collectAsState()
-    val isSessionEncrypted by viewModel.isSessionEncrypted.collectAsState()
-    val storedAesKey by viewModel.sessionAesKey.collectAsState()
+    val contactName by viewModel.contactName.collectAsStateWithLifecycle()
+    val bluetoothAddress by viewModel.contactAddressState.collectAsStateWithLifecycle()
+    val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
+    val transport by viewModel.transport.collectAsStateWithLifecycle()
+    val contactPhotoUrl by viewModel.contactPhotoUrl.collectAsStateWithLifecycle()
+    val safetyNumber by viewModel.safetyNumber.collectAsStateWithLifecycle()
+    val peerKeyChanged by viewModel.peerKeyChanged.collectAsStateWithLifecycle()
+    val safetyNumberForwardSecret by viewModel.safetyNumberForwardSecret.collectAsStateWithLifecycle()
+    val signalInfo by viewModel.signalInfo.collectAsStateWithLifecycle()
+    val signalPermissionMissing by viewModel.signalPermissionMissing.collectAsStateWithLifecycle()
+    val isSessionEncrypted by viewModel.isSessionEncrypted.collectAsStateWithLifecycle()
+    val storedAesKey by viewModel.sessionAesKey.collectAsStateWithLifecycle()
     val contactAvatarVersion by ContactAvatarStorage.observeAvatarVersion(sessionCode)
-        .collectAsState(initial = 0L)
+        .collectAsStateWithLifecycle(initialValue = 0L)
     val contactProfileBitmap by produceState<Bitmap?>(
         initialValue = null,
         key1 = sessionCode,
@@ -136,6 +145,7 @@ fun ChatInfoScreen(navController: NavController, sessionCode: String) {
                             displayName = displayName,
                             stableKey = sessionCode,
                             bitmap = contactProfileBitmap,
+                            photoUrl = contactPhotoUrl,
                             modifier = Modifier.fillMaxSize(),
                             textStyle = MaterialTheme.typography.displaySmall
                         )
@@ -157,13 +167,14 @@ fun ChatInfoScreen(navController: NavController, sessionCode: String) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.Medium
                         )
-                        ConnectionStatusBadge(connectionState)
+                        ConnectionStatusBadge(connectionState, transport)
                     }
                 }
             }
 
             ConnectionDetailsCard(
                 connectionState = connectionState,
+                transport = transport,
                 bluetoothAddress = bluetoothAddress,
                 signalInfo = signalInfo,
                 signalPermissionMissing = signalPermissionMissing
@@ -180,6 +191,15 @@ fun ChatInfoScreen(navController: NavController, sessionCode: String) {
                     navController.navigate("chat/$encodedSessionCode/handshake_code")
                 }
             )
+
+            safetyNumber?.let {
+                SafetyNumberCard(
+                    safetyNumber = it,
+                    keyChanged = peerKeyChanged,
+                    forwardSecret = safetyNumberForwardSecret,
+                    onVerify = { viewModel.acknowledgePeerKeyChange() }
+                )
+            }
         }
 
         if (isEditingName) {
@@ -275,8 +295,118 @@ private fun CenteredNameWithEdit(
 }
 
 @Composable
+private fun SafetyNumberCard(
+    safetyNumber: String,
+    keyChanged: Boolean,
+    forwardSecret: Boolean,
+    onVerify: () -> Unit
+) {
+    val warn = keyChanged
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 2.dp,
+        color = if (warn) {
+            MaterialTheme.colorScheme.errorContainer
+        } else {
+            MaterialTheme.colorScheme.surface
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (warn) Icons.Filled.Warning else Icons.Filled.Shield,
+                    contentDescription = null,
+                    tint = if (warn) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = stringResource(
+                        if (warn) R.string.safety_number_changed_title
+                        else R.string.safety_number_title
+                    ),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (warn) {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    }
+                )
+            }
+            if (warn) {
+                Text(
+                    text = stringResource(R.string.safety_number_changed_description),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+            Text(
+                text = safetyNumber,
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = FontFamily.Monospace,
+                lineHeight = MaterialTheme.typography.headlineSmall.lineHeight,
+                color = if (warn) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+            )
+            if (forwardSecret && !warn) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Lock,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = stringResource(R.string.safety_number_forward_secret),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            Text(
+                text = stringResource(R.string.safety_number_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (warn) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+            if (warn) {
+                Button(
+                    onClick = onVerify,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text(text = stringResource(R.string.safety_number_verify_action))
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ConnectionDetailsCard(
     connectionState: ChatConnectionState,
+    transport: ChatTransport,
     bluetoothAddress: String?,
     signalInfo: SignalStrengthInfo?,
     signalPermissionMissing: Boolean
@@ -306,7 +436,7 @@ private fun ConnectionDetailsCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Medium
                 )
-                ConnectionStatusBadge(connectionState)
+                ConnectionStatusBadge(connectionState, transport)
             }
             val addressText = bluetoothAddress?.takeIf { it.isNotBlank() }
             Column(

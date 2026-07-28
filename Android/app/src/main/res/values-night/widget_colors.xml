@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_card_bg">#1F2124</color>
+    <color name="widget_text_primary">#F2F2F5</color>
+    <color name="widget_text_secondary">#A8AAAE</color>
+
+    <!-- Lighter severity shades for contrast on the dark card. -->
+    <color name="widget_severity_red">#EF5350</color>
+    <color name="widget_severity_orange">#FFB74D</color>
+    <color name="widget_severity_green">#81C784</color>
+    <color name="widget_severity_neutral">#B0BEC5</color>
+    <color name="widget_severity_red_container">#33EF5350</color>
+    <color name="widget_severity_orange_container">#33FFB74D</color>
+    <color name="widget_severity_green_container">#3381C784</color>
+    <color name="widget_severity_neutral_container">#33B0BEC5</color>
+</resources>

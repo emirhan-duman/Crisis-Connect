@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="guide_screen_intro_title">Guide d\'urgence</string>
+    <string name="guide_screen_intro_subtitle">Accédez rapidement aux informations essentielles et suivez de courtes actions sous pression.</string>
+    <string name="guide_screen_filter_all">Toutes les catégories</string>
+    <string name="guide_screen_section_30_seconds">En 30 secondes</string>
+    <string name="guide_screen_section_step_by_step">Étape par étape</string>
+    <string name="guide_screen_section_dont">À ne pas faire</string>
+    <string name="guide_screen_section_checklist">Liste de contrôle</string>
+    <string name="guide_screen_expand_details">Afficher les détails</string>
+    <string name="guide_screen_collapse_details">Masquer les détails</string>
+    <string name="guide_screen_action_start_checklist">Démarrer la liste de contrôle</string>
+    <string name="guide_screen_action_call_local">Appeler %1$s</string>
+    <string name="guide_screen_action_open_assembly">Ouvrir le point de rassemblement</string>
+    <string name="guide_screen_source_note">Note de source :</string>
+    <string name="guide_screen_checklist_progress">%1$d/%2$d terminé</string>
+    <string name="guide_screen_no_dial_app_with_number">Aucune application trouvée pour appeler %1$s.</string>
+    <string name="guide_screen_no_map_app">Aucune application trouvée pour ouvrir les cartes.</string>
+    <string name="guide_screen_assembly_query">Point de rassemblement en cas de catastrophe</string>
+    <string name="guide_screen_search_placeholder">Rechercher par code, catégorie ou sujet</string>
+    <string name="guide_screen_clear_search">Effacer la recherche</string>
+    <string name="guide_screen_clear_filters">Effacer les filtres</string>
+    <string name="guide_screen_empty_title">Aucun guide trouvé</string>
+    <string name="guide_screen_empty_body">Essayez de réduire les filtres ou de rechercher avec un mot-clé plus large.</string>
+    <string name="guide_screen_more_quick_steps">+%1$d actions rapides supplémentaires</string>
+    <string name="guide_screen_region_value">Région : %1$s • Numéro d\'urgence : %2$s</string>
+    <string name="guide_screen_results_count">%1$d guides répertoriés</string>
+    <string name="guide_screen_read_minutes_format">%1$d min</string>
+</resources>

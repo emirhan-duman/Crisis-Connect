@@ -1,28 +1,24 @@
 package com.auralis.crisisconnect.screens
 
+import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,14 +27,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.BluetoothConnected
+import androidx.compose.material.icons.filled.BluetoothSearching
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -50,53 +53,42 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.CustomAccessibilityAction
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.customActions
-import androidx.compose.ui.semantics.progressBarRangeInfo
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.setProgress
-import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.BlePeerStore
 import com.auralis.crisisconnect.service.GattSOSServerService
+import com.auralis.crisisconnect.service.sos.EmergencyNumberResolver
+import com.auralis.crisisconnect.service.sos.SosCloudReporter
+import com.auralis.crisisconnect.service.sos.SosContactNotifier
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 
 private data class SosPalette(
     val backgroundStart: Color,
@@ -108,7 +100,6 @@ private data class SosPalette(
     val heroTop: Color,
     val heroBottom: Color,
     val heroBorder: Color,
-    val heroGlow: Color,
     val title: Color,
     val body: Color,
     val muted: Color,
@@ -116,8 +107,6 @@ private data class SosPalette(
     val liveBorder: Color,
     val liveText: Color,
     val liveDot: Color,
-    val timerSurface: Color,
-    val timerOutline: Color,
     val timerText: Color,
     val timerLabel: Color,
     val statusSurface: Color,
@@ -126,29 +115,34 @@ private data class SosPalette(
     val statusPrimaryIconTint: Color,
     val statusSecondaryIconSurface: Color,
     val statusSecondaryIconTint: Color,
-    val stopCardTop: Color,
-    val stopCardBottom: Color,
-    val stopCardBorder: Color,
     val trackBase: Color,
-    val trackBaseOverlay: Color,
     val trackLabel: Color,
     val progressStart: Color,
     val progressEnd: Color,
     val knobSurface: Color,
-    val knobBorder: Color,
     val knobText: Color
 )
 
+/**
+ * Live SOS screen — a single-viewport (no scroll) three-stage escalation: the automatic broadcast
+ * condensed into a hero card with status chips, a one-tap regional emergency call, the notified
+ * contacts as avatar chips, and the stop slider pinned to the bottom.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SOSScreen(navController: NavController) {
-    val isRunning by GattSOSServerService.isRunning.collectAsState()
-    val startTimestamp by GattSOSServerService.startTimestampMillis.collectAsState()
+    val isRunning by GattSOSServerService.isDeclared.collectAsStateWithLifecycle()
+    val startTimestamp by GattSOSServerService.startTimestampMillis.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val palette = rememberSosPalette()
     var hasSeenRunning by rememberSaveable { mutableStateOf(false) }
     val elapsedMillis by rememberElapsedMillis(startTimestamp = startTimestamp, isRunning = isRunning)
-    val peers by BlePeerStore.peers.collectAsState()
+    val peers by BlePeerStore.peers.collectAsStateWithLifecycle()
+    val cloudReportState by SosCloudReporter.state.collectAsStateWithLifecycle()
+    val recipients by SosContactNotifier.recipients.collectAsStateWithLifecycle()
+    val recipientsReady by SosContactNotifier.selectionReady.collectAsStateWithLifecycle()
+    val recipientsSource by SosContactNotifier.selectionSource.collectAsStateWithLifecycle()
+    val emergencyNumber = remember(context) { EmergencyNumberResolver.resolve(context) }
 
     LaunchedEffect(isRunning) {
         if (isRunning) hasSeenRunning = true
@@ -223,38 +217,560 @@ fun SOSScreen(navController: NavController) {
         ) {
             SosAmbientBackdrop(palette)
 
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                val heightScale = (maxHeight / 760.dp).coerceIn(0.5f, 1.05f)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 560.dp)
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                HeroCard(
+                    palette = palette,
+                    elapsedMillis = elapsedMillis,
+                    peerCount = peers.size,
+                    cloudReportState = cloudReportState
+                )
 
-                Column(
+                CallCard(
+                    palette = palette,
+                    emergencyNumber = emergencyNumber,
+                    onCall = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_DIAL, Uri.parse("tel:$emergencyNumber"))
+                            )
+                        }
+                    }
+                )
+
+                ContactsCard(
+                    palette = palette,
+                    recipients = recipients,
+                    selectionReady = recipientsReady,
+                    selectionSource = recipientsSource
+                )
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                SosSlideAction(
+                    label = stringResource(R.string.sos_screen_slide_label),
+                    confirmActionLabel = stringResource(R.string.sos_screen_slide_action_confirm),
+                    idleStateDescription = stringResource(R.string.sos_screen_slider_state_idle),
+                    readyStateDescription = stringResource(R.string.sos_screen_slider_state_ready),
+                    style = SosSlideStyle(
+                        track = palette.trackBase,
+                        trackBorder = palette.statusBorder,
+                        progressStart = palette.progressStart,
+                        progressEnd = palette.progressEnd,
+                        label = palette.trackLabel,
+                        knob = palette.knobSurface,
+                        knobIcon = palette.knobText
+                    ),
+                    height = 68.dp,
+                    onConfirmed = { GattSOSServerService.stopBroadcast(context) }
+                )
+                Text(
+                    text = stringResource(R.string.sos_screen_slide_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.muted,
+                    textAlign = TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .widthIn(max = scaledDp(560.dp, heightScale, min = 320.dp))
-                        .align(Alignment.TopCenter)
-                        .padding(
-                            horizontal = scaledDp(18.dp, heightScale),
-                            vertical = scaledDp(16.dp, heightScale)
-                        ),
-                    verticalArrangement = Arrangement.spacedBy(scaledDp(14.dp, heightScale))
-                ) {
-                    StatusHeader(
-                        elapsedMillis = elapsedMillis,
-                        scale = heightScale,
-                        palette = palette
-                    )
-
-                    StopCard(
-                        onStopConfirmed = {
-                            GattSOSServerService.stopBroadcast(context)
-                        },
-                        scale = heightScale,
-                        palette = palette
-                    )
-                }
+                        .padding(bottom = 2.dp)
+                )
             }
         }
     }
 }
+
+// ─── Hero: beacon + timer + status chips ──────────────────────────────────────
+
+@Composable
+private fun HeroCard(
+    palette: SosPalette,
+    elapsedMillis: Long,
+    peerCount: Int,
+    cloudReportState: SosCloudReporter.State
+) {
+    val shape = RoundedCornerShape(24.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(10.dp, shape)
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(palette.heroTop, palette.heroBottom)))
+            .border(width = 1.dp, color = palette.heroBorder, shape = shape)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SosBeacon(palette = palette)
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    LivePill(palette = palette)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = formatElapsed(elapsedMillis),
+                        style = MaterialTheme.typography.displaySmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = (-1).sp
+                        ),
+                        color = palette.timerText
+                    )
+                    Text(
+                        text = stringResource(R.string.sos_screen_elapsed_hint),
+                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.2.sp),
+                        color = palette.timerLabel
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(palette.statusBorder.copy(alpha = 0.7f))
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                StatusChip(
+                    icon = Icons.Default.CheckCircle,
+                    text = stringResource(R.string.sos_stage_broadcast_title),
+                    tint = palette.statusPrimaryIconTint,
+                    palette = palette,
+                    modifier = Modifier.weight(1f)
+                )
+                StatusChip(
+                    icon = if (peerCount > 0) {
+                        Icons.Default.BluetoothConnected
+                    } else {
+                        Icons.Default.BluetoothSearching
+                    },
+                    text = if (peerCount > 0) {
+                        stringResource(R.string.sos_chip_peers, peerCount)
+                    } else {
+                        stringResource(R.string.sos_chip_searching)
+                    },
+                    tint = palette.statusSecondaryIconTint,
+                    palette = palette,
+                    modifier = Modifier.weight(1f)
+                )
+                val (cloudIcon, cloudText) = cloudChipContent(cloudReportState)
+                StatusChip(
+                    icon = cloudIcon,
+                    text = cloudText,
+                    tint = palette.statusSecondaryIconTint,
+                    palette = palette,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+/** Short cloud-uplink chip label; the detailed wording lives in the reporter's log/tooltips. */
+@Composable
+private fun cloudChipContent(state: SosCloudReporter.State): Pair<ImageVector, String> {
+    return when (state) {
+        SosCloudReporter.State.Idle,
+        SosCloudReporter.State.WaitingForNetwork ->
+            Icons.Default.CloudOff to stringResource(R.string.sos_chip_no_internet)
+        SosCloudReporter.State.Sending ->
+            Icons.Default.CloudUpload to stringResource(R.string.sos_contact_status_sending)
+        is SosCloudReporter.State.Reported -> {
+            val placeName = state.placeName
+            Icons.Default.CloudDone to if (placeName.isNullOrBlank()) {
+                stringResource(R.string.sos_chip_reported)
+            } else {
+                placeName
+            }
+        }
+        SosCloudReporter.State.Failed ->
+            Icons.Default.CloudOff to stringResource(R.string.sos_contact_status_failed)
+    }
+}
+
+@Composable
+private fun StatusChip(
+    icon: ImageVector,
+    text: String,
+    tint: Color,
+    palette: SosPalette,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(palette.statusSurface)
+            .border(1.dp, palette.statusBorder, RoundedCornerShape(10.dp))
+            .padding(horizontal = 8.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.title,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun SosBeacon(palette: SosPalette) {
+    val durationScale = rememberAnimatorDurationScale()
+    var ringScale = 1.3f
+    var ringAlpha = 0.2f
+    if (durationScale > 0f) {
+        val transition = rememberInfiniteTransition(label = "sos-beacon")
+        val duration = (1_800 * durationScale).toInt().coerceAtLeast(1)
+        ringScale = transition.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.55f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(duration, easing = LinearOutSlowInEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "sos-beacon-ring-scale"
+        ).value
+        ringAlpha = transition.animateFloat(
+            initialValue = 0.5f,
+            targetValue = 0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(duration, easing = LinearOutSlowInEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "sos-beacon-ring-alpha"
+        ).value
+    }
+
+    Box(
+        modifier = Modifier.size(80.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(54.dp)
+                .scale(ringScale)
+                .alpha(ringAlpha)
+                .border(width = 2.dp, color = palette.liveDot, shape = CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .size(54.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.verticalGradient(listOf(palette.progressStart, palette.progressEnd))
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_alarm_sos),
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(26.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun LivePill(palette: SosPalette) {
+    val durationScale = rememberAnimatorDurationScale()
+    val transition = if (durationScale > 0f) rememberInfiniteTransition(label = "live-pulse") else null
+    val dotScaleState = if (transition != null) {
+        transition.animateFloat(
+            initialValue = 0.88f,
+            targetValue = 1.08f,
+            animationSpec = infiniteRepeatable(
+                animation = tween((1400 * durationScale).toInt(), easing = LinearOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "live-dot-scale"
+        )
+    } else {
+        remember { mutableFloatStateOf(1f) }
+    }
+    val dotScale by dotScaleState
+
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(palette.liveSurface)
+            .border(width = 1.dp, color = palette.liveBorder, shape = CircleShape)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(12.dp)
+                .clip(CircleShape)
+                .background(palette.liveDot.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp * dotScale)
+                    .clip(CircleShape)
+                    .background(palette.liveDot)
+            )
+        }
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = stringResource(R.string.sos_screen_live_badge),
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.15.sp),
+            fontWeight = FontWeight.Bold,
+            color = palette.liveText
+        )
+    }
+}
+
+// ─── Emergency call ───────────────────────────────────────────────────────────
+
+@Composable
+private fun CallCard(
+    palette: SosPalette,
+    emergencyNumber: String,
+    onCall: () -> Unit
+) {
+    SectionCard(palette) {
+        TitleRow(
+            title = stringResource(R.string.sos_stage_call_title),
+            badge = stringResource(R.string.sos_stage_tap_badge),
+            palette = palette
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        Button(
+            onClick = onCall,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = palette.progressStart,
+                contentColor = Color.White
+            )
+        ) {
+            Icon(
+                imageVector = Icons.Default.Call,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = stringResource(R.string.sos_call_button_label, emergencyNumber),
+                style = MaterialTheme.typography.titleSmall.copy(letterSpacing = 0.1.sp),
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = stringResource(R.string.sos_call_hint),
+            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp),
+            color = palette.muted
+        )
+    }
+}
+
+// ─── Notified contacts ───────────────────────────────────────────────────────
+
+@Composable
+private fun ContactsCard(
+    palette: SosPalette,
+    recipients: List<SosContactNotifier.Recipient>,
+    selectionReady: Boolean,
+    selectionSource: SosContactNotifier.SelectionSource
+) {
+    SectionCard(palette) {
+        TitleRow(
+            title = stringResource(R.string.sos_stage_contacts_title),
+            badge = if (selectionSource == SosContactNotifier.SelectionSource.Custom) {
+                stringResource(R.string.sos_chip_custom_selection)
+            } else {
+                stringResource(R.string.sos_stage_auto_badge)
+            },
+            palette = palette
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        when {
+            !selectionReady -> {
+                Text(
+                    text = stringResource(R.string.sos_contacts_loading),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.body
+                )
+            }
+            recipients.isEmpty() -> {
+                Text(
+                    text = stringResource(R.string.sos_contacts_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.body
+                )
+            }
+            else -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    recipients.forEach { recipient ->
+                        RecipientChip(recipient = recipient, palette = palette)
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                val sentCount =
+                    recipients.count { it.status == SosContactNotifier.RecipientStatus.Sent }
+                Text(
+                    text = stringResource(
+                        R.string.sos_contacts_summary,
+                        sentCount,
+                        recipients.size
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.muted
+                )
+            }
+        }
+    }
+}
+
+/** A contact as a small avatar (initial) with a delivery-status badge in its corner. */
+@Composable
+private fun RecipientChip(
+    recipient: SosContactNotifier.Recipient,
+    palette: SosPalette
+) {
+    val initial = recipient.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    val sent = recipient.status == SosContactNotifier.RecipientStatus.Sent
+    Box(modifier = Modifier.size(44.dp)) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(palette.statusSecondaryIconSurface)
+                .border(1.dp, palette.statusBorder, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = initial,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = palette.statusSecondaryIconTint
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(16.dp)
+                .align(Alignment.BottomEnd)
+                .clip(CircleShape)
+                .background(
+                    if (sent) palette.statusSecondaryIconTint else palette.muted
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = if (sent) Icons.Default.Check else Icons.Default.Schedule,
+                contentDescription = null,
+                tint = palette.statusSurface,
+                modifier = Modifier.size(11.dp)
+            )
+        }
+    }
+}
+
+// ─── Shared building blocks ───────────────────────────────────────────────────
+
+@Composable
+private fun SectionCard(
+    palette: SosPalette,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = palette.statusSurface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, palette.statusBorder),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            content = content
+        )
+    }
+}
+
+@Composable
+private fun TitleRow(
+    title: String,
+    badge: String,
+    palette: SosPalette
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall.copy(letterSpacing = 0.1.sp),
+            fontWeight = FontWeight.SemiBold,
+            color = palette.title,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = badge,
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.3.sp),
+            color = palette.muted
+        )
+    }
+}
+
+@Composable
+private fun SosAmbientBackdrop(palette: SosPalette) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = 96.dp, y = (-40).dp)
+                .size(280.dp)
+                .background(
+                    brush = Brush.radialGradient(
+                        colors = listOf(palette.backgroundGlowPrimary, Color.Transparent)
+                    ),
+                    shape = CircleShape
+                )
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .offset(x = (-120).dp, y = 32.dp)
+                .size(260.dp)
+                .background(
+                    brush = Brush.radialGradient(
+                        colors = listOf(palette.backgroundGlowSecondary, Color.Transparent)
+                    ),
+                    shape = CircleShape
+                )
+        )
+    }
+}
+
+// ─── State helpers ────────────────────────────────────────────────────────────
 
 private object SosSessionRouter {
     private val handled = ConcurrentHashMap.newKeySet<String>()
@@ -301,233 +817,6 @@ private fun rememberElapsedMillis(
 }
 
 @Composable
-private fun rememberSosPalette(): SosPalette {
-    val isDark = isSystemInDarkTheme()
-    return remember(isDark) {
-        if (isDark) {
-            SosPalette(
-                backgroundStart = Color(0xFF0C1015),
-                backgroundMid = Color(0xFF131922),
-                backgroundEnd = Color(0xFF090D12),
-                backgroundGlowPrimary = Color(0x40FF5A64),
-                backgroundGlowSecondary = Color(0x262E8BFF),
-                topBarScrim = Color(0xCC0F141C),
-                heroTop = Color(0xFF1A212C),
-                heroBottom = Color(0xFF111720),
-                heroBorder = Color(0x26FF7A7F),
-                heroGlow = Color(0x1CFF6A70),
-                title = Color(0xFFF7F9FD),
-                body = Color(0xFFD8DEE8),
-                muted = Color(0xFF9EABBD),
-                liveSurface = Color(0xFF38181C),
-                liveBorder = Color(0x4CFF6E74),
-                liveText = Color(0xFFFFD6D8),
-                liveDot = Color(0xFFFF6B70),
-                timerSurface = Color(0xFF0E141B),
-                timerOutline = Color(0xFF2B3442),
-                timerText = Color(0xFFF7F9FD),
-                timerLabel = Color(0xFF9EABBD),
-                statusSurface = Color(0xFF121923),
-                statusBorder = Color(0xFF273243),
-                statusPrimaryIconSurface = Color(0xFF3A171B),
-                statusPrimaryIconTint = Color(0xFFFF8D93),
-                statusSecondaryIconSurface = Color(0xFF162334),
-                statusSecondaryIconTint = Color(0xFF8EB7FF),
-                stopCardTop = Color(0xFF151B24),
-                stopCardBottom = Color(0xFF101720),
-                stopCardBorder = Color(0xFF2A3444),
-                trackBase = Color(0xFF0C1117),
-                trackBaseOverlay = Color(0xFF1A2330),
-                trackLabel = Color(0xFFB9C2D0),
-                progressStart = Color(0xFFD53A43),
-                progressEnd = Color(0xFFFF7A45),
-                knobSurface = Color(0xFFF7F8FB),
-                knobBorder = Color(0xFFFFB2B6),
-                knobText = Color(0xFFB3261E)
-            )
-        } else {
-            SosPalette(
-                backgroundStart = Color(0xFFF8FAFD),
-                backgroundMid = Color(0xFFF1F4F8),
-                backgroundEnd = Color(0xFFECEFF4),
-                backgroundGlowPrimary = Color(0x26FF646E),
-                backgroundGlowSecondary = Color(0x143D7DFF),
-                topBarScrim = Color(0xDDF8FAFD),
-                heroTop = Color(0xFFFFFFFF),
-                heroBottom = Color(0xFFF5F8FB),
-                heroBorder = Color(0x1FB3261E),
-                heroGlow = Color(0x14FF6B70),
-                title = Color(0xFF111827),
-                body = Color(0xFF475569),
-                muted = Color(0xFF64748B),
-                liveSurface = Color(0xFFFFECEE),
-                liveBorder = Color(0x33D32F2F),
-                liveText = Color(0xFFB42318),
-                liveDot = Color(0xFFE53935),
-                timerSurface = Color(0xFF121B29),
-                timerOutline = Color(0xFF223045),
-                timerText = Color(0xFFF8FAFC),
-                timerLabel = Color(0xFFB8C4D4),
-                statusSurface = Color(0xFFFFFFFF),
-                statusBorder = Color(0xFFE2E8F0),
-                statusPrimaryIconSurface = Color(0xFFFFEEF0),
-                statusPrimaryIconTint = Color(0xFFD92D20),
-                statusSecondaryIconSurface = Color(0xFFEEF4FF),
-                statusSecondaryIconTint = Color(0xFF175CD3),
-                stopCardTop = Color(0xFFFFFFFF),
-                stopCardBottom = Color(0xFFF7F9FC),
-                stopCardBorder = Color(0xFFE2E8F0),
-                trackBase = Color(0xFFF3F5F8),
-                trackBaseOverlay = Color(0xFFE7ECF2),
-                trackLabel = Color(0xFF667085),
-                progressStart = Color(0xFFD92D20),
-                progressEnd = Color(0xFFF97066),
-                knobSurface = Color(0xFFFFFFFF),
-                knobBorder = Color(0xFFFAC5C0),
-                knobText = Color(0xFFB42318)
-            )
-        }
-    }
-}
-
-@Composable
-private fun SosAmbientBackdrop(palette: SosPalette) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .offset(x = 96.dp, y = (-40).dp)
-                .size(280.dp)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(palette.backgroundGlowPrimary, Color.Transparent)
-                    ),
-                    shape = RoundedCornerShape(999.dp)
-                )
-        )
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .offset(x = (-120).dp, y = 32.dp)
-                .size(260.dp)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(palette.backgroundGlowSecondary, Color.Transparent)
-                    ),
-                    shape = RoundedCornerShape(999.dp)
-                )
-        )
-    }
-}
-
-@Composable
-private fun StatusHeader(elapsedMillis: Long, scale: Float, palette: SosPalette) {
-    val shape = RoundedCornerShape(28.dp)
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(14.dp, shape),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(shape)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            palette.heroTop,
-                            palette.heroBottom
-                        )
-                    )
-                )
-                .border(
-                    width = 1.dp,
-                    color = palette.heroBorder,
-                    shape = shape
-                )
-        ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 44.dp, y = (-52).dp)
-                    .size(scaledDp(180.dp, scale, min = 120.dp))
-                    .background(
-                        brush = Brush.radialGradient(
-                            colors = listOf(palette.heroGlow, Color.Transparent)
-                        ),
-                        shape = RoundedCornerShape(999.dp)
-                    )
-            )
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        horizontal = scaledDp(20.dp, scale),
-                        vertical = scaledDp(20.dp, scale)
-                    ),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                val textScale = textScaleFor(scale, min = 0.72f, max = 1.02f)
-
-                LivePill(
-                    modifier = Modifier.align(Alignment.Start),
-                    scale = scale,
-                    palette = palette
-                )
-                Spacer(modifier = Modifier.height(scaledDp(16.dp, scale)))
-                Text(
-                    text = stringResource(R.string.sos_screen_active_title),
-                    style = scaledTextStyle(
-                        MaterialTheme.typography.headlineSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = (-0.2).sp
-                        ),
-                        textScale,
-                        minScale = 0.72f,
-                        maxScale = 1.02f
-                    ),
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth(),
-                    color = palette.title
-                )
-                Spacer(modifier = Modifier.height(scaledDp(8.dp, scale)))
-                Text(
-                    text = stringResource(R.string.sos_screen_active_body),
-                    style = scaledTextStyle(
-                        MaterialTheme.typography.bodyLarge.copy(
-                            lineHeight = 24.sp,
-                            letterSpacing = 0.15.sp
-                        ),
-                        textScale,
-                        minScale = 0.72f,
-                        maxScale = 1.02f
-                    ),
-                    color = palette.body,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(scaledDp(18.dp, scale)))
-                TimeBadge(
-                    elapsedMillis = elapsedMillis,
-                    scale = scale,
-                    palette = palette
-                )
-                Spacer(modifier = Modifier.height(scaledDp(16.dp, scale)))
-                StatusDetails(
-                    elapsedMillis = elapsedMillis,
-                    scale = scale,
-                    palette = palette
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun rememberAnimatorDurationScale(): Float {
     val context = LocalContext.current
     return remember(context) {
@@ -542,574 +831,75 @@ private fun rememberAnimatorDurationScale(): Float {
 }
 
 @Composable
-private fun LivePill(modifier: Modifier = Modifier, scale: Float, palette: SosPalette) {
-    val durationScale = rememberAnimatorDurationScale()
-    val transition = if (durationScale > 0f) rememberInfiniteTransition(label = "live-pulse") else null
-    val dotScaleState = if (transition != null) {
-        transition.animateFloat(
-            initialValue = 0.88f,
-            targetValue = 1.08f,
-            animationSpec = infiniteRepeatable(
-                animation = tween((1400 * durationScale).toInt(), easing = LinearOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "live-dot-scale"
-        )
-    } else {
-        remember { mutableFloatStateOf(1f) }
-    }
-    val dotScale by dotScaleState
-
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(palette.liveSurface)
-            .border(
-                width = 1.dp,
-                color = palette.liveBorder,
-                shape = RoundedCornerShape(999.dp)
+private fun rememberSosPalette(): SosPalette {
+    val isDark = isSystemInDarkTheme()
+    return remember(isDark) {
+        if (isDark) {
+            SosPalette(
+                backgroundStart = Color(0xFF0C1015),
+                backgroundMid = Color(0xFF131922),
+                backgroundEnd = Color(0xFF090D12),
+                backgroundGlowPrimary = Color(0x40FF5A64),
+                backgroundGlowSecondary = Color(0x262E8BFF),
+                topBarScrim = Color(0xCC0F141C),
+                heroTop = Color(0xFF1A212C),
+                heroBottom = Color(0xFF111720),
+                heroBorder = Color(0x26FF7A7F),
+                title = Color(0xFFF7F9FD),
+                body = Color(0xFFD8DEE8),
+                muted = Color(0xFF9EABBD),
+                liveSurface = Color(0xFF38181C),
+                liveBorder = Color(0x4CFF6E74),
+                liveText = Color(0xFFFFD6D8),
+                liveDot = Color(0xFFFF6B70),
+                timerText = Color(0xFFF7F9FD),
+                timerLabel = Color(0xFF9EABBD),
+                statusSurface = Color(0xFF121923),
+                statusBorder = Color(0xFF273243),
+                statusPrimaryIconSurface = Color(0xFF3A171B),
+                statusPrimaryIconTint = Color(0xFFFF8D93),
+                statusSecondaryIconSurface = Color(0xFF162334),
+                statusSecondaryIconTint = Color(0xFF8EB7FF),
+                trackBase = Color(0xFF0C1117),
+                trackLabel = Color(0xFFB9C2D0),
+                progressStart = Color(0xFFD53A43),
+                progressEnd = Color(0xFFFF7A45),
+                knobSurface = Color(0xFFF7F8FB),
+                knobText = Color(0xFFB3261E)
             )
-            .padding(
-                horizontal = scaledDp(14.dp, scale),
-                vertical = scaledDp(6.dp, scale)
-            ),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        val textScale = textScaleFor(scale, min = 0.76f, max = 1.04f)
-        Box(
-            modifier = Modifier
-                .size(scaledDp(16.dp, scale))
-                .clip(RoundedCornerShape(999.dp))
-                .background(palette.liveDot.copy(alpha = 0.18f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(scaledDp(8.dp, scale, min = 6.dp) * dotScale)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(palette.liveDot)
+        } else {
+            SosPalette(
+                backgroundStart = Color(0xFFF8FAFD),
+                backgroundMid = Color(0xFFF1F4F8),
+                backgroundEnd = Color(0xFFECEFF4),
+                backgroundGlowPrimary = Color(0x26FF646E),
+                backgroundGlowSecondary = Color(0x143D7DFF),
+                topBarScrim = Color(0xDDF8FAFD),
+                heroTop = Color(0xFFFFFFFF),
+                heroBottom = Color(0xFFF5F8FB),
+                heroBorder = Color(0x1FB3261E),
+                title = Color(0xFF111827),
+                body = Color(0xFF475569),
+                muted = Color(0xFF64748B),
+                liveSurface = Color(0xFFFFECEE),
+                liveBorder = Color(0x33D32F2F),
+                liveText = Color(0xFFB42318),
+                liveDot = Color(0xFFE53935),
+                timerText = Color(0xFF111827),
+                timerLabel = Color(0xFF64748B),
+                statusSurface = Color(0xFFFFFFFF),
+                statusBorder = Color(0xFFE2E8F0),
+                statusPrimaryIconSurface = Color(0xFFFFEEF0),
+                statusPrimaryIconTint = Color(0xFFD92D20),
+                statusSecondaryIconSurface = Color(0xFFEEF4FF),
+                statusSecondaryIconTint = Color(0xFF175CD3),
+                trackBase = Color(0xFFF3F5F8),
+                trackLabel = Color(0xFF667085),
+                progressStart = Color(0xFFD92D20),
+                progressEnd = Color(0xFFF97066),
+                knobSurface = Color(0xFFFFFFFF),
+                knobText = Color(0xFFB42318)
             )
-        }
-        Spacer(modifier = Modifier.width(scaledDp(8.dp, scale)))
-        Text(
-            text = stringResource(R.string.sos_screen_live_badge),
-            style = scaledTextStyle(
-                MaterialTheme.typography.labelLarge.copy(letterSpacing = 0.15.sp),
-                textScale,
-                minScale = 0.76f,
-                maxScale = 1.04f
-            ),
-            fontWeight = FontWeight.Bold,
-            color = palette.liveText
-        )
-    }
-}
-
-@Composable
-private fun TimeBadge(elapsedMillis: Long, scale: Float, palette: SosPalette) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        color = palette.timerSurface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, palette.timerOutline),
-        shadowElevation = 0.dp,
-        tonalElevation = 0.dp
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            palette.timerSurface,
-                            palette.timerSurface.copy(alpha = 0.92f)
-                        )
-                    )
-                )
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        horizontal = scaledDp(18.dp, scale),
-                        vertical = scaledDp(14.dp, scale)
-                    ),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                val textScale = textScaleFor(scale, min = 0.74f, max = 1.02f)
-                Text(
-                    text = formatElapsed(elapsedMillis),
-                    style = scaledTextStyle(
-                        MaterialTheme.typography.headlineLarge.copy(
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = (-1.2).sp
-                        ),
-                        textScale,
-                        minScale = 0.74f,
-                        maxScale = 1.02f
-                    ),
-                    color = palette.timerText
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = stringResource(R.string.sos_screen_elapsed_hint),
-                    style = scaledTextStyle(
-                        MaterialTheme.typography.labelLarge.copy(letterSpacing = 0.18.sp),
-                        textScale,
-                        minScale = 0.74f,
-                        maxScale = 1.02f
-                    ),
-                    color = palette.timerLabel
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatusDetails(elapsedMillis: Long, scale: Float, palette: SosPalette) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = scaledDp(2.dp, scale)),
-        verticalArrangement = Arrangement.spacedBy(scaledDp(12.dp, scale))
-    ) {
-        val textScale = textScaleFor(scale, min = 0.72f, max = 1.02f)
-        StatusRow(
-            icon = Icons.Default.CheckCircle,
-            text = stringResource(R.string.sos_screen_status_active),
-            scale = textScale,
-            palette = palette,
-            iconSurface = palette.statusPrimaryIconSurface,
-            iconTint = palette.statusPrimaryIconTint
-        )
-        StatusRow(
-            icon = Icons.Default.AccessTime,
-            text = stringResource(R.string.sos_screen_status_started, formatElapsed(elapsedMillis)),
-            scale = textScale,
-            palette = palette,
-            iconSurface = palette.statusSecondaryIconSurface,
-            iconTint = palette.statusSecondaryIconTint
-        )
-    }
-}
-
-@Composable
-private fun StatusRow(
-    icon: ImageVector,
-    text: String,
-    scale: Float,
-    palette: SosPalette,
-    iconSurface: Color,
-    iconTint: Color
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = palette.statusSurface,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, palette.statusBorder)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Surface(
-                modifier = Modifier.size(32.dp),
-                shape = RoundedCornerShape(10.dp),
-                color = iconSurface,
-                tonalElevation = 0.dp
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = iconTint
-                    )
-                }
-            }
-            Text(
-                text = text,
-                style = scaledTextStyle(
-                    MaterialTheme.typography.bodyMedium.copy(letterSpacing = 0.1.sp),
-                    scale,
-                    minScale = 0.72f,
-                    maxScale = 1.02f
-                ),
-                color = palette.title,
-                modifier = Modifier.weight(1f),
-                maxLines = 2
-            )
-        }
-    }
-}
-
-@Composable
-private fun StopCard(
-    onStopConfirmed: () -> Unit,
-    scale: Float,
-    palette: SosPalette
-) {
-    val shape = RoundedCornerShape(24.dp)
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = scaledDp(12.dp, scale))
-            .shadow(10.dp, shape),
-        shape = shape,
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(shape)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            palette.stopCardTop,
-                            palette.stopCardBottom
-                        )
-                    )
-                )
-                .border(
-                    width = 1.dp,
-                    color = palette.stopCardBorder,
-                    shape = shape
-                )
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        horizontal = scaledDp(20.dp, scale),
-                        vertical = scaledDp(18.dp, scale)
-                    ),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                val textScale = textScaleFor(scale, min = 0.72f, max = 1f)
-                Text(
-                    text = stringResource(R.string.sos_screen_slide_title),
-                    style = scaledTextStyle(
-                        MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            letterSpacing = 0.1.sp
-                        ),
-                        textScale,
-                        minScale = 0.72f,
-                        maxScale = 1f
-                    ),
-                    textAlign = TextAlign.Center,
-                    color = palette.title
-                )
-                Spacer(modifier = Modifier.height(scaledDp(12.dp, scale)))
-                SlideToCancel(
-                    onSlideFinished = onStopConfirmed,
-                    scale = scale,
-                    palette = palette
-                )
-                Spacer(modifier = Modifier.height(scaledDp(12.dp, scale)))
-                Text(
-                    text = stringResource(R.string.sos_screen_slide_hint),
-                    style = scaledTextStyle(
-                        MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
-                        textScale,
-                        minScale = 0.72f,
-                        maxScale = 1f
-                    ),
-                    color = palette.muted,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SlideToCancel(
-    onSlideFinished: () -> Unit,
-    scale: Float,
-    palette: SosPalette
-) {
-    val knobWidth = scaledDp(92.dp, scale, min = 66.dp)
-    val trackHeight = scaledDp(76.dp, scale, min = 64.dp)
-    val trackPadding = scaledDp(6.dp, scale, min = 5.dp)
-    val knobHeight = (trackHeight - trackPadding * 2).coerceAtLeast(scaledDp(46.dp, scale, min = 42.dp))
-    val knobCornerRadius = scaledDp(14.dp, scale, min = 10.dp)
-    val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
-    val haptic = LocalHapticFeedback.current
-    val confirmThreshold = 0.97f
-    val textScale = textScaleFor(scale, min = 0.72f, max = 1f)
-    val trackShape = RoundedCornerShape(scaledDp(40.dp, scale, min = 24.dp))
-    val confirmActionLabel = stringResource(R.string.sos_screen_slide_action_confirm)
-    val accessibilityLabel = stringResource(R.string.sos_screen_slide_label)
-    val idleStateDescription = stringResource(R.string.sos_screen_slider_state_idle)
-    val readyStateDescription = stringResource(R.string.sos_screen_slider_state_ready)
-    var sliderPosition by remember { mutableFloatStateOf(0f) }
-    var hasTriggeredStart by remember { mutableStateOf(false) }
-    var hasTriggeredThreshold by remember { mutableStateOf(false) }
-
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(trackHeight)
-            .clip(trackShape)
-            .background(palette.trackBase)
-            .border(
-                width = 1.dp,
-                color = palette.stopCardBorder,
-                shape = trackShape
-            )
-            .padding(trackPadding)
-    ) {
-        val trackWidthPx = constraints.maxWidth.toFloat()
-        val knobWidthPx = with(density) { knobWidth.toPx() }
-        val maxOffsetPx = (trackWidthPx - knobWidthPx).coerceAtLeast(0f)
-    val progressFraction = sliderPosition.coerceIn(0f, 1f)
-    val knobOffsetPx = progressFraction * maxOffsetPx
-    val isArmed = progressFraction >= confirmThreshold
-    val targetAccent = if (isArmed) 1f else (progressFraction / confirmThreshold).coerceIn(0f, 1f)
-    val targetVisibility by animateFloatAsState(
-        targetValue = if (progressFraction > 0.01f) 1f else 0f,
-        animationSpec = tween(durationMillis = 140, easing = LinearOutSlowInEasing),
-        label = "sos-slide-target-visibility"
-    )
-    val progressWidthPx = (knobOffsetPx + knobWidthPx / 2f).coerceIn(0f, trackWidthPx)
-    val progressCornerRadius = scaledDp(32.dp, scale, min = 22.dp)
-    val progressShape = RoundedCornerShape(
-        topStart = progressCornerRadius,
-        bottomStart = progressCornerRadius,
-        topEnd = progressCornerRadius * progressFraction,
-        bottomEnd = progressCornerRadius * progressFraction
-    )
-
-    LaunchedEffect(progressFraction) {
-        if (progressFraction > 0.03f && !hasTriggeredStart) {
-            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            hasTriggeredStart = true
-        }
-        if (progressFraction >= confirmThreshold && !hasTriggeredThreshold) {
-            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            hasTriggeredThreshold = true
-        }
-        if (progressFraction < 0.03f) {
-            hasTriggeredStart = false
-        }
-        if (progressFraction < confirmThreshold) {
-            hasTriggeredThreshold = false
-        }
-    }
-
-        val trackBrush = Brush.horizontalGradient(
-            colors = listOf(
-                palette.progressStart,
-                palette.progressEnd
-            )
-        )
-        val draggableState = rememberDraggableState { delta ->
-            val currentPx = progressFraction * maxOffsetPx
-            val newPx = (currentPx + delta).coerceIn(0f, maxOffsetPx)
-            sliderPosition = if (maxOffsetPx == 0f) 0f else newPx / maxOffsetPx
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .semantics(mergeDescendants = true) {
-                    contentDescription = accessibilityLabel
-                    stateDescription = if (progressFraction >= confirmThreshold) {
-                        readyStateDescription
-                    } else {
-                        idleStateDescription
-                    }
-                    progressBarRangeInfo = ProgressBarRangeInfo(progressFraction, 0f..1f)
-                    customActions = listOf(
-                        CustomAccessibilityAction(confirmActionLabel) {
-                            onSlideFinished()
-                            sliderPosition = 0f
-                            true
-                        }
-                    )
-                    setProgress { target ->
-                        if (target >= confirmThreshold) {
-                            onSlideFinished()
-                            sliderPosition = 0f
-                        } else {
-                            sliderPosition = 0f
-                        }
-                        true
-                    }
-                }
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(scaledDp(32.dp, scale, min = 22.dp)))
-                    .background(palette.trackBaseOverlay)
-            )
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = scaledDp(8.dp, scale))
-                    .width(knobWidth)
-                    .height(knobHeight)
-                    .clip(RoundedCornerShape(knobCornerRadius))
-                    .background(
-                        lerp(
-                            Color.Transparent,
-                            lerp(
-                                palette.progressStart.copy(alpha = 0.18f),
-                                palette.progressEnd.copy(alpha = if (isArmed) 0.34f else 0.24f),
-                                targetAccent
-                            ),
-                            targetVisibility
-                        )
-                    )
-                    .border(
-                        width = 1.dp,
-                        color = lerp(
-                            Color.Transparent,
-                            lerp(
-                                palette.progressStart.copy(alpha = 0.34f),
-                                palette.progressEnd.copy(alpha = 0.58f),
-                                targetAccent
-                            ),
-                            targetVisibility
-                        ),
-                        shape = RoundedCornerShape(knobCornerRadius)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = null,
-                    tint = lerp(
-                        Color.Transparent,
-                        lerp(
-                            palette.progressStart,
-                            Color.White,
-                            if (isArmed) 1f else targetAccent * 0.45f
-                        ),
-                        targetVisibility
-                    ),
-                    modifier = Modifier.size(scaledDp(18.dp, scale, min = 16.dp))
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(with(density) { progressWidthPx.toDp() })
-                    .clip(progressShape)
-                    .background(trackBrush)
-            )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(
-                        start = scaledDp(84.dp, scale, min = 72.dp),
-                        end = scaledDp(18.dp, scale)
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End
-            ) {
-                Text(
-                    text = stringResource(R.string.sos_screen_slide_label),
-                    style = scaledTextStyle(
-                        MaterialTheme.typography.bodyMedium.copy(letterSpacing = 0.12.sp),
-                        textScale,
-                        minScale = 0.72f,
-                        maxScale = 1f
-                    ),
-                    color = lerp(
-                        palette.trackLabel,
-                        Color.White,
-                        0.18f + (progressFraction * 0.34f)
-                    ),
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.End
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset(knobOffsetPx.toInt(), 0) }
-                    .width(knobWidth)
-                    .height(knobHeight)
-                    .shadow(elevation = if (isArmed) 10.dp else 8.dp, shape = RoundedCornerShape(knobCornerRadius))
-                    .clip(RoundedCornerShape(knobCornerRadius))
-                    .background(palette.knobSurface)
-                    .border(
-                        width = 1.dp,
-                        color = lerp(
-                            palette.knobBorder,
-                            palette.progressEnd.copy(alpha = 0.45f),
-                            progressFraction
-                        ),
-                        shape = RoundedCornerShape(knobCornerRadius)
-                    )
-                    .draggable(
-                        state = draggableState,
-                        orientation = Orientation.Horizontal,
-                        onDragStarted = {
-                            hasTriggeredStart = false
-                            hasTriggeredThreshold = false
-                        },
-                        onDragStopped = {
-                            if (sliderPosition >= confirmThreshold) {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onSlideFinished()
-                                sliderPosition = 0f
-                            } else {
-                                val start = sliderPosition
-                                scope.launch {
-                                    val anim = Animatable(start)
-                                    anim.animateTo(
-                                        targetValue = 0f,
-                                        animationSpec = tween(
-                                            durationMillis = 200,
-                                            easing = LinearOutSlowInEasing
-                                        )
-                                    ) {
-                                        sliderPosition = value
-                                    }
-                                }
-                            }
-                        }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = stringResource(R.string.sos_screen_slide_label),
-                        tint = palette.knobText,
-                        modifier = Modifier.size(scaledDp(18.dp, scale, min = 16.dp))
-                    )
-                    Text(
-                        text = stringResource(R.string.emergency_button_label),
-                        style = scaledTextStyle(
-                            MaterialTheme.typography.titleSmall.copy(letterSpacing = 0.12.sp),
-                            textScale,
-                            minScale = 0.72f,
-                            maxScale = 1f
-                        ),
-                        fontWeight = FontWeight.Bold,
-                        color = palette.knobText
-                    )
-                }
-            }
         }
     }
 }
@@ -1125,30 +915,4 @@ private fun formatElapsed(elapsedMillis: Long): String {
     } else {
         String.format("%02d:%02d", minutes, seconds)
     }
-}
-
-private fun textScaleFor(scale: Float, min: Float, max: Float): Float {
-    return scale.coerceIn(min, max)
-}
-
-private fun scaledTextStyle(
-    style: TextStyle,
-    scale: Float,
-    minScale: Float,
-    maxScale: Float
-): TextStyle {
-    val clampedScale = scale.coerceIn(minimumValue = minScale, maximumValue = maxScale)
-    val fontSize = if (style.fontSize != TextUnit.Unspecified) style.fontSize * clampedScale else style.fontSize
-    val lineHeight = if (style.lineHeight != TextUnit.Unspecified) style.lineHeight * clampedScale else style.lineHeight
-    val letterSpacing = if (style.letterSpacing != TextUnit.Unspecified) style.letterSpacing * clampedScale else style.letterSpacing
-
-    return style.copy(
-        fontSize = fontSize,
-        lineHeight = lineHeight,
-        letterSpacing = letterSpacing
-    )
-}
-
-private fun scaledDp(base: Dp, scale: Float, min: Dp = 4.dp): Dp {
-    return (base * scale).coerceAtLeast(min)
 }

@@ -81,7 +81,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -144,7 +143,7 @@ fun GattMeshScreen(
 ) {
     val context = LocalContext.current
     val viewModel: GattMeshViewModel = viewModel()
-    val localUserName by getSavedUserName(context).collectAsState(initial = "")
+    val localUserName by getSavedUserName(context).collectAsStateWithLifecycle(initialValue = "")
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val messageDraft by viewModel.messageDraft.collectAsStateWithLifecycle()
@@ -204,11 +203,13 @@ fun GattMeshScreen(
     }
     val selfSubtitle = stringResource(R.string.gatt_mesh_connected_users_this_device)
     val showSelfInConnectedList = uiState.publicMeshEnabled && uiState.isServiceEnabled
+    val selfAgency = uiState.localAgency?.trim()?.takeIf { it.isNotEmpty() }
     val connectedPeerItems = remember(
         uiState.connectedPeers,
         selfDisplayName,
         selfSubtitle,
-        showSelfInConnectedList
+        showSelfInConnectedList,
+        selfAgency
     ) {
         buildList {
             if (showSelfInConnectedList) {
@@ -220,6 +221,7 @@ fun GattMeshScreen(
                         isSelf = true,
                         verificationStatus = GattMeshPeerVerificationStatus.UNVERIFIED,
                         verifiedRole = null,
+                        verifiedAgency = selfAgency,
                     )
                 )
             }
@@ -232,6 +234,7 @@ fun GattMeshScreen(
                         isSelf = false,
                         verificationStatus = peer.verificationStatus,
                         verifiedRole = peer.verifiedRole,
+                        verifiedAgency = peer.verifiedAgency?.trim()?.takeIf { it.isNotEmpty() },
                     )
                 )
             }
@@ -879,7 +882,51 @@ private fun ConnectedPeerSheetRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
+        // Verified institution (kurum) on the right — same as the authority mesh sheet.
+        if (!peer.verifiedAgency.isNullOrBlank()) {
+            Spacer(modifier = Modifier.width(8.dp))
+            GattMeshAgencyBadge(
+                agency = peer.verifiedAgency,
+                verified = peer.verificationStatus == GattMeshPeerVerificationStatus.VERIFIED
+            )
+        }
     }
+    }
+}
+
+/** Verified-institution (AFAD/FEMA…) badge shown to the right of a peer in the connected-users sheet. */
+@Composable
+private fun GattMeshAgencyBadge(agency: String, verified: Boolean) {
+    val container = if (verified) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+    }
+    val content = if (verified) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        modifier = Modifier.clip(CircleShape).background(container).padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        if (verified) {
+            Icon(
+                imageVector = Icons.Filled.Verified,
+                contentDescription = null,
+                tint = content,
+                modifier = Modifier.size(14.dp)
+            )
+        }
+        Text(
+            text = agency,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            color = content,
+            maxLines = 1
+        )
     }
 }
 
@@ -890,6 +937,7 @@ private data class ConnectedPeerSheetItem(
     val isSelf: Boolean,
     val verificationStatus: GattMeshPeerVerificationStatus,
     val verifiedRole: String?,
+    val verifiedAgency: String? = null,
 )
 
 private const val SELF_CONNECTED_PEER_KEY = "__self__"

@@ -7,13 +7,17 @@
 
 import SwiftUI
 import SwiftData
+import StoreKit
 import UIKit
 import CoreImage.CIFilterBuiltins
 import Combine
+import FirebaseAuth
 
 private enum PresentedChatDestination: Identifiable {
     case session(UUID)
     case generalChat
+    case authorityChannels
+    case authorityThread(channelId: String, peerUid: String)
 
     var id: String {
         switch self {
@@ -21,6 +25,10 @@ private enum PresentedChatDestination: Identifiable {
             return "session.\(sessionId.uuidString)"
         case .generalChat:
             return "general-chat"
+        case .authorityChannels:
+            return "authority-channels"
+        case .authorityThread(let channelId, let peerUid):
+            return "authority-thread.\(channelId).\(peerUid)"
         }
     }
 }
@@ -31,6 +39,10 @@ struct ContentView: View {
     @StateObject private var voiceCallCoordinator = ChatPeerVoiceCallCoordinator.shared
     @State private var rescueRole: String = SecureLocalStore.shared.loadRole() ?? "user"
     @State private var presentedChatDestination: PresentedChatDestination?
+    // Settings' aggregated Bluetooth/Location reminder reuses onboarding's status mapping so a
+    // revoked permission (which silently kills the offline mesh) surfaces an in-app nudge.
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var permissionsMonitor = OnboardingPermissionsCoordinator()
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -44,7 +56,8 @@ struct ContentView: View {
                         NewContactView(
                             onQrSharePaired: {
                                 viewModel.closeNewChat()
-                            }
+                            },
+                            showAddFromAgency: showRescueTools
                         )
                         .navigationTitle("New Contact")
                         .navigationBarTitleDisplayMode(.inline)
@@ -75,6 +88,21 @@ struct ContentView: View {
                         .appNavigationBarStyle()
                     }
                     .interactiveDismissDisabled(true)
+                }
+                .fullScreenCover(isPresented: $viewModel.showingRecentDisasters) {
+                    NavigationStack {
+                        RecentDisastersView()
+                            .toolbar {
+                                ToolbarItem(placement: .topBarLeading) {
+                                    Button {
+                                        viewModel.showingRecentDisasters = false
+                                    } label: {
+                                        Label("Back", systemImage: "chevron.left")
+                                    }
+                                }
+                            }
+                            .appNavigationBarStyle()
+                    }
                 }
                 .tabItem {
                     Label("Messages", systemImage: "bubble.left.and.bubble.right")
@@ -127,6 +155,28 @@ struct ContentView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .zIndex(1)
             }
+
+            // Internet (WebRTC) voice call overlay — global, so an incoming call surfaces on
+            // whatever screen is open.
+            InternetCallOverlayHost()
+                .zIndex(2)
+
+            // SFU authority-call overlay (inert while SfuCallConfig.enabled is false).
+            SfuCallOverlayHost()
+                .zIndex(2)
+
+            // Nearby SPAKE2 pairing consent. Referencing the host is ALSO what instantiates the
+            // responder singleton, which registers the "open to add" beacon with the shared
+            // peripheral coordinator — without this the pairing service is never hosted and a peer
+            // can never establish the offline Bluetooth link (Android shows a notification here;
+            // in-app consent is the iOS equivalent since pairing happens with the app open).
+            NearbyPairingApprovalHost()
+                .zIndex(2)
+
+            // Rescue-certificate provisioning banner (Android's CertificateProvisioningBanner) —
+            // global, so first-time issuance after sign-in is visible from any screen.
+            CertificateProvisioningBannerHost()
+                .zIndex(3)
         }
         .tint(.appPrimary)
         .id(settings.appLanguage)
@@ -169,6 +219,11 @@ struct ContentView: View {
             voiceCallCoordinator.bootstrap()
             consumePendingOpenSessionIfNeeded()
             consumePendingNotificationRouteIfNeeded()
+            AppAnalytics.screenView(viewModel.selectedTab.screenRoute)
+        }
+        .onChange(of: viewModel.selectedTab) { _, newTab in
+            // Central screen-view logging for the primary tab navigation (Android's nav observer).
+            AppAnalytics.screenView(newTab.screenRoute)
         }
         .onReceive(NotificationCenter.default.publisher(for: .rescueRoleDidChange)) { _ in
             rescueRole = SecureLocalStore.shared.loadRole() ?? "user"
@@ -181,6 +236,13 @@ struct ContentView: View {
         }
         .onChange(of: voiceCallCoordinator.requestedOpenSessionId) { _, _ in
             consumePendingOpenSessionIfNeeded()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Re-check after the user returns from the system Settings app (the exact moment they'd
+            // flip Bluetooth/Location back on) so the reminder card clears itself.
+            if phase == .active {
+                permissionsMonitor.refreshStatuses()
+            }
         }
     }
 
@@ -214,6 +276,10 @@ struct ContentView: View {
             SOSChatDetailScreen(sessionId: sessionId)
         case .generalChat:
             GattMeshView()
+        case .authorityChannels:
+            AuthorityChannelsListView()
+        case .authorityThread(let channelId, let peerUid):
+            AuthorityThreadDeepLinkView(channelId: channelId, peerUid: peerUid)
         }
     }
 
@@ -240,6 +306,18 @@ struct ContentView: View {
             openCallSession(sessionId)
         case .generalChat:
             openGeneralChat()
+        case .authorityChannels:
+            viewModel.selectedTab = .messages
+            presentedChatDestination = .authorityChannels
+        case .authorityThread(let channelId, let peerUid):
+            viewModel.selectedTab = .messages
+            presentedChatDestination = .authorityThread(channelId: channelId, peerUid: peerUid)
+        case .sosCountdown:
+            // Widget tap: open the SOS flow — its own arming countdown stays the
+            // guard against accidental taps.
+            viewModel.showingSOS = true
+        case .recentDisasters:
+            viewModel.showingRecentDisasters = true
         }
     }
 
@@ -255,6 +333,12 @@ struct ContentView: View {
     private var toolsScreen: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("TOOLS_SECTION_ASSISTANT")
+                        .font(.headline)
+                    crisisSentinelToolLink
+                }
+
                 if hasDetectTools {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("TOOLS_SECTION_DETECT")
@@ -319,6 +403,20 @@ struct ContentView: View {
                         OfflineMapView()
                     }
                 }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("TOOLS_SECTION_AWARENESS")
+                        .font(.headline)
+                    toolLink(
+                        title: NSLocalizedString("RECENT_DISASTERS_TITLE", comment: ""),
+                        subtitle: NSLocalizedString("TOOLS_RECENT_DISASTERS_SUBTITLE", comment: ""),
+                        systemImage: "globe.americas.fill",
+                        tint: .appDanger,
+                        accessibilityIdentifier: "tool-link-recent-disasters"
+                    ) {
+                        RecentDisastersView()
+                    }
+                }
             }
             .padding(.horizontal, AppTheme.screenPadding)
             .padding(.vertical, 18)
@@ -333,6 +431,8 @@ struct ContentView: View {
     private var settingsScreen: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                missingPermissionsCard
+
                 settingsSectionLabel(NSLocalizedString("SETTINGS_SECTION_IDENTITY", comment: ""))
                 settingsLink(title: NSLocalizedString("Profile", comment: ""), subtitle: NSLocalizedString("SETTINGS_PROFILE_SUBTITLE", comment: ""), systemImage: "person.crop.circle", tint: .appPrimary) {
                     ProfileView()
@@ -368,6 +468,26 @@ struct ContentView: View {
                 }
 
                 settingsSectionLabel(NSLocalizedString("SETTINGS_SECTION_SAFETY", comment: ""))
+                settingsLink(
+                    title: NSLocalizedString("SOS_EMERGENCY_CONTACTS_TITLE", comment: ""),
+                    subtitle: NSLocalizedString("SOS_EMERGENCY_CONTACTS_SUBTITLE", comment: ""),
+                    systemImage: "person.crop.circle.badge.exclamationmark",
+                    tint: .appDanger
+                ) {
+                    SosEmergencyContactsView()
+                }
+                settingsLink(
+                    title: NSLocalizedString("CHILD_PROFILE_TITLE", comment: ""),
+                    // Live status: with the mode ON the static marketing line hid the one fact the
+                    // parent checks this row for.
+                    subtitle: ChildProfileManager.shared.isEnabled
+                        ? NSLocalizedString("CHILD_PROFILE_STATUS_ENABLED", comment: "")
+                        : NSLocalizedString("CHILD_PROFILE_LINK_SUBTITLE", comment: ""),
+                    systemImage: "figure.and.child.holdinghands",
+                    tint: .appPrimary
+                ) {
+                    ChildProfileView()
+                }
                 settingsLink(title: NSLocalizedString("Notifications", comment: ""), subtitle: NSLocalizedString("SETTINGS_NOTIFICATIONS_SUBTITLE", comment: ""), systemImage: "bell", tint: .appWarning) {
                     NotificationsView()
                 }
@@ -381,6 +501,53 @@ struct ContentView: View {
                 ) {
                     PrivacyView()
                 }
+
+                settingsSectionLabel(NSLocalizedString("SETTINGS_SECTION_SUPPORT", comment: ""))
+                settingsActionRow(
+                    title: NSLocalizedString("SETTINGS_RATE_APP_TITLE", comment: ""),
+                    subtitle: NSLocalizedString("SETTINGS_RATE_APP_SUBTITLE", comment: ""),
+                    systemImage: "star",
+                    tint: .appWarning
+                ) {
+                    requestAppRating()
+                }
+                ShareLink(item: String(
+                    format: NSLocalizedString("SETTINGS_SHARE_APP_TEXT", comment: ""),
+                    "https://crisisconnect.network"
+                )) {
+                    settingsRowLabel(
+                        title: NSLocalizedString("SETTINGS_SHARE_APP_TITLE", comment: ""),
+                        subtitle: NSLocalizedString("SETTINGS_SHARE_APP_SUBTITLE", comment: ""),
+                        systemImage: "square.and.arrow.up",
+                        tint: .appPrimary
+                    )
+                }
+                .buttonStyle(.plain)
+                settingsActionRow(
+                    title: NSLocalizedString("SETTINGS_FEEDBACK_TITLE", comment: ""),
+                    subtitle: NSLocalizedString("SETTINGS_FEEDBACK_SUBTITLE", comment: ""),
+                    systemImage: "envelope",
+                    tint: .appPrimary
+                ) {
+                    sendFeedbackEmail()
+                }
+                settingsActionRow(
+                    title: NSLocalizedString("SETTINGS_HELP_TITLE", comment: ""),
+                    subtitle: NSLocalizedString("SETTINGS_HELP_SUBTITLE", comment: ""),
+                    systemImage: "questionmark.circle",
+                    tint: .appSuccess
+                ) {
+                    if let url = URL(string: "https://crisisconnect.network/contact") {
+                        UIApplication.shared.open(url)
+                    }
+                }
+
+                Text(AppReleaseInfo.versionDetail)
+                    .font(.footnote)
+                    .foregroundStyle(Color.appTextSecondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("settings-version-footer")
             }
             .padding(.horizontal, AppTheme.screenPadding)
             .padding(.vertical, 18)
@@ -398,6 +565,192 @@ struct ContentView: View {
             .foregroundStyle(Color.appTextSecondary)
             .padding(.horizontal, 4)
             .padding(.top, 4)
+    }
+
+    private var locationNeedsAttention: Bool {
+        permissionsMonitor.locationStatus != .granted
+    }
+
+    private var bluetoothNeedsAttention: Bool {
+        permissionsMonitor.bluetoothStatus != .granted || permissionsMonitor.bluetoothPoweredOff
+    }
+
+    /// Android's MissingPermissionsCard parity: an error-tinted nudge shown only when Bluetooth or
+    /// Location isn't fully usable — the offline mesh silently dies otherwise. Deep-links to the
+    /// system settings; the check refreshes on scenePhase .active when the user comes back.
+    @ViewBuilder
+    private var missingPermissionsCard: some View {
+        if locationNeedsAttention || bluetoothNeedsAttention {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    AppIconBadge(systemName: "exclamationmark.triangle.fill", tint: .appDanger)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("SETTINGS_PERMISSIONS_REMINDER_TITLE")
+                            .font(.headline)
+                        Text("SETTINGS_PERMISSIONS_REMINDER_MESSAGE")
+                            .font(.footnote)
+                            .foregroundStyle(Color.appTextSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    if bluetoothNeedsAttention {
+                        permissionReminderRow(
+                            icon: "dot.radiowaves.left.and.right",
+                            title: NSLocalizedString("Bluetooth", comment: "")
+                        )
+                    }
+                    if locationNeedsAttention {
+                        permissionReminderRow(
+                            icon: "location.fill",
+                            title: NSLocalizedString("Location", comment: "")
+                        )
+                    }
+                }
+
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Label(NSLocalizedString("Open Settings", comment: ""), systemImage: "gearshape.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(AppPrimaryButtonStyle(fill: .appDanger))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                    .fill(Color.appDanger.opacity(0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                    .stroke(Color.appDanger.opacity(0.22), lineWidth: 1)
+            )
+            .accessibilityIdentifier("settings-missing-permissions-card")
+        }
+    }
+
+    private func permissionReminderRow(icon: String, title: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.appDanger)
+                .frame(width: 20)
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+        }
+    }
+
+    /// A settings row that performs an action instead of navigating — same look as settingsLink,
+    /// used by the Support & feedback section (rate/share/email/help).
+    private func settingsActionRow(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            settingsRowLabel(title: title, subtitle: subtitle, systemImage: systemImage, tint: tint)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func settingsRowLabel(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        tint: Color
+    ) -> some View {
+        HStack(spacing: 14) {
+            AppIconBadge(systemName: systemImage, tint: tint)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Text(subtitle)
+                    .font(.footnote)
+                    .foregroundStyle(Color.appTextSecondary)
+                    .multilineTextAlignment(.leading)
+            }
+
+            Spacer()
+
+            Image(systemName: "arrow.up.right")
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(Color.appTextSecondary)
+        }
+        .appSurface(style: .regular, padding: 16)
+    }
+
+    /// The numeric App Store app ID (App Store Connect → App Information → "Apple ID"). Needed to
+    /// deep-link the Rate row straight to the write-review page. UNSET placeholder for now — until a
+    /// real ID is filled in, Rate falls back to StoreKit's requestReview at runtime.
+    private static let appStoreAppID = "" // TODO(APP_STORE_APP_ID): set to the numeric App Store ID.
+
+    /// Explicit Rate action: open the App Store's write-review page directly (Android's
+    /// openPlayStoreListing parity) so the tap ALWAYS lands somewhere, instead of StoreKit's
+    /// quota-throttled requestReview — that quota is usually already spent by the automatic
+    /// onPositiveEvent prompt, so tapping Rate would silently do nothing. Falls back to the StoreKit
+    /// card only while the numeric App Store ID hasn't been configured.
+    private func requestAppRating() {
+        let appID = Self.appStoreAppID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !appID.isEmpty else {
+            requestStoreReviewPrompt()
+            return
+        }
+        if let deepLink = URL(string: "itms-apps://apps.apple.com/app/id\(appID)?action=write-review") {
+            UIApplication.shared.open(deepLink) { opened in
+                guard !opened,
+                      let webLink = URL(string: "https://apps.apple.com/app/id\(appID)?action=write-review")
+                else { return }
+                UIApplication.shared.open(webLink)
+            }
+        }
+    }
+
+    /// Best-effort StoreKit rating card — Apple's quota decides whether it actually appears. Kept for
+    /// the automatic onPositiveEvent path and as the fallback until the App Store ID is set.
+    private func requestStoreReviewPrompt() {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }) else { return }
+        AppStore.requestReview(in: scene)
+    }
+
+    /// ACTION_SENDTO parity: a mailto: URL with the app/device context prefilled, so only mail
+    /// apps handle it and the report lands with the version info attached.
+    private func sendFeedbackEmail() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        let subject = String(
+            format: NSLocalizedString("SETTINGS_FEEDBACK_EMAIL_SUBJECT", comment: ""),
+            "\(version) (\(build))"
+        )
+        let body = String(
+            format: NSLocalizedString("SETTINGS_FEEDBACK_EMAIL_BODY", comment: ""),
+            "\(version) (\(build))",
+            UIDevice.current.model,
+            UIDevice.current.systemVersion
+        )
+        var components = URLComponents()
+        components.scheme = "mailto"
+        components.path = "contact@crisisconnect.network"
+        components.queryItems = [
+            URLQueryItem(name: "subject", value: subject),
+            URLQueryItem(name: "body", value: body),
+        ]
+        if let url = components.url {
+            UIApplication.shared.open(url)
+        }
     }
 
     private func settingsMetricCard(title: String, value: String, tint: Color) -> some View {
@@ -423,6 +776,37 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous)
                 .stroke(Color.appBorder, lineWidth: 1)
         )
+    }
+
+    private var crisisSentinelToolLink: some View {
+        NavigationLink(destination: LazyNavigationDestination {
+            CrisisSentinelHomeView()
+        }) {
+            HStack(spacing: 14) {
+                AppCustomIconBadge(tint: .appPrimary) {
+                    CrisisSentinelSparklesIcon()
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("CRISIS_SENTINEL_TITLE")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("CRISIS_SENTINEL_MAIN_ENTRY_PREVIEW")
+                        .font(.footnote)
+                        .foregroundStyle(Color.appTextSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(Color.appTextSecondary)
+            }
+            .appSurface(style: .regular, padding: 16)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("tool-link-crisis-sentinel")
     }
 
     private func toolLink<Destination: View>(
@@ -666,6 +1050,9 @@ private struct ContactOnboardingStatusView: View {
 
 private struct NewContactView: View {
     var onQrSharePaired: () -> Void = {}
+    /// Android NewChat parity: agency members also get "Add from agency" here — the kurum
+    /// directory moved off the messages home into this screen.
+    var showAddFromAgency: Bool = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Query(sort: \Profile.createdAt, order: .reverse) private var profiles: [Profile]
     @ObservedObject private var  contactStore = ContactStore.shared
@@ -754,6 +1141,26 @@ private struct NewContactView: View {
                     Label("Connect Manually", systemImage: "link")
                 }
                 .disabled(onboardingStage.isBlocking)
+                // A pushed page, not a sheet: the flow continues into the newly added chat, and a
+                // sheet-in-a-sheet navigation felt detached from the rest of the contacts area.
+                NavigationLink {
+                    LazyNavigationDestination {
+                        AddFromContactsView()
+                    }
+                } label: {
+                    Label("NEW_CONTACT_ADD_FROM_PHONE", systemImage: "person.crop.circle.badge.plus")
+                }
+                .disabled(onboardingStage.isBlocking)
+                if showAddFromAgency {
+                    NavigationLink {
+                        LazyNavigationDestination {
+                            AuthorityChannelsListView()
+                        }
+                    } label: {
+                        Label("NEW_CONTACT_ADD_FROM_AGENCY", systemImage: "building.2")
+                    }
+                    .disabled(onboardingStage.isBlocking)
+                }
 
                 if onboardingStage != .idle {
                     ContactOnboardingStatusView(
@@ -769,6 +1176,7 @@ private struct NewContactView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color.appBackground)
+
         .onAppear {
             DispatchQueue.main.async {
                 prepareQrShare(displayName: localDisplayName, shareId: qrShareId)
@@ -1005,23 +1413,37 @@ private struct NewContactView: View {
         sessionCode: String,
         aesKey: String
     ) -> String {
+        // Carry our internet-messaging identity so the scanner can reach us online later. Only the
+        // public key is shared; the private key stays in the Secure Enclave.
+        let peerUid = Auth.auth().currentUser?.uid
+        let peerPublicKey = try? MessagingIdentity.shared.publicKeyBase64()
         let payload = ContactQRPayload(
             code: sessionCode,
             key: aesKey,
             platform: "ios",
             bleFallbackCapable: true,
             name: displayName,
-            shareId: shareId
+            shareId: shareId,
+            peerUid: peerUid,
+            peerPublicKey: peerPublicKey
         )
         return payload.encodedString() ?? ""
     }
 
     private func handleScan(_ value: String) {
-        guard let payload = ContactQRPayload.decode(from: value),
-              payload.v == ContactQRPayload.currentVersion else {
+        guard let payload = ContactQRPayload.decode(from: value) else {
+            MessagingDiagLog.log("qr scan: DECODE FAILED (len=\(value.count))")
             showAlert(title: "CONTACT_SCAN_INVALID_TITLE", message: "CONTACT_SCAN_INVALID_MESSAGE")
             return
         }
+        guard payload.v == ContactQRPayload.currentVersion else {
+            MessagingDiagLog.log("qr scan: version mismatch v=\(payload.v)")
+            showAlert(title: "CONTACT_SCAN_INVALID_TITLE", message: "CONTACT_SCAN_INVALID_MESSAGE")
+            return
+        }
+        MessagingDiagLog.log(
+            "qr scan: decoded platform=\(payload.platform) hasPeerUid=\(payload.peerUid != nil) hasPeerKey=\(payload.peerPublicKey != nil)"
+        )
         processContactPayload(payload, fallbackDisplayName: "Contact", source: .qr)
     }
 
@@ -1079,6 +1501,7 @@ private struct NewContactView: View {
         onboardingResolvedName = resolvedName
         onboardingStage = .searching
 
+        MessagingDiagLog.log("qr add: starting BLE verify for \(resolvedName)")
         verifier.verify(payload: payload, localDisplayName: localDisplayName) { result in
             switch result {
             case .verified(let result):
@@ -1089,6 +1512,10 @@ private struct NewContactView: View {
                     fallbackSessionCode: result.sessionCode,
                     fallbackAddress: result.lastKnownBleAddress
                 )
+                // Prefer a BLE-identity match; else fall back to a contact already stamped with this
+                // peer's uid (added earlier via the directory or auto-created from an incoming
+                // message) so re-scanning its QR heals that thread instead of spawning a duplicate.
+                // Mirrors Android saveInternetContactFromQr's findStoredContactForQr ?? getContactByPeerUid.
                 let existingRecord = contactStore.existingBleContact(
                     sessionCode: canonicalSessionCode,
                     remoteSessionCode: remoteSessionCode,
@@ -1096,10 +1523,13 @@ private struct NewContactView: View {
                     lastKnownBleAddress: result.lastKnownBleAddress,
                     remoteDeviceId: result.remoteDeviceId,
                     verifiedIdentityKey: result.remoteDeviceId
-                )
+                ) ?? (payload.peerUid?.nilIfEmpty).flatMap { contactStore.contactForPeerUid($0) }
+                // Route the upsert into the existing thread's session code so upsertBleContact merges
+                // in place (preserving that record's id/thread) instead of inserting a fresh row.
+                let upsertSessionCode = existingRecord?.sessionCode ?? canonicalSessionCode
                 let record = contactStore.upsertBleContact(
                     name: result.displayName ?? resolvedName,
-                    sessionCode: canonicalSessionCode,
+                    sessionCode: upsertSessionCode,
                     aesKeyBase64: key,
                     isVerified: true,
                     verifiedIdentityKey: result.remoteDeviceId,
@@ -1110,8 +1540,16 @@ private struct NewContactView: View {
                     ),
                     bleShareId: result.shareId,
                     lastKnownBleAddress: result.lastKnownBleAddress,
-                    remoteDeviceId: result.remoteDeviceId
+                    remoteDeviceId: result.remoteDeviceId,
+                    peerUid: payload.peerUid,
+                    peerPublicKey: payload.peerPublicKey,
+                    analyticsSource: "qr"
                 )
+                MessagingDiagLog.log(
+                    "qr add (BLE verified): peerUid=\(payload.peerUid?.prefix(8) ?? "nil") " +
+                        "peerKey=\(payload.peerPublicKey != nil) supportsInternet=\(record.supportsInternet)"
+                )
+                announceOurIdentity(to: record)
                 SOSChatStore.shared.ensureSession(
                     id: record.id,
                     displayName: record.name,
@@ -1127,18 +1565,88 @@ private struct NewContactView: View {
                 )
                 finishOnboarding(with: record, alreadyRegistered: existingRecord != nil)
             case .failed(.notFound):
+                if saveInternetContactFromPayload(payload, fallbackName: resolvedName) { return }
                 resetOnboardingState()
                 showAlert(title: "CONTACT_SCAN_NOT_FOUND_TITLE", message: "CONTACT_SCAN_NOT_FOUND_MESSAGE")
             case .failed(.bluetoothPoweredOff):
+                if saveInternetContactFromPayload(payload, fallbackName: resolvedName) { return }
                 resetOnboardingState()
                 showAlert(title: "CONTACT_BLUETOOTH_TITLE", message: "CONTACT_BLUETOOTH_DISABLED_MESSAGE")
             case .failed(.bluetoothUnauthorized):
+                if saveInternetContactFromPayload(payload, fallbackName: resolvedName) { return }
                 resetOnboardingState()
                 showAlert(title: "CONTACT_BLUETOOTH_TITLE", message: "CONTACT_BLUETOOTH_UNAUTHORIZED_MESSAGE")
             case .failed(.bluetoothUnsupported):
+                if saveInternetContactFromPayload(payload, fallbackName: resolvedName) { return }
                 resetOnboardingState()
                 showAlert(title: "CONTACT_BLUETOOTH_TITLE", message: "CONTACT_BLUETOOTH_UNSUPPORTED_MESSAGE")
             }
+        }
+    }
+
+    /// Internet-first fallback (Android parity, connectUsingQr.finishFailure): the Bluetooth pairing
+    /// couldn't complete (peer out of range / BT off / unauthorized), but if the QR carries the
+    /// peer's internet identity we STILL register an internet-capable contact so the chat and calls
+    /// work online — no Bluetooth required. Returns true when it saved one (caller stops erroring).
+    @discardableResult
+    private func saveInternetContactFromPayload(_ payload: ContactQRPayload, fallbackName: String) -> Bool {
+        let peerUid = (payload.peerUid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let peerKey = (payload.peerPublicKey ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = payload.key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !peerUid.isEmpty, !peerKey.isEmpty, isValidAESKey(key) else { return false }
+        let remoteSessionCode = payload.code.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (payload.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName = name.isEmpty ? fallbackName : name
+
+        // Reuse an existing thread if we already have this peer (added via the directory or
+        // auto-created from an incoming message) so re-scanning its QR heals that contact instead of
+        // forking a second thread. Mirrors Android saveInternetContactFromQr's getContactByPeerUid reuse.
+        let existingByPeerUid = contactStore.contactForPeerUid(peerUid)
+        // No BLE handshake happened, so there is no verified device id/address — key the contact by
+        // the existing thread's session code when we found one, else by its remote session code
+        // (always present in a QR), else by the peer uid. peerUid + peerPublicKey make it
+        // internet-capable (supportsInternet). Routing through the existing session code makes
+        // upsertBleContact merge the QR fields into that record in place rather than insert a duplicate.
+        let canonicalSessionCode = existingByPeerUid?.sessionCode
+            ?? (remoteSessionCode.isEmpty ? peerUid : remoteSessionCode)
+        let record = contactStore.upsertBleContact(
+            name: resolvedName,
+            sessionCode: canonicalSessionCode,
+            aesKeyBase64: key,
+            isVerified: false,
+            remoteSessionCode: remoteSessionCode.nilIfEmpty,
+            remotePlatform: ContactRemotePlatform.normalize(payload.platform),
+            bleShareId: payload.shareId,
+            lastKnownBleAddress: nil,
+            remoteDeviceId: nil,
+            peerUid: peerUid,
+            peerPublicKey: peerKey,
+            analyticsSource: "qr_internet"
+        )
+        SOSChatStore.shared.ensureSession(
+            id: record.id,
+            displayName: record.name,
+            role: .unknown,
+            isVerified: false
+        )
+        MessagingDiagLog.log("qr add: BLE verify failed but saved internet contact peer=\(peerUid.prefix(8))")
+        announceOurIdentity(to: record)
+        finishOnboarding(with: record, alreadyRegistered: existingByPeerUid != nil)
+        return true
+    }
+
+    /// After a QR pairing saves an internet-capable contact, announce OUR internet identity to the
+    /// peer over the relay so their side heals its BLE-only reciprocal contact (Android parity). The
+    /// MTU-independent half of bidirectional QR pairing — the BLE client-hello can drop the identity
+    /// on a small Android↔iOS MTU, so we never rely on it alone. Best-effort.
+    private func announceOurIdentity(to record: ContactRecord) {
+        guard record.supportsInternet else { return }
+        let mySessionCode = localSessionCode
+        let myName = ProfileMetadataStore.preferredDisplayName()
+        Task {
+            _ = await InternetChatTransport.shared.sendIdentityAnnounce(
+                contact: record, mySessionCode: mySessionCode, myName: myName
+            )
         }
     }
 

@@ -44,8 +44,13 @@ final class FirebaseBootstrapper {
     private func bootstrap() async {
         _ = secureStore.getOrCreateAesKeyBase64()
         _ = try? DeviceIdentityStore.shared.getOrCreatePrivateKey()
-        clearAnonymousSessionIfNeeded()
         await bootstrapAuthenticatedSession()
+        // Make this device reachable over internet messaging. Signs in anonymously when there is no
+        // account, so QR-added contacts work online without an explicit login. Anonymous sessions
+        // are now a valid state (a QR-only messaging identity); every real-account feature already
+        // guards on `!user.isAnonymous`, so keeping the session around is safe and it is no longer
+        // cleared. See MessagingRegistrar.
+        await MessagingRegistrar.ensureRegistered()
     }
 
     private func ensureUserDocument(for user: User) async {
@@ -84,7 +89,10 @@ final class FirebaseBootstrapper {
         if sharingEnabled {
             updates.merge(sharedProfileFields(for: user, existingSnapshot: snapshot)) { _, new in new }
         } else {
-            updates["username"] = FieldValue.delete()
+            // Sharing off means "don't publish from this device" — never "purge the account".
+            // username is cross-platform state (web Settings and Android write it too), so this
+            // launch-time sync must not delete it; doing so made names set on other platforms
+            // vanish while every mobile UI kept showing its local cache.
             updates["email"] = FieldValue.delete()
             updates["country"] = FieldValue.delete()
             let shouldPreserveAgencyContext = (snapshot?.get("verified") as? Bool == true)
@@ -129,10 +137,17 @@ final class FirebaseBootstrapper {
         let preservedAgency = (existingSnapshot?.get("agency") as? String ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if !fullName.isEmpty {
-            fields["username"] = fullName
-        } else if let displayName = user.displayName, !displayName.isEmpty {
-            fields["username"] = displayName
+        // Passive launch-time sync: only seed username when the cloud has none. A name saved on
+        // the web panel or Android must not be overwritten by this device's local cache — only an
+        // explicit edit in the profile editor (ProfileViewModel) pushes a new name.
+        let remoteUsername = ((existingSnapshot?.get("username") as? String) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if remoteUsername.isEmpty {
+            if !fullName.isEmpty {
+                fields["username"] = fullName
+            } else if let displayName = user.displayName, !displayName.isEmpty {
+                fields["username"] = displayName
+            }
         }
         if !email.isEmpty {
             fields["email"] = email
@@ -182,20 +197,10 @@ final class FirebaseBootstrapper {
         _ = await refreshRescueAccess()
     }
 
-    private func clearAnonymousSessionIfNeeded() {
-        guard let user = auth.currentUser, user.isAnonymous else { return }
-
-        do {
-            try auth.signOut()
-            secureStore.clearUid()
-            secureStore.clearRole()
-            securityRepository.clearStoredCertificate()
-            CrashReporter.updateCurrentUser(uid: nil, role: "user", certificateReady: false)
-            NSLog("Cleared persisted anonymous Firebase session; app now stays signed out until explicit login.")
-        } catch {
-            NSLog("Failed to clear persisted anonymous Firebase session: %@", String(describing: error))
-        }
-    }
+    // Note: anonymous sessions are intentionally NOT cleared anymore — an anonymous session is a
+    // valid QR-only internet-messaging identity (see MessagingRegistrar). Every real-account
+    // feature already gates on `!user.isAnonymous`, so the app still presents as "signed out" until
+    // an explicit login, while the messaging identity persists across launches.
 
     @discardableResult
     func refreshRescueAccess() async -> RescueAccessState {
@@ -222,7 +227,7 @@ final class FirebaseBootstrapper {
         switch await FirebaseRoleHelper.fetchRescueRole() {
         case .authorized(let role):
             secureStore.saveRole(role)
-            let warmed = await securityRepository.warmUpCertificate()
+            let warmed = await warmUpCertificateWithBanner()
             let hasStoredCertificate = await securityRepository.hasUsableStoredCertificate(allowExpired: true)
             let certificateReady = warmed || hasStoredCertificate
             CrashReporter.updateCurrentUser(uid: user.uid, role: role, certificateReady: certificateReady)
@@ -253,6 +258,35 @@ final class FirebaseBootstrapper {
             secureStore.clearRole()
             CrashReporter.updateCurrentUser(uid: user.uid, role: "user", certificateReady: false)
             return RescueAccessState(role: "user", certificateReady: false)
+        }
+    }
+
+    /// Provisions the rescue certificate, surfacing progress in the floating banner the first
+    /// time this device obtains one (Android's attachCertificateAutoProvisioner behavior).
+    /// A device that already holds a usable certificate re-provisions silently, and the role
+    /// gate is already satisfied here: this only runs from the `.authorized` branch.
+    private func warmUpCertificateWithBanner() async -> Bool {
+        // Server-side revocation check first: a dashboard-revoked certificate is wiped here
+        // (stored cert + attested key) so the provisioning below either re-issues a fresh one
+        // — the role gate above is already satisfied — or leaves rescue mode off, instead of the
+        // stale cert lingering until natural expiry. Transient network failures leave it untouched.
+        await securityRepository.revalidateAgainstServer()
+        let alreadyHadUsable = await securityRepository.hasUsableStoredCertificate()
+        if !alreadyHadUsable {
+            await CertificateProvisioningNotifier.shared.emitInProgress()
+        }
+        do {
+            _ = try await securityRepository.getOrFetchCertificate()
+            if !alreadyHadUsable {
+                await CertificateProvisioningNotifier.shared.emitSuccess()
+            }
+            return true
+        } catch {
+            NSLog("FirebaseBootstrapper: rescue certificate provisioning failed: %@", String(describing: error))
+            if !alreadyHadUsable {
+                await CertificateProvisioningNotifier.shared.emitFailure(error)
+            }
+            return false
         }
     }
 }

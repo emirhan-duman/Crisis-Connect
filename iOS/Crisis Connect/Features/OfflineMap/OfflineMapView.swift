@@ -8,9 +8,15 @@
 import SwiftUI
 import MapKit
 
+/// MKMapView annotation for an externally-dropped Sentinel pin (kept distinct so we can add/remove
+/// only these without touching the user-location annotation).
+final class SentinelPinAnnotation: MKPointAnnotation {}
+
 struct OfflineMapView: View {
     @StateObject private var viewModel = OfflineMapViewModel()
     @State private var tileProvider = OfflineTileProvider(tileStore: OfflineTileStore())
+    /// Optional markers to drop and fit on appear (Crisis Sentinel "show on map").
+    var initialPins: [OfflineMapPin] = []
 
     var body: some View {
         ZStack {
@@ -43,6 +49,9 @@ struct OfflineMapView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             viewModel.activate()
+            if !initialPins.isEmpty {
+                viewModel.showExternalPins(initialPins)
+            }
         }
         .overlay(alignment: .top) {
             if let toast = viewModel.toast {
@@ -134,9 +143,9 @@ private struct MapControlStack: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            MapControlButton(systemName: "arrow.down.circle", label: "Download", action: onDownload)
-            MapControlButton(systemName: "list.bullet", label: "Regions", action: onList)
-            MapControlButton(systemName: "location.fill", label: "My Location", action: onLocation)
+            MapControlButton(systemName: "arrow.down.circle", label: NSLocalizedString("Download", comment: ""), action: onDownload)
+            MapControlButton(systemName: "list.bullet", label: NSLocalizedString("Regions", comment: ""), action: onList)
+            MapControlButton(systemName: "location.fill", label: NSLocalizedString("My Location", comment: ""), action: onLocation)
         }
     }
 }
@@ -176,7 +185,7 @@ private struct ActiveDownloadCard: View {
             }
 
             HStack {
-                Text("\(region.downloadedTiles) / \(region.tileCount) tiles")
+                Text(String(format: NSLocalizedString("%d / %d tiles", comment: ""), region.downloadedTiles, region.tileCount))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -434,6 +443,7 @@ private struct OfflineMapRepresentable: UIViewRepresentable {
         }
 
         context.coordinator.updateRegionOverlays(on: uiView, regions: viewModel.regions)
+        context.coordinator.updateExternalPins(on: uiView, pins: viewModel.externalPins)
 
         if context.coordinator.lastFocusToken != viewModel.focusToken {
             context.coordinator.lastFocusToken = viewModel.focusToken
@@ -477,6 +487,7 @@ private struct OfflineMapRepresentable: UIViewRepresentable {
         private var lastAllowsNetworkFallback: Bool?
         private var regionOverlaySignature: [String] = []
         private var overlayStatus: [ObjectIdentifier: OfflineRegionStatus] = [:]
+        private var externalPinSignature: [String] = []
         private let viewModel: OfflineMapViewModel
 
         init(viewModel: OfflineMapViewModel) {
@@ -517,6 +528,34 @@ private struct OfflineMapRepresentable: UIViewRepresentable {
             guard regionIDs != tileProviderRegionIDs else { return }
             tileProviderRegionIDs = regionIDs
             tileProvider.updateRegions(regionIDs)
+        }
+
+        func updateExternalPins(on mapView: MKMapView, pins: [OfflineMapPin]) {
+            let signature = pins.map { "\($0.lat),\($0.lng),\($0.label)" }
+            guard signature != externalPinSignature else { return }
+            externalPinSignature = signature
+            let existing = mapView.annotations.compactMap { $0 as? SentinelPinAnnotation }
+            mapView.removeAnnotations(existing)
+            let annotations = pins.map { pin -> SentinelPinAnnotation in
+                let a = SentinelPinAnnotation()
+                a.coordinate = pin.coordinate
+                a.title = pin.label.isEmpty ? nil : pin.label
+                a.subtitle = pin.details
+                return a
+            }
+            mapView.addAnnotations(annotations)
+        }
+
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard annotation is SentinelPinAnnotation else { return nil }
+            let id = "sentinel-pin"
+            let view = (mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKMarkerAnnotationView)
+                ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: id)
+            view.annotation = annotation
+            view.markerTintColor = UIColor(Color.appPrimary)
+            view.glyphImage = UIImage(systemName: "mappin")
+            view.canShowCallout = true
+            return view
         }
 
         func updateRegionOverlays(on mapView: MKMapView, regions: [OfflineMapRegion]) {

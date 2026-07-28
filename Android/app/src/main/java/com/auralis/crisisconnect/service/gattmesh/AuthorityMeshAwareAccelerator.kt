@@ -1,7 +1,7 @@
 package com.auralis.crisisconnect.service.gattmesh
 
-import android.annotation.SuppressLint
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
@@ -24,8 +24,6 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
-import java.io.DataInputStream
-import java.io.DataOutputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
@@ -50,12 +48,14 @@ import kotlinx.coroutines.launch
  * Wire frame per blob (one TCP stream carries many frames):
  * [u32 MAGIC][u32 initLen][init packet JSON (same as BLE IMAGE_INIT)][u32 cipherLen][cipher].
  */
-@SuppressLint("NewApi")
+@SuppressLint("MissingPermission", "NewApi")
 internal class AuthorityMeshAwareAccelerator(
     context: Context,
     private val groupKeyProvider: () -> ByteArray?,
     private val onBlobReceived: (initPacketPayload: ByteArray, cipher: ByteArray) -> Unit,
-) {
+) : MeshAccelerator {
+
+    override val laneId: String = "aware"
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -69,12 +69,12 @@ internal class AuthorityMeshAwareAccelerator(
     private var serverSocket: ServerSocket? = null
     private var messageIdCounter = 1
 
-    private val links = CopyOnWriteArrayList<AwareLink>()
+    private val links = CopyOnWriteArrayList<BlobLink>()
     private val networkCallbacks = mutableListOf<ConnectivityManager.NetworkCallback>()
     private val respondedPeerIds = mutableSetOf<Int>()
     private val initiatedPeerIds = mutableSetOf<Int>()
 
-    fun isSupported(): Boolean {
+    override fun isSupported(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             return false
         }
@@ -85,9 +85,9 @@ internal class AuthorityMeshAwareAccelerator(
         return manager?.isAvailable == true
     }
 
-    fun hasFastPeers(): Boolean = links.isNotEmpty()
+    override fun hasFastPeers(): Boolean = links.isNotEmpty()
 
-    fun start() {
+    override fun start() {
         synchronized(lock) {
             if (started) {
                 return
@@ -132,7 +132,7 @@ internal class AuthorityMeshAwareAccelerator(
         }
     }
 
-    fun stop() {
+    override fun stop() {
         val callbacks: List<ConnectivityManager.NetworkCallback>
         synchronized(lock) {
             if (!started) {
@@ -161,11 +161,11 @@ internal class AuthorityMeshAwareAccelerator(
     }
 
     /** Pushes one blob to every open fast-lane socket. Fire-and-forget; BLE remains the baseline. */
-    fun offerBlob(initPacketPayload: ByteArray, cipher: ByteArray) {
+    override fun offerBlob(initPacketPayload: ByteArray, cipher: ByteArray) {
         if (links.isEmpty()) {
             return
         }
-        if (initPacketPayload.size > MAX_INIT_BYTES || cipher.size > MAX_CIPHER_BYTES) {
+        if (initPacketPayload.size > BlobLink.MAX_INIT_BYTES || cipher.size > BlobLink.MAX_CIPHER_BYTES) {
             return
         }
         links.forEach { link ->
@@ -196,11 +196,7 @@ internal class AuthorityMeshAwareAccelerator(
         }
     }
 
-    @SuppressLint("MissingPermission")
     private fun startPublish(session: WifiAwareSession) {
-        if (!hasAwarePermissions()) {
-            return
-        }
         val config = PublishConfig.Builder()
             .setServiceName(SERVICE_NAME)
             .build()
@@ -224,11 +220,7 @@ internal class AuthorityMeshAwareAccelerator(
         }
     }
 
-    @SuppressLint("MissingPermission")
     private fun startSubscribe(session: WifiAwareSession) {
-        if (!hasAwarePermissions()) {
-            return
-        }
         val config = SubscribeConfig.Builder()
             .setServiceName(SERVICE_NAME)
             .build()
@@ -341,7 +333,7 @@ internal class AuthorityMeshAwareAccelerator(
     private fun attachLink(socket: Socket) {
         val link = runCatching {
             socket.tcpNoDelay = true
-            AwareLink(socket)
+            BlobLink(socket, onBlobReceived)
         }.getOrNull() ?: return
         links.add(link)
         Log.i(TAG, "Accelerator fast lane open (links=${links.size})")
@@ -378,62 +370,9 @@ internal class AuthorityMeshAwareAccelerator(
         }
     }
 
-    private inner class AwareLink(private val socket: Socket) {
-        private val output = DataOutputStream(socket.getOutputStream().buffered())
-        private val input = DataInputStream(socket.getInputStream().buffered())
-        private val writeLock = Any()
-
-        fun writeFrame(initPayload: ByteArray, cipher: ByteArray) {
-            runCatching {
-                synchronized(writeLock) {
-                    output.writeInt(FRAME_MAGIC)
-                    output.writeInt(initPayload.size)
-                    output.write(initPayload)
-                    output.writeInt(cipher.size)
-                    output.write(cipher)
-                    output.flush()
-                }
-            }.onFailure {
-                close()
-                links.remove(this)
-            }
-        }
-
-        fun readLoop() {
-            runCatching {
-                while (true) {
-                    val magic = input.readInt()
-                    if (magic != FRAME_MAGIC) {
-                        return
-                    }
-                    val initLength = input.readInt()
-                    if (initLength !in 1..MAX_INIT_BYTES) {
-                        return
-                    }
-                    val initPayload = ByteArray(initLength)
-                    input.readFully(initPayload)
-                    val cipherLength = input.readInt()
-                    if (cipherLength !in 1..MAX_CIPHER_BYTES) {
-                        return
-                    }
-                    val cipher = ByteArray(cipherLength)
-                    input.readFully(cipher)
-                    onBlobReceived(initPayload, cipher)
-                }
-            }
-        }
-
-        fun close() {
-            runCatching { socket.close() }
-        }
-    }
-
     private companion object {
         private const val TAG = "AuthorityMeshAware"
         private const val SERVICE_NAME = "ccauthblobv1"
-        private const val FRAME_MAGIC = 0x43434142 // "CCAB"
-        private const val MAX_INIT_BYTES = 8_192
-        private const val MAX_CIPHER_BYTES = 400_064
         private const val PSK_SALT = "cc-authmesh-aware-psk-v1"
         private val HELLO_MESSAGE = "cc-authblob-hello".toByteArray(Charsets.UTF_8)
     }

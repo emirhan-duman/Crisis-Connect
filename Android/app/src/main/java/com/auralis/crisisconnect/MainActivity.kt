@@ -1,12 +1,19 @@
 package com.auralis.crisisconnect
 
+import com.auralis.crisisconnect.analytics.Analytics
 import com.auralis.crisisconnect.screens.MainScreen
+import com.auralis.crisisconnect.screens.AddFromContactsScreen
 import com.auralis.crisisconnect.screens.NewChatScreen
+import com.auralis.crisisconnect.screens.authority.AuthorityChannelsScreen
+import com.auralis.crisisconnect.screens.authority.AuthorityChannelThreadScreen
+import com.auralis.crisisconnect.screens.authority.AuthorityContactPickerScreen
 import com.auralis.crisisconnect.screens.Guide.GuideMainScreen
 import com.auralis.crisisconnect.screens.ToolsMainScreen
 import com.auralis.crisisconnect.screens.SettingsScreen
 import com.auralis.crisisconnect.screens.AdvancedSettingsScreen
+import com.auralis.crisisconnect.screens.settings.ChildProfileScreen
 import com.auralis.crisisconnect.screens.settings.ProfileScreen
+import com.auralis.crisisconnect.screens.settings.SosEmergencyContactsScreen
 import com.auralis.crisisconnect.screens.Tools.CrisisSentinelSwipeBackCoordinator
 import com.auralis.crisisconnect.screens.Tools.MetalDetectorScreen
 import com.auralis.crisisconnect.screens.Tools.SignalFinderScreen
@@ -16,6 +23,7 @@ import com.auralis.crisisconnect.screens.Tools.CrisisSentinelHomeScreen
 import com.auralis.crisisconnect.screens.Tools.CrisisSentinelScreen
 import com.auralis.crisisconnect.screens.Tools.CrisisSentinelSettingsScreen
 import com.auralis.crisisconnect.screens.Tools.OfflineMapScreen
+import com.auralis.crisisconnect.screens.Tools.RecentDisastersScreen
 import com.auralis.crisisconnect.screens.Tools.SensorToolScreen
 import com.auralis.crisisconnect.screens.Tools.WhistleScreen
 import com.auralis.crisisconnect.screens.Chat.ChatScreen
@@ -23,9 +31,11 @@ import com.auralis.crisisconnect.screens.Chat.ChatInfoScreen
 import com.auralis.crisisconnect.screens.Chat.BleChatScreen
 import com.auralis.crisisconnect.screens.Chat.GattMeshScreen
 import com.auralis.crisisconnect.screens.SOSScreen
+import com.auralis.crisisconnect.screens.SosCountdownScreen
 import com.auralis.crisisconnect.ui.cert.CertificateProvisioningBanner
 
 import android.Manifest
+import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -35,6 +45,7 @@ import android.content.res.Configuration
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -45,7 +56,12 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import com.auralis.crisisconnect.messaging.call.InternetCallForegroundService
+import com.auralis.crisisconnect.messaging.call.InternetCallManager
+import com.auralis.crisisconnect.screens.Chat.InternetCallOverlay
+import com.auralis.crisisconnect.screens.Chat.InternetCallOverlayHost
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -66,7 +82,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -84,6 +100,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -96,6 +113,8 @@ import com.auralis.crisisconnect.data.local.ContactAvatarStorage
 import com.auralis.crisisconnect.feature.RescueFeatureManager
 import com.auralis.crisisconnect.feature.RescueFeatureRedirectScreen
 import com.auralis.crisisconnect.navigation.navigateBottomBar
+import com.auralis.crisisconnect.ui.components.NavbarSettingsCache
+import kotlinx.coroutines.flow.map
 import com.auralis.crisisconnect.navigation.resolveConversationRoute
 import com.auralis.crisisconnect.screens.Chat.CallOverlay
 import com.auralis.crisisconnect.ui.theme.DisasterCommunicationSystemTheme
@@ -117,6 +136,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import java.security.SecureRandom
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -197,9 +217,24 @@ class MainActivity : ComponentActivity() {
         setLocale(this, startupLanguageCode, shouldRecreate = false)
         applyOrientationPolicyForDeviceClass()
         applyIncomingCallWakeWindowPolicy(intent)
+        answerInternetCallIfRequested(intent)
         handleSsoDeepLink(intent)
         rescueFeatureManager.registerListener(rescueFeatureInstallListener)
         FirebaseApp.initializeApp(this)
+        lifecycleScope.launch {
+            settingsDataStore.data.map { prefs ->
+                prefs[booleanPreferencesKey("rescue_show_in_navbar")] ?: false
+            }.collect { show ->
+                NavbarSettingsCache.showRescueInNavbar = show
+            }
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val role = SecurityRepository(applicationContext)
+                .getUsableStoredCertificateRole(allowExpired = true)
+                ?.trim()
+                ?.lowercase(Locale.US)
+            NavbarSettingsCache.hasRescueAccess = role == "admin" || role == "fieldteam"
+        }
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 DatabaseInitializer().initializeDatabase(applicationContext)
@@ -207,6 +242,18 @@ class MainActivity : ComponentActivity() {
                 Log.w(TAG, "Database bootstrap failed", throwable)
             }
         }
+        lifecycleScope.launch(Dispatchers.IO) {
+            // Make this device reachable over internet messaging (publish identity key + FCM
+            // token). Signs in anonymously first when there is no account, so QR-added
+            // contacts work online without an explicit login.
+            runCatching {
+                com.auralis.crisisconnect.messaging.MessagingBootstrap.ensureRegistered(applicationContext)
+            }.onFailure { throwable ->
+                Log.w(TAG, "Messaging bootstrap failed", throwable)
+            }
+        }
+        // Nearby discovery no longer needs a kick here: RfcommForegroundService (started below)
+        // hosts it and follows the opt-in preference on its own.
         val contentInitialized = runCatching {
             setUpComposeContent(
                 onInitialUiReady = {
@@ -232,23 +279,28 @@ class MainActivity : ComponentActivity() {
 
         bootstrapCrisisLinkServiceIfEnabled()
         bootstrapGattMeshServiceIfEnabled()
+        bootstrapAuthorityMeshServiceIfEnabled()
         bootstrapMeshServiceIfAlwaysOn()
         startRfcommForegroundServiceAfterOnboarding()
 
         lifecycleScope.launch {
+            // Rethrow cancellation: swallowing it here made a dying activity fall back to "en"
+            // and apply it, which is how installs used to get mislabeled as English.
             val languageCode = runCatching {
                 withContext(Dispatchers.IO) {
                     getSavedLanguage(this@MainActivity).first()
                 }
             }.onFailure { throwable ->
+                if (throwable is CancellationException) throw throwable
                 Log.w(TAG, "Unable to load saved language; falling back to default", throwable)
-            }.getOrDefault("en")
+            }.getOrDefault(getSavedLanguageSync(this@MainActivity))
 
             val themeOption = runCatching {
                 withContext(Dispatchers.IO) {
                     getSavedThemeOption(this@MainActivity).first()
                 }
             }.onFailure { throwable ->
+                if (throwable is CancellationException) throw throwable
                 Log.w(TAG, "Unable to load saved theme; falling back to cached option", throwable)
             }.getOrDefault(getSavedThemeOptionSync(this@MainActivity))
 
@@ -343,7 +395,7 @@ class MainActivity : ComponentActivity() {
                 withFrameNanos { onInitialUiReady() }
             }
             val themeOption by getSavedThemeOption(this@MainActivity)
-                .collectAsState(initial = initialThemeOption)
+                .collectAsStateWithLifecycle(initialValue = initialThemeOption)
             LaunchedEffect(themeOption) {
                 configureSystemBars(themeOption)
             }
@@ -363,6 +415,15 @@ class MainActivity : ComponentActivity() {
                     Box(modifier = Modifier.fillMaxSize()) {
                     val navController = rememberNavController()
                     val currentBackStackEntry by navController.currentBackStackEntryAsState()
+                    DisposableEffect(navController) {
+                        // Route patterns ("chat/{sessionCode}") carry no argument values, so the
+                        // screen_view stream never leaks session codes or peer identifiers.
+                        val listener = NavController.OnDestinationChangedListener { _, destination, _ ->
+                            destination.route?.let { Analytics.screenView(it) }
+                        }
+                        navController.addOnDestinationChangedListener(listener)
+                        onDispose { navController.removeOnDestinationChangedListener(listener) }
+                    }
                     var hasResolvedInitialDestination by remember { mutableStateOf(false) }
 
                     LaunchedEffect(currentBackStackEntry) {
@@ -392,11 +453,33 @@ class MainActivity : ComponentActivity() {
                             }
                             val route = navIntent.getStringExtra(EXTRA_NAVIGATE_TO_ROUTE)
                             if (!route.isNullOrBlank()) {
-                                when (route) {
-                                    "main",
-                                    "tools_main",
-                                    "guide_main" -> {
+                                when {
+                                    route == "main" ||
+                                        route == "tools_main" ||
+                                        route == "guide_main" -> {
                                         navController.navigateBottomBar(route)
+                                    }
+
+                                    // Authority-messages deep-link from a channel push notification.
+                                    route == "authority_channels" ||
+                                        route.startsWith("authority_channel/") -> {
+                                        navController.navigate(route) { launchSingleTop = true }
+                                    }
+
+                                    // SOS quick-access widget tap → countdown screen (the countdown
+                                    // itself is the accidental-tap guard, so we never skip it).
+                                    route == "sos_countdown" -> {
+                                        navController.navigate(route) { launchSingleTop = true }
+                                    }
+
+                                    // Disasters widget tap → Recent Disasters screen.
+                                    route == "recent_disasters" -> {
+                                        navController.navigate(route) { launchSingleTop = true }
+                                    }
+
+                                    // Live SOS notification tap → the running broadcast's status.
+                                    route == "sos_status" -> {
+                                        navController.navigate(route) { launchSingleTop = true }
                                     }
 
                                     else -> {
@@ -462,11 +545,57 @@ class MainActivity : ComponentActivity() {
                                         onOnboardingCompleted = ::ensureCriticalPermissionsAndStartService
                                     )
                                 }
+                                composable("sos_countdown") { SosCountdownScreen(navController) }
+                                composable("sos_emergency_contacts") {
+                                    SosEmergencyContactsScreen(navController)
+                                }
                                 composable("sos_status") { SOSScreen(navController) }
                                 composable("new_chat") { NewChatScreen(navController) }
+                                composable("add_from_contacts") { AddFromContactsScreen(navController) }
+                                composable("authority_channels") { AuthorityChannelsScreen(navController) }
+                                composable("authority_contact_picker") {
+                                    AuthorityContactPickerScreen(navController)
+                                }
+                                composable(
+                                    route = "authority_channel/{channelId}/{peerUid}?title={title}&agency={agency}&role={role}",
+                                    arguments = listOf(
+                                        navArgument("channelId") { type = NavType.StringType },
+                                        navArgument("peerUid") { type = NavType.StringType },
+                                        navArgument("title") {
+                                            type = NavType.StringType
+                                            nullable = true
+                                            defaultValue = null
+                                        },
+                                        navArgument("agency") {
+                                            type = NavType.StringType
+                                            nullable = true
+                                            defaultValue = null
+                                        },
+                                        navArgument("role") {
+                                            type = NavType.StringType
+                                            nullable = true
+                                            defaultValue = null
+                                        },
+                                    ),
+                                ) { backStackEntry ->
+                                    AuthorityChannelThreadScreen(
+                                        navController = navController,
+                                        channelId = backStackEntry.arguments?.getString("channelId")
+                                            ?.let(Uri::decode) ?: "",
+                                        peerUid = backStackEntry.arguments?.getString("peerUid")
+                                            ?.let(Uri::decode) ?: "",
+                                        title = backStackEntry.arguments?.getString("title")
+                                            ?.let(Uri::decode) ?: "",
+                                        agency = backStackEntry.arguments?.getString("agency")
+                                            ?.let(Uri::decode) ?: "",
+                                        role = backStackEntry.arguments?.getString("role")
+                                            ?.let(Uri::decode) ?: "",
+                                    )
+                                }
                                 composable("qr_scan") { QrScannerScreen(navController) }
                                 composable("settings") { SettingsScreen(navController) }
                                 composable("advanced_settings") { AdvancedSettingsScreen(navController) }
+                                composable("child_profile_settings") { ChildProfileScreen(navController) }
                                 composable("profile") { ProfileScreen(navController) }
                                 composable(
                                     route = "chat/{sessionCode}?displayName={displayName}",
@@ -613,38 +742,68 @@ class MainActivity : ComponentActivity() {
                                     }
                                 ) { CrisisSentinelHomeScreen(navController) }
                                 composable("crisis_sentinel_settings") { CrisisSentinelSettingsScreen(navController) }
-                                composable(
-                                    route = "crisis_sentinel_chat/{conversationId}",
-                                    enterTransition = { chatEnterTransition() },
-                                    exitTransition = { chatForwardExitTransition() },
-                                    popEnterTransition = { chatPopEnterTransition() },
-                                    popExitTransition = {
-                                        // The swipe-back gesture already slid this screen away.
-                                        if (CrisisSentinelSwipeBackCoordinator.isArmed()) {
-                                            ExitTransition.None
-                                        } else {
-                                            chatPopExitTransition()
-                                        }
-                                    }
-                                ) { backStackEntry ->
-                                    val conversationId = backStackEntry.arguments
-                                        ?.getString("conversationId")
-                                        ?.let(Uri::decode)
-                                        ?: ""
-                                    CrisisSentinelChatScreen(
-                                        navController = navController,
-                                        conversationId = conversationId
-                                    )
-                                }
+                                 composable(
+                                     route = "crisis_sentinel_chat/{conversationId}?initialPrompt={initialPrompt}",
+                                     arguments = listOf(
+                                         navArgument("conversationId") { type = NavType.StringType },
+                                         navArgument("initialPrompt") { type = NavType.StringType; nullable = true; defaultValue = null }
+                                     ),
+                                     enterTransition = { chatEnterTransition() },
+                                     exitTransition = { chatForwardExitTransition() },
+                                     popEnterTransition = { chatPopEnterTransition() },
+                                     popExitTransition = {
+                                         if (CrisisSentinelSwipeBackCoordinator.isArmed()) {
+                                             ExitTransition.None
+                                         } else {
+                                             chatPopExitTransition()
+                                         }
+                                     }
+                                 ) { backStackEntry ->
+                                     val conversationId = backStackEntry.arguments
+                                         ?.getString("conversationId")
+                                         ?.let(Uri::decode)
+                                         ?: ""
+                                     val initialPrompt = backStackEntry.arguments
+                                         ?.getString("initialPrompt")
+                                         ?.let(Uri::decode)
+                                     CrisisSentinelChatScreen(
+                                         navController = navController,
+                                         conversationId = conversationId,
+                                         initialPrompt = initialPrompt
+                                     )
+                                 }
                                 composable("metal_detector") { MetalDetectorScreen(navController) }
                                 composable("signal_finder") { SignalFinderScreen(navController) }
                                 composable("whistle") { WhistleScreen(navController) }
-                                composable("offline_map") { OfflineMapScreen(navController) }
+                                 composable(
+                                     route = "offline_map?lat={lat}&lng={lng}&label={label}&points={points}",
+                                     arguments = listOf(
+                                         navArgument("lat") { type = NavType.StringType; nullable = true; defaultValue = null },
+                                         navArgument("lng") { type = NavType.StringType; nullable = true; defaultValue = null },
+                                         navArgument("label") { type = NavType.StringType; nullable = true; defaultValue = null },
+                                         navArgument("points") { type = NavType.StringType; nullable = true; defaultValue = null }
+                                     )
+                                 ) { backStackEntry ->
+                                     val lat = backStackEntry.arguments?.getString("lat")?.toDoubleOrNull()
+                                     val lng = backStackEntry.arguments?.getString("lng")?.toDoubleOrNull()
+                                     val label = backStackEntry.arguments?.getString("label")
+                                     val pointsJson = backStackEntry.arguments?.getString("points")
+                                     OfflineMapScreen(
+                                         navController,
+                                         initialLat = lat,
+                                         initialLng = lng,
+                                         initialLabel = label,
+                                         pointsJson = pointsJson
+                                     )
+                                 }
                                 composable("compass") { CompassScreen(navController) }
                                 composable("sensor_tool") { SensorToolScreen(navController) }
+                                composable("recent_disasters") { RecentDisastersScreen(navController) }
                             }
                         }
                         GlobalIncomingCallOverlayHost(navController)
+                        GlobalInternetCallOverlayHost()
+                        com.auralis.crisisconnect.screens.Chat.SfuCallOverlayHost(this@MainActivity)
                         CertificateProvisioningBanner(
                             modifier = Modifier.align(Alignment.TopCenter)
                         )
@@ -773,6 +932,18 @@ class MainActivity : ComponentActivity() {
             },
             onMinimize = { dismissedCallId = call.callId }
         )
+    }
+
+    /**
+     * App-wide overlay for an internet (WebRTC) call, so an incoming call rings and can be answered
+     * from ANY screen — not only inside that contact's chat. [InternetCallManager] is a process-wide
+     * singleton whose state is a StateFlow, so unlike the Bluetooth host this needs no service binding.
+     */
+    @Composable
+    private fun GlobalInternetCallOverlayHost() {
+        // Shared with RescueActivity (see InternetCallOverlayHost) so authority (kurum) calls placed or
+        // received in rescue mode render the identical full-screen call UI this activity already shows.
+        InternetCallOverlayHost(this@MainActivity)
     }
 
     private fun String?.isChatRoute(): Boolean {
@@ -992,14 +1163,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        intent?.let {
-            setIntent(it)
-            applyIncomingCallWakeWindowPolicy(it)
-            handleSsoDeepLink(it)
-            navigationEvents.tryEmit(it)
+    /**
+     * Authority (yetkili) mesh defaults ON in the background so it connects without the user opening
+     * the chat. Gated by a stored rescue/authority role cert, so civilian devices never start it (and
+     * the authority runtime self-stops anyway if it can't derive a group key). Independent of the
+     * public mesh and the Wi-Fi-Aware "always on" setting.
+     */
+    private fun bootstrapAuthorityMeshServiceIfEnabled() {
+        lifecycleScope.launch {
+            val enabled = runCatching {
+                val authorityMeshKey = booleanPreferencesKey("advanced_authority_mesh_enabled")
+                settingsDataStore.data.first()[authorityMeshKey] ?: true
+            }.getOrDefault(true)
+            if (!enabled) {
+                return@launch
+            }
+            if (!hasStoredRescueFeatureAccess()) {
+                return@launch
+            }
+            RescueFeatureManager(applicationContext).startAuthorityMeshService()
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyIncomingCallWakeWindowPolicy(intent)
+        answerInternetCallIfRequested(intent)
+        handleSsoDeepLink(intent)
+        navigationEvents.tryEmit(intent)
     }
 
     /** Catches the `crisisconnect://sso/callback` deep link returned by the web enterprise-SSO flow. */
@@ -1039,6 +1231,28 @@ class MainActivity : ComponentActivity() {
     private fun onRescueFeatureInstalled() {
         bootstrapCrisisLinkServiceIfEnabled()
         bootstrapMeshServiceIfAlwaysOn()
+    }
+
+    /**
+     * Accept the ringing internet call when we were launched by the ring notification's answer action.
+     *
+     * The answer action opens US rather than the foreground service on purpose: the service answered
+     * fine, but its follow-up attempt to start this activity was refused as a background activity
+     * launch (BAL_BLOCK), so the call ran with audio and no screen. Launching from the notification is
+     * the user's own tap, so it is always allowed — and answering here means the UI is already coming
+     * up as the call goes active.
+     *
+     * Trusted-token gated like every other privileged extra: MainActivity is exported, so without the
+     * check any app could answer the user's calls.
+     */
+    private fun answerInternetCallIfRequested(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_ANSWER_INTERNET_CALL, false) != true) return
+        intent.removeExtra(EXTRA_ANSWER_INTERNET_CALL)
+        if (!hasTrustedLaunchToken(intent)) {
+            Log.w(TAG, "Ignoring untrusted answer request on exported MainActivity")
+            return
+        }
+        InternetCallManager.accept()
     }
 
     private fun applyIncomingCallWakeWindowPolicy(intent: Intent?) {
@@ -1114,6 +1328,8 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_NAVIGATE_TO_ROUTE = "extra_nav_route"
         const val EXTRA_NAVIGATE_TO_CALL = "extra_nav_call"
         const val EXTRA_WAKE_FOR_INCOMING_CALL = "extra_wake_for_incoming_call"
+        /** Set by the internet ring notification's answer action; see [answerInternetCallIfRequested]. */
+        const val EXTRA_ANSWER_INTERNET_CALL = "extra_answer_internet_call"
         private const val EXTRA_TRUSTED_LAUNCH_TOKEN = "extra_trusted_launch_token"
         private const val LAUNCH_TRUST_PREFS = "main_activity_launch_trust"
         private const val LAUNCH_TRUST_PREFS_ENCRYPTED = "main_activity_launch_trust_enc"

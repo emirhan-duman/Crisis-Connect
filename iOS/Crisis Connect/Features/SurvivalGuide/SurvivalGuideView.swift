@@ -59,8 +59,13 @@ struct SurvivalGuideView: View {
         return languageCode.hasPrefix("tr")
     }
 
+    private var isJapanese: Bool {
+        let languageCode = locale.language.languageCode?.identifier.lowercased() ?? locale.identifier.lowercased()
+        return languageCode.hasPrefix("ja")
+    }
+
     private var assemblyQuery: String {
-        localized("Afet ve Acil Durum Toplanma Alanı", "Disaster assembly area")
+        localized("Afet ve Acil Durum Toplanma Alanı", "Disaster assembly area", "指定緊急避難場所")
     }
 
     private var cardBackground: Color {
@@ -78,7 +83,7 @@ struct SurvivalGuideView: View {
                     .foregroundStyle(.secondary)
 
                 TextField(
-                    localized("Kod, kategori veya konuya göre ara", "Search by code, category, or topic"),
+                    localized("Kod, kategori veya konuya göre ara", "Search by code, category, or topic", "コード・カテゴリー・トピックで検索"),
                     text: $viewModel.searchQuery
                 )
                 .textInputAutocapitalization(.never)
@@ -95,7 +100,7 @@ struct SurvivalGuideView: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(localized("Aramayı temizle", "Clear search"))
+                    .accessibilityLabel(localized("Aramayı temizle", "Clear search", "検索をクリア"))
                 }
             }
             .padding(.horizontal, 12)
@@ -108,7 +113,7 @@ struct SurvivalGuideView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     GuideCategoryChip(
-                        title: localized("Tüm kategoriler", "All categories"),
+                        title: localized("Tüm kategoriler", "All categories", "すべてのカテゴリー"),
                         systemImage: "square.grid.2x2",
                         isSelected: viewModel.selectedCategoryID == SurvivalGuideData.allCategoryID
                     ) {
@@ -133,14 +138,14 @@ struct SurvivalGuideView: View {
             }
 
             HStack(alignment: .center) {
-                Text(format(localized("%d rehber listeleniyor", "%d guides listed"), visibleEntries.count))
+                Text(format(localized("%d rehber listeleniyor", "%d guides listed", "%d 件のガイドを表示中"), visibleEntries.count))
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 Spacer()
 
                 if viewModel.hasActiveFilters {
-                    Button(localized("Filtreleri temizle", "Clear filters")) {
+                    Button(localized("Filtreleri temizle", "Clear filters", "フィルターをクリア")) {
                         withAnimation(.easeInOut(duration: 0.18)) {
                             viewModel.clearFilters()
                         }
@@ -163,17 +168,17 @@ struct SurvivalGuideView: View {
     private var introPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(localized("Acil Durum Rehberi", "Emergency Guide"))
+                Text(localized("Acil Durum Rehberi", "Emergency Guide", "緊急時ガイド"))
                     .font(.title3.weight(.semibold))
 
-                Text(localized("Kritik bilgiye hızla ulaş, panik anında kısa adımları uygula.", "Reach critical information quickly and follow short actions under pressure."))
+                Text(localized("Kritik bilgiye hızla ulaş, panik anında kısa adımları uygula.", "Reach critical information quickly and follow short actions under pressure.", "重要な情報に素早くアクセスし、緊迫した場面で短い手順を実行してください。"))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
             Text(
                 format(
-                    localized("Bölge: %@ • Acil numara: %@", "Region: %@ • Emergency number: %@"),
+                    localized("Bölge: %@ • Acil numara: %@", "Region: %@ • Emergency number: %@", "地域: %@ • 緊急番号: %@"),
                     viewModel.countryLabel(locale: locale),
                     emergencyNumber
                 )
@@ -186,7 +191,7 @@ struct SurvivalGuideView: View {
                     callEmergency(number: emergencyNumber)
                 } label: {
                     Label(
-                        format(localized("%@'yi ara", "Call %@"), emergencyNumber),
+                        format(localized("%@'yi ara", "Call %@", "%@に発信"), emergencyNumber),
                         systemImage: "phone.fill"
                     )
                     .lineLimit(1)
@@ -198,7 +203,7 @@ struct SurvivalGuideView: View {
                 Button {
                     openAssemblyArea()
                 } label: {
-                    Label(localized("Toplanma alanını aç", "Open assembly area"), systemImage: "mappin.and.ellipse")
+                    Label(localized("Toplanma alanını aç", "Open assembly area", "避難場所を開く"), systemImage: "mappin.and.ellipse")
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
@@ -228,10 +233,10 @@ struct SurvivalGuideView: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(localized("Rehber bulunamadı", "No guide found"))
+                Text(localized("Rehber bulunamadı", "No guide found", "ガイドが見つかりません"))
                     .font(.subheadline.weight(.semibold))
 
-                Text(localized("Filtreleri azaltıp daha genel bir anahtar kelime ile tekrar dene.", "Try reducing filters or searching with a broader keyword."))
+                Text(localized("Filtreleri azaltıp daha genel bir anahtar kelime ile tekrar dene.", "Try reducing filters or searching with a broader keyword.", "フィルターを減らすか、より一般的なキーワードで検索してください。"))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -289,26 +294,26 @@ struct SurvivalGuideView: View {
             .buttonStyle(.plain)
 
             guideSection(
-                title: localized("30 saniyede", "In 30 seconds"),
+                title: localized("30 saniyede", "In 30 seconds", "30秒でできること"),
                 items: quickActions.map(guideText),
                 warning: false
             )
 
             if isExpanded == false && hiddenQuickActionCount > 0 {
-                Text(format(localized("+%d hızlı adım daha", "+%d more quick actions"), hiddenQuickActionCount))
+                Text(format(localized("+%d hızlı adım daha", "+%d more quick actions", "他に+%d 件のクイックステップ"), hiddenQuickActionCount))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             if isExpanded {
                 guideSection(
-                    title: localized("Adım adım", "Step by step"),
+                    title: localized("Adım adım", "Step by step", "ステップごとの対応"),
                     items: article.stepByStep.map(guideText),
                     warning: false
                 )
 
                 guideSection(
-                    title: localized("Yapma", "Don't do"),
+                    title: localized("Yapma", "Don't do", "やってはいけないこと"),
                     items: article.dontDo.map(guideText),
                     warning: true
                 )
@@ -316,7 +321,7 @@ struct SurvivalGuideView: View {
                 guideChecklistSection(article: article)
 
                 if let sourceNote = article.sourceNote.map(guideText) {
-                    Text("\(localized("Kaynak notu:", "Source note:")) \(sourceNote)")
+                    Text("\(localized("Kaynak notu:", "Source note:", "参考情報:")) \(sourceNote)")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -328,7 +333,7 @@ struct SurvivalGuideView: View {
                         viewModel.startChecklist(for: article)
                     }
                 } label: {
-                    Label(localized("Checklist'i başlat", "Start checklist"), systemImage: "checkmark.circle")
+                    Label(localized("Checklist'i başlat", "Start checklist", "チェックリストを開始"), systemImage: "checkmark.circle")
                 }
                 .buttonStyle(.bordered)
             }
@@ -389,14 +394,14 @@ struct SurvivalGuideView: View {
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(localized("Checklist", "Checklist"))
+                Text(localized("Checklist", "Checklist", "チェックリスト"))
                     .font(.subheadline.weight(.semibold))
 
                 Spacer()
 
                 Text(
                     format(
-                        localized("%d/%d tamamlandı", "%d/%d completed"),
+                        localized("%d/%d tamamlandı", "%d/%d completed", "%d / %d 完了"),
                         progress.completed,
                         progress.total
                     )
@@ -457,8 +462,9 @@ struct SurvivalGuideView: View {
         openURL(url)
     }
 
-    private func localized(_ tr: String, _ en: String) -> String {
-        isTurkish ? tr : en
+    private func localized(_ tr: String, _ en: String, _ ja: String) -> String {
+        if isJapanese { return ja }
+        return isTurkish ? tr : en
     }
 
     private func guideText(_ text: SurvivalGuideLocalizedText) -> String {

@@ -1,0 +1,1449 @@
+/*
+ * IMPORTANT: This Japanese translation was produced by Claude (AI).
+ * Crisis Connect is a safety-critical emergency-coordination app.
+ * Mistranslation can cause physical harm.
+ * NATIVE SPEAKER REVIEW IS REQUIRED BEFORE PRODUCTION RELEASE.
+ *
+ * Reviewer checklist:
+ *   - ですます形 (polite masu-form) consistency across descriptive text
+ *   - 救助 vs 救援 vs 救出 usage in rescue-domain strings
+ *   - 要救助者 preferred over 被害者 (avoids negative connotation)
+ *   - Format specifiers preserved verbatim: %@, %d, %lld, %1$@, etc.
+ *   - Emergency phone number "112" left as-is (Turkey/EU); consider
+ *     guiding JP users to 119 (fire/ambulance) or 110 (police) —
+ *     flagged for product decision, not changed here.
+ *   - Button labels use dictionary form (開始, 停止, キャンセル) rather
+ *     than ですます for space and convention.
+ *   - Date 2026-04-21 (initial draft).
+ */
+
+/* App */
+"Crisis Connect" = "クライシスコネクト";
+"SOS_BUTTON_LABEL" = "SOS";
+"APP_VERSION_FORMAT" = "バージョン %@";
+"APP_VERSION_BUILD_FORMAT" = "バージョン %@ (ビルド %@)";
+"SPLASH_SUBTITLE" = "危機的状況のためのオフライン連携。";
+"SPLASH_LOADING_STATUS" = "ローカル安全サービスを準備しています...";
+
+/* SOS Broadcast */
+"SOS_BROADCAST_ACTIVE" = "SOS発信中";
+"SOS_BROADCAST_DURATION" = "発信時間";
+"SOS_BROADCAST_SLIDE_TO_CANCEL" = "スライドしてキャンセル";
+"SOS_BROADCAST_SLIDE_RELEASE" = "指を離してSOSを終了";
+"SOS_BROADCAST_STATUS_TITLE" = "状態";
+"SOS_BROADCAST_STATUS_ACTIVE" = "発信中";
+"SOS_BROADCAST_LIVE_BADGE" = "LIVE";
+"SOS_BROADCAST_HINT" = "発信中はアプリを開いたままにしてください。";
+"SOS_BROADCAST_HELP" = "付近の救助隊があなたのSOS信号に接続できます。";
+
+/* SOS Chat */
+"SOS_CHAT_TITLE" = "現地チームとのチャット";
+"SOS_CHAT_OPEN_BUTTON" = "現地チームにメッセージ";
+"SOS_CHAT_EMPTY_TITLE" = "現地チームからのメッセージはまだありません";
+"SOS_CHAT_EMPTY_MESSAGE" = "認証済みチームが接続するとメッセージが表示されます。";
+"DIRECT_CHAT_EMPTY_TITLE" = "メッセージはまだありません";
+"DIRECT_CHAT_EMPTY_MESSAGE" = "この連絡先とのメッセージがここに表示されます。";
+"DIRECT_CHAT_STATUS_CONNECTING" = "接続中…";
+"DIRECT_CHAT_STATUS_CONNECTED" = "接続済み";
+"CHAT_STATUS_CONNECTED_INTERNET" = "インターネットで接続中";
+"DIRECT_CHAT_STATUS_DISCONNECTED" = "切断済み";
+"DIRECT_CHAT_STATUS_FAILED" = "接続エラー";
+"SOS_CHAT_SEND_PLACEHOLDER" = "メッセージを入力";
+"SOS_CHAT_ROLE_FIELD_TEAM" = "現地チーム";
+"SOS_CHAT_ROLE_VICTIM" = "要救助者";
+"SOS_CHAT_ROLE_UNKNOWN" = "不明なチーム";
+"SOS_CHAT_ROLE_CONTACT" = "連絡先";
+"SOS_CHAT_VERIFIED" = "認証済み";
+"SOS_CHAT_STATUS_PENDING" = "送信中...";
+"SOS_CHAT_STATUS_SENT" = "送信済み";
+"SOS_CHAT_STATUS_DELIVERED" = "配信済み";
+"SOS_CHAT_STATUS_READ" = "既読";
+"SOS_CHAT_ACTION_REPLY" = "返信";
+"CHAT_ACTION_COPY" = "コピー";
+"SOS_CHAT_REPLY_CONTEXT_LABEL" = "返信先";
+"SOS_CHAT_REPLY_SENDER_YOU" = "自分";
+"SOS_CHAT_REPLY_UNKNOWN_PLACEHOLDER" = "メッセージ";
+"SOS_CHAT_LOADING" = "会話を読み込み中...";
+"SOS_CHAT_LOAD_OLDER" = "以前のメッセージを読み込む";
+"SOS_CHAT_NOTIFICATION_TITLE" = "SOSメッセージ";
+
+/* Messages & Contacts */
+"Messages" = "メッセージ";
+"MESSAGES_HEADER_SUBTITLE" = "信頼できる連絡先とSOSチャットを一か所にまとめました。";
+"MESSAGES_FILTER_ALL" = "すべて";
+"MESSAGES_FILTER_UNREAD" = "未読";
+"MESSAGES_FILTER_DIRECT" = "付近";
+"MESSAGES_FILTER_RESCUE" = "救助";
+"MESSAGES_BADGE_NEARBY" = "付近";
+"MESSAGES_SECTION_TITLE" = "受信トレイ";
+"MESSAGES_SECTION_ATTENTION" = "要対応";
+"MESSAGES_SECTION_ATTENTION_SUBTITLE" = "未読の会話が先頭に表示されます。";
+"MESSAGES_SECTION_RESCUE" = "救助連携";
+"MESSAGES_SECTION_RESCUE_SUBTITLE" = "認証済みまたは現地チームのスレッド。";
+"MESSAGES_SECTION_RECENT" = "最近";
+"MESSAGES_SECTION_RECENT_SUBTITLE" = "その他は最新の活動順に並びます。";
+"MESSAGES_CLEAR_FILTER" = "クリア";
+"MESSAGES_FILTER_EMPTY_TITLE" = "まだ何もありません";
+"MESSAGES_FILTER_EMPTY_UNREAD" = "未読はありません。新しい未読の会話はここに表示されます。";
+"MESSAGES_FILTER_EMPTY_DIRECT" = "信頼できる連絡先が接続すると、付近のダイレクト会話がここに表示されます。";
+"MESSAGES_FILTER_EMPTY_RESCUE" = "連携が始まると、現地チームや救助の会話がここに表示されます。";
+"MESSAGES_MARK_READ" = "既読にする";
+"Voice message" = "音声メッセージ";
+"Photo" = "写真";
+"Ready to send" = "送信準備完了";
+"Location shared" = "位置情報を共有しました";
+"Shared file" = "共有ファイル";
+"SOS_CHAT_LOCATION_COORDINATES_FORMAT" = "緯度 %@、経度 %@";
+"SOS_CHAT_LOCATION_ACCURACY_FORMAT" = "精度: %@";
+"SOS_CHAT_LOCATION_OPEN_MAPS" = "マップで開く";
+"No messages yet" = "メッセージはまだありません";
+"Tap the + button at the top right to add an emergency contact." = "右上の+ボタンをタップして緊急連絡先を追加してください。";
+"New Contact" = "新しい連絡先";
+"Search chats" = "チャットを検索";
+"MESSAGES_SEARCH_EMPTY_TITLE" = "該当なし";
+"MESSAGES_SEARCH_EMPTY_MESSAGE" = "別の名前を試すか、検索をクリアしてください。";
+"Share your QR code to add an emergency contact." = "QRコードを共有して緊急連絡先を追加します。";
+"Scan QR" = "QRをスキャン";
+"Connect Manually" = "手動で接続";
+"Add an emergency contact" = "緊急連絡先を追加";
+"Share your QR code or connect manually." = "QRコードを共有するか、手動で接続してください。";
+"Your QR Code" = "あなたのQRコード";
+"Private" = "非公開";
+"Scan someone else's code to connect instantly." = "相手のコードをスキャンしてすぐに接続します。";
+"Paste a link or enter a code." = "リンクを貼り付けるか、コードを入力してください。";
+"Your QR code is only visible when you choose to share it." = "あなたのQRコードは共有を選んだ場合にのみ表示されます。";
+"CONTACT_SCAN_INVALID_TITLE" = "無効なQR";
+"CONTACT_SCAN_INVALID_MESSAGE" = "このQRコードはクライシスコネクトの連絡先ではありません。";
+"CONTACT_SCAN_SELF_TITLE" = "自分のコードです";
+"CONTACT_SCAN_SELF_MESSAGE" = "自分のQRコードを追加することはできません。";
+"CONTACT_SCAN_SUCCESS_TITLE" = "連絡先を追加しました";
+"CONTACT_SCAN_SUCCESS_MESSAGE" = "この連絡先とオフラインでメッセージを送れるようになりました。";
+"CONTACT_SCAN_NOT_FOUND_TITLE" = "発信が見つかりません";
+"CONTACT_SCAN_NOT_FOUND_MESSAGE" = "相手のデバイスが共有中で、近くにあることを確認してください。";
+"CONTACT_BLUETOOTH_TITLE" = "Bluetoothが必要です";
+"CONTACT_BLUETOOTH_DISABLED_MESSAGE" = "付近のQR連絡先を確認するためにBluetoothをオンにしてください。";
+"CONTACT_BLUETOOTH_UNAUTHORIZED_MESSAGE" = "付近のQR連絡先を確認するためにBluetoothの使用を許可してください。";
+"CONTACT_BLUETOOTH_UNSUPPORTED_MESSAGE" = "このデバイスではBluetoothで付近のQR連絡先を確認できません。";
+"CONTACT_ONBOARDING_SEARCHING_TITLE" = "付近を検索中";
+"CONTACT_ONBOARDING_SEARCHING_MESSAGE" = "相手のデバイスからの連絡先発信を探しています。";
+"CONTACT_ONBOARDING_PAIRING_TITLE" = "安全にペアリング中";
+"CONTACT_ONBOARDING_PAIRING_MESSAGE" = "QRペイロードをライブのBluetoothハンドシェイクと照合しています。";
+"CONTACT_ONBOARDING_SAVING_TITLE" = "連絡先を保存中";
+"CONTACT_ONBOARDING_SAVING_MESSAGE" = "安全な連絡先レコードとチャットセッションを確定しています。";
+"CONTACT_ONBOARDING_ALREADY_REGISTERED_TITLE" = "登録済みです";
+"CONTACT_ONBOARDING_ALREADY_REGISTERED_MESSAGE" = "既存の安全な連絡先を更新し、以前のチャット履歴は維持しました。";
+"CONTACT_ONBOARDING_COMPLETED_TITLE" = "連絡先の準備完了";
+"CONTACT_ONBOARDING_COMPLETED_MESSAGE" = "安全なペアリングが完了しました。この連絡先とオフラインでメッセージを送れます。";
+"CONTACT_CAMERA_TITLE" = "カメラへのアクセス";
+"CONTACT_CAMERA_MESSAGE" = "QRコードをスキャンするためにカメラの使用を許可してください。";
+"Close" = "閉じる";
+
+/* Tools */
+"Tools" = "ツール";
+"Sensors" = "センサー";
+"Compass" = "コンパス";
+"LiDAR" = "ナイトビジョン";
+"NIGHT_VISION_TOOL_TITLE" = "ナイトビジョンツール";
+"NIGHT_VISION_NAV_TITLE" = "ナイトビジョン";
+"NIGHT_VISION_TOOL_SUBTITLE" = "暗所や低視界空間で、LiDARが近くの障害物の把握を支援します。";
+"NIGHT_VISION_HEADER_TITLE" = "低視界での障害物検知";
+"NIGHT_VISION_HEADER_DETAIL" = "ナイトビジョンはライブカメラとLiDARの深度コントラストを組み合わせ、近くの障害物を強調します。";
+"Metal Detector" = "金属探知機";
+"Connectivity" = "接続";
+"Signal Finder" = "信号探索";
+"Survival Guide" = "サバイバルガイド";
+
+/* Rescue Client */
+"RESCUE_TOOL" = "救助連携";
+"RESCUE_BUTTON_LABEL" = "救助";
+"RESCUE_SCREEN_TITLE" = "救助連携";
+"RESCUE_SIGNAL_SECTION_TITLE" = "SOS信号";
+"RESCUE_REFRESH" = "更新";
+"RESCUE_OVERVIEW_HEADING" = "現地活動状況";
+"RESCUE_OVERVIEW_DESCRIPTION" = "付近のSOS発信の概要。";
+"RESCUE_OVERVIEW_ACTIVE" = "アクティブなSOS";
+"RESCUE_OVERVIEW_TOTAL" = "信号の合計";
+"RESCUE_LAST_REFRESH_FORMAT" = "最終更新: %@";
+"RESCUE_SCANNING_ACTIVE" = "ライブスキャン中";
+"RESCUE_SCANNING_IDLE" = "スキャナー待機中";
+"RESCUE_STATUS_CONNECTING" = "接続中";
+"RESCUE_STATUS_CONNECTED" = "接続済み";
+"RESCUE_STATUS_DISCOVERING" = "探索中";
+"RESCUE_STATUS_AUTHENTICATING" = "認証中";
+"RESCUE_STATUS_ACTIVE" = "アクティブなSOS";
+"RESCUE_STATUS_DISCONNECTED" = "切断済み";
+"RESCUE_STATUS_DETECTED" = "検出済み";
+"RESCUE_STATUS_FAILED" = "失敗";
+"RESCUE_BROADCAST_LABEL_FORMAT" = "発信ID: %@";
+"RESCUE_DEVICE_LABEL_FORMAT" = "デバイス: %@";
+"RESCUE_DEVICE_IDENTIFIER_FORMAT" = "デバイス識別子: %@";
+"RESCUE_SIGNAL_STRENGTH_FORMAT" = "信号強度: %d dBm";
+"RESCUE_VICTIM_BATTERY_FORMAT" = "要救助者のバッテリー：%d%%";
+"RESCUE_SIGNAL_STRENGTH_UNKNOWN" = "信号強度: --";
+"RESCUE_LAST_SEEN_FORMAT" = "最終検出: %@";
+"RESCUE_EMPTY_TITLE" = "SOS発信はまだ検出されていません";
+"RESCUE_EMPTY_BODY" = "チームのデバイスがSOSモードになっていることを確認し、数秒待って受信してください。";
+"RESCUE_EMPTY_SUPPORT" = "最後に把握した座標に近づき、開けた場所で待機してください。";
+"RESCUE_EMPTY_FILTERED_TITLE" = "アクティブなSOS接続はありません";
+"RESCUE_EMPTY_FILTERED_BODY" = "信号はアクティブなセッションのみに絞り込まれています。接続を開始するか、フィルタを無効にして付近の発信を確認してください。";
+"RESCUE_EMPTY_FILTERED_SUPPORT" = "付近の発信は、まだ接続されていなくても利用できる場合があります。";
+"RESCUE_START_SCAN" = "スキャン開始";
+"RESCUE_PAUSE_SCAN" = "スキャン一時停止";
+"RESCUE_UNKNOWN_DEVICE" = "不明なデバイス";
+"RESCUE_ERROR_BLUETOOTH_UNAVAILABLE" = "このデバイスはBluetoothに対応していません。";
+"RESCUE_ERROR_BLUETOOTH_UNAUTHORIZED" = "Bluetoothの使用が許可されていません。";
+"RESCUE_ERROR_BLUETOOTH_DISABLED" = "Bluetoothがオフです。スキャンするにはオンにしてください。";
+"RESCUE_ERROR_WIFI_AWARE_UNAVAILABLE" = "このデバイスではWi-Fi Awareを利用できません。";
+"RESCUE_ERROR_WIFI_AWARE_ENTITLEMENT" = "Wi-Fi Awareエンタイトルメントがありません。署名設定で機能を有効にしてください。";
+"RESCUE_ERROR_WIFI_AWARE_CONFIGURATION" = "Info.plistにWi-Fi Awareサービスが宣言されていません。";
+"RESCUE_ERROR_WIFI_AWARE_NO_PAIRED_DEVICES" = "ペアリング済みのWi-Fi Awareデバイスが見つかりませんでした。";
+"RESCUE_WIFI_AWARE_PAIR_TITLE" = "付近の救助デバイスとペアリング";
+"RESCUE_WIFI_AWARE_PAIR_BODY" = "iOSではライブ救助探索を開始する前に、一度デバイスを選択する必要があります。";
+"RESCUE_WIFI_AWARE_PAIR_ACTION" = "Wi-Fi Awareデバイスをペアリング";
+"RESCUE_WIFI_AWARE_PAIR_FALLBACK" = "このデバイスではデバイスピッカーを利用できません。";
+"RESCUE_SETTINGS_TITLE" = "救助設定";
+"RESCUE_SETTINGS_SUBTITLE" = "探索フィルタ、自動接続、応答者表示オプション。";
+"RESCUE_SETTINGS_DISCOVERY_SECTION" = "探索";
+"RESCUE_SETTINGS_DISCOVERY_FOOTER" = "救助スキャンを自動で開始するか、新しいSOS発信にどの程度積極的に接続するかを、ここで設定します。";
+"RESCUE_SETTINGS_DISPLAY_SECTION" = "表示";
+"RESCUE_SETTINGS_DEVICE_IDENTIFIER" = "デバイス識別子を表示";
+"RESCUE_SETTINGS_DEVICE_IDENTIFIER_FOOTER" = "iOSではこれはアプリに表示される周辺機器の識別子であり、ハードウェアのBluetoothアドレスではありません。";
+"RESCUE_SETTINGS_AUTO_START" = "自動でスキャンを開始";
+"RESCUE_SETTINGS_AUTO_CONNECT" = "スキャンした発信に自動接続";
+"RESCUE_SETTINGS_ONLY_ACTIVE" = "アクティブなSOSセッションのみ表示";
+"RESCUE_SETTINGS_RELAY_SECTION" = "中継と同期";
+"RESCUE_SETTINGS_RELAY_FOOTER" = "クライシスリンクはシステムが許可する場合、iOS純正の救助トランスポートとBluetoothバックグラウンドモードを使用します。アプリ終了後はiOSが無線を停止することがあります。";
+"RESCUE_SETTINGS_MESH_ALWAYS_ON" = "メッシュ中継を常時オン";
+"RESCUE_SETTINGS_CRISIS_LINK" = "クライシスリンク同期";
+"RESCUE_SETTINGS_LIVE_LOCATION" = "ライブ位置情報の同期";
+"RESCUE_SETTINGS_LIVE_LOCATION_INTERVAL" = "ライブ位置情報の間隔";
+"RESCUE_SETTINGS_LIVE_LOCATION_INTERVAL_FORMAT" = "%d秒";
+"RESCUE_SETTINGS_AVAILABILITY_SECTION" = "プラットフォーム対応状況";
+"RESCUE_SETTINGS_STATUS_AVAILABLE" = "利用可能";
+"RESCUE_SETTINGS_STATUS_UNAVAILABLE" = "利用不可";
+"RESCUE_SETTINGS_AVAILABILITY_FOOTER" = "未対応のオプションは設計上オフのままです。iOSビルドが、まだ安全に提供できない機能を広告しないようにするためです。";
+/* Whistle */
+"WHISTLE_STATUS_ACTIVE" = "ホイッスル発信中";
+"WHISTLE_STATUS_READY" = "ホイッスル準備完了";
+"WHISTLE_FREQUENCY_LABEL" = "周波数";
+"WHISTLE_MODE_LABEL" = "モード";
+"WHISTLE_MODE_CONTINUOUS" = "連続";
+"WHISTLE_MODE_PULSE" = "パルス";
+"WHISTLE_MODE_SOS" = "SOS";
+"WHISTLE_MODE_CONTINUOUS_DETAIL" = "長距離信号のための持続音。";
+"WHISTLE_MODE_PULSE_DETAIL" = "バッテリーを節約し疲労を軽減する短いパルス音。";
+"WHISTLE_MODE_SOS_DETAIL" = "モールスSOSパターン(... --- ...)。";
+"WHISTLE_START" = "開始";
+"WHISTLE_STOP" = "停止";
+"WHISTLE_HINT" = "短い音を使ってバッテリーを節約し、救助者が見つけやすくなるようにしてください。";
+"WHISTLE_WARNING_TITLE" = "音量に関する警告";
+"WHISTLE_WARNING_MESSAGE" = "この音は非常に大きいです。電話を耳から離してください。続行しますか?";
+"WHISTLE_WARNING_CONFIRM" = "開始";
+"WHISTLE_WARNING_CANCEL" = "キャンセル";
+
+/* LiDAR */
+"LIDAR_UNAVAILABLE_TITLE" = "ナイトビジョンを利用できません";
+"LIDAR_UNAVAILABLE_MESSAGE" = "ナイトビジョンはLiDARスキャナ搭載のiPhoneまたはiPadが必要です。";
+"LIDAR_STATUS_ACTIVE" = "アクティブ";
+"LIDAR_STATUS_INACTIVE" = "非アクティブ";
+"LIDAR_STATUS_UNSUPPORTED" = "非対応";
+"LIDAR_STATUS_FROZEN" = "フリーズ";
+"LIDAR_DISTANCE_LABEL" = "前方の空間";
+"LIDAR_RANGE_LABEL" = "深度範囲";
+"LIDAR_SIGNAL_LABEL" = "信号";
+"LIDAR_PALETTE_LABEL" = "パレット";
+"LIDAR_PALETTE_NIGHT" = "ナイト";
+"LIDAR_PALETTE_THERMAL" = "サーマル";
+"LIDAR_FREEZE_BUTTON" = "フリーズ";
+"LIDAR_RESUME_BUTTON" = "ライブ";
+"LIDAR_HINT" = "電話を胸の高さに保ち、ゆっくりスキャンしてください。障害物が警報範囲に入るとハプティクスで警告します。";
+"LIDAR_OBSTACLE_DETECTED" = "障害物";
+"LIDAR_OBSTACLE_IMMEDIATE" = "近距離に障害物";
+"LIDAR_FROZEN_WARNING" = "一時停止中 • ライブではありません";
+"LIDAR_SAFETY_NOTE" = "LiDAR支援はガラス、暗色または反射面、煙、階段、段差を検出できない場合があります。唯一の安全手段として頼らないでください。";
+"LIDAR_ALERT_CLEAR" = "クリア";
+"LIDAR_ALERT_CLEAR_DETAIL" = "追跡範囲は開けています";
+"LIDAR_ALERT_CAUTION" = "注意";
+"LIDAR_ALERT_CAUTION_DETAIL" = "障害物が追跡範囲に接近しています";
+"LIDAR_ALERT_DANGER" = "危険";
+"LIDAR_ALERT_DANGER_DETAIL" = "障害物が警報距離内にあります";
+"LIDAR_ALERT_SIGNAL" = "信号喪失";
+"LIDAR_ALERT_SIGNAL_DETAIL" = "ゆっくり動き、電話を安定させてフレームを再取得してください";
+"LIDAR_SIGNAL_WEAK" = "弱い";
+"LIDAR_SIGNAL_MEDIUM" = "普通";
+"LIDAR_SIGNAL_STRONG" = "強い";
+"LIDAR_GUIDANCE_LABEL" = "ガイダンス";
+"LIDAR_GUIDANCE_FORWARD" = "前進";
+"LIDAR_GUIDANCE_FORWARD_DETAIL" = "電話を中央に保ち、ゆっくり進んでください。";
+"LIDAR_GUIDANCE_LEFT" = "左へ";
+"LIDAR_GUIDANCE_LEFT_DETAIL" = "左側の通路が開けています。少し左に寄ってください。";
+"LIDAR_GUIDANCE_RIGHT" = "右へ";
+"LIDAR_GUIDANCE_RIGHT_DETAIL" = "右側の通路が開けています。少し右に寄ってください。";
+"LIDAR_GUIDANCE_STOP" = "停止";
+"LIDAR_GUIDANCE_STOP_DETAIL" = "前方の通路が狭すぎます。位置を戻して再スキャンしてください。";
+"LIDAR_GUIDANCE_SCAN" = "スキャン";
+"LIDAR_GUIDANCE_SCAN_DETAIL" = "信号が弱いです。電話を安定させ、少し上げてゆっくりスキャンしてください。";
+"LIDAR_HAPTICS_LABEL" = "ハプティクス";
+"LIDAR_HAPTICS_ON" = "オン";
+"LIDAR_HAPTICS_OFF" = "オフ";
+"LIDAR_CONTROLS_LABEL" = "ナイトビジョンの設定";
+"LIDAR_SCAN_PROFILE_LABEL" = "フォーカス";
+"LIDAR_SCAN_PROFILE_PRECISION" = "高精度";
+"LIDAR_SCAN_PROFILE_BALANCED" = "バランス";
+"LIDAR_SCAN_PROFILE_WIDE" = "広角";
+"LIDAR_ALERT_RADIUS_LABEL" = "警報";
+"LIDAR_ALERT_PRESET_NEAR" = "近距離";
+"LIDAR_ALERT_PRESET_BALANCED" = "標準";
+"LIDAR_ALERT_PRESET_EARLY" = "早期";
+
+/* Privacy */
+"PRIVACY_SHARING_SECTION" = "共有";
+"PRIVACY_SHARING_FOOTER" = "SOS中および信頼できる連絡先との共有内容を管理します。";
+"PRIVACY_SHARE_LOCATION" = "SOS中にライブ位置情報を共有";
+"PRIVACY_SHARE_PROFILE" = "プロフィール情報を共有";
+"PRIVACY_ANALYTICS_SECTION" = "分析";
+"PRIVACY_ANALYTICS" = "匿名の分析データを共有";
+"PRIVACY_ANALYTICS_FOOTER" = "アプリの安定性とパフォーマンス向上に役立ちます。";
+"PRIVACY_OPEN_SETTINGS" = "iOS設定を開く";
+"PRIVACY_OPEN_SETTINGS_FOOTER" = "カメラ、位置情報、写真などのシステム権限を管理します。";
+
+/* Notifications */
+"NOTIFICATIONS_PERMISSIONS_SECTION" = "権限";
+"NOTIFICATIONS_STATUS_LABEL" = "状態";
+"NOTIFICATIONS_STATUS_AUTHORIZED" = "許可済み";
+"NOTIFICATIONS_STATUS_DENIED" = "拒否済み";
+"NOTIFICATIONS_STATUS_NOT_DETERMINED" = "未設定";
+"NOTIFICATIONS_STATUS_PROVISIONAL" = "仮承認";
+"NOTIFICATIONS_STATUS_EPHEMERAL" = "一時的";
+"NOTIFICATIONS_STATUS_UNKNOWN" = "不明";
+"NOTIFICATIONS_PERMISSIONS_FOOTER_ALLOWED" = "通知は有効です。通知の種類を以下でカスタマイズできます。";
+"NOTIFICATIONS_PERMISSIONS_FOOTER_DENIED" = "通知はオフです。iOS設定で有効にして通知を受け取ってください。";
+"NOTIFICATIONS_PERMISSIONS_FOOTER_REQUEST" = "通知をオンにしてSOSの更新や安全アラートを受け取りましょう。";
+"NOTIFICATIONS_PERMISSIONS_FOOTER_UNKNOWN" = "iOS設定で通知権限を管理してください。";
+"NOTIFICATIONS_APP_ENABLE" = "通知を有効にする";
+"NOTIFICATIONS_ALERTS_SECTION" = "アラート";
+"NOTIFICATIONS_ALERT_SOS" = "SOSアラート";
+"NOTIFICATIONS_ALERT_CONTACTS" = "緊急連絡先の更新";
+"NOTIFICATIONS_ALERT_TIPS" = "安全に関するリマインダー";
+"NOTIFICATIONS_ALERTS_FOOTER" = "これらのアラートは通知が有効な場合のみ動作します。";
+"NOTIFICATIONS_SOUND_SECTION" = "サウンドとハプティクス";
+"NOTIFICATIONS_SOUND" = "サウンドを再生";
+"NOTIFICATIONS_VIBRATION" = "バイブレーション";
+"NOTIFICATIONS_OPEN_SETTINGS" = "iOS設定を開く";
+"NOTIFICATIONS_OPEN_SETTINGS_FOOTER" = "アラート、サウンド、バッジなどのシステム権限を変更します。";
+
+/* Settings */
+"Settings" = "設定";
+"Account" = "アカウント";
+"Profile" = "プロフィール";
+"General" = "一般";
+"Language" = "言語";
+"System Default" = "システムのデフォルト";
+"English" = "英語";
+"Turkish" = "トルコ語";
+"Japanese" = "日本語";
+"Language changes apply instantly." = "言語の変更はすぐに反映されます。";
+"Theme" = "テーマ";
+"Light" = "ライト";
+"Dark" = "ダーク";
+"Theme changes apply instantly." = "テーマの変更はすぐに反映されます。";
+"Notifications" = "通知";
+"Privacy" = "プライバシー";
+"About" = "このアプリについて";
+"Version 1.0" = "バージョン 1.0.0";
+
+/* Profile */
+"Full Name" = "氏名";
+"Phone" = "電話番号";
+"Email" = "メールアドレス";
+"Contact Info" = "連絡先情報";
+"Choose Photo" = "写真を選択";
+"Emergency Note" = "緊急メモ";
+"Save" = "保存";
+"PROFILE_COUNTRY_LABEL" = "国コード";
+"PROFILE_COUNTRY_PLACEHOLDER" = "JP";
+"PROFILE_AGENCY_LABEL" = "所属機関";
+"PROFILE_AGENCY_PLACEHOLDER" = "AFAD";
+"PROFILE_AUTH_SECTION" = "認証";
+"PROFILE_AUTH_STATUS_LABEL" = "状態";
+"PROFILE_AUTH_ANONYMOUS" = "匿名";
+"PROFILE_AUTH_SIGNED_IN" = "ログイン済み";
+"PROFILE_AUTH_SIGNED_OUT" = "ログアウト済み";
+"PROFILE_ROLE_LABEL" = "役割";
+"PROFILE_VERIFIED_LABEL" = "認証";
+"PROFILE_VERIFIED_YES" = "認証済み";
+"PROFILE_VERIFIED_NO" = "未認証";
+"PROFILE_DEVICE_KEY_LABEL" = "デバイスキー";
+"PROFILE_DEVICE_KEY_SECURED" = "保護済み";
+"PROFILE_DEVICE_KEY_MISSING" = "なし";
+"PROFILE_CERT_LABEL" = "証明書";
+"PROFILE_CERT_READY" = "準備完了";
+"PROFILE_CERT_PENDING" = "未発行";
+"PROFILE_PASSWORD_LABEL" = "パスワード";
+"PROFILE_LOGIN_EMAIL" = "メールでログイン";
+"PROFILE_LOGIN_GOOGLE" = "Googleでログイン";
+"PROFILE_APPLE_SIGN_IN_UNAVAILABLE" = "Appleでサインインを完了できませんでした。";
+"PROFILE_APPLE_SIGN_IN_NONCE_MISSING" = "Appleでサインインのセッションが期限切れです。もう一度お試しください。";
+"PROFILE_APPLE_SIGN_IN_TOKEN_MISSING" = "Appleでサインインから有効なIDトークンが返されませんでした。";
+"PROFILE_LOGOUT" = "ログアウト";
+"PROFILE_REFRESH_ROLE" = "役割を更新";
+"PROFILE_AUTH_ERROR_TITLE" = "ログインエラー";
+"PROFILE_EMAIL_LOGIN_TITLE" = "メールとパスワード";
+"PROFILE_EMAIL_LOGIN_SUBTITLE" = "メールとパスワードを使用して安全にアカウントにアクセスします。";
+"PROFILE_EMAIL_REQUIRED" = "メールアドレスを入力してください。";
+"PROFILE_EMAIL_INVALID" = "有効なメールアドレスを入力してください。";
+"PROFILE_PASSWORD_REQUIRED" = "パスワードを入力してください。";
+"PROFILE_EMAIL_SIGN_IN_ERROR" = "メールでのサインインに失敗しました。";
+"PROFILE_EMAIL_SIGN_IN_INVALID_CREDENTIALS" = "メールまたはパスワードが正しくありません。もう一度お試しください。";
+"PROFILE_EMAIL_SIGN_IN_NETWORK_ERROR" = "ネットワークエラーです。接続を確認してもう一度お試しください。";
+"PROFILE_EMAIL_SIGN_IN_TOO_MANY_REQUESTS" = "サインイン試行回数が多すぎます。しばらくしてからもう一度お試しください。";
+"PROFILE_EMAIL_SIGN_IN_USER_DISABLED" = "このアカウントは無効化されています。サポートにお問い合わせください。";
+"PROFILE_PASSWORD_SHOW" = "パスワードを表示";
+"PROFILE_PASSWORD_HIDE" = "パスワードを非表示";
+"PROFILE_SIGN_IN_ACTION" = "サインイン";
+"PROFILE_LOGIN_AUTHORIZED_ONLY_TITLE" = "機関向けサインイン";
+"PROFILE_LOGIN_AUTHORIZED_ONLY_MESSAGE" = "このサインイン領域は認可された機関専用です。一般ユーザーはここからサインインできません。";
+"PROFILE_DELETE_ACCOUNT" = "アカウントを削除";
+"PROFILE_DELETE_ACCOUNT_CONFIRM_TITLE" = "アカウントを削除しますか?";
+"PROFILE_DELETE_ACCOUNT_CONFIRM_MESSAGE" = "本当にアカウントを削除しますか? この操作は永久に元に戻せません。プロフィールデータはすべて削除されます。";
+"PROFILE_DELETE_ACCOUNT_CONFIRM_ACTION" = "削除";
+"PROFILE_DELETE_ACCOUNT_ERROR_RECENT_LOGIN" = "セキュリティのため、もう一度サインインしてからアカウント削除をお試しください。";
+"PROFILE_DELETE_ACCOUNT_ERROR_GENERIC" = "アカウントを削除できませんでした。もう一度お試しください。";
+
+/* Metal Detector */
+"Magnetometer not available on this device." = "このデバイスでは磁力計を利用できません。";
+"Move slowly near metal objects. Readings are relative to Earth's magnetic field." = "金属物体の近くではゆっくり動かしてください。値は地磁気を基準とした相対値です。";
+"Magnetic Field" = "磁場";
+"Pause" = "一時停止";
+"Resume" = "再開";
+
+/* Survival Guide */
+"Keep this guide handy. Prepare before, act during, and recover after an emergency." = "このガイドを手元に置いてください。災害前に備え、発生時に行動し、発生後に回復します。";
+"Preparedness Checklist" = "備えのチェックリスト";
+"SURVIVAL_PROGRESS_FORMAT" = "%d / %d 項目完了";
+"Water (3 days)" = "水 (3日分)";
+"Non‑perishable food (3 days)" = "保存食 (3日分)";
+"Flashlight + spare batteries" = "懐中電灯 + 予備電池";
+"First aid kit" = "救急セット";
+"Power bank + cables" = "モバイルバッテリー + ケーブル";
+"Whistle" = "ホイッスル";
+"Copies of IDs & important docs" = "身分証・重要書類のコピー";
+"Cash (small bills)" = "現金 (小額紙幣)";
+"Medications (7 days)" = "常備薬 (7日分)";
+"Reset Checklist" = "チェックリストをリセット";
+"Before an Emergency" = "災害発生前";
+"Save emergency contacts and share your live location when appropriate." = "緊急連絡先を保存し、適切なタイミングでライブ位置情報を共有してください。";
+"Agree on a family meeting point and communication plan." = "家族の集合場所と連絡手段を決めておいてください。";
+"Secure heavy furniture and objects that could fall." = "重い家具や落下しそうな物を固定してください。";
+"Keep your devices charged; maintain a power bank." = "デバイスを充電しておき、モバイルバッテリーを用意してください。";
+"Download offline maps for your area." = "お住まいの地域のオフラインマップをダウンロードしてください。";
+"During an Emergency" = "災害発生時";
+"Stay calm and follow instructions from authorities." = "落ち着いて、当局の指示に従ってください。";
+"Avoid rumors; verify information from official sources." = "噂を避け、公式情報源から情報を確認してください。";
+"Conserve battery: lower brightness, disable background activity." = "バッテリーを節約: 明るさを下げ、バックグラウンド動作を無効にしてください。";
+"If trapped, signal with a whistle or tapping; avoid shouting continuously." = "閉じ込められた場合はホイッスルや叩く音で合図し、大声を出し続けないでください。";
+"If indoors during shaking, Drop, Cover, and Hold On." = "揺れている間に屋内にいる場合は、姿勢を低く(DROP)、頭を守り(COVER)、動かない(HOLD ON)を実行してください。";
+"After an Emergency" = "災害発生後";
+"Check on others if it’s safe; provide first aid if trained." = "安全であれば他の人の様子を確認し、訓練を受けていれば応急処置をしてください。";
+"Report your status to family and emergency contacts." = "家族や緊急連絡先に自分の状況を伝えてください。";
+"Document damage with photos and notes." = "被害を写真とメモで記録してください。";
+"Be prepared for aftershocks; inspect utilities for leaks." = "余震に備え、ライフラインの漏れを確認してください。";
+"Important Numbers" = "重要な電話番号";
+"Emergency Services" = "緊急サービス";
+"Call 112" = "112に発信";
+"Resources" = "リソース";
+"AFAD (Turkey)" = "AFAD (トルコ)";
+"Turkish Red Crescent" = "トルコ赤新月社";
+"Ready.gov (US)" = "Ready.gov (米国)";
+"This guide is for general guidance only. Follow local authorities and emergency services." = "このガイドは一般的な参考情報です。地域の当局や緊急サービスの指示に従ってください。";
+"Open" = "開く";
+
+/* Sensors Dashboard */
+"Accelerometer (g)" = "加速度計 (g)";
+"Gyroscope (deg/s)" = "ジャイロスコープ (度/秒)";
+"Magnetometer (µT)" = "磁力計 (µT)";
+"Magnitude" = "大きさ";
+"Device Motion" = "デバイスモーション";
+"Roll" = "ロール";
+"Pitch" = "ピッチ";
+"Yaw" = "ヨー";
+"User Accel" = "ユーザー加速度";
+"Gravity" = "重力";
+"Altimeter" = "高度計";
+"Relative Altitude" = "相対高度";
+"Pressure" = "気圧";
+"Proximity" = "近接";
+"State" = "状態";
+"Near" = "近い";
+"Far" = "遠い";
+"Heading" = "方位";
+"Direction" = "方向";
+"Accuracy" = "精度";
+"Many sensors are not available in the Simulator. Use a real device for best results." = "多くのセンサーはシミュレータでは利用できません。実機を使用するのが最適です。";
+"Not available on this device" = "このデバイスでは利用できません";
+
+/* Signal Scanner */
+"Bluetooth (BLE)" = "Bluetooth (BLE)";
+"Bluetooth" = "Bluetooth";
+"Stop Scan" = "スキャン停止";
+"Start Scan" = "スキャン開始";
+"Enable Bluetooth to scan" = "スキャンするにはBluetoothを有効にしてください";
+"Scanning..." = "スキャン中...";
+"No devices found" = "デバイスが見つかりません";
+"BLE scanning requires a real device. Simulator is not supported." = "BLEスキャンには実機が必要です。シミュレータには対応していません。";
+"Unknown" = "不明";
+"Resetting" = "リセット中";
+"Unsupported" = "非対応";
+"Unauthorized" = "未認可";
+"Powered Off" = "電源オフ";
+"Powered On" = "電源オン";
+
+/* Compass */
+"Compass not available on this device." = "このデバイスではコンパスを利用できません。";
+"Make sure your device supports heading and try moving it in a figure‑8 to calibrate." = "デバイスが方位に対応していることを確認し、8の字を描くように動かして校正してください。";
+"If the compass seems inaccurate, move your phone in a figure‑8 pattern to calibrate." = "コンパスが不正確に見える場合は、電話を8の字を描くように動かして校正してください。";
+"Hold Flat" = "水平に保持";
+"Hold your phone flat for better compass accuracy." = "コンパスの精度を高めるため、電話を水平に保ってください。";
+
+/* Cardinal Directions */
+"CARDINAL_N" = "北";
+"CARDINAL_NE" = "北東";
+"CARDINAL_E" = "東";
+"CARDINAL_SE" = "南東";
+"CARDINAL_S" = "南";
+"CARDINAL_SW" = "南西";
+"CARDINAL_W" = "西";
+"CARDINAL_NW" = "北西";
+"Cancel" = "キャンセル";
+"Clear search" = "検索をクリア";
+
+/* Advanced Settings */
+"ADVANCED_SETTINGS_TITLE" = "詳細設定";
+"ADVANCED_SETTINGS_DESCRIPTION" = "診断やメッセージ配信のためにアプリの動作を調整します。";
+"ADVANCED_SETTINGS_LINK_SUBTITLE" = "無線の挙動、診断、配信の制御。";
+"ADVANCED_SETTING_PUBLIC_MESH_TITLE" = "一般チャット";
+"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "付近の共有一般チャットにこの電話を表示します。";
+"ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_TITLE" = "一般チャットの通知";
+"ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_DESCRIPTION" = "共有の一般チャットからの新着メッセージのみ通知します。";
+"ADVANCED_SETTING_HIGH_RANGE_TITLE" = "広域モード";
+"ADVANCED_SETTING_HIGH_RANGE_DESCRIPTION" = "適した条件下で通信範囲を広げます。";
+"ADVANCED_SETTING_HIGH_RANGE_LOCKED_REASON" = "BLEの連絡先がこの経路を使用しているため、現在この設定はオフにできません。";
+"ADVANCED_SETTING_BATTERY_SAVER_TITLE" = "バッテリー節約モード";
+"ADVANCED_SETTING_BATTERY_SAVER_DESCRIPTION" = "長時間の現場活動中にバッテリーを守るため、バックグラウンド処理を減らします。";
+"ADVANCED_SETTING_DELIVERY_RETRY_TITLE" = "メッセージ配信の再試行";
+"ADVANCED_SETTING_DELIVERY_RETRY_DESCRIPTION" = "接続が改善したときに、失敗した送信メッセージを自動で再試行します。";
+"NEW_CONTACT_ADD_FROM_PHONE" = "連絡先から追加";
+"CONTACTS_ADD_FROM_PHONE_TITLE" = "連絡先";
+"CONTACTS_MATCH_SECTION" = "Crisis Connect利用中";
+"CONTACTS_PERMISSION_DENIED" = "連絡先へのアクセスがオフです。設定でアクセスを許可すると、Crisis Connectを使っている友人を見つけられます。";
+"CONTACTS_SIGNIN_REQUIRED" = "連絡先を検索するにはアカウントでサインインしてください。QRペアリングはアカウントなしでも使えます。";
+"CONTACTS_LOOKUP_FAILED" = "現在検索できません。接続を確認して再試行してください。";
+"CONTACTS_NO_MATCHES" = "連絡先の中にCrisis Connectで見つけられる人はまだいません。";
+"CONTACTS_ADD" = "追加";
+"CONTACTS_ADDED" = "追加済み";
+"CHAT_INFO_TITLE" = "連絡先情報";
+"CHAT_INFO_SESSION_CODE" = "セッションコード";
+"AUTHORITY_AGENCY_CHANNEL_ROW" = "機関チャネル";
+"AUTHORITY_HIERARCHY_EMPTY" = "パネル間チャネルはまだありません。パネルが親・子・兄弟パネルに接続されると表示されます。";
+"SOS_CONTACT_MESSAGE" = "SOS。緊急事態です。助けが必要です。現在地: %@";
+"SOS_CONTACT_MESSAGE_NO_LOCATION" = "SOS。緊急事態です。助けが必要です。（位置情報を取得できません）";
+"SOS_CONTACT_MESSAGE_ENDED" = "SOSは終了しました。緊急支援はもう必要ありません。";
+// Active-SOS "notify your people" card (Android sos_stage_contacts_* / sos_contacts_* parity)
+"SOS_STAGE_CONTACTS_TITLE" = "身近な人に知らせる";
+"SOS_STAGE_AUTO_BADGE" = "自動";
+"SOS_CHIP_CUSTOM_SELECTION" = "選択済み";
+"SOS_CONTACTS_LOADING" = "よく連絡する相手を選んでいます…";
+"SOS_CONTACTS_EMPTY" = "インターネット経由で連絡できる相手がまだいません。";
+"SOS_CONTACTS_SUMMARY" = "%2$d人中%1$d人に送信済み";
+"SOS_CONTACT_STATUS_WAITING" = "待機中";
+"SOS_CONTACT_STATUS_SENDING" = "送信中";
+"SOS_CONTACT_STATUS_SENT" = "送信済み";
+"SOS_CONTACT_STATUS_FAILED" = "再試行します";
+"AUTHORITY_MEDIA_VOICE_NOTE" = "ボイスメッセージ";
+"AUTHORITY_MEDIA_UNAVAILABLE" = "読み込めませんでした — 接続を確認してください";
+"AUTHORITY_MEDIA_AUDIO_UNSUPPORTED" = "この形式はiOSでは再生できません";
+"AUTHORITY_CHANNELS_TITLE" = "機関メッセージ";
+"AUTHORITY_CHANNEL_ENTRY_SUMMARY" = "機関パネルと共有する暗号化チャネル";
+"AUTHORITY_CHANNEL_NOT_MEMBER" = "アカウントはまだ機関パネルに紐付いていません。ダッシュボードから追加してもらうよう管理者に依頼してください。";
+"AUTHORITY_CHANNEL_ERROR" = "機関チャネルを読み込めませんでした。接続を確認して再試行してください。";
+"AUTHORITY_COMPOSER_PLACEHOLDER" = "メッセージ";
+"AUTHORITY_MESSAGE_NOTIFICATION_BODY" = "新しい暗号化メッセージ";
+"SAFETY_NUMBER_CHANGED_TITLE" = "セキュリティコードが変更されました";
+"SAFETY_NUMBER_CHANGED_DESCRIPTION" = "この連絡先のセキュリティコードが変わりました。アプリの再インストールや機種変更の可能性がありますが、なりすましの可能性もあります。信頼する前に、下の番号を対面または通話で照合してください。";
+"SAFETY_NUMBER_VERIFY_ACTION" = "確認しました";
+"SOS_ALERT_OPEN_MAP" = "地図を開く";
+"CHILD_PROFILE_TITLE" = "子どもプロフィール";
+"CHILD_PROFILE_LINK_SUBTITLE" = "PINロックと保護者リンク";
+"CHILD_PROFILE_DESCRIPTION" = "このデバイスを子どものものとして設定します。承認済みの保護者が自動的にSOS緊急連絡先になり、モードの解除にはPINが必要です。";
+"CHILD_PROFILE_PARENTS_TITLE" = "保護者";
+"CHILD_PROFILE_PARENTS_DESCRIPTION" = "相手が自分のデバイスでリクエストを承認すると保護者になります。";
+"CHILD_PROFILE_NO_PARENTS" = "リンクされた保護者はまだいません。";
+"CHILD_PROFILE_PARENT_PENDING" = "承認待ち";
+"CHILD_PROFILE_ADD_PARENT" = "保護者を追加";
+"CHILD_PROFILE_PICKER_TITLE" = "保護者を選択";
+"CHILD_PROFILE_PICKER_EMPTY" = "リクエストを送れる連絡先がありません。";
+"CHILD_PROFILE_CHILDREN_TITLE" = "子ども";
+"CHILD_PROFILE_CHILDREN_DESCRIPTION" = "保護者リクエストを承認したデバイス。SOSアラートが最初に届きます。";
+"CHILD_PROFILE_NO_CHILDREN" = "リンクされた子どもはいません。";
+"CHILD_PROFILE_REQUEST_SUBTITLE" = "あなたを緊急保護者として希望しています";
+"CHILD_PROFILE_ACCEPT" = "承認";
+"CHILD_PROFILE_DECLINE" = "拒否";
+"CHILD_PROFILE_SET_PIN_TITLE" = "PINを設定";
+"CHILD_PROFILE_SET_PIN_MESSAGE" = "4〜8桁。子どもプロフィールの解除に必要です。子どもが知らないPINを選んでください。";
+"CHILD_PROFILE_ENTER_PIN_TITLE" = "PINを入力";
+"CHILD_PROFILE_ENTER_PIN_MESSAGE" = "この操作は子どもプロフィールのPINで保護されています。";
+"CHILD_PROFILE_PIN_PLACEHOLDER" = "PIN";
+"CHILD_PROFILE_PIN_CONFIRM_PLACEHOLDER" = "PINを確認";
+"CHILD_PROFILE_PIN_SUBMIT" = "確定";
+"CHILD_PROFILE_PIN_INVALID" = "PINは4〜8桁で入力してください。";
+"CHILD_PROFILE_PIN_MISMATCH" = "PINが一致しません。";
+"CHILD_PROFILE_WRONG_PIN" = "PINが違います。残り%d回。";
+"CHILD_PROFILE_LOCKED_OUT" = "試行回数が多すぎます。%d秒後に再試行してください。";
+"CHILD_PARENT_REQUEST_NOTIFICATION" = "あなたを緊急保護者として希望しています";
+"CHILD_PARENT_ACCEPTED_NOTIFICATION" = "保護者リクエストが承認されました";
+"CHILD_PARENT_DECLINED_NOTIFICATION" = "保護者リクエストが拒否されました";
+"SOS_EMERGENCY_CONTACTS_TITLE" = "SOS緊急連絡先";
+"SOS_EMERGENCY_CONTACTS_SUBTITLE" = "SOS開始時に自動で通知する相手";
+"SOS_EMERGENCY_CONTACTS_EXPLAIN" = "SOSを開始すると、これらの連絡先に現在地とともに自動でメッセージが送られます。空のままにすると、アプリが最も近しい連絡先を選びます。";
+"SOS_EMERGENCY_CONTACTS_EMPTY" = "インターネット経由で連絡できる相手がまだいません。まず連絡先を追加してください。";
+"SOS_EMERGENCY_CONTACTS_LIMIT" = "最大%d人まで。";
+"CHILD_PROFILE_SOS_PARENTS_BANNER" = "子ども用プロファイルがオンです。SOSアラートは承認済みの保護者に自動的に送信されます。以下のリストは保護者が承認するまでの間のみ使用されます。";
+"SAFETY_NUMBER_TITLE" = "セキュリティ確認";
+"SAFETY_NUMBER_EXPLAIN" = "この番号を相手のデバイスに表示される番号と照合してください。一致すれば、接続はエンドツーエンドで検証されています — 中間者はいません。";
+"SAFETY_NUMBER_UNAVAILABLE" = "セーフティナンバーは利用できません — このチャットにはまだインターネットIDがありません。";
+"COMMON_COPY" = "コピー";
+"ADVANCED_SETTING_SHARE_LAST_SEEN_TITLE" = "最終接続の共有";
+"ADVANCED_SETTING_SHARE_LAST_SEEN_DESCRIPTION" = "連絡先に最終オンライン時刻を表示します。オフにするとプレゼンスは完全に非表示になります。";
+"CHAT_TYPING" = "入力中…";
+"CHAT_PRESENCE_ONLINE" = "オンライン";
+"CHAT_PRESENCE_LAST_SEEN" = "最終接続 %@";
+"ADVANCED_SETTING_DIAGNOSTICS_UPLOAD_TITLE" = "診断データのアップロード";
+"ADVANCED_SETTING_DIAGNOSTICS_UPLOAD_DESCRIPTION" = "問題のトラブルシューティングに役立てるため、匿名化されたテレメトリの送信を許可します。";
+"ADVANCED_SETTING_EXPERIMENTAL_FEATURES_TITLE" = "実験的機能";
+"ADVANCED_SETTING_EXPERIMENTAL_FEATURES_DESCRIPTION" = "まだ変更や不安定の可能性があるベータ機能を有効にします。";
+"ADVANCED_SETTING_UNAVAILABLE_NOTE" = "このデバイスでは利用できません。";
+
+/* General Chat */
+"GENERAL_CHAT_ENTRY_TITLE" = "一般チャット";
+"GENERAL_CHAT_ENTRY_SUMMARY" = "付近の人々との共有チャット。";
+"AUTHORITY_CHAT_ENTRY_TITLE" = "権限メッシュ";
+"AUTHORITY_CHAT_ENTRY_SUMMARY" = "認証済みフィールドチーム専用のロール制限メッシュ。";
+"AUTHORITY_CHAT_NAV_TITLE" = "権限メッシュ";
+"RESCUE_AUTHORITY_MESH_TOGGLE_FOOTER" = "認証済みフィールドチーム向けの暗号化メッシュ。";
+"RESCUE_AUTHORITY_MESH_TOGGLE_NO_KEY" = "認証キーを待っています…";
+"MESH_CHAT_ATTACH_IMAGE" = "画像を添付";
+"MESH_CHAT_VOICE_RECORD" = "音声メッセージを録音";
+"GENERAL_CHAT_BACK_ACTION" = "戻る";
+"GENERAL_CHAT_NAV_TITLE" = "一般チャット";
+"GENERAL_CHAT_NAV_SUBTITLE_OFF" = "一般チャットはオフです";
+"GENERAL_CHAT_JOIN_ACTION" = "一般チャットに参加";
+"GENERAL_CHAT_COMPOSER_PLACEHOLDER" = "メッセージを入力...";
+"GENERAL_CHAT_REMOTE_STATUS" = "共有中";
+"GENERAL_CHAT_STATUS_OFF_NOTICE" = "この共有会話に参加するには、一般チャットをオンにしてください。";
+"GENERAL_CHAT_STATUS_ACTIVE_NOTICE" = "一般チャットはアクティブです。付近の人が参加できます。";
+"GENERAL_CHAT_STATUS_SEARCHING_NOTICE" = "付近の人を探しています。誰かが接続するとチャットが始まります。";
+"GENERAL_CHAT_EMPTY_ENABLED" = "メッセージを入力して、付近の人々との共有会話を始めましょう。";
+"GENERAL_CHAT_EMPTY_DISABLED" = "この電話を共有会話に参加させたいときに、一般チャットをオンにしてください。";
+"GENERAL_CHAT_CONNECTED_USERS_TITLE" = "ここにいる人々";
+"GENERAL_CHAT_CONNECTED_USERS_EMPTY" = "まだ誰も接続していません。";
+"GENERAL_CHAT_CONNECTED_USERS_WAITING" = "一般チャットを開いたままにしておくと、付近の人が接続したときにここに表示されます。";
+"GENERAL_CHAT_CONNECTED_USERS_COUNT" = "ここにいる人数: %d";
+"GENERAL_CHAT_INTRO_TITLE" = "一般チャット";
+"GENERAL_CHAT_INTRO_SUBTITLE" = "ここでのメッセージは、この会話に参加している付近の全員と共有されます。";
+"GENERAL_CHAT_INTRO_BULLET_SHARED" = "このルームのメッセージは1人だけでなく、付近の人々に届きます。";
+"GENERAL_CHAT_INTRO_BULLET_RELAY" = "メッセージは付近の他の電話を経由して移動し続けることがあります。";
+"GENERAL_CHAT_INTRO_BULLET_PRIVACY" = "個人情報や機密事項はここで共有しないでください。";
+"GENERAL_CHAT_INTRO_FOOTER_STANDARD" = "この会話は一般チャットを開いている付近の電話とのみ動作します。";
+"GENERAL_CHAT_INTRO_FOOTER_EXPERIMENTAL" = "この会話は付近の電話と動作し、現在は追加のテスト機能がオンになっています。";
+"GENERAL_CHAT_INTRO_DONT_SHOW_AGAIN" = "今後表示しない";
+"GENERAL_CHAT_INTRO_CONTINUE" = "続ける";
+"GENERAL_CHAT_INTRO_CANCEL" = "戻る";
+"GENERAL_CHAT_THIS_DEVICE" = "この電話";
+"GENERAL_CHAT_PEER_NAME_FALLBACK" = "付近の人";
+"GENERAL_CHAT_PEER_SUBTITLE" = "付近の人";
+"GENERAL_CHAT_YOU" = "自分";
+"GENERAL_CHAT_READY" = "接続済み";
+"GENERAL_CHAT_CONNECTING" = "接続中";
+"GENERAL_CHAT_STATUS_QUEUED" = "キュー待機中";
+"GENERAL_CHAT_STATUS_SENDING" = "送信中";
+"GENERAL_CHAT_STATUS_SENT" = "送信済み";
+"GENERAL_CHAT_STATUS_DELIVERED" = "配信済み";
+"GENERAL_CHAT_STATUS_READ" = "既読";
+"GENERAL_CHAT_STATUS_FAILED" = "失敗";
+"GENERAL_CHAT_ERROR_UNSUPPORTED" = "このデバイスでは一般チャットを利用できません。";
+"GENERAL_CHAT_ERROR_UNAUTHORIZED" = "一般チャットを使用するにはBluetoothの使用を許可してください。";
+"GENERAL_CHAT_ERROR_POWERED_OFF" = "一般チャットを使用するにはBluetoothをオンにしてください。";
+"GENERAL_CHAT_ERROR_RESETTING" = "Bluetoothを再起動中です。しばらくお待ちください。";
+"GENERAL_CHAT_ERROR_UNKNOWN" = "一般チャットを準備しています。";
+"GENERAL_CHAT_ERROR_UNAVAILABLE" = "一般チャットは現在利用できません。";
+
+/* Voice Call */
+"VOICE_CALL_RECONNECTING" = "再接続中…";
+"VOICE_CALL_QUALITY_GOOD" = "接続良好";
+"VOICE_CALL_QUALITY_FAIR" = "接続普通";
+"VOICE_CALL_QUALITY_POOR" = "接続不良";
+"VIDEO_CALL_SWITCH_CAMERA" = "カメラを切り替え";
+"VOICE_CALL_STATE_DIALING" = "発信中…";
+"VOICE_CALL_STATE_INCOMING" = "着信";
+"VOICE_CALL_STATE_CONNECTING" = "接続中…";
+"VOICE_CALL_STATE_ACTIVE" = "通話中";
+"VOICE_CALL_ENDED" = "通話が終了しました";
+"VOICE_CALL_ACTION" = "音声通話";
+"VIDEO_CALL_ACTION" = "ビデオ通話";
+"VOICE_CALL_ANSWER_ACTION" = "応答";
+"VOICE_CALL_REJECT_ACTION" = "拒否";
+"VOICE_CALL_END_ACTION" = "通話終了";
+"VOICE_CALL_MUTE" = "ミュート";
+"VOICE_CALL_UNMUTE" = "ミュート解除";
+"VOICE_CALL_SPEAKER" = "スピーカー";
+"VOICE_CALL_EARPIECE" = "受話口";
+"VIDEO_CALL_ENABLE_CAMERA" = "カメラをオン";
+"VIDEO_CALL_DISABLE_CAMERA" = "カメラをオフ";
+"VOICE_CALL_OPEN_CHAT" = "チャットを開く";
+"VOICE_CALL_STATUS_ACTIVE" = "暗号化された付近での音声通話が進行中です。";
+"VOICE_CALL_STATUS_DIALING" = "付近の連絡先を探しています…";
+"VOICE_CALL_STATUS_CONNECTING" = "付近のiOS連絡先に接続中…";
+"VOICE_CALL_STATUS_RINGING_OUTGOING" = "付近の連絡先を呼び出し中…";
+"VOICE_CALL_STATUS_RINGING_INCOMING" = "付近からの着信音声通話。";
+"VOICE_CALL_STATUS_ENDED" = "音声通話が終了しました。";
+"VOICE_CALL_STATUS_NO_ANSWER" = "応答がありませんでした。";
+"VOICE_CALL_STATUS_REJECTED" = "通話が拒否されました。";
+"VOICE_CALL_STATUS_BUSY" = "連絡先は他の通話中です。";
+"VOICE_CALL_STATUS_MISSED" = "不在着信。";
+"VOICE_CALL_STATUS_MIC_REQUIRED" = "付近での音声通話にはマイクの使用許可が必要です。";
+"VOICE_CALL_STATUS_UNAVAILABLE" = "付近の音声通話は現在利用できません。";
+"VOICE_CALL_STATUS_WAITING_PEER" = "相手のiOS連絡先が付近で同じチャットを開くのを待っています。";
+"VOICE_CALL_NOTIFICATION_BODY" = "付近からの着信音声通話。";
+"VIDEO_CALL_STATUS_ACTIVE" = "暗号化された付近でのビデオ通話が進行中です。";
+"VIDEO_CALL_STATUS_DIALING" = "付近のビデオ通話を開始しています…";
+"VIDEO_CALL_STATUS_CONNECTING" = "付近のビデオ通話に接続中…";
+"VIDEO_CALL_STATUS_RINGING_OUTGOING" = "付近の連絡先にビデオ通話を発信中…";
+"VIDEO_CALL_STATUS_RINGING_INCOMING" = "付近からの着信ビデオ通話。";
+"VIDEO_CALL_STATUS_ENDED" = "ビデオ通話が終了しました。";
+"VIDEO_CALL_STATUS_NO_ANSWER" = "ビデオ通話に応答がありませんでした。";
+"VIDEO_CALL_STATUS_REJECTED" = "ビデオ通話が拒否されました。";
+"VIDEO_CALL_STATUS_BUSY" = "連絡先は他の通話中です。";
+"VIDEO_CALL_STATUS_MISSED" = "不在ビデオ着信。";
+"VIDEO_CALL_STATUS_PERMISSIONS_REQUIRED" = "付近でのビデオ通話にはカメラとマイクの使用許可が必要です。";
+"VIDEO_CALL_STATUS_UNAVAILABLE" = "付近のiOSビデオ通話は現在利用できません。";
+"VIDEO_CALL_NOTIFICATION_BODY" = "付近からの着信ビデオ通話。";
+"SOS_CHAT_CALL_EVENT_OUTGOING_ANSWERED" = "発信通話";
+"SOS_CHAT_CALL_EVENT_INCOMING_ANSWERED" = "着信通話";
+"SOS_CHAT_CALL_EVENT_MISSED" = "不在着信";
+"SOS_CHAT_CALL_EVENT_REJECTED" = "拒否した通話";
+"SOS_CHAT_CALL_EVENT_CANCELED" = "キャンセルされた通話";
+"SOS_CHAT_E2EE_NOTICE" = "このチャットはエンドツーエンドで暗号化され、2台のデバイスにのみ保存されます。";
+
+/* App Error */
+"APP_ERROR_TITLE" = "アプリのデータを準備できませんでした。";
+"APP_ERROR_MESSAGE" = "アプリを完全に終了して再度開いてください。問題が続く場合はアプリを削除して再インストールしてください。";
+
+/* Onboarding */
+"ONBOARDING_COMPLETE_SETUP" = "セットアップを完了";
+"ONBOARDING_COMPLETE_SETUP_DETAIL" = "表示名を入力し、必要な書類を確認してください。";
+"ONBOARDING_NAME_SECTION" = "あなたのお名前";
+"ONBOARDING_NAME_SECTION_DETAIL" = "信頼できる連絡先や救助隊に表示されます。";
+"ONBOARDING_NAME_PLACEHOLDER" = "お名前を入力してください";
+"ONBOARDING_NAME_HINT" = "後からプロフィールで変更できます。";
+"ONBOARDING_DOCUMENTS_SECTION" = "必要な書類";
+"ONBOARDING_DOCUMENTS_SECTION_DETAIL" = "続行するには両方に同意する必要があります。";
+"ONBOARDING_TERMS" = "利用規約";
+"ONBOARDING_PRIVACY" = "プライバシーポリシー";
+"ONBOARDING_LOCAL_NOTICE" = "あなたのプロフィール情報は、明示的に共有しない限りこのデバイス内に保存されます。";
+"ONBOARDING_REVIEW_LINK" = "確認";
+"ONBOARDING_BACK" = "戻る";
+
+/* Tools Screen */
+"TOOLS_SECTION_ASSISTANT" = "アシスタント";
+"TOOLS_SECTION_DETECT" = "検知";
+"TOOLS_SECTION_SIGNAL" = "信号と救助";
+"TOOLS_SECTION_NAVIGATE" = "ナビゲーション";
+"TOOLS_SENSORS_SUBTITLE" = "リアルタイムのモーション、方位、高度、デバイステレメトリ。";
+"TOOLS_COMPASS_SUBTITLE" = "すばやい方位の確認と方向の参照。";
+"TOOLS_METAL_DETECTOR_SUBTITLE" = "付近の干渉と金属反応をスキャン。";
+"TOOLS_SIGNAL_FINDER_SUBTITLE" = "付近のより強い無線やBluetooth信号を探します。";
+"TOOLS_WHISTLE_SUBTITLE" = "声だけでは足りないときの大音量の音響信号。";
+"TOOLS_OFFLINE_MAP_SUBTITLE" = "ネットワーク無しでキャッシュ済みマップとローカルの位置参照を開きます。";
+
+/* Settings Screen */
+"SETTINGS_SECTION_IDENTITY" = "ID とアクセス";
+"SETTINGS_SECTION_PREFERENCES" = "環境設定";
+"SETTINGS_SECTION_SAFETY" = "安全とプライバシー";
+"SETTINGS_PROFILE_SUBTITLE" = "ID、連絡先情報、緊急メモ。";
+"SETTINGS_NOTIFICATIONS_SUBTITLE" = "アラートの設定と重要なリマインダー。";
+"SETTINGS_PRIVACY_SUBTITLE" = "権限、データ取り扱い、デバイスのセキュリティ。";
+
+/* New Contact */
+"NEW_CONTACT_REFRESH_QR" = "QRを更新";
+"NEW_CONTACT_STOP_SHARING" = "共有を停止";
+"NEW_CONTACT_SHOW_QR" = "QRコードを表示";
+"NEW_CONTACT_SECTION_CONNECT" = "接続";
+"NEW_CONTACT_ADD_CONTACT" = "連絡先を追加";
+"NEW_CONTACT_EMPTY_DETAIL" = "信頼できる緊急連絡先を追加して、安全な通信とSOS連携を開始しましょう。";
+"NEW_CONTACT_LOADING_TITLE" = "会話を読み込み中...";
+"NEW_CONTACT_LOADING_DETAIL" = "バックグラウンドでチャット一覧を準備しています。";
+
+/* Manual Connect */
+"MANUAL_CONNECT_TITLE" = "手動で接続";
+"MANUAL_CONNECT_HEADER" = "手動での連絡先入力";
+"MANUAL_CONNECT_HEADER_DETAIL" = "QRペイロードの連絡先データを貼り付けてください。";
+"MANUAL_CONNECT_SECTION_IDENTITY" = "ID";
+"MANUAL_CONNECT_DISPLAY_NAME" = "表示名(任意)";
+"MANUAL_CONNECT_SECTION_CONNECTION" = "接続";
+"MANUAL_CONNECT_SESSION_CODE" = "セッションコード";
+"MANUAL_CONNECT_AES_KEY" = "AESキー (base64)";
+"MANUAL_CONNECT_SHARE_ID" = "共有ID(任意)";
+"MANUAL_CONNECT_HINT" = "セッションコードとAESキーは相手のデバイスのQRペイロードと一致する必要があります。";
+"MANUAL_CONNECT_ACTION" = "接続";
+
+/* Offline Map */
+"OFFLINE_MAP_TITLE" = "オフラインマップ";
+"OFFLINE_MAP_DOWNLOAD_TITLE" = "オフラインダウンロード";
+"OFFLINE_MAP_REGIONS_TITLE" = "オフライン地域";
+"OFFLINE_MAP_CONTINUE" = "続ける";
+"OFFLINE_MAP_OK" = "OK";
+"OFFLINE_MAP_DOWNLOAD_ACTION" = "表示中のエリアをダウンロード";
+"OFFLINE_MAP_SECTION_REGION" = "地域";
+"OFFLINE_MAP_NAME" = "名前";
+"OFFLINE_MAP_SECTION_ZOOM" = "ズーム範囲";
+"OFFLINE_MAP_MIN_ZOOM" = "最小ズーム: %d";
+"OFFLINE_MAP_MAX_ZOOM" = "最大ズーム: %d";
+"OFFLINE_MAP_SECTION_ESTIMATE" = "推定";
+"OFFLINE_MAP_TILES" = "タイル";
+"OFFLINE_MAP_SIZE" = "サイズ";
+"OFFLINE_MAP_RENAME_TITLE" = "地域名を変更";
+"OFFLINE_MAP_RENAME_MESSAGE" = "このオフライン地域の名前を更新します。";
+"OFFLINE_MAP_NO_REGIONS" = "オフライン地域はまだありません。";
+"OFFLINE_MAP_DOWNLOADED_TILES" = "%d 枚のタイルをダウンロードしました";
+"OFFLINE_MAP_CREATED" = "作成: %@";
+"OFFLINE_MAP_VIEW" = "表示";
+"OFFLINE_MAP_RENAME" = "名前変更";
+"OFFLINE_MAP_DELETE" = "削除";
+
+/* Profile */
+"PROFILE_EDIT_NAME_TITLE" = "名前を編集";
+"PROFILE_EDIT_NAME_MESSAGE" = "チャットやQR連絡先共有で表示される名前を更新します。";
+"PROFILE_EDIT_LABEL" = "編集";
+
+/* Common */
+"COMMON_CLOSE" = "閉じる";
+"COMMON_CANCEL" = "キャンセル";
+"COMMON_SAVE" = "保存";
+"COMMON_OK" = "OK";
+"COMMON_BACK" = "戻る";
+"COMMON_PAUSE" = "一時停止";
+"COMMON_RESUME" = "再開";
+
+/* Onboarding additions */
+"Next" = "次へ";
+"Continue" = "続ける";
+"Get started" = "開始する";
+"You can edit these later in Profile." = "これらは後でプロフィールから編集できます。";
+"To continue, please accept both documents and enter your name." = "続行するには、両方の書類に同意してお名前を入力してください。";
+"You can change these later in Settings." = "これらは後で設定から変更できます。";
+"You can review these tips later from Messages and Rescue." = "これらのヒントは後でメッセージと救助から確認できます。";
+"Step 1 of 3" = "ステップ 1 / 3";
+"Step 2 of 3" = "ステップ 2 / 3";
+"Step 3 of 3" = "ステップ 3 / 3";
+"Complete the required setup." = "必要なセットアップを完了してください。";
+"Enable core features." = "主要機能を有効にしてください。";
+"Keep Crisis Connect reachable." = "クライシスコネクトを接続可能な状態に保ってください。";
+"Add your name and accept the documents. You can edit details later." = "お名前を入力し、書類に同意してください。詳細は後で編集できます。";
+"Grant the permissions Crisis Connect relies on during emergencies." = "クライシスコネクトが緊急時に必要とする権限を許可してください。";
+"Keep the app in the background so offline messages can still reach you." = "オフラインメッセージが届くように、アプリをバックグラウンドで動作させ続けてください。";
+"Core permissions" = "主要な権限";
+"Each permission helps Crisis Connect reach you, or help others, during emergencies." = "各権限は、緊急時にクライシスコネクトがあなたに届くか、他の人を支援するために役立ちます。";
+"Location" = "位置情報";
+"Share SOS location, center offline maps, and help rescuers find you." = "SOSの位置を共有し、オフラインマップの中心を合わせ、救助者があなたを見つけるのを支援します。";
+"Reach nearby phones over BLE mesh when the internet is down." = "インターネットが使えないときに、BLEメッシュで近くの電話に接続します。";
+"Receive SOS alerts from nearby users in distress." = "緊急事態にある近くの利用者からのSOS通知を受け取ります。";
+"You can skip any permission now and change it later from Settings. The app still works — but some rescue features will be limited." = "今はどの権限もスキップでき、後で設定から変更できます。アプリは引き続き動作しますが、一部の救助機能が制限されます。";
+"Allow" = "許可";
+"Allowed" = "許可済み";
+"Denied" = "拒否済み";
+"Restricted" = "制限あり";
+"How to leave the app" = "アプリの終了方法";
+"Go Home or switch apps. Do not swipe Crisis Connect away." = "ホームに戻るか他のアプリに切り替えてください。クライシスコネクトをスワイプで終了しないでください。";
+"Home or switch apps is OK" = "ホームまたはアプリ切り替えはOK";
+"Do not swipe it away" = "スワイプで終了しないでください";
+"Do This" = "これを行う";
+"Leave it in the background" = "バックグラウンドに残す";
+"Go Home or switch apps." = "ホームに戻るか、アプリを切り替えてください。";
+"Do Not Do This" = "これはしないでください";
+"Do not close it" = "閉じないでください";
+"Do not swipe Crisis Connect away." = "クライシスコネクトをスワイプで終了しないでください。";
+"Back" = "戻る";
+
+/* OfflineMap additions */
+"Download" = "ダウンロード";
+"Regions" = "地域";
+"My Location" = "現在地";
+"Select a map area first." = "先にマップのエリアを選択してください。";
+"Offline map provider key is not configured." = "オフラインマッププロバイダーキーが設定されていません。";
+"Region is too small for the selected zoom range." = "選択したズーム範囲に対して地域が小さすぎます。";
+"This download may be large and take time. Continue?" = "このダウンロードは大きくて時間がかかる場合があります。続行しますか?";
+"Download paused" = "ダウンロードを一時停止しました";
+"Download resumed" = "ダウンロードを再開しました";
+"Location permission is disabled. Enable it in Settings." = "位置情報の許可が無効です。設定で有効にしてください。";
+"Unable to access location." = "位置情報にアクセスできません。";
+"Unable to fetch location." = "位置情報を取得できません。";
+"Download started" = "ダウンロードを開始しました";
+"Download complete: %@" = "ダウンロード完了: %@";
+"Download failed: %@" = "ダウンロード失敗: %@";
+"Offline Region %d" = "オフライン地域 %d";
+"Large Download" = "大容量ダウンロード";
+"Offline Maps" = "オフラインマップ";
+"Tile count is zero." = "タイル数がゼロです。";
+"Invalid tile URL." = "タイルURLが無効です。";
+"Empty tile response." = "タイル応答が空です。";
+"Invalid tile response." = "タイル応答が無効です。";
+"Tile request failed after retrying." = "再試行後もタイルの取得に失敗しました。";
+"Imported Offline Map" = "インポート済みオフラインマップ";
+"No offline map region is available to share." = "共有できるオフラインマップ地域がありません。";
+"The selected offline map is too large to send." = "選択したオフラインマップが大きすぎて送信できません。";
+"The offline map bundle could not be prepared." = "オフラインマップパッケージを準備できませんでした。";
+"The shared offline map bundle is invalid." = "共有されたオフラインマップパッケージが無効です。";
+"Idle" = "待機中";
+"Downloading" = "ダウンロード中";
+"Paused" = "一時停止";
+"Complete" = "完了";
+"Failed" = "失敗";
+"%d / %d tiles" = "%d / %d タイル";
+
+/* Profile additions */
+"Account Details" = "アカウント詳細";
+"Core profile fields synced across contact sharing and rescue coordination." = "連絡先共有と救助連携で同期される基本プロフィール項目。";
+"Username" = "ユーザー名";
+"Country" = "国";
+"Agency" = "所属機関";
+"Role" = "役割";
+"Display Name" = "表示名";
+"Use a clear name that other people see in chats and QR adds." = "チャットやQR追加で他の人に見える、わかりやすい名前を使用してください。";
+"Verification is managed by the server." = "認証はサーバーで管理されています。";
+"Access" = "アクセス";
+"Connect or disconnect the account used for verified profile sync." = "認証済みプロフィール同期に使用するアカウントを接続または切断します。";
+"Not set" = "未設定";
+"Dismiss login error" = "ログインエラーを閉じる";
+"Offline Map" = "オフラインマップ";
+"SOS" = "SOS";
+
+/* Crisis Sentinel */
+"CRISIS_SENTINEL_TITLE" = "Crisis Sentinel";
+"CRISIS_SENTINEL_TOOL_SUBTITLE" = "災害、応急手当、現場レポート、Crisis Connect を支援するオフラインアシスタント。";
+"CRISIS_SENTINEL_REFRESH_STATUS" = "モデル状態を更新";
+"CRISIS_SENTINEL_NOTICE_TITLE" = "Crisis Sentinel";
+"CRISIS_SENTINEL_INTRO" = "Crisis Sentinel を一度ダウンロードしておくと、通信が不安定なときもオフラインの災害ガイドとして使えます。";
+"CRISIS_SENTINEL_MODEL_STATUS_TITLE" = "オフラインAIのダウンロード";
+"CRISIS_SENTINEL_MODEL_ACTIVE" = "モデルはダウンロード済み";
+"CRISIS_SENTINEL_MODEL_MISSING" = "モデル未ダウンロード";
+"CRISIS_SENTINEL_MODEL_CORRUPT" = "モデルの再ダウンロードが必要";
+"CRISIS_SENTINEL_MODEL_STORAGE_LOW" = "ストレージ不足";
+"CRISIS_SENTINEL_MODEL_FALLBACK" = "アプリを軽く保つため、モデルは別途ダウンロードします。準備ができるまでは、内蔵のオフラインガイドで回答します。";
+"CRISIS_SENTINEL_MODEL_RELEASE_FORMAT" = "リリース: %@";
+"CRISIS_SENTINEL_MODEL_SIZE_FORMAT" = "保存済み: %@";
+"CRISIS_SENTINEL_MODEL_DOWNLOAD" = "モデルをダウンロード";
+"CRISIS_SENTINEL_MODEL_MANIFEST_LOADING" = "リリースを確認中...";
+"CRISIS_SENTINEL_MODEL_DOWNLOADING" = "モデルをダウンロード中...";
+"CRISIS_SENTINEL_MODEL_DOWNLOAD_PROGRESS_FORMAT" = "モデルをダウンロード中… %d%%";
+"CRISIS_SENTINEL_DOWNLOAD_MANIFEST_MISSING" = "モデルリリースはまだ設定されていません。";
+"CRISIS_SENTINEL_DOWNLOAD_QUEUED" = "モデルのダウンロードが完了しました。";
+"CRISIS_SENTINEL_DOWNLOAD_FAILED" = "モデルをダウンロードできませんでした。";
+"CRISIS_SENTINEL_DOWNLOAD_ONLY_TITLE" = "オフラインAIをダウンロード";
+"CRISIS_SENTINEL_DOWNLOAD_ONLY_BODY" = "Crisis Sentinel モデルをこの端末にダウンロードします。大きなファイルになる場合があるため、Wi-Fi と十分な空き容量をおすすめします。";
+"CRISIS_SENTINEL_DOWNLOAD_READY_TITLE" = "Crisis Sentinel は準備完了です";
+"CRISIS_SENTINEL_DOWNLOAD_READY_BODY" = "オフラインモデルはこの端末で準備できています。メインメニューに戻り、AI項目から Crisis Sentinel を開いてください。";
+"CRISIS_SENTINEL_OPEN_MAIN_MENU" = "メインメニューへ";
+"CRISIS_SENTINEL_HOME_SUBTITLE" = "災害ガイド、現場レポート、応急手当、Crisis Connect の知識をローカルアシスタントで利用できます。";
+"CRISIS_SENTINEL_SETTINGS" = "AI設定";
+"CRISIS_SENTINEL_NEW_CHAT" = "新しいチャット";
+"CRISIS_SENTINEL_RECENT_CHATS" = "最近のチャット";
+"CRISIS_SENTINEL_NO_CHATS_TITLE" = "Crisis Sentinel のチャットはまだありません";
+"CRISIS_SENTINEL_NO_CHATS_BODY" = "質問、現場レポート作成、オフライン応急手当の確認には新しいチャットを開始してください。";
+"CRISIS_SENTINEL_EMPTY_CHAT_PREVIEW" = "メッセージはまだありません";
+"CRISIS_SENTINEL_DEFAULT_MODE" = "既定の応答モード";
+"CRISIS_SENTINEL_DEFAULT_MODE_BODY" = "新しいチャットはこのモードを使います。Public は一般利用者向けに安全で、Field team は運用メモをより強く整形します。";
+"CRISIS_SENTINEL_DEFAULT_MODE_AUTHORIZED_BODY" = "権限のある役割が検出されました。新しいチャットは選択した役割のコンテキストを使用します。Coordinator の出力は下書きのみで、指揮の承認が必要です。";
+"CRISIS_SENTINEL_MODEL_ANSWER_NOT_READY" = "ローカルAIチャットを始める前に Crisis Sentinel をダウンロードしてください。";
+"CRISIS_SENTINEL_MODE_PUBLIC" = "Public";
+"CRISIS_SENTINEL_MODE_FIELD" = "Field team";
+"CRISIS_SENTINEL_MODE_COORDINATOR" = "Coordinator";
+"CRISIS_SENTINEL_GENERATING" = "回答を準備中...";
+"CRISIS_SENTINEL_GENERATION_CANCELLED" = "回答生成をキャンセルしました。";
+"CRISIS_SENTINEL_GENERATION_TIMEOUT" = "回答生成がタイムアウトしました。質問を短くするか、添付したコンテキストを減らしてください。";
+"CRISIS_SENTINEL_INPUT_PHOTO_OCR" = "写真OCR";
+"CRISIS_SENTINEL_INPUT_FILE" = "ファイルテキストを追加";
+"CRISIS_SENTINEL_INPUT_VOICE" = "音声入力";
+"CRISIS_SENTINEL_INPUT_VOICE_STOP" = "音声入力を停止";
+"CRISIS_SENTINEL_INPUT_PROCESSING" = "選択した入力を読み取り中...";
+"CRISIS_SENTINEL_INPUT_ADDED" = "入力を質問に追加しました。";
+"CRISIS_SENTINEL_INPUT_EMPTY" = "読み取れるテキストがありません。";
+"CRISIS_SENTINEL_INPUT_FAILED" = "選択した入力を読み取れませんでした。";
+"CRISIS_SENTINEL_INPUT_UNAVAILABLE" = "このデバイスでは音声入力を使用できません。";
+"CRISIS_SENTINEL_DICTATION_STARTED" = "音声入力を開始しました。完了したら停止してください。";
+"CRISIS_SENTINEL_PROMPT_EMPTY" = "まず質問または現場メモを書いてください。";
+"CRISIS_SENTINEL_SOURCE_LOCAL_MODEL" = "ローカルモデル";
+"CRISIS_SENTINEL_SOURCE_OFFLINE_RULES" = "オフラインガイド";
+"CRISIS_SENTINEL_CHAT_EMPTY_TITLE" = "Crisis Sentinel に質問";
+"CRISIS_SENTINEL_CHAT_EMPTY_BODY" = "状況をわかりやすい言葉で書いてください。写真の文字、ファイルの文字、音声入力も追加できます。";
+"CRISIS_SENTINEL_CHAT_PLACEHOLDER" = "Crisis Sentinel にメッセージ";
+"CRISIS_SENTINEL_MAIN_ENTRY_PREVIEW" = "オフライン災害支援用のローカルAIが準備完了";
+"CRISIS_SENTINEL_INFO" = "情報";
+"CRISIS_SENTINEL_DRAFT_BADGE" = "下書き";
+"CRISIS_SENTINEL_DRAFT_PREVIEW_FORMAT" = "下書き: %@";
+"CRISIS_SENTINEL_DELETE_CHAT_TITLE" = "チャットを削除しますか？";
+"CRISIS_SENTINEL_DELETE_CHAT_ACTION" = "チャットを削除";
+"CRISIS_SENTINEL_DELETE_CHAT_MESSAGE" = "この Crisis Sentinel チャットをこのデバイスから削除します。";
+"CRISIS_SENTINEL_MODEL_REQUIRED_SPACE_LABEL" = "必要な空き容量";
+"CRISIS_SENTINEL_MODEL_REQUIRED_SPACE_FORMAT" = "少なくとも %@";
+"CRISIS_SENTINEL_MODEL_DOWNLOAD_SIZE_LABEL" = "ダウンロードサイズ";
+"CRISIS_SENTINEL_MODEL_DOWNLOAD_SIZE_UNKNOWN" = "ダウンロード前に確認";
+"CRISIS_SENTINEL_CELLULAR_DOWNLOAD_TITLE" = "モバイルデータでダウンロードしますか？";
+"CRISIS_SENTINEL_CELLULAR_DOWNLOAD_ACTION" = "そのままダウンロード";
+"CRISIS_SENTINEL_CELLULAR_DOWNLOAD_MESSAGE" = "モデルは大きい場合があります。モバイルデータの使用を抑えるため Wi-Fi をおすすめします。";
+"CRISIS_SENTINEL_MODEL_DELETE" = "ダウンロード済みモデルを削除";
+"CRISIS_SENTINEL_MODEL_DELETE_DONE" = "ダウンロード済みモデルを削除しました。";
+"CRISIS_SENTINEL_MODEL_DELETE_FAILED" = "ダウンロード済みモデルを削除できませんでした。";
+"CRISIS_SENTINEL_MODEL_DELETE_TITLE" = "ダウンロード済みモデルを削除しますか？";
+"CRISIS_SENTINEL_MODEL_DELETE_ACTION" = "モデルを削除";
+"CRISIS_SENTINEL_MODEL_DELETE_MESSAGE" = "Crisis Sentinel はこのデバイスからオフラインAIモデルを削除します。後でもう一度ダウンロードできます。";
+
+/* Crisis Sentinel chat quality */
+"CRISIS_SENTINEL_ACTION_SHARE" = "共有";
+"CRISIS_SENTINEL_ACTION_REGENERATE" = "再生成";
+"CRISIS_SENTINEL_NEW_RESPONSE" = "新しい返信";
+"CRISIS_SENTINEL_DURATION_SECONDS" = "%@秒";
+
+/* Crisis Sentinel chat polish */
+"CRISIS_SENTINEL_SUGGEST_PUBLIC_1" = "がれきの下に閉じ込められました。どうすれば？";
+"CRISIS_SENTINEL_SUGGEST_PUBLIC_2" = "地震への備えに何が必要ですか？";
+"CRISIS_SENTINEL_SUGGEST_PUBLIC_3" = "激しい出血はどう止めますか？";
+"CRISIS_SENTINEL_SUGGEST_PUBLIC_4" = "火災時に安全に避難するには？";
+"CRISIS_SENTINEL_SUGGEST_FIELD_1" = "トリアージの優先順位は？";
+"CRISIS_SENTINEL_SUGGEST_FIELD_2" = "短いSITREPの下書きを作成";
+"CRISIS_SENTINEL_SUGGEST_FIELD_3" = "がれきでの捜索救助の手順";
+"CRISIS_SENTINEL_SUGGEST_FIELD_4" = "安全な負傷者搬送の方法";
+"CRISIS_SENTINEL_MODEL_DOWNLOADING_BUTTON" = "モデルをダウンロード中…";
+
+/* Profile auth providers (Microsoft / SSO / Phone) */
+"PROFILE_LOGIN_MICROSOFT" = "Microsoftでサインイン";
+"PROFILE_LOGIN_ENTERPRISE_SSO" = "SSOでサインイン";
+"PROFILE_LOGIN_DIVIDER" = "または次の方法で続行";
+"PROFILE_LOGIN_PHONE_TITLE" = "電話番号で認証";
+"PROFILE_ENTERPRISE_SSO_NOT_CONFIGURED" = "このアプリビルドでは企業SSOが構成されていません。";
+"PROFILE_PHONE_PLACEHOLDER" = "電話番号";
+"PROFILE_PHONE_SEND_CODE" = "コードを送信";
+"PROFILE_PHONE_CODE_PLACEHOLDER" = "確認コード";
+"PROFILE_PHONE_VERIFY" = "確認";
+"PROFILE_PHONE_REQUIRED" = "電話番号を入力してください。";
+"PROFILE_PHONE_CODE_REQUIRED" = "確認コードを入力してください。";
+"PROFILE_PHONE_HELP" = "国番号を含めて入力してください（例：+81 90 1234 5678）。";
+"PROFILE_PHONE_CODE_SENT_FORMAT" = "%@ に送信された6桁のコードを入力してください。";
+"PROFILE_PHONE_RESEND" = "コードを再送信";
+"PROFILE_PHONE_RESEND_IN_FORMAT" = "%d秒後に再送信";
+"PROFILE_PHONE_CHANGE_NUMBER" = "番号を変更";
+"PROFILE_SSO_EMAIL_REQUIRED" = "先に勤務先メールを入力してください。";
+"PROFILE_SSO_EXCHANGE_FAILED" = "SSOサインインを完了できませんでした。再試行してください。";
+"PROFILE_SSO_FAILED" = "SSOサインインに失敗または拒否されました。";
+
+/* Telsiz (push-to-talk) */
+"TELSIZ_TITLE" = "トランシーバー";
+"TELSIZ_TOOLBAR" = "トランシーバー";
+"TELSIZ_STATUS_IDLE" = "チャンネル空き — 長押しで話す";
+"TELSIZ_STATUS_LOCAL" = "あなたが話しています";
+"TELSIZ_STATUS_REMOTE_FORMAT" = "%@ が話しています";
+"TELSIZ_HOLD_TO_TALK" = "長押しで話す";
+"TELSIZ_RELEASE_HINT" = "離すと停止";
+"TELSIZ_RECEIVING" = "受信中";
+"TELSIZ_BUSY" = "チャンネル使用中";
+"TELSIZ_MAX_TALK" = "通話時間の上限に達しました";
+"TELSIZ_LEAVE" = "トランシーバーを退出";
+"TELSIZ_MEMBERS_FORMAT" = "%d 人";
+"TELSIZ_SELF" = "あなた";
+"TELSIZ_STATUS_SPEAKING" = "通話中";
+"TELSIZ_MEMBERS" = "メンバー";
+"TELSIZ_IDLE_HEADING" = "チャンネル空き";
+"TELSIZ_PULL_TO_OPEN" = "引いてトランシーバーを開く";
+"TELSIZ_RELEASE_TO_OPEN" = "離して開く";
+"TELSIZ_LIVE" = "ライブ";
+"TELSIZ_EMPTY" = "まだ誰もいません。近くの担当者が参加するとここに表示されます。";
+"TELSIZ_PERMISSION_TITLE" = "マイクの許可が必要です";
+"TELSIZ_PERMISSION_MESSAGE" = "トランシーバーを使うには設定でマイクを許可してください。";
+"TELSIZ_PERMISSION_SETTINGS" = "設定を開く";
+"TELSIZ_PERMISSION_CANCEL" = "キャンセル";
+
+/* MARK: - Recent Disasters */
+"TOOLS_SECTION_AWARENESS" = "情報を入手";
+"TOOLS_RECENT_DISASTERS_SUBTITLE" = "世界および現在地周辺の災害警報をリアルタイムで監視。";
+"RECENT_DISASTERS_TITLE" = "最近の災害";
+"RECENT_DISASTERS_TAB_GLOBAL" = "世界の警報";
+"RECENT_DISASTERS_SEARCH_HINT" = "国を検索...";
+"RECENT_DISASTERS_FILTER_HIGH_SEVERITY" = "高深刻度のみ";
+"RECENT_DISASTERS_FILTER_ALL" = "すべて";
+"RECENT_DISASTERS_FILTER_EQ" = "地震";
+"RECENT_DISASTERS_FILTER_FL" = "洪水";
+"RECENT_DISASTERS_FILTER_TC" = "暴風/熱帯低気圧";
+"RECENT_DISASTERS_FILTER_VO" = "火山";
+"RECENT_DISASTERS_FILTER_WF" = "山火事";
+"RECENT_DISASTERS_FILTER_DR" = "干ばつ";
+"RECENT_DISASTERS_LAST_UPDATED" = "最終更新: %@";
+"RECENT_DISASTERS_NO_EVENTS" = "災害イベントは見つかりませんでした。";
+"RECENT_DISASTERS_NO_MATCH" = "フィルターに一致するイベントはありません。";
+"RECENT_DISASTERS_OFFLINE_MODE" = "オフラインモード";
+"RECENT_DISASTERS_OFFLINE_MESSAGE" = "インターネットがないとデータを更新できません。キャッシュされた警報を表示しています。";
+"RECENT_DISASTERS_RETRY" = "再試行";
+"RECENT_DISASTERS_ERROR_OFFLINE" = "データを取得できず、キャッシュもありません。接続を確認してください。";
+"RECENT_DISASTERS_ERROR_TIMEOUT" = "サーバーが時間内に応答しませんでした。もう一度お試しください。";
+"RECENT_DISASTERS_IMPACT_DATE" = "期間: %1$@ 〜 %2$@";
+"RECENT_DISASTERS_IMPACT_COORDINATES" = "座標: 緯度 %1$.4f, 経度 %2$.4f";
+"RECENT_DISASTERS_ACTION_MAP" = "地図で表示";
+"RECENT_DISASTERS_DISTANCE_AWAY" = "%@先";
+"RECENT_DISASTERS_FEMA_RED_ALERT_TITLE" = "重大警報";
+"RECENT_DISASTERS_FEMA_RED_ALERT_DESC_GLOBAL" = "重大な危険です。地元当局の指示に従い、緊急時の計画を確認し、直ちに安全な場所へ避難してください。";
+"RECENT_DISASTERS_FEMA_RED_ALERT_DESC_LOCAL" = "顕著な地震活動が検知されました。損傷した建物に入らず、指定された安全な集合場所にとどまり、緊急連絡手段を確保してください。";
+"RECENT_DISASTERS_NEARBY_TITLE" = "周辺";
+"RECENT_DISASTERS_NEARBY_SAFE_TITLE" = "安全です";
+"RECENT_DISASTERS_NEARBY_SAFE_DESC" = "現在地から500km以内に活動中の災害は検知されていません。";
+"RECENT_DISASTERS_NEARBY_NO_LOCATION" = "周辺の災害を表示するには位置情報を有効にしてください。";
+"RECENT_DISASTERS_ENABLE_LOCATION" = "位置情報を有効にする";
+"RECENT_DISASTERS_ALL_EVENTS_TITLE" = "すべてのイベント";
+"RECENT_DISASTERS_TIME_JUST_NOW" = "たった今";
+"RECENT_DISASTERS_TIME_MINUTES" = "%d分前";
+"RECENT_DISASTERS_TIME_HOURS" = "%d時間前";
+"RECENT_DISASTERS_TIME_DAYS" = "%d日前";
+"RECENT_DISASTERS_SOURCE" = "ソース: %@";
+"RECENT_DISASTERS_DISCLAIMER" = "データは公式機関から提供され、遅延する場合があります。常に公式の警報と地元当局の指示に従ってください。";
+"RECENT_DISASTERS_DETAIL_SEVERITY" = "深刻度: %@";
+"RECENT_DISASTERS_REFRESH_CD" = "更新";
+"RECENT_DISASTERS_CLEAR_CD" = "検索をクリア";
+"RECENT_DISASTERS_TYPE_EQ" = "地震";
+"RECENT_DISASTERS_TYPE_FL" = "洪水";
+"RECENT_DISASTERS_TYPE_TC" = "暴風 / 熱帯低気圧";
+"RECENT_DISASTERS_TYPE_VO" = "火山";
+"RECENT_DISASTERS_TYPE_WF" = "山火事";
+"RECENT_DISASTERS_TYPE_DR" = "干ばつ";
+"RECENT_DISASTERS_AFAD_TITLE" = "地震: %@";
+"RECENT_DISASTERS_AFAD_SEVERITY" = "マグニチュード: %1$@ | 深さ: %2$@ km";
+"RECENT_DISASTERS_AFAD_DESCRIPTION" = "AFAD地震情報:\n地域: %1$@\nマグニチュード: %2$@\n深さ: %3$@ km\n日時: %4$@";
+
+/* MARK: - プロフィール 救助証明書カード */
+"PROFILE_CERT_CARD_TITLE" = "救助証明書";
+"PROFILE_CERT_CARD_SUBTITLE" = "救助サーバーが発行した、この端末専用の資格情報です。";
+"PROFILE_CERT_STATUS_ACTIVE" = "有効";
+"PROFILE_CERT_STATUS_EXPIRED" = "期限切れ";
+"PROFILE_CERT_STATUS_REVOKED" = "失効";
+"PROFILE_CERT_LOADING" = "証明書を確認中…";
+"PROFILE_CERT_MISSING_BODY" = "この端末にはまだ証明書が発行されていません。下のボタンをタップして申請してください。";
+"PROFILE_CERT_REQUEST_BUTTON" = "証明書を申請";
+"PROFILE_CERT_REQUEST_IN_PROGRESS" = "発行中…";
+"PROFILE_CERT_ROLE_LABEL" = "役割";
+"PROFILE_CERT_DEVICE_LABEL" = "端末ID";
+"PROFILE_CERT_ISSUED_LABEL" = "発行日";
+"PROFILE_CERT_EXPIRES_LABEL" = "有効期限";
+"PROFILE_CERT_RENEW_BUTTON" = "証明書を更新";
+"PROFILE_CERT_REFRESH_BUTTON" = "再読み込み";
+"PROFILE_CERT_REVOKE_BUTTON" = "失効";
+"PROFILE_CERT_REVOKE_TITLE" = "この証明書を失効しますか？";
+"PROFILE_CERT_REVOKE_BODY" = "新しい証明書を発行するまで、この端末の救助モードは無効になります。";
+"PROFILE_CERT_REVOKE_CONFIRM" = "失効";
+"PROFILE_CERT_CANCEL" = "キャンセル";
+"PROFILE_CERT_FAILURE_TITLE" = "証明書を読み込めませんでした";
+"PROFILE_CERT_RETRY_BUTTON" = "再試行";
+"PROFILE_CERT_DISMISS" = "閉じる";
+"PROFILE_CERT_SIGNIN_REQUIRED" = "救助証明書を申請するにはサインインしてください。";
+"PROFILE_CERT_PROVISION_SUCCESS" = "証明書を発行しました。";
+"PROFILE_CERT_REVOKE_SUCCESS" = "証明書を失効しました。";
+"PROFILE_CERT_ACTIVE_HEADLINE" = "証明書は有効です";
+"PROFILE_CERT_EXPIRED_HEADLINE" = "証明書の期限が切れています";
+"PROFILE_CERT_REVOKED_HEADLINE" = "証明書は失効しました";
+"PROFILE_CERT_INACTIVE_SUBTITLE" = "新しい証明書を発行するまで救助モードは無効のままです。";
+"PROFILE_CERT_EXPIRES_RELATIVE" = "%@ に期限切れ";
+"PROFILE_CERT_MANAGE_LABEL" = "証明書の管理";
+
+"CHAT_STATUS_CONNECTED_BLUETOOTH" = "Bluetooth接続中";
+
+"Open Settings" = "設定を開く";
+"Bluetooth is off — turn it on from Control Center or Settings." = "Bluetoothがオフです — コントロールセンターまたは設定からオンにしてください。";
+
+// Rescue-certificate provisioning banner (Android cert_banner_* parity)
+"CERT_BANNER_IN_PROGRESS_TITLE" = "救助証明書を発行中…";
+"CERT_BANNER_IN_PROGRESS_BODY" = "救助モードで行動できるよう、この端末を保護しています。";
+"CERT_BANNER_SUCCESS_TITLE" = "救助証明書の準備ができました";
+"CERT_BANNER_SUCCESS_BODY" = "この端末は救助活動のために確認されました。";
+"CERT_BANNER_FAILURE_TITLE" = "証明書を発行できませんでした";
+"CERT_BANNER_FAILURE_BODY_WITH_DETAIL" = "%1$@ — プロフィールから再試行してください。";
+"CERT_BANNER_FAILURE_BODY_GENERIC" = "電波が戻ったらプロフィールから再試行してください。";
+"CERT_BANNER_DISMISS" = "閉じる";
+"CERT_BANNER_REASON_AUTH" = "サインインが必要です";
+"CERT_BANNER_REASON_REJECTED" = "サーバーがこの端末を拒否しました";
+
+// SOS emergency call (Android sos_stage_call_title / sos_call_* parity)
+"SOS_STAGE_CALL_TITLE" = "緊急通報";
+"SOS_STAGE_TAP_BADGE" = "ワンタップ";
+"SOS_CALL_BUTTON_LABEL" = "%@ に発信";
+"SOS_CALL_HINT" = "発信すると、あなたの位置情報が緊急サービスに自動送信されます。";
+
+// Whistle sweep + rescue modes (Android whistle_mode_sweep / _rescue parity)
+"WHISTLE_MODE_SWEEP" = "サイレンスイープ";
+"WHISTLE_MODE_SWEEP_DETAIL" = "騒音を突き抜ける上下するサイレン。";
+"WHISTLE_MODE_RESCUE" = "レスキュー";
+"WHISTLE_MODE_RESCUE_DETAIL" = "遠くまで届くように調整されたさえずり音。";
+
+// ==== ja completion to full parity (was 1064/1193) ====
+
+/* MARK: - Late-parity keys (SAFETY_NUMBER forward secret) */
+"SAFETY_NUMBER_FORWARD_SECRET" = "前方秘匿が有効になりました — このチャットは現在、最も強力な暗号化を使用しています。番号はこのアップグレードにより変更されました。";
+
+/* Crisis Sentinel prompt / response / incident draft */
+"CRISIS_SENTINEL_PROMPT_LABEL" = "質問または現場メモ";
+"CRISIS_SENTINEL_PROMPT_PLACEHOLDER" = "例：倒壊した建物の近くでガス臭がし、2人が閉じ込められており、医療支援が必要です。";
+"CRISIS_SENTINEL_ASK" = "質問する";
+"CRISIS_SENTINEL_INPUTS_TITLE" = "入力";
+"CRISIS_SENTINEL_TEXT_READY" = "準備完了：テキスト + オフライン RAG が有効";
+"CRISIS_SENTINEL_MEDIA_READY" = "準備完了：写真 OCR、ファイルテキスト、音声入力が接続済み";
+"CRISIS_SENTINEL_RESPONSE_TITLE" = "回答";
+"CRISIS_SENTINEL_CONFIDENCE_FORMAT" = "信頼度：%@";
+"CRISIS_SENTINEL_SAFETY_TITLE" = "安全上の注意";
+"CRISIS_SENTINEL_FOLLOWUPS_TITLE" = "追加の質問";
+"CRISIS_SENTINEL_INCIDENT_TITLE" = "インシデントの下書き";
+"CRISIS_SENTINEL_INCIDENT_TYPE_FORMAT" = "種類：%@";
+"CRISIS_SENTINEL_INCIDENT_PRIORITY_FORMAT" = "優先度：%@";
+"CRISIS_SENTINEL_INCIDENT_LOCATION_FORMAT" = "位置：%@";
+"CRISIS_SENTINEL_INCIDENT_CASUALTIES_FORMAT" = "負傷者／被災者：%d";
+"CRISIS_SENTINEL_INCIDENT_TRAPPED_FORMAT" = "閉じ込められた人：%d";
+"CRISIS_SENTINEL_INCIDENT_HAZARDS_FORMAT" = "危険要因：%@";
+"CRISIS_SENTINEL_INCIDENT_NEEDS_FORMAT" = "必要なもの：%@";
+"CRISIS_SENTINEL_INCIDENT_MISSING_FORMAT" = "不足している項目：%@";
+"CRISIS_SENTINEL_CITATIONS_TITLE" = "オフラインの出典";
+
+/* Settings — support & feedback */
+"SETTINGS_SECTION_SUPPORT" = "サポートとフィードバック";
+"SETTINGS_RATE_APP_TITLE" = "このアプリを評価";
+"SETTINGS_RATE_APP_SUBTITLE" = "Crisis Connect を気に入っていただけましたか？App Store で評価してください。";
+"SETTINGS_SHARE_APP_TITLE" = "アプリを共有";
+"SETTINGS_SHARE_APP_SUBTITLE" = "災害時に他の人が連絡を取れるよう手助けします。";
+"SETTINGS_SHARE_APP_TEXT" = "Crisis Connect はネットワークが機能しないときでもあなたをつなぎます：%@";
+"SETTINGS_FEEDBACK_TITLE" = "フィードバックを送信";
+"SETTINGS_FEEDBACK_SUBTITLE" = "問題を報告したり、改善を提案したりします。";
+"SETTINGS_FEEDBACK_EMAIL_SUBJECT" = "Crisis Connect のフィードバック（%@）";
+"SETTINGS_FEEDBACK_EMAIL_BODY" = "この行より上にフィードバックをご記入ください。\n\n---\nアプリのバージョン：%@\nデバイス：%@\niOS：%@";
+"SETTINGS_HELP_TITLE" = "ヘルプとサポート";
+"SETTINGS_HELP_SUBTITLE" = "回答を探すにはサポートページをご覧ください。";
+
+/* SOS countdown */
+"SOS_COUNTDOWN_TITLE" = "SOS を開始しています";
+"SOS_COUNTDOWN_BODY" = "カウントダウンが終わると緊急ブロードキャストが始まります。";
+"SOS_COUNTDOWN_SECONDS_LEFT" = "SOS は %d 秒後に開始します";
+"SOS_COUNTDOWN_SLIDE_LABEL" = "スライドしてキャンセル";
+"SOS_COUNTDOWN_SLIDE_HINT" = "ブロードキャストが始まる前に、最後までスライドしてキャンセルします。";
+
+/* Onboarding — intro / name / internet / guidance / privacy / trust */
+"ONBOARDING_STEP_COUNTER" = "ステップ %d / %d";
+"ONBOARDING_INTRO_EYEBROW" = "ようこそ";
+"ONBOARDING_INTRO_HEADLINE" = "インターネットが使えないときでも安全な通信を";
+"ONBOARDING_INTRO_BODY" = "ネットワークが不安定なときの日常のメッセージ、緊急時、災害時に Crisis Connect を使いましょう。";
+"ONBOARDING_INTRO_TAGLINE" = "最も大切なときに命をつなぐ";
+"ONBOARDING_INTRO_NEARBY_TITLE" = "近くの人とメッセージ";
+"ONBOARDING_INTRO_NEARBY_DETAIL" = "ローカルなデバイス接続で周囲の人を見つけます。";
+"ONBOARDING_INTRO_OFFLINE_TITLE" = "障害時にも動作";
+"ONBOARDING_INTRO_OFFLINE_DETAIL" = "モバイルデータなしで近くのデバイスへのメッセージ送信を試み続けます。";
+"ONBOARDING_INTRO_SAFETY_TITLE" = "識別できる連絡先";
+"ONBOARDING_INTRO_SAFETY_DETAIL" = "保存された連絡先には、あなたが選んだ名前が表示されます。";
+"ONBOARDING_INTRO_FOOTER" = "設定は約1分で完了します。";
+"ONBOARDING_NAME_HERO" = "あなたの表示名";
+"ONBOARDING_NAME_HERO_DETAIL" = "保存された連絡先にはこのように表示されます。";
+"ONBOARDING_NAME_FOOTER_EMPTY" = "続けるには名前を入力してください。";
+"ONBOARDING_INTERNET_TITLE" = "ほとんどデータを使わずにメッセージ";
+"ONBOARDING_INTERNET_HERO_DETAIL" = "Crisis Connect はインターネット経由でも動作します — 暗号化され、データ使用量が非常に少ないです。";
+"ONBOARDING_INTERNET_BODY" = "ごくわずかなデータしか使わない暗号化メッセージなので、ネットワークが混雑していても機能し続けます。";
+"ONBOARDING_INTERNET_LOWBW_TITLE" = "非常に少ないデータ使用";
+"ONBOARDING_INTERNET_LOWBW_DETAIL" = "メッセージは非常に小さく、OS のプッシュチャネルで配信されるため、接続が弱くても届きます。";
+"ONBOARDING_INTERNET_BASESTATION_TITLE" = "携帯ネットワークの負担を軽減";
+"ONBOARDING_INTERNET_BASESTATION_DETAIL" = "接続と再試行がはるかに少ないため、災害時の基地局への負荷が軽減されます。";
+"ONBOARDING_INTERNET_E2E_TITLE" = "エンドツーエンド暗号化";
+"ONBOARDING_INTERNET_E2E_DETAIL" = "メッセージを読めるのはあなたと受信者だけ — サーバーが内容を見ることはありません。";
+"ONBOARDING_INTERNET_PHONE_TITLE" = "電話番号を追加";
+"ONBOARDING_INTERNET_PHONE_DETAIL" = "あなたの番号を知っている連絡先がインターネット経由で連絡できるようにします。";
+"ONBOARDING_INTERNET_PHONE_LABEL" = "電話番号";
+"ONBOARDING_INTERNET_CODE_LABEL" = "確認コード";
+"ONBOARDING_INTERNET_SEND_CODE" = "コードを送信";
+"ONBOARDING_INTERNET_VERIFY" = "確認";
+"ONBOARDING_INTERNET_SKIP" = "スキップ";
+"ONBOARDING_INTERNET_VERIFIED" = "確認済み：%@";
+"ONBOARDING_INTERNET_WORKING" = "確認サービスに接続しています…";
+"ONBOARDING_PHONE_UNAVAILABLE" = "電話番号の確認は現在利用できません。";
+"ONBOARDING_PHONE_CODE_ERROR" = "コードが正しくありません。もう一度お試しください。";
+"ONBOARDING_INTERNET_OPTIONAL_NOTE" = "このステップは任意です — スキップして、後でプロフィールから電話番号を追加できます。";
+"ONBOARDING_GUIDANCE_EYEBROW" = "バックグラウンドガイド";
+"ONBOARDING_GUIDANCE_OFFLINE_REASON" = "インターネットなしでメッセージを受信するには、アプリがバックグラウンドにとどまる必要があります — Bluetooth メッセージは、アプリがそこで動作している間だけあなたに届きます。";
+"ONBOARDING_PRIVACY_TITLE" = "プライバシーと利用規約";
+"ONBOARDING_PRIVACY_BODY" = "プライバシーの取り扱いを確認し、利用規約に同意して完了してください。";
+"ONBOARDING_PRIVACY_FOOTER_READY" = "準備完了 — Crisis Connect を始めましょう。";
+"ONBOARDING_TRUST_TITLE" = "あなたのプライバシーを最優先";
+"ONBOARDING_TRUST_OPEN_SOURCE" = "オープンソース — 誰でもコードを検査できます";
+"ONBOARDING_TRUST_NO_ADS" = "広告なし — あなたの個人データが売られることはありません";
+"ONBOARDING_TRUST_EMERGENCY" = "緊急通信のためだけに作られました";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "アプリを安定させるため、匿名のクラッシュレポートのみを収集します。";
+"ONBOARDING_FINISH" = "Crisis Connect を始める";
+
+/* Crisis Sentinel — engine / online errors / model picker / cards */
+"CRISIS_SENTINEL_ENGINE_ONLINE" = "クラウド";
+"CRISIS_SENTINEL_ENGINE_EDGE" = "デバイス上";
+"CRISIS_SENTINEL_ONLINE_TOOL_ON_WEB" = "この機能はウェブダッシュボードで利用できます。";
+"CRISIS_SENTINEL_ONLINE_ERROR_UNAUTHORIZED" = "クラウドエンジンを使用するには、機関のアカウントでサインインしてください。";
+"CRISIS_SENTINEL_ONLINE_ERROR_FORBIDDEN" = "お使いのアカウントには、クラウドエンジンのダッシュボードへのアクセス権がありません。";
+"CRISIS_SENTINEL_ONLINE_ERROR_QUOTA" = "現在、機関の AI 利用枠を使い切っています。";
+"CRISIS_SENTINEL_ONLINE_ERROR_NETWORK" = "クラウドエンジンに接続できませんでした。接続を確認してください。";
+"CRISIS_SENTINEL_ONLINE_ERROR_SERVER" = "クラウドエンジンが予期しないエラーを返しました。";
+"CRISIS_SENTINEL_ONLINE_ERROR_NOT_CONFIGURED" = "お使いの機関にはまだ AI プロバイダーが設定されていません。";
+"CRISIS_SENTINEL_MODEL_DEFAULT" = "サーバーの既定";
+"CRISIS_SENTINEL_MODEL_DEFAULT_SUBTITLE" = "パネルに最適なモデルを選ばせます。";
+"CRISIS_SENTINEL_MODEL_PICKER_TITLE" = "AI モデル";
+"CRISIS_SENTINEL_MODEL_LOADING" = "モデルを読み込んでいます…";
+"CRISIS_SENTINEL_MODEL_LOAD_FAILED" = "モデルリストを読み込めませんでした。";
+"CRISIS_SENTINEL_MODEL_RETRY" = "再試行";
+"CRISIS_SENTINEL_MODEL_CONTEXT" = "%lldK コンテキスト";
+"CRISIS_SENTINEL_CARD_SHOW_ALL_ON_MAP" = "地図に表示";
+"CRISIS_SENTINEL_CARD_OPEN_IMAGE" = "画像を開く";
+"CRISIS_SENTINEL_CARD_ROUTE_STEPS_MORE" = "さらに %d ステップを表示";
+
+/* Authority roles / picker / channels */
+"AUTHORITY_ROLE_ADMIN" = "管理者";
+"AUTHORITY_ROLE_AUTHORITY" = "当局";
+"AUTHORITY_ROLE_FIELDTEAM" = "現地チーム";
+"AUTHORITY_SHARED_LOCATION" = "共有された位置";
+"NEW_CONTACT_ADD_FROM_AGENCY" = "機関から追加";
+"AUTHORITY_CHANNEL_E2EE_NOTICE" = "このチャンネルはエンドツーエンドで暗号化されています。";
+"AUTHORITY_CHANNEL_EMPTY" = "まだメッセージはありません。";
+"AUTHORITY_PICKER_HQ_UNITS" = "本部部隊";
+"AUTHORITY_PICKER_SIBLING_UNITS" = "同格部隊";
+"AUTHORITY_PICKER_SUB_UNITS" = "下位部隊";
+"AUTHORITY_PICKER_MANAGEMENT" = "管理部門";
+"AUTHORITY_PICKER_FIELD_TEAMS" = "現地チーム";
+"AUTHORITY_CHANNEL_ROW_LABEL" = "当局";
+"AUTHORITY_CHANNEL_CALL_AUDIO" = "音声通話";
+"AUTHORITY_CHANNEL_CALL_VIDEO" = "ビデオ通話";
+"AUTHORITY_CHANNEL_CALL_MISSED" = "不在着信";
+
+/* Conversation preview / chat / field-team online */
+"CONVERSATION_PREVIEW_VOICE_MESSAGE" = "音声メッセージ";
+"CONVERSATION_PREVIEW_PHOTO_MESSAGE" = "写真";
+"CHAT_FILE_PREVIEW_LABEL" = "共有ファイル";
+"CHAT_SCROLL_TO_BOTTOM" = "最新のメッセージにスクロール";
+"MAIN_SEARCH_SECTION_MESSAGES" = "メッセージ";
+"CHAT_CALL_ACTIVE_ROW" = "通話中";
+"CRISIS_SENTINEL_DOWNLOAD_FIELDTEAM_ONLINE_TITLE" = "オンライン AI の準備完了";
+"CRISIS_SENTINEL_DOWNLOAD_FIELDTEAM_ONLINE_BODY" = "現地チームのメンバーとして、今すぐオンラインで Crisis Sentinel とチャットできます。インターネットなしでも AI を利用できるよう、オフラインモデルをダウンロードしてください。";
+"CHAT_LOCATION_PREVIEW_LABEL_LIVE" = "リアルタイムの位置情報";
+
+// Generic encrypted-message alert push (server has no plaintext; APNs loc-keys, device-localized)
+"NOTIF_ENC_MESSAGE_TITLE" = "Crisis Connect";
+"NOTIF_ENC_MESSAGE_BODY" = "新しい暗号化メッセージ";
+
+"SOS_CHAT_ACTION_RETRY_SEND" = "再送信";
+
+"SOS_CHAT_STATUS_FAILED" = "未送信";
+
+"CHAT_DATE_TODAY" = "今日";
+"CHAT_DATE_YESTERDAY" = "昨日";
+
+// --- Round-2 iOS parity fixes ---
+"CRISIS_SENTINEL_ONLINE_ERROR_NETWORK_EDGE_HINT" = "オンライン AI に接続できませんでした。Crisis Sentinel Edge に切り替えられます。";
+"CRISIS_SENTINEL_CLOUD_SYNC_UNAVAILABLE" = "このチャットはこのデバイスにのみ保存されています";
+"CRISIS_SENTINEL_CLOUD_SYNC_ERROR_LOCAL_FALLBACK" = "同期に失敗しました — このデバイスで続行します";
+"CRISIS_SENTINEL_GENERATION_PERFORMANCE_WARNING" = "このデバイスではオフラインモデルの応答が遅くなることがあります。短めのプロンプトの方がうまく機能します。";
+"SOS_CLOUD_STATUS_NO_INTERNET" = "インターネットなし";
+"SOS_CLOUD_STATUS_REPORTED" = "報告済み";
+"SETTINGS_PERMISSIONS_REMINDER_TITLE" = "権限の確認が必要です";
+"SETTINGS_PERMISSIONS_REMINDER_MESSAGE" = "Bluetoothと位置情報は、緊急時にオフラインメッシュを動作させ続けます。インターネットが使えないときも連絡が取れるよう、これらをオンにしてください。";
+"AUTHORITY_PICKER_CROSS_PANEL_WARNING" = "関連する機関を読み込めませんでした — 所属機関のみ表示しています。";
+"AUTHORITY_PICKER_RETRY" = "再試行";
+
+// --- Internet call screen share ---
+"VOICE_CALL_ACTION_SHARE_SCREEN" = "画面を共有";
+"VOICE_CALL_ACTION_STOP_SHARE" = "共有を停止";
+"VOICE_CALL_SHARING_SCREEN_LABEL" = "画面を共有中";
+
+/* One-time "save as emergency contact?" prompt (parity with Android) */
+"SOS_EC_PROMPT_TITLE" = "緊急連絡先に追加しますか？";
+"SOS_EC_PROMPT_MESSAGE" = "SOS開始時に%@へ自動通知しますか？後で設定 → SOS緊急連絡先から変更できます。";
+"SOS_EC_PROMPT_CONFIRM" = "追加";
+"SOS_EC_PROMPT_DECLINE" = "今はしない";
+
+/* Nearby SPAKE2 pairing consent (parity with Android's pairing notification) */
+"NEARBY_PAIRING_REQUEST_TITLE" = "%@ が近くで接続したがっています";
+"NEARBY_PAIRING_REQUEST_TEXT" = "Bluetooth でチャットするには応答してください。";
+"NEARBY_PAIRING_ACCEPT" = "応答";
+"NEARBY_PAIRING_DECLINE" = "拒否";
+
+/* Add-from-contacts: tabs, nearby search, recovery actions (Android parity) */
+"CONTACTS_TAB_ONLINE" = "Crisis Connect 上";
+"CONTACTS_TAB_NEARBY" = "近く";
+"NEARBY_DISCOVERY_TOGGLE_TITLE" = "近くの連絡先が自分を見つけられるようにする";
+"NEARBY_DISCOVERY_TOGGLE_SUBTITLE" = "Bluetooth 経由で回転する非公開トークンを送信し、番号を知っている連絡先がインターネットなしであなたに連絡できるようにします。";
+"NEARBY_PICK_CONTACT" = "誰を探していますか？番号で近くの人を見つけるには連絡先を選んでください。";
+"NEARBY_SEARCHING" = "近くを検索中…";
+"NEARBY_PAIR_NOT_FOUND" = "近くに見つかりませんでした。アプリを開いて近くにいることを確認してから、もう一度お試しください。";
+"NEARBY_PAIR_FAILED" = "接続できませんでした。近くにいることを確認してもう一度お試しください。";
+"CONTACTS_RETRY" = "もう一度お試しください";
+
+/* Nearby tab state cascade (Android parity) */
+"NEARBY_ENABLE_HINT" = "周りの人を見つけるには上のスイッチをオンにしてください。";
+"NEARBY_DEVICES_COUNT" = "近くに追加可能なデバイスが %d 台";
+"NEARBY_SCAN_PERMISSION_NEEDED" = "近くの連絡先を見つけるには Bluetooth スキャンの権限が必要です。";
+"NEARBY_CONTACTS_PERMISSION_NEEDED" = "誰を探すか選ぶには連絡先へのアクセスが必要です。";
+"NEARBY_DISCOVERY_PHONE_REQUIRED" = "近くの人に見つけてもらうには、電話番号を追加して認証してください。";
+
+/* Profile screen parity (ported from Android) */
+"PROFILE_PHONE_LABEL" = "電話番号";
+"PROFILE_USERNAME_REQUIRED" = "ユーザー名を入力してください。";
+"PROFILE_USERNAME_UPDATE_SUCCESS" = "ユーザー名が正常に更新されました。";
+"PROFILE_USERNAME_UPDATE_ERROR" = "ユーザー名の更新に失敗しました。再試行してください。";
+"PROFILE_PHOTO_SAVED" = "プロフィール写真が保存されました";
+"PROFILE_PHOTO_ERROR" = "画像を読み取れませんでした";
+"PROFILE_PHOTO_CONTENT_DESCRIPTION" = "プロフィール写真";
+"PROFILE_PHONE_SERVICE_UNAVAILABLE" = "認証サービスは一時的に利用できません。しばらくしてからもう一度お試しください。";
+"NOTIFICATIONS_ALERT_MESSAGES" = "インターネットメッセージ";
+"SOS_BROADCAST_RESCUERS_NEARBY" = "救助者が接続中";
+
+/* In-chat search + contact rename + child-profile status */
+"CHAT_SEARCH_TITLE" = "メッセージを検索";
+"CHAT_SEARCH_PLACEHOLDER" = "入力してメッセージを探す";
+"CHAT_SEARCH_NO_RESULTS" = "メッセージが見つかりません";
+"CHAT_INFO_RENAME_TITLE" = "連絡先の名前を変更";
+"CHAT_INFO_RENAME_MESSAGE" = "この名前はあなたにのみ表示されます。";
+"CHILD_PROFILE_STATUS_ENABLED" = "子どもプロファイルはオンです";
+"RESCUE_OPEN_VICTIM_LOCATION" = "要救助者の位置 — 地図で開く";
+"RESCUE_CALL_INCOMING" = "着信";
+"RESCUE_CALL_RINGING" = "呼び出し中…";
+"RESCUE_CALL_CONNECTING" = "接続中…";
+"RESCUE_CALL_VIA_BLUETOOTH" = "Bluetoothで接続中";
+"RESCUE_CALL_ACCEPT" = "応答";
+"RESCUE_CALL_REJECT" = "拒否";
+"RESCUE_CALL_END" = "終了";
+"RESCUE_CALL_MUTE" = "ミュート";
+"RESCUE_CALL_UNMUTE" = "ミュート解除";
+"RESCUE_CALL_SPEAKER" = "スピーカー";
+"RESCUE_MEDICAL_BLOOD_FORMAT" = "血液型：%@";
+"RESCUE_MEDICAL_ALLERGIES_FORMAT" = "アレルギー：%@";
+"RESCUE_MEDICAL_MEDICATION_FORMAT" = "服薬：%@";
+"MEDICAL_INFO_TITLE" = "緊急医療情報";
+"MEDICAL_INFO_SUBTITLE" = "SOS中に認証済みの救助者のみに共有。アップロードされません。";
+"MEDICAL_INFO_BLOOD_LABEL" = "血液型";
+"MEDICAL_INFO_ALLERGIES_LABEL" = "アレルギー";
+"MEDICAL_INFO_MEDICATION_LABEL" = "服用中の薬";
+"MEDICAL_INFO_NOTES_LABEL" = "緊急メモ";
+"MEDICAL_INFO_SAVE" = "保存";
+"MEDICAL_INFO_SAVED" = "医療情報を保存しました";
+"RESCUE_REMOTE_SIGNALS_TITLE" = "遠隔シグナル（インターネット）";
+"RESCUE_REMOTE_SIGNAL_UNNAMED" = "シグナル %@";
+"RESCUE_REMOTE_SOURCE_INTERNET" = "インターネット";
+"RESCUE_REMOTE_SOURCE_FIELD" = "現場報告";
+"RESCUE_REMOTE_REPORTERS_FORMAT" = "%d人の救助者が報告";
+"RESCUE_REMOTE_SIGNALS_LOADING" = "パネルのシグナルを読み込み中…";
+"RESCUE_REMOTE_SIGNALS_EMPTY" = "所属機関のパネルにアクティブな遠隔SOSシグナルはありません。";
+"RESCUE_REMOTE_SIGNALS_EMPTY_TITLE" = "すべて平穏";
+"RESCUE_REMOTE_HERO_COUNT" = "アクティブなシグナル：%d件";
+"RESCUE_REMOTE_SIGNALS_SUBTITLE" = "所属機関パネルのライブフィード";
+"RESCUE_CALL_INCOMING_BODY" = "救助リンク経由の音声通話";
+"ONBOARDING_PERMISSIONS_FOOTER_REQUIRED" = "続行するには上記のすべての許可に回答してください — Bluetoothの許可は必須です。";
+"ONBOARDING_PERMISSIONS_BLUETOOTH_REQUIRED" = "オフラインの災害メッセージにはBluetoothが必須です。設定を開いて許可してください。";

@@ -1,40 +1,40 @@
-# Xcode
-DerivedData/
-build/
-*.xcuserstate
-xcuserdata/
+.DS_Store
 
-# SPM
-.build/
-.swiftpm/
-SourcePackages/
-
-# Firebase config (contains API keys)
-**/GoogleService-Info.plist
-
-# Codex / CI derived data
+# Local build and tool artifacts
 .codex-derived*/
-.codex-temp/
 .spm-fresh-cache/
-
-# Debug & profiling
-*.trace
-*.trace/
-*-os-log.xml
-*-process-info.xml
 .tmp_crashlogs/
 .tmp_devicelogs/
-*.ips
+DerivedData/
+.build/
 
-# Backups
-.duplicate-swift-backups/
-*.swift.disabled
+# Xcode user-specific state
+xcuserdata/
+*.xcuserstate
+*.hmap
 
-# Build output
-release/output/
-screenshots/
-Diagnostics/
+# Xcode build/packaging
+*.ipa
+*.dSYM.zip
+*.dSYM
 
-# OS
-.DS_Store
-Thumbs.db
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Carthage
+Carthage/Build/
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Local profiling and debug captures
+*.trace
+*-os-log.xml
+*-process-info.xml
+
+# Rust MLS core (OrangeMlsWorker.xcframework) is now tracked via git-lfs — see .gitattributes
+# and docs/SFU_GROUP_CALLS.md. Rebuild with crisis-connect-web/rust-mls-ios/build-xcframework.sh.

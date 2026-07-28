@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Overridden on v31+ with the system widget radii so our cards match the launcher's. -->
+    <dimen name="widget_corner_radius">24dp</dimen>
+    <dimen name="widget_inner_radius">12dp</dimen>
+</resources>

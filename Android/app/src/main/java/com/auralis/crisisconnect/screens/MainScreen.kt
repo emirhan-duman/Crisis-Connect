@@ -22,15 +22,16 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -59,11 +60,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.CallMade
@@ -72,14 +75,16 @@ import androidx.compose.material.icons.filled.CallReceived
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.MissedVideoCall
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -89,7 +94,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -100,8 +104,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -113,34 +117,40 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -154,9 +164,12 @@ import com.auralis.crisisconnect.ai.CrisisSentinelModelFileStore
 import com.auralis.crisisconnect.ai.CrisisSentinelModelManifestCache
 import com.auralis.crisisconnect.core.chat.parseReplyMetadata
 import com.auralis.crisisconnect.core.chat.stripReplyMetadata
+import com.auralis.crisisconnect.core.search.normalizeForSearch
+import com.auralis.crisisconnect.core.search.searchableMessageBody
 import com.auralis.crisisconnect.data.BlePeerStore
 import com.auralis.crisisconnect.data.ChatMessage
 import com.auralis.crisisconnect.data.Contact
+import com.auralis.crisisconnect.data.AuthorityMeshChatStore
 import com.auralis.crisisconnect.data.GattMeshChatStore
 import com.auralis.crisisconnect.data.MessageType
 import com.auralis.crisisconnect.data.MeshChatMessage
@@ -187,10 +200,19 @@ import com.auralis.crisisconnect.service.p2p.P2pGattChatManager
 import com.auralis.crisisconnect.ui.components.AppBottomBar
 import com.auralis.crisisconnect.ui.components.ContactAvatar
 import com.auralis.crisisconnect.ui.components.GroupChatAvatar
+import com.auralis.crisisconnect.ui.components.rememberConnectedSessions
 import com.auralis.crisisconnect.ui.theme.StatusConnectedContainer
 import com.auralis.crisisconnect.ui.theme.StatusConnectedOnContainer
+import com.auralis.crisisconnect.data.AppDatabase
+import com.auralis.crisisconnect.data.toAuthorityConversationEntity
+import com.auralis.crisisconnect.data.toChannelConversation
+import com.auralis.crisisconnect.messaging.AuthorityBridgeContacts
+import com.auralis.crisisconnect.messaging.HierarchyMessagingClient
+import com.auralis.crisisconnect.messaging.InternetConversation
+import com.auralis.crisisconnect.screens.authority.ChannelConversation
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CoroutineScope
@@ -198,24 +220,59 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private const val RESCUE_ROLE_LOG_TAG = "RescueRoleCheck"
 private const val SOS_BROADCAST_LOG_TAG = "SosBroadcastStart"
 private val ALLOWED_RESCUE_ROLES = setOf("admin", "fieldteam")
 private const val SEARCH_PULL_MIN_PREVIEW_DURATION_MS = 70L
 private const val SEARCH_PULL_MIN_OPEN_DURATION_MS = 130L
+
+/** Room the open search bar occupies above the conversation list. */
+private val SEARCH_OPEN_LIST_TOP_PADDING = 84.dp
+
+/**
+ * Per-frame bookkeeping for the pull-to-search gesture. Plain fields, not snapshot state:
+ * composition never reads these — the visuals follow two Animatables in the draw/placement
+ * phase instead, which keeps the drag from recomposing the screen every frame.
+ */
+private class SearchPullGestureState {
+    var distancePx = 0f
+    var maxDistancePx = 0f
+    var startedAtMs = 0L
+    var durationMs = 0L
+
+    val isActive: Boolean
+        get() = distancePx > 0f || maxDistancePx > 0f || startedAtMs != 0L
+
+    fun reset() {
+        distancePx = 0f
+        maxDistancePx = 0f
+        startedAtMs = 0L
+        durationMs = 0L
+    }
+}
 private const val MAIN_CONNECTED_LABEL_DURATION_MS = 4_000L
 private const val CHAT_LOCATION_PREFIX = "CC_LOC:"
 private const val MESH_GENERAL_SESSION_CODE = "gattmesh:general"
 private const val MESH_GENERAL_LIST_ITEM_KEY = "gattmesh:general:list_item"
+private const val AUTHORITY_MESH_LIST_ITEM_KEY = "authority:general:list_item"
+// The authority/rescue mesh keeps a contact row only so its messages satisfy the message↔contact
+// foreign key. It must never surface in the main home conversation list (it lives in the Rescue
+// screen instead), so it is always filtered out here.
+private const val AUTHORITY_MESH_SESSION_CODE = "authority:general"
 private const val PERMISSION_REQUEST_PREFS = "settings_permission_requests"
 private const val PERMISSION_REQUESTED_KEY_PREFIX = "requested_"
-private val WELCOME_BLOCKED_TEXT_COLOR = Color(0xFFB71C1C)
 private val GOOGLE_MAPS_LOCATION_REGEX =
     Regex("""https?://maps\.google\.com/\?q=([-0-9.]+),([-0-9.]+)""")
 
@@ -227,6 +284,7 @@ private enum class WelcomeContinueAction {
 
 private data class WelcomePermissionRequirement(
     val labelRes: Int,
+    val descriptionRes: Int,
     val permissions: List<String>
 )
 
@@ -235,6 +293,13 @@ private data class WelcomeContinueBlocker(
     val detailText: String,
     val action: WelcomeContinueAction? = null,
     val actionText: String? = null
+)
+
+internal data class WelcomeReadinessItem(
+    val title: String,
+    val description: String,
+    val isReady: Boolean,
+    val icon: WelcomeReadinessIcon
 )
 
 private fun openLegalLink(context: Context, url: String) {
@@ -279,6 +344,7 @@ private fun welcomePermissionRequirements(): List<WelcomePermissionRequirement> 
             add(
                 WelcomePermissionRequirement(
                     labelRes = R.string.permission_group_bluetooth,
+                    descriptionRes = R.string.welcome_permission_bluetooth_description,
                     permissions = listOf(
                         Manifest.permission.BLUETOOTH_CONNECT,
                         Manifest.permission.BLUETOOTH_SCAN,
@@ -289,6 +355,7 @@ private fun welcomePermissionRequirements(): List<WelcomePermissionRequirement> 
             add(
                 WelcomePermissionRequirement(
                     labelRes = R.string.permission_group_location,
+                    descriptionRes = R.string.welcome_permission_location_description,
                     permissions = listOf(
                         Manifest.permission.ACCESS_COARSE_LOCATION,
                         Manifest.permission.ACCESS_FINE_LOCATION
@@ -299,6 +366,7 @@ private fun welcomePermissionRequirements(): List<WelcomePermissionRequirement> 
             add(
                 WelcomePermissionRequirement(
                     labelRes = R.string.permission_group_location,
+                    descriptionRes = R.string.welcome_permission_location_description,
                     permissions = listOf(Manifest.permission.ACCESS_FINE_LOCATION)
                 )
             )
@@ -307,12 +375,14 @@ private fun welcomePermissionRequirements(): List<WelcomePermissionRequirement> 
             add(
                 WelcomePermissionRequirement(
                     labelRes = R.string.permission_group_nearby_wifi,
+                    descriptionRes = R.string.welcome_permission_nearby_wifi_description,
                     permissions = listOf(Manifest.permission.NEARBY_WIFI_DEVICES)
                 )
             )
             add(
                 WelcomePermissionRequirement(
                     labelRes = R.string.permission_group_notifications,
+                    descriptionRes = R.string.welcome_permission_notifications_description,
                     permissions = listOf(Manifest.permission.POST_NOTIFICATIONS)
                 )
             )
@@ -392,7 +462,15 @@ private fun resolveWelcomeContinueBlocker(context: Context): WelcomeContinueBloc
         .filter { requirement ->
             requirement.permissions.any { permission -> !context.isPermissionGranted(permission) }
         }
-        .map { requirement -> context.getString(requirement.labelRes) }
+        .map { requirement ->
+            val labelRes = if (requirement.labelRes == R.string.permission_group_nearby_wifi) {
+                R.string.welcome_setup_bluetooth_title
+            } else {
+                requirement.labelRes
+            }
+            context.getString(labelRes)
+        }
+        .distinct()
 
     if (missingPermissionGroups.isNotEmpty()) {
         val buttonText = if (missingPermissionGroups.size == 1) {
@@ -440,6 +518,95 @@ private fun resolveWelcomeContinueBlocker(context: Context): WelcomeContinueBloc
     return null
 }
 
+private fun buildWelcomeReadinessItems(context: Context): List<WelcomeReadinessItem> {
+    val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+    val bluetoothSupported =
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH) &&
+            bluetoothManager?.adapter != null
+    val bluetoothEnabled = bluetoothSupported &&
+        runCatching { bluetoothManager?.adapter?.isEnabled == true }.getOrElse { false }
+    val permissionRequirements = welcomePermissionRequirements()
+    val nearbyLinkPermissions = permissionRequirements
+        .filter { requirement ->
+            requirement.labelRes == R.string.permission_group_bluetooth ||
+                requirement.labelRes == R.string.permission_group_nearby_wifi
+        }
+        .flatMap { requirement -> requirement.permissions }
+    val locationPermissions = permissionRequirements
+        .filter { requirement -> requirement.labelRes == R.string.permission_group_location }
+        .flatMap { requirement -> requirement.permissions }
+    val notificationPermissions = permissionRequirements
+        .filter { requirement -> requirement.labelRes == R.string.permission_group_notifications }
+        .flatMap { requirement -> requirement.permissions }
+
+    return buildList {
+        add(
+            WelcomeReadinessItem(
+                title = context.getString(R.string.welcome_setup_bluetooth_title),
+                description = context.getString(R.string.welcome_setup_bluetooth_description),
+                isReady = bluetoothSupported &&
+                    bluetoothEnabled &&
+                    nearbyLinkPermissions.all { permission -> context.isPermissionGranted(permission) },
+                icon = WelcomeReadinessIcon.NearbyLinks
+            )
+        )
+        if (locationPermissions.isNotEmpty()) {
+            add(
+                WelcomeReadinessItem(
+                    title = context.getString(R.string.permission_group_location),
+                    description = context.getString(R.string.welcome_permission_location_description),
+                    isReady = locationPermissions.all { permission ->
+                        context.isPermissionGranted(permission)
+                    },
+                    icon = WelcomeReadinessIcon.Location
+                )
+            )
+        }
+        if (notificationPermissions.isNotEmpty()) {
+            add(
+                WelcomeReadinessItem(
+                    title = context.getString(R.string.permission_group_notifications),
+                    description = context.getString(R.string.welcome_permission_notifications_description),
+                    isReady = notificationPermissions.all { permission ->
+                        context.isPermissionGranted(permission)
+                    },
+                    icon = WelcomeReadinessIcon.Notifications
+                )
+            )
+        }
+    }
+}
+
+private fun welcomePermissionGroupsForIcon(icon: WelcomeReadinessIcon): Set<Int> {
+    return when (icon) {
+        WelcomeReadinessIcon.NearbyLinks -> setOf(
+            R.string.permission_group_bluetooth,
+            R.string.permission_group_nearby_wifi
+        )
+        WelcomeReadinessIcon.Location -> setOf(R.string.permission_group_location)
+        WelcomeReadinessIcon.Notifications -> setOf(R.string.permission_group_notifications)
+    }
+}
+
+private fun missingPermissionsForReadinessIcon(
+    context: Context,
+    icon: WelcomeReadinessIcon
+): List<String> {
+    val groups = welcomePermissionGroupsForIcon(icon)
+    return welcomePermissionRequirements()
+        .filter { requirement -> requirement.labelRes in groups }
+        .flatMap { requirement -> requirement.permissions }
+        .distinct()
+        .filterNot { permission -> context.isPermissionGranted(permission) }
+}
+
+private fun isBluetoothCurrentlyEnabled(context: Context): Boolean {
+    val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+    val supported = context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH) &&
+        bluetoothManager?.adapter != null
+    return supported && runCatching { bluetoothManager?.adapter?.isEnabled == true }.getOrElse { false }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
@@ -451,6 +618,7 @@ fun MainScreen(
     val viewModel: MainScreenViewModel = viewModel()
     val showDialog by viewModel.showDialog.collectAsStateWithLifecycle()
     val publicMeshEnabled by viewModel.publicMeshEnabled.collectAsStateWithLifecycle()
+    val authorityMeshEnabled by viewModel.authorityMeshEnabled.collectAsStateWithLifecycle()
     val unreadCounts by viewModel.unreadCounts.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -478,17 +646,28 @@ fun MainScreen(
     val rescueFeatureManager = remember(context) {
         RescueFeatureManager(context.applicationContext)
     }
-    val sosServiceStarter = remember(context) {
+    // Pinned "Kurtarma ağı" entry on the messages home (mirrors iOS' authority entry card), shown to
+    // verified rescuers while the authority mesh is on. Opens the authority chat in the rescue module.
+    val showAuthorityMeshEntry = authorityMeshEnabled &&
+        rescueRoleResult is RescueRoleResult.Authorized
+    val onAuthorityMeshSelected: () -> Unit = {
+        rescueFeatureManager.launchInstalled(
+            context,
+            startDestination = RescueFeatureManager.START_DESTINATION_MESH_CHAT
+        )
+    }
+    val sosCountdownNavigator = remember(navController) {
         {
-            val sosIntent = Intent(context, GattSOSServerService::class.java)
-            ContextCompat.startForegroundService(context, sosIntent)
+            navController.navigate("sos_countdown") {
+                launchSingleTop = true
+            }
         }
     }
     val requestEnableBluetoothLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            sosServiceStarter()
+            sosCountdownNavigator()
         } else {
             Toast.makeText(
                 context,
@@ -557,7 +736,7 @@ fun MainScreen(
         rescueRoleResult = when (fetchedResult) {
             is RescueRoleResult.Authorized -> {
                 LocalKeyStorage.saveRole(context, fetchedResult.role)
-                securityRepository.warmUpCertificate()
+                securityRepository.warmUpCertificateInBackground()
                 fetchedResult
             }
 
@@ -631,166 +810,107 @@ fun MainScreen(
     }
 
     if (showDialog) {
-        Dialog(
-            onDismissRequest = {},
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                dismissOnBackPress = false,
-                dismissOnClickOutside = false
-            )
-        ) {
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.background
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(32.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
+        var fullName by rememberSaveable { mutableStateOf("") }
+        var isTermsAccepted by rememberSaveable { mutableStateOf(false) }
+        val blocker = welcomeContinueBlocker
+        val termsUrl = stringResource(R.string.welcome_terms_url)
+        val privacyUrl = stringResource(R.string.welcome_privacy_url)
+        val readinessItems = remember(context, blocker) {
+            buildWelcomeReadinessItems(context)
+        }
+        WelcomeScreen(
+            fullName = fullName,
+            onFullNameChange = { fullName = it },
+            isTermsAccepted = isTermsAccepted,
+            onTermsAcceptedChange = { isTermsAccepted = it },
+            readinessItems = readinessItems,
+            arePermissionsSatisfied = blocker == null,
+            permissionActionLabel = blocker?.actionText ?: blocker?.buttonText,
+            completeActionLabel = stringResource(R.string.welcome_finish_button),
+            blockerDetailText = blocker?.detailText,
+            onOpenTerms = { openLegalLink(context, termsUrl) },
+            onOpenPrivacy = { openLegalLink(context, privacyUrl) },
+            onResolveBlocker = {
+                when (blocker?.action) {
+                    WelcomeContinueAction.RequestPermissions -> {
+                        val missingPermissions = missingWelcomePermissions(context)
+                        val requestablePermissions =
+                            requestableWelcomePermissions(context, missingPermissions)
+                        if (requestablePermissions.isNotEmpty()) {
+                            markPermissionsAsRequested(context, requestablePermissions)
+                            welcomePermissionRequestLauncher.launch(
+                                requestablePermissions.toTypedArray()
+                            )
+                        } else {
+                            openAppPermissionSettings(context)
+                        }
+                    }
+
+                    WelcomeContinueAction.OpenSettings -> {
+                        openAppPermissionSettings(context)
+                    }
+
+                    WelcomeContinueAction.EnableBluetooth -> {
+                        runCatching {
+                            welcomeEnableBluetoothLauncher.launch(
+                                Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                            )
+                        }.onFailure { throwable ->
+                            Log.w(
+                                SOS_BROADCAST_LOG_TAG,
+                                "Unable to show Bluetooth enable prompt from welcome dialog",
+                                throwable
+                            )
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.rescue_error_bluetooth_disabled),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+
+                    null -> Unit
+                }
+            },
+            onRequestPermission = { item ->
+                // Tapping a not-ready card surfaces the system prompt for just that
+                // permission group (or the Bluetooth enable sheet for nearby links).
+                if (item.icon == WelcomeReadinessIcon.NearbyLinks &&
+                    !isBluetoothCurrentlyEnabled(context)
                 ) {
-                    Text(
-                        text = stringResource(R.string.welcome_title),
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = stringResource(R.string.welcome_description),
-                        fontSize = 16.sp
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    val termsUrl = stringResource(R.string.welcome_terms_url)
-                    val privacyUrl = stringResource(R.string.welcome_privacy_url)
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringResource(R.string.welcome_terms_link_label),
-                            color = MaterialTheme.colorScheme.primary,
-                            textDecoration = TextDecoration.Underline,
-                            modifier = Modifier.clickable {
-                                openLegalLink(context, termsUrl)
-                            }
+                    runCatching {
+                        welcomeEnableBluetoothLauncher.launch(
+                            Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
                         )
-                        Text(
-                            text = stringResource(R.string.welcome_privacy_link_label),
-                            color = MaterialTheme.colorScheme.primary,
-                            textDecoration = TextDecoration.Underline,
-                            modifier = Modifier.clickable {
-                                openLegalLink(context, privacyUrl)
-                            }
+                    }.onFailure { throwable ->
+                        Log.w(
+                            SOS_BROADCAST_LOG_TAG,
+                            "Unable to show Bluetooth enable prompt from welcome card",
+                            throwable
                         )
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.rescue_error_bluetooth_disabled),
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    var fullName by rememberSaveable { mutableStateOf("") }
-                    val isChecked = remember { mutableStateOf(false) }
-
-                    OutlinedTextField(
-                        value = fullName,
-                        onValueChange = { fullName = it },
-                        label = { Text(stringResource(R.string.full_name_label)) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words)
-                    )
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = isChecked.value,
-                            onCheckedChange = { isChecked.value = it }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.welcome_checkbox))
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    val hasValidName = fullName.isNotBlank()
-                    val blocker = welcomeContinueBlocker
-                    val isSystemBlocked = blocker != null
-                    val hasBlockerAction = blocker?.action != null
-                    Button(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            when (blocker?.action) {
-                                WelcomeContinueAction.RequestPermissions -> {
-                                    val missingPermissions = missingWelcomePermissions(context)
-                                    val requestablePermissions =
-                                        requestableWelcomePermissions(context, missingPermissions)
-                                    if (requestablePermissions.isNotEmpty()) {
-                                        markPermissionsAsRequested(context, requestablePermissions)
-                                        welcomePermissionRequestLauncher.launch(
-                                            requestablePermissions.toTypedArray()
-                                        )
-                                    } else {
-                                        openAppPermissionSettings(context)
-                                    }
-                                }
-
-                                WelcomeContinueAction.OpenSettings -> {
-                                    openAppPermissionSettings(context)
-                                }
-
-                                WelcomeContinueAction.EnableBluetooth -> {
-                                    runCatching {
-                                        welcomeEnableBluetoothLauncher.launch(
-                                            Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-                                        )
-                                    }.onFailure { throwable ->
-                                        Log.w(
-                                            SOS_BROADCAST_LOG_TAG,
-                                            "Unable to show Bluetooth enable prompt from welcome dialog",
-                                            throwable
-                                        )
-                                        Toast.makeText(
-                                            context,
-                                            context.getString(R.string.rescue_error_bluetooth_disabled),
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                    }
-                                }
-
-                                null -> {
-                                    if (blocker == null) {
-                                        viewModel.acceptDialog(fullName)
-                                        onOnboardingCompleted()
-                                    }
-                                }
-                            }
-                        },
-                        enabled = isChecked.value && hasValidName && (!isSystemBlocked || hasBlockerAction),
-                        shape = RoundedCornerShape(16.dp),
-                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)
-                    ) {
-                        Text(
-                            text = blocker?.actionText
-                                ?: blocker?.buttonText
-                                ?: stringResource(R.string.continue_button),
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    blocker?.detailText?.let { detailText ->
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = detailText,
-                            modifier = Modifier.fillMaxWidth(),
-                            color = WELCOME_BLOCKED_TEXT_COLOR,
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                } else {
+                    val missing = missingPermissionsForReadinessIcon(context, item.icon)
+                    val requestable = requestableWelcomePermissions(context, missing)
+                    if (requestable.isNotEmpty()) {
+                        markPermissionsAsRequested(context, requestable)
+                        welcomePermissionRequestLauncher.launch(requestable.toTypedArray())
+                    } else {
+                        openAppPermissionSettings(context)
                     }
                 }
+            },
+            onComplete = {
+                viewModel.acceptDialog(fullName)
+                onOnboardingCompleted()
             }
-        }
+        )
+        return
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -807,7 +927,7 @@ fun MainScreen(
                 focusedElevation = 10.dp,
                 hoveredElevation = 10.dp
             )
-            val isSosActive by GattSOSServerService.isRunning.collectAsStateWithLifecycle()
+            val isSosActive by GattSOSServerService.isDeclared.collectAsStateWithLifecycle()
             val sosStartTimestamp by GattSOSServerService.startTimestampMillis.collectAsStateWithLifecycle()
             val sosElapsedText = rememberSosElapsedText(
                 startTimestamp = sosStartTimestamp,
@@ -840,10 +960,12 @@ fun MainScreen(
                         .widthIn(min = 108.dp, max = 184.dp),
                     shape = RoundedCornerShape(18.dp),
                     onClick = {
-                        navController.navigate("sos_status") {
-                            launchSingleTop = true
+                        if (isSosActive) {
+                            navController.navigate("sos_status") {
+                                launchSingleTop = true
+                            }
+                            return@ExtendedFloatingActionButton
                         }
-                        if (isSosActive) return@ExtendedFloatingActionButton
 
                         val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE)
                             as? BluetoothManager)?.adapter
@@ -869,12 +991,12 @@ fun MainScreen(
                                         "Unable to show Bluetooth enable prompt for SOS",
                                         throwable
                                     )
-                                    sosServiceStarter()
+                                    sosCountdownNavigator()
                                 }
                                 return@ExtendedFloatingActionButton
                             }
                         }
-                        sosServiceStarter()
+                        sosCountdownNavigator()
                     },
                     containerColor = sosContainerColor,
                     contentColor = Color.White,
@@ -1018,6 +1140,8 @@ fun MainScreen(
                 innerPadding = innerPadding,
                 isCurrentUserRescue = rescueRoleResult is RescueRoleResult.Authorized,
                 showGeneralMeshEntry = showGeneralMeshEntry,
+                showAuthorityMeshEntry = showAuthorityMeshEntry,
+                onAuthorityMeshSelected = onAuthorityMeshSelected,
                 meshGeneralUnreadCount = effectiveMeshUnreadCount,
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope
@@ -1098,6 +1222,8 @@ private fun MainConversationContent(
     innerPadding: PaddingValues,
     isCurrentUserRescue: Boolean,
     showGeneralMeshEntry: Boolean,
+    showAuthorityMeshEntry: Boolean,
+    onAuthorityMeshSelected: () -> Unit,
     meshGeneralUnreadCount: Int,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null
@@ -1109,64 +1235,206 @@ private fun MainConversationContent(
     val activeCalls = rememberActiveCallsBySession()
     val connectedSessions = rememberConnectedSessions()
     val unreadCounts by viewModel.unreadCounts.collectAsStateWithLifecycle()
-    val allMessages by viewModel.allMessagesNewestFirst.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val messageSearchResults by viewModel.messageSearchResults.collectAsStateWithLifecycle()
     val meshGeneralMessages by GattMeshChatStore.messages.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Cross-panel (hierarchy) channel peers, surfaced as normal-looking rows in the home list.
+    // Loaded once when the messages screen composes — hoisted to the top of the body so it runs
+    // regardless of which contacts/empty/loading branch renders below. Empty for non-managers, so
+    // no gate is needed. Only peers you've ACTUALLY messaged appear here (like a normal chat list) —
+    // the full reachable roster lives in the "Kurumdan ekle" picker, not on the home screen.
+    // Offline-first: the local (SQLCipher) conversation cache drives the list, so it renders instantly
+    // and survives with no connectivity — a disaster app should still show your chats offline.
+    val authorityDao = remember(appContext) { AppDatabase.getInstance(appContext).authorityMessageDao() }
+    val channelConversations by remember(authorityDao) {
+        authorityDao.observeConversations().map { rows -> rows.map { it.toChannelConversation() } }
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    // (channel:peer) keys whose last incoming message is newer than the thread's read cursor → home badge.
+    val channelUnreadKeys by remember(authorityDao) {
+        authorityDao.observeUnreadKeys().map { keys -> keys.map { "${it.channelId}:${it.peerUid}" }.toSet() }
+    }.collectAsStateWithLifecycle(initialValue = emptySet())
+    // (channel:peer) → the peer's hidden Bluetooth-bridge sessionCode, so channel rows can show the
+    // same connected pill citizen rows get when the offline link is up.
+    val myUid = remember { FirebaseAuth.getInstance().currentUser?.uid.orEmpty() }
+    val channelBridgeSessions = remember(channelConversations, myUid) {
+        if (myUid.isBlank()) {
+            emptyMap()
+        } else {
+            channelConversations.associate { conversation ->
+                "${conversation.channelId}:${conversation.peerUid}" to
+                    InternetConversation.pairId(myUid, conversation.peerUid)
+            }
+        }
+    }
+    // When online, refresh the previews from the roster and write them through into Room.
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                val client = HierarchyMessagingClient()
+                val channels = client.fetchChannels()
+                // Hidden Bluetooth-bridge contacts for peers whose number the backend released,
+                // so the kurum chat gains an offline transport (fire-and-forget; failures only
+                // cost the offline capability, never the online refresh below).
+                runCatching { AuthorityBridgeContacts.syncFromChannels(appContext, channels) }
+                    .onFailure { android.util.Log.w("AuthorityBridge", "bridge sync failed", it) }
+                val candidates = channels.flatMap { channel ->
+                    channel.peers.map { peer -> channel to peer }
+                }
+                // Keep only peers you've actually messaged, and carry the last-message preview for the
+                // row. Probe channels in parallel; newest conversation first, like a normal chat list.
+                val fresh = coroutineScope {
+                    candidates.map { (channel, peer) ->
+                        async {
+                            val preview = client.latestMessageWith(channel.channelId, peer.uid)
+                                ?: return@async null
+                            ChannelConversation(
+                                channelId = channel.channelId,
+                                peerUid = peer.uid,
+                                // Show a real name, not the backend's login-email fallback: prefer a
+                                // non-email roster name, else the name the peer stamped on their
+                                // messages, else the email's local part (iOS parity).
+                                peerName = com.auralis.crisisconnect.messaging.AuthorityNameResolver
+                                    .resolve(peer.name, preview.peerName),
+                                peerPanelName = channel.peerPanelName,
+                                group = channel.group,
+                                lastText = preview.text,
+                                lastAtMillis = preview.atMillis,
+                                lastSenderUid = preview.senderUid,
+                                lastAttachmentKind = preview.attachmentKind,
+                                peerRole = peer.role ?: "",
+                            )
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+                authorityDao.replaceConversations(fresh.map { it.toAuthorityConversationEntity() })
+            } catch (e: Exception) {
+                android.util.Log.w("AuthorityChannels", "channel roster refresh failed", e)
+                // Offline / transient failure: keep whatever conversations are already cached.
+            }
+        }
+    }
     // Use screen width from configuration instead of BoxWithConstraints scope
     val configuration = LocalConfiguration.current
     val isExpandedScreen = configuration.screenWidthDp >= 600
     val listState = rememberLazyListState()
-    val locale = Locale.getDefault()
-    var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchVisible by rememberSaveable { mutableStateOf(false) }
-    var pullDistancePx by remember { mutableFloatStateOf(0f) }
-    var maxPullDistancePx by remember { mutableFloatStateOf(0f) }
-    var pullStartedAtMs by remember { mutableLongStateOf(0L) }
-    var pullDurationMs by remember { mutableLongStateOf(0L) }
+    // Raw gesture bookkeeping lives outside the snapshot system on purpose: nothing composes
+    // off these per-frame values. The UI only observes the two Animatables (bar reveal, list
+    // shift) in the draw/placement phase, plus the isPullReady flip for the hint text + haptic.
+    val pullGesture = remember { SearchPullGestureState() }
+    val searchBarReveal = remember { Animatable(0f) }
+    val listPullOffset = remember { Animatable(0f) }
+    var isPullReady by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    val pullScope = rememberCoroutineScope()
     var isCrisisSentinelReady by remember(appContext) {
         mutableStateOf(isCrisisSentinelModelReady(appContext))
     }
     val pullThresholdPx = with(LocalDensity.current) { 92.dp.toPx() }
     val pullRevealStartPx = with(LocalDensity.current) { 16.dp.toPx() }
-    val pullProgress = (
-        (pullDistancePx - pullRevealStartPx) / (pullThresholdPx - pullRevealStartPx)
-        ).coerceIn(0f, 1f)
+    val searchOpenShiftPx = with(LocalDensity.current) { SEARCH_OPEN_LIST_TOP_PADDING.toPx() }
     val showSearchBar = isSearchVisible || searchQuery.isNotBlank()
-    val showCrisisSentinelEntry = remember(isCrisisSentinelReady, searchQuery, context) {
-        if (!isCrisisSentinelReady) {
+    val normalizedQuery = remember(searchQuery) { normalizeForSearch(searchQuery.trim()) }
+    // Field-team users (valid rescue certificate) always get the entry — they can use the cloud
+    // engine without the on-device model; everyone else needs the model installed.
+    val showCrisisSentinelEntry = remember(
+        isCrisisSentinelReady,
+        isCurrentUserRescue,
+        normalizedQuery,
+        context
+    ) {
+        if (!isCrisisSentinelReady && !isCurrentUserRescue) {
             false
         } else {
-            val query = searchQuery.trim()
-            query.isBlank() ||
-                context.getString(R.string.tool_crisis_sentinel_title).contains(query, ignoreCase = true) ||
-                context.getString(R.string.tool_crisis_sentinel_description).contains(query, ignoreCase = true)
+            normalizedQuery.isEmpty() ||
+                normalizeForSearch(context.getString(R.string.tool_crisis_sentinel_title))
+                    .contains(normalizedQuery) ||
+                normalizeForSearch(context.getString(R.string.tool_crisis_sentinel_description))
+                    .contains(normalizedQuery)
         }
     }
-    val isPreviewVisible = !showSearchBar &&
-        pullDistancePx > pullRevealStartPx &&
-        pullDurationMs >= SEARCH_PULL_MIN_PREVIEW_DURATION_MS
-    val previewRevealFraction = if (isPreviewVisible) pullProgress else 0f
-    val openedRevealFraction by animateFloatAsState(
-        targetValue = if (showSearchBar) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.84f, stiffness = 420f),
-        label = "main_search_open_reveal"
-    )
-    val searchRevealFraction = if (showSearchBar) openedRevealFraction else previewRevealFraction
-    val isPullReady = pullProgress >= 1f
-    val filteredContacts = remember(contacts, allMessages, searchQuery, locale) {
+    // While searching, the pinned mesh entries obey the query like everything else.
+    val showGeneralMeshEntryForList = showGeneralMeshEntry && (
+        normalizedQuery.isEmpty() ||
+            normalizeForSearch(stringResource(R.string.mesh_chat_general_title))
+                .contains(normalizedQuery)
+        )
+    val showAuthorityMeshEntryForList = showAuthorityMeshEntry && (
+        normalizedQuery.isEmpty() ||
+            normalizeForSearch(stringResource(R.string.authority_mesh_chat_title))
+                .contains(normalizedQuery)
+        )
+    // The bar stays composed while it is even partially revealed (dragging, springing back,
+    // or fading out on close); the boolean only flips at the edges.
+    val isSearchBarRevealed by remember {
+        derivedStateOf { searchBarReveal.value > 0.001f }
+    }
+    val searchRevealFraction: () -> Float = { searchBarReveal.value }
+    val filteredContacts = remember(contacts, normalizedQuery) {
         filterContactsForGlobalSearch(
             contacts = contacts,
-            allMessages = allMessages,
-            query = searchQuery,
-            locale = locale
+            normalizedQuery = normalizedQuery
         )
     }
+    // Cross-panel (authority) rows obey the same search box as chats: match on the peer's name, their
+    // agency/panel, or the last-message preview. Without this the search bar silently skipped them.
+    val filteredChannelConversations = remember(channelConversations, normalizedQuery) {
+        if (normalizedQuery.isEmpty()) {
+            channelConversations
+        } else {
+            channelConversations.filter { conversation ->
+                normalizeForSearch(conversation.peerName).contains(normalizedQuery) ||
+                    normalizeForSearch(conversation.peerPanelName).contains(normalizedQuery) ||
+                    normalizeForSearch(conversation.peerUid).contains(normalizedQuery) ||
+                    normalizeForSearch(conversation.lastText).contains(normalizedQuery)
+            }
+        }
+    }
+    // Matched messages become their own result rows (with the contact's name resolved for the
+    // header), instead of silently keeping the contact in the list like the old search did.
+    val searchMessageRows = remember(messageSearchResults, contacts, isCurrentUserRescue, context) {
+        if (messageSearchResults.messages.isEmpty()) {
+            emptyList()
+        } else {
+            val contactsBySession = contacts.associateBy { it.sessionCode }
+            messageSearchResults.messages.mapNotNull { message ->
+                if (message.sessionCode.equals(AUTHORITY_MESH_SESSION_CODE, ignoreCase = true)) {
+                    return@mapNotNull null
+                }
+                val contact = contactsBySession[message.sessionCode]
+                SearchMessageRowUi(
+                    messageId = message.id,
+                    sessionCode = message.sessionCode,
+                    timestampMillis = message.timestampMillis,
+                    displayName = contact?.let {
+                        mainListContactDisplayName(
+                            contact = it,
+                            isCurrentUserRescue = isCurrentUserRescue,
+                            context = context
+                        )
+                    } ?: message.sessionCode,
+                    stableKey = contact?.let { contactStableKey(it) } ?: message.sessionCode,
+                    preferredTransport = contact?.preferredTransport,
+                    body = searchableMessageBody(message) ?: message.text
+                )
+            }
+        }
+    }
+    // Only claim "no results" once the debounced message search has caught up with what's
+    // typed — otherwise the empty state flashes while results are still being computed.
+    val isSearchSettled = messageSearchResults.query == normalizedQuery
     val showSearchNoResults = isContactsLoaded &&
-        searchQuery.isNotBlank() &&
+        normalizedQuery.isNotEmpty() &&
+        isSearchSettled &&
         filteredContacts.isEmpty() &&
-        !showGeneralMeshEntry &&
+        filteredChannelConversations.isEmpty() &&
+        searchMessageRows.isEmpty() &&
+        !showGeneralMeshEntryForList &&
+        !showAuthorityMeshEntryForList &&
         !showCrisisSentinelEntry
     val onContactSelected: (String, String?, String?) -> Unit = remember(navController) {
         { sessionCode, preferredDisplayName, preferredTransport ->
@@ -1179,18 +1447,82 @@ private fun MainConversationContent(
             )
         }
     }
-    fun resetPullState() {
-        pullDistancePx = 0f
-        maxPullDistancePx = 0f
-        pullStartedAtMs = 0L
-        pullDurationMs = 0L
+    // Maps the raw pull distance to the 0..1 reveal the bar and the list shift both follow.
+    fun pullRevealTarget(): Float {
+        if (pullGesture.durationMs < SEARCH_PULL_MIN_PREVIEW_DURATION_MS) {
+            return 0f
+        }
+        return (
+            (pullGesture.distancePx - pullRevealStartPx) / (pullThresholdPx - pullRevealStartPx)
+            ).coerceIn(0f, 1f)
+    }
+    // Called on every drag frame: snap the visuals to the finger and fire one haptic tick
+    // exactly when the pull crosses the open threshold.
+    fun updatePullVisuals() {
+        val fraction = pullRevealTarget()
+        pullScope.launch {
+            searchBarReveal.snapTo(fraction)
+            listPullOffset.snapTo(fraction * searchOpenShiftPx)
+        }
+        val ready = pullGesture.distancePx >= pullThresholdPx
+        if (ready != isPullReady) {
+            isPullReady = ready
+            if (ready) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
+        }
     }
     fun shouldOpenSearchFromPull(): Boolean {
         if (isSearchVisible) {
             return false
         }
-        return maxPullDistancePx >= pullThresholdPx &&
-            pullDurationMs >= SEARCH_PULL_MIN_OPEN_DURATION_MS
+        return pullGesture.maxDistancePx >= pullThresholdPx &&
+            pullGesture.durationMs >= SEARCH_PULL_MIN_OPEN_DURATION_MS
+    }
+    // Finger lifted: either commit to opening search or spring everything back home.
+    fun finishPull() {
+        val open = shouldOpenSearchFromPull()
+        pullGesture.reset()
+        isPullReady = false
+        if (open) {
+            isSearchVisible = true
+            // The list swaps from a transient draw offset to real top padding in the same
+            // frame, so subtract the padding from the offset to keep the rows visually still.
+            pullScope.launch {
+                listPullOffset.snapTo(listPullOffset.value - searchOpenShiftPx)
+                listPullOffset.animateTo(0f, tween(durationMillis = 210, easing = FastOutSlowInEasing))
+            }
+        } else {
+            pullScope.launch {
+                searchBarReveal.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+            }
+            pullScope.launch {
+                listPullOffset.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+            }
+        }
+    }
+    fun closeSearch() {
+        viewModel.onSearchQueryChange("")
+        isSearchVisible = false
+        pullGesture.reset()
+        isPullReady = false
+        // Mirror image of opening: padding drops instantly, the offset takes its place and
+        // then animates out so the rows slide up in step with the bar fading away.
+        pullScope.launch {
+            listPullOffset.snapTo(listPullOffset.value + searchOpenShiftPx)
+            listPullOffset.animateTo(0f, tween(durationMillis = 170, easing = FastOutSlowInEasing))
+        }
+    }
+    BackHandler(enabled = showSearchBar) {
+        closeSearch()
+    }
+    LaunchedEffect(showSearchBar) {
+        if (showSearchBar) {
+            // Springs from wherever the pull left it — no restart-from-zero dip.
+            searchBarReveal.animateTo(1f, spring(dampingRatio = 0.84f, stiffness = 420f))
+        } else if (searchBarReveal.value > 0f) {
+            searchBarReveal.animateTo(0f, tween(durationMillis = 170, easing = FastOutSlowInEasing))
+        }
     }
     val pullToSearchConnection = remember(listState, isSearchVisible, pullThresholdPx) {
         object : NestedScrollConnection {
@@ -1207,45 +1539,38 @@ private fun MainConversationContent(
                 when {
                     isAtTop && available.y > 0f -> {
                         val now = SystemClock.uptimeMillis()
-                        if (pullStartedAtMs == 0L) {
-                            pullStartedAtMs = now
+                        if (pullGesture.startedAtMs == 0L) {
+                            pullGesture.startedAtMs = now
                         }
                         val dampedDelta = available.y * 0.55f
-                        val nextDistance = (pullDistancePx + dampedDelta).coerceAtMost(
+                        val nextDistance = (pullGesture.distancePx + dampedDelta).coerceAtMost(
                             pullThresholdPx * 1.35f
                         )
-                        if (nextDistance != pullDistancePx) {
-                            pullDistancePx = nextDistance
+                        pullGesture.distancePx = nextDistance
+                        if (nextDistance > pullGesture.maxDistancePx) {
+                            pullGesture.maxDistancePx = nextDistance
                         }
-                        if (nextDistance > maxPullDistancePx) {
-                            maxPullDistancePx = nextDistance
-                        }
-                        pullDurationMs = (now - pullStartedAtMs).coerceAtLeast(0L)
+                        pullGesture.durationMs =
+                            (now - pullGesture.startedAtMs).coerceAtLeast(0L)
+                        updatePullVisuals()
                     }
 
-                    (available.y < 0f || !isAtTop) &&
-                        (
-                            pullDistancePx > 0f ||
-                                maxPullDistancePx > 0f ||
-                                pullStartedAtMs != 0L
-                            ) -> {
-                        val nextDistance = (pullDistancePx + available.y).coerceAtLeast(0f)
-                        if (nextDistance != pullDistancePx) {
-                            pullDistancePx = nextDistance
-                        }
+                    (available.y < 0f || !isAtTop) && pullGesture.isActive -> {
+                        pullGesture.distancePx =
+                            (pullGesture.distancePx + available.y).coerceAtLeast(0f)
                         if (!isAtTop) {
-                            pullStartedAtMs = 0L
+                            pullGesture.startedAtMs = 0L
                         }
+                        updatePullVisuals()
                     }
                 }
                 return Offset.Zero
             }
 
             override suspend fun onPreFling(available: Velocity): Velocity {
-                if (shouldOpenSearchFromPull()) {
-                    isSearchVisible = true
+                if (pullGesture.isActive) {
+                    finishPull()
                 }
-                resetPullState()
                 return Velocity.Zero
             }
         }
@@ -1254,15 +1579,8 @@ private fun MainConversationContent(
     LaunchedEffect(listState, isSearchVisible, pullThresholdPx) {
         snapshotFlow { listState.isScrollInProgress }
             .collectLatest { isScrolling ->
-                if (
-                    !isScrolling &&
-                    !isSearchVisible &&
-                    (pullDistancePx > 0f || pullStartedAtMs != 0L)
-                ) {
-                    if (shouldOpenSearchFromPull()) {
-                        isSearchVisible = true
-                    }
-                    resetPullState()
+                if (!isScrolling && !isSearchVisible && pullGesture.isActive) {
+                    finishPull()
                 }
             }
     }
@@ -1307,7 +1625,8 @@ private fun MainConversationContent(
                     )
                 }
             }
-        } else if (contacts.isEmpty() && !showGeneralMeshEntry && !isCrisisSentinelReady) {
+        } else if (searchQuery.isBlank() && contacts.isEmpty() && channelConversations.isEmpty() &&
+            !showGeneralMeshEntry && !(isCrisisSentinelReady || isCurrentUserRescue)) {
             Box(
                 modifier = contentModifier,
                 contentAlignment = Alignment.Center
@@ -1321,14 +1640,6 @@ private fun MainConversationContent(
                 )
             }
         } else {
-            val listTopPadding by animateDpAsState(
-                targetValue = if (showSearchBar) 84.dp else 0.dp,
-                animationSpec = tween(
-                    durationMillis = if (showSearchBar) 210 else 170,
-                    easing = FastOutSlowInEasing
-                ),
-                label = "main_search_list_padding"
-            )
             val listModifier = if (isExpandedScreen) {
                 Modifier
                     .align(Alignment.TopStart)
@@ -1351,31 +1662,49 @@ private fun MainConversationContent(
                     unreadCounts = unreadCounts,
                     isCurrentUserRescue = isCurrentUserRescue,
                     showCrisisSentinelEntry = showCrisisSentinelEntry,
-                    showGeneralMeshEntry = showGeneralMeshEntry,
+                    showGeneralMeshEntry = showGeneralMeshEntryForList,
+                    showAuthorityMeshEntry = showAuthorityMeshEntryForList,
+                    onAuthorityMeshSelected = onAuthorityMeshSelected,
+                    isSearchActive = normalizedQuery.isNotEmpty(),
+                    normalizedQuery = normalizedQuery,
+                    searchMessageRows = searchMessageRows,
+                    channelConversations = filteredChannelConversations,
+                    channelUnreadKeys = channelUnreadKeys,
+                    channelBridgeSessions = channelBridgeSessions,
+                    onChannelSelected = { conversation ->
+                        navController.navigate(
+                            "authority_channel/${Uri.encode(conversation.channelId)}/" +
+                                "${Uri.encode(conversation.peerUid)}?title=${Uri.encode(conversation.peerName)}" +
+                                "&agency=${Uri.encode(conversation.peerPanelName)}" +
+                                "&role=${Uri.encode(conversation.peerRole)}"
+                        )
+                    },
                     meshGeneralUnreadCount = meshGeneralUnreadCount,
                     meshGeneralMessages = meshGeneralMessages,
                     onContactSelected = onContactSelected,
                     onCrisisSentinelSelected = { navController.navigate("crisis_sentinel_home") },
                     listState = listState,
-                    contentPadding = PaddingValues(top = listTopPadding),
+                    // Real layout padding only while search is open; the drag preview moves the
+                    // rows with a placement-phase offset instead so pulling never relayouts.
+                    contentPadding = PaddingValues(
+                        top = if (showSearchBar) SEARCH_OPEN_LIST_TOP_PADDING else 0.dp
+                    ),
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = animatedVisibilityScope,
-                    modifier = listModifier
+                    modifier = listModifier.offset {
+                        IntOffset(x = 0, y = listPullOffset.value.roundToInt())
+                    }
                 )
 
-                if (showSearchBar || isPreviewVisible) {
+                if (showSearchBar || isSearchBarRevealed) {
                     MainScreenSearchBar(
                         query = searchQuery,
                         onQueryChange = {
                             if (showSearchBar) {
-                                searchQuery = it
+                                viewModel.onSearchQueryChange(it)
                             }
                         },
-                        onClose = {
-                            searchQuery = ""
-                            isSearchVisible = false
-                            resetPullState()
-                        },
+                        onClose = ::closeSearch,
                         interactive = showSearchBar,
                         pullReady = isPullReady,
                         revealFraction = searchRevealFraction,
@@ -1390,14 +1719,28 @@ private fun MainConversationContent(
                 }
 
                 if (showSearchNoResults) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
+                        Icon(
+                            imageVector = Icons.Filled.SearchOff,
+                            contentDescription = null,
+                            modifier = Modifier.size(44.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = stringResource(R.string.main_search_no_results),
+                            text = stringResource(
+                                R.string.main_search_no_results_for,
+                                searchQuery.trim()
+                            ),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
@@ -1465,11 +1808,20 @@ private fun MainScreenSearchBar(
     onClose: () -> Unit,
     interactive: Boolean,
     pullReady: Boolean,
-    revealFraction: Float,
+    revealFraction: () -> Float,
     modifier: Modifier = Modifier
 ) {
-    val reveal = revealFraction.coerceIn(0f, 1f)
     val shape = RoundedCornerShape(22.dp)
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    // Opening search (via pull or otherwise) should land the user straight in the field,
+    // keyboard up — without this the bar appears but a second tap is needed to type.
+    LaunchedEffect(interactive) {
+        if (interactive) {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
     val placeholder = stringResource(
         if (interactive) {
             R.string.main_search_placeholder
@@ -1480,18 +1832,21 @@ private fun MainScreenSearchBar(
         }
     )
     val outlineColor = MaterialTheme.colorScheme.outlineVariant.copy(
-        alpha = if (interactive) 0.55f else 0.28f
+        alpha = if (interactive) 0.55f else if (pullReady) 0.45f else 0.28f
     )
-    val iconTint = if (interactive) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
 
     Surface(
         modifier = modifier
-            .alpha(reveal)
-            .offset(y = (-8).dp * (1f - reveal))
+            .graphicsLayer {
+                // Deferred read: the pull gesture animates the bar in the draw phase only,
+                // so dragging never recomposes the screen.
+                val reveal = revealFraction().coerceIn(0f, 1f)
+                alpha = reveal
+                translationY = (-12).dp.toPx() * (1f - reveal)
+                val scale = 0.94f + 0.06f * reveal
+                scaleX = scale
+                scaleY = scale
+            }
             .border(width = 1.dp, color = outlineColor, shape = shape),
         shape = shape,
         color = MaterialTheme.colorScheme.surface,
@@ -1502,15 +1857,34 @@ private fun MainScreenSearchBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(58.dp)
-                .padding(horizontal = 16.dp),
+                .padding(
+                    start = if (interactive) 4.dp else 16.dp,
+                    end = if (interactive) 4.dp else 16.dp
+                ),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Filled.Search,
-                contentDescription = null,
-                tint = iconTint
-            )
-            Spacer(modifier = Modifier.width(12.dp))
+            if (interactive) {
+                IconButton(onClick = onClose) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.back),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = null,
+                    // Threshold feedback: the icon adopts the accent color the moment
+                    // releasing would open search (paired with the haptic tick).
+                    tint = if (pullReady) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
+            Spacer(modifier = Modifier.width(if (interactive) 4.dp else 12.dp))
             BasicTextField(
                 value = query,
                 onValueChange = { value ->
@@ -1518,7 +1892,9 @@ private fun MainScreenSearchBar(
                         onQueryChange(value)
                     }
                 },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester),
                 singleLine = true,
                 readOnly = !interactive,
                 textStyle = MaterialTheme.typography.titleMedium.copy(
@@ -1526,7 +1902,7 @@ private fun MainScreenSearchBar(
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = {}),
+                keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
                 decorationBox = { innerTextField ->
                     Box(
                         modifier = Modifier.fillMaxWidth(),
@@ -1554,23 +1930,6 @@ private fun MainScreenSearchBar(
                     )
                 }
             }
-            if (interactive) {
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier
-                        .size(34.dp)
-                        .background(
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                            shape = CircleShape
-                        )
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = stringResource(R.string.close),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
         }
     }
 }
@@ -1586,6 +1945,15 @@ private fun ContactList(
     isCurrentUserRescue: Boolean,
     showCrisisSentinelEntry: Boolean,
     showGeneralMeshEntry: Boolean,
+    showAuthorityMeshEntry: Boolean,
+    onAuthorityMeshSelected: () -> Unit,
+    isSearchActive: Boolean,
+    normalizedQuery: String,
+    searchMessageRows: List<SearchMessageRowUi>,
+    channelConversations: List<ChannelConversation>,
+    onChannelSelected: (ChannelConversation) -> Unit,
+    channelUnreadKeys: Set<String>,
+    channelBridgeSessions: Map<String, String>,
     meshGeneralUnreadCount: Int,
     meshGeneralMessages: List<MeshChatMessage>,
     onContactSelected: (String, String?, String?) -> Unit,
@@ -1618,12 +1986,12 @@ private fun ContactList(
         )
     }
     val visibleContacts = remember(sortedContacts, showGeneralMeshEntry) {
-        if (!showGeneralMeshEntry) {
-            sortedContacts
-        } else {
-            sortedContacts.filterNot { contact ->
-                contact.sessionCode.equals(MESH_GENERAL_SESSION_CODE, ignoreCase = true)
-            }
+        sortedContacts.filterNot { contact ->
+            // Authority/rescue mesh is never a home conversation; the public general mesh is rendered
+            // as a dedicated pinned entry instead of a plain contact row.
+            contact.sessionCode.equals(AUTHORITY_MESH_SESSION_CODE, ignoreCase = true) ||
+                (showGeneralMeshEntry &&
+                    contact.sessionCode.equals(MESH_GENERAL_SESSION_CODE, ignoreCase = true))
         }
     }
     val rows = remember(
@@ -1652,6 +2020,7 @@ private fun ContactList(
                 sessionCode = sessionCode,
                 stableKey = contactStableKey(contact),
                 preferredTransport = contact.preferredTransport,
+                peerPhotoUrl = contact.peerPhotoUrl,
                 supportingText = supportingText,
                 timestampText = latestContactActivityTimestampMillis(
                     lastMessage = lastMessage,
@@ -1690,12 +2059,67 @@ private fun ContactList(
             lastMessage = meshGeneralLastMessage
         )
     }
+    // Merge normal chats and authority conversations into one recency-sorted list so they interleave
+    // (same comparator as sortContactsForMainList: rescuer-first, then unread, then most recent).
+    val homeRows = remember(
+        rows,
+        visibleContacts,
+        channelConversations,
+        channelUnreadKeys,
+        unreadCounts,
+        latestMessages,
+        latestCallEvents,
+        activeCalls,
+        timeFormatter,
+        context
+    ) {
+        val contactItems = visibleContacts.zip(rows).map { (contact, rowUi) ->
+            HomeRow.ContactRow(
+                rowUi = rowUi,
+                unread = unreadCounts[contact.sessionCode] ?: 0,
+                sortIsRescuer = isRescuerContact(contact),
+                sortMillis = latestContactActivityTimestampMillis(
+                    lastMessage = latestMessages[contact.sessionCode],
+                    lastCallEvent = latestCallEvents[contact.sessionCode],
+                    activeCall = activeCalls[contact.sessionCode]
+                ) ?: 0L
+            )
+        }
+        val channelItems = channelConversations.map { conversation ->
+            HomeRow.ChannelRow(
+                conversation = conversation,
+                preview = buildChannelPreviewUi(context, conversation),
+                unread = if ("${conversation.channelId}:${conversation.peerUid}" in channelUnreadKeys) 1 else 0,
+                timestampText = conversation.lastAtMillis
+                    .takeIf { it > 0L }
+                    ?.let { timeFormatter.format(Date(it)) }
+            )
+        }
+        (contactItems + channelItems).sortedWith(
+            compareByDescending<HomeRow> { it.sortIsRescuer }
+                .thenByDescending { it.sortUnread }
+                .thenByDescending { it.sortMillis }
+        )
+    }
+
+    val hasChatResults = showCrisisSentinelEntry || showGeneralMeshEntry ||
+        showAuthorityMeshEntry || homeRows.isNotEmpty()
 
     LazyColumn(
         modifier = modifier,
         state = listState,
         contentPadding = contentPadding
     ) {
+        // While searching, split the results WhatsApp-style: chats that match by name first,
+        // then the individual messages whose text matched.
+        if (isSearchActive && hasChatResults) {
+            item(
+                key = "search_section_chats",
+                contentType = "search_section_header"
+            ) {
+                SearchSectionHeader(text = stringResource(R.string.main_search_section_chats))
+            }
+        }
         if (showCrisisSentinelEntry) {
             item(
                 key = "crisis_sentinel_main_entry",
@@ -1717,29 +2141,287 @@ private fun ContactList(
                 )
             }
         }
+        if (showAuthorityMeshEntry) {
+            item(
+                key = AUTHORITY_MESH_LIST_ITEM_KEY,
+                contentType = "authority_mesh_item"
+            ) {
+                val authorityUnread by AuthorityMeshChatStore.unreadCount
+                    .collectAsStateWithLifecycle()
+                MeshGeneralListItem(
+                    unreadCount = authorityUnread,
+                    timestampText = null,
+                    preview = ContactPreviewUi(
+                        previewText = "",
+                        previewWithSender = "",
+                        showReadIndicator = false,
+                        isRead = false
+                    ),
+                    onClick = onAuthorityMeshSelected,
+                    titleRes = R.string.authority_mesh_chat_title,
+                    subtitleRes = R.string.authority_mesh_chat_subtitle
+                )
+            }
+        }
+        // One merged, recency-sorted list: cross-panel authority conversations interleave with chats as
+        // normal-looking rows (same ContactListItem), each carrying its own unread badge.
         items(
-            items = rows,
-            key = { row -> row.stableKey },
-            contentType = { "contact_item" }
-        ) { row ->
-            val unreadCount = unreadCounts[row.sessionCode] ?: 0
-            ContactListItem(
-                contactName = row.name,
-                sessionCode = row.sessionCode,
-                contactStableKey = row.stableKey,
-                supportingText = row.supportingText,
-                timestampText = row.timestampText,
-                preview = row.preview,
-                isConnected = row.isConnected,
-                isVerified = row.isVerified,
-                showConnectedLabel = row.sessionCode in recentConnectedLabelSessions,
-                unreadCount = unreadCount,
-                onClick = { onContactSelected(row.sessionCode, row.name, row.preferredTransport) },
-                sharedTransitionScope = sharedTransitionScope,
-                animatedVisibilityScope = animatedVisibilityScope
+            items = homeRows,
+            key = { it.key },
+            contentType = { it.contentType }
+        ) { homeRow ->
+            when (homeRow) {
+                is HomeRow.ChannelRow -> {
+                    val conversation = homeRow.conversation
+                    // Live Bluetooth link to this peer's hidden bridge contact → same connected
+                    // pill a citizen row gets.
+                    val bridgeSession =
+                        channelBridgeSessions["${conversation.channelId}:${conversation.peerUid}"]
+                    val isBridgeConnected =
+                        bridgeSession != null && bridgeSession in connectedSessions
+                    ContactListItem(
+                        contactName = conversation.peerName.ifBlank { conversation.peerUid },
+                        sessionCode = "authority:${conversation.channelId}:${conversation.peerUid}",
+                        contactStableKey = "authch:${conversation.channelId}:${conversation.peerUid}",
+                        peerPhotoUrl = null,
+                        // Which agency, not a generic "Authority" — shown as a chip right next to
+                        // the name. The supporting text only renders when there is no message
+                        // preview, and these rows always carry one, so the chip is the only spot
+                        // where the agency is actually visible on the home list.
+                        nameTag = conversation.peerPanelName.ifBlank {
+                            stringResource(R.string.authority_channel_row_label)
+                        },
+                        supportingText = conversation.peerPanelName.ifBlank {
+                            stringResource(R.string.authority_channel_row_label)
+                        },
+                        timestampText = homeRow.timestampText,
+                        preview = homeRow.preview,
+                        isConnected = isBridgeConnected,
+                        isVerified = false,
+                        showConnectedLabel = isBridgeConnected &&
+                            bridgeSession in recentConnectedLabelSessions,
+                        unreadCount = homeRow.unread,
+                        onClick = { onChannelSelected(conversation) },
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope
+                    )
+                }
+                is HomeRow.ContactRow -> {
+                    val row = homeRow.rowUi
+                    ContactListItem(
+                        contactName = row.name,
+                        sessionCode = row.sessionCode,
+                        contactStableKey = row.stableKey,
+                        peerPhotoUrl = row.peerPhotoUrl.ifBlank { null },
+                        supportingText = row.supportingText,
+                        timestampText = row.timestampText,
+                        preview = row.preview,
+                        isConnected = row.isConnected,
+                        isVerified = row.isVerified,
+                        showConnectedLabel = row.sessionCode in recentConnectedLabelSessions,
+                        unreadCount = homeRow.unread,
+                        onClick = { onContactSelected(row.sessionCode, row.name, row.preferredTransport) },
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope
+                    )
+                }
+            }
+        }
+        if (isSearchActive && searchMessageRows.isNotEmpty()) {
+            item(
+                key = "search_section_messages",
+                contentType = "search_section_header"
+            ) {
+                SearchSectionHeader(text = stringResource(R.string.main_search_section_messages))
+            }
+            items(
+                items = searchMessageRows,
+                key = { "searchmsg:${it.messageId}" },
+                contentType = { "search_message_row" }
+            ) { row ->
+                SearchMessageResultItem(
+                    row = row,
+                    normalizedQuery = normalizedQuery,
+                    timestampText = formatSearchResultTimestamp(
+                        timestampMillis = row.timestampMillis,
+                        locale = locale,
+                        timeFormatter = timeFormatter
+                    ),
+                    onClick = {
+                        onContactSelected(row.sessionCode, row.displayName, row.preferredTransport)
+                    }
+                )
+            }
+        }
+    }
+}
+
+/** A single matched message in the home-screen search results. */
+@Immutable
+private data class SearchMessageRowUi(
+    val messageId: Long,
+    val sessionCode: String,
+    val timestampMillis: Long,
+    val displayName: String,
+    val stableKey: String,
+    val preferredTransport: String?,
+    val body: String
+)
+
+@Composable
+private fun SearchSectionHeader(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 4.dp)
+    )
+}
+
+@Composable
+private fun SearchMessageResultItem(
+    row: SearchMessageRowUi,
+    normalizedQuery: String,
+    timestampText: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val contactAvatarVersion by ContactAvatarStorage.observeAvatarVersion(row.sessionCode)
+        .collectAsStateWithLifecycle(initialValue = 0L)
+    val contactAvatarBitmap by produceState<Bitmap?>(
+        initialValue = null,
+        key1 = row.sessionCode,
+        key2 = contactAvatarVersion
+    ) {
+        value = withContext(Dispatchers.IO) {
+            ContactAvatarStorage.loadContactAvatar(context, row.sessionCode)
+        }
+    }
+    val highlightColor = MaterialTheme.colorScheme.primary
+    val snippet = remember(row.body, normalizedQuery, highlightColor) {
+        buildSearchSnippet(
+            body = row.body,
+            normalizedQuery = normalizedQuery,
+            highlightColor = highlightColor
+        )
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ContactAvatar(
+            displayName = row.displayName,
+            stableKey = row.stableKey,
+            bitmap = contactAvatarBitmap,
+            photoUrl = null,
+            modifier = Modifier.size(44.dp),
+            textStyle = MaterialTheme.typography.titleSmall
+        )
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = row.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (timestampText != null) {
+                    Text(
+                        text = timestampText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+                text = snippet,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
+}
+
+private const val SEARCH_SNIPPET_LEAD_CHARS = 18
+
+/**
+ * Snippet with the matched substring highlighted. Relies on [normalizeForSearch] being
+ * index-preserving: a match range found in the normalized text is applied directly to the
+ * original text. Long messages are windowed so the first match stays visible.
+ */
+private fun buildSearchSnippet(
+    body: String,
+    normalizedQuery: String,
+    highlightColor: Color
+): AnnotatedString {
+    val singleLine = body.replace('\n', ' ')
+    val matchStart = if (normalizedQuery.isEmpty()) {
+        -1
+    } else {
+        normalizeForSearch(singleLine).indexOf(normalizedQuery)
+    }
+    if (matchStart < 0) {
+        return AnnotatedString(singleLine)
+    }
+    val matchEnd = matchStart + normalizedQuery.length
+    val windowStart = if (matchStart <= SEARCH_SNIPPET_LEAD_CHARS) {
+        0
+    } else {
+        val candidate = matchStart - SEARCH_SNIPPET_LEAD_CHARS
+        // Snap forward to the next word boundary so the leading ellipsis cuts cleanly.
+        val boundary = singleLine.indexOf(' ', candidate)
+        if (boundary in candidate until matchStart) boundary + 1 else candidate
+    }
+    return buildAnnotatedString {
+        if (windowStart > 0) {
+            append("…")
+        }
+        append(singleLine, windowStart, matchStart)
+        withStyle(SpanStyle(color = highlightColor, fontWeight = FontWeight.SemiBold)) {
+            append(singleLine, matchStart, matchEnd)
+        }
+        append(singleLine, matchEnd, singleLine.length)
+    }
+}
+
+/** Today → clock time; this year → "9 Tem"; otherwise with the year. */
+private fun formatSearchResultTimestamp(
+    timestampMillis: Long,
+    locale: Locale,
+    timeFormatter: SimpleDateFormat
+): String? {
+    if (timestampMillis <= 0L) {
+        return null
+    }
+    val now = Calendar.getInstance()
+    val then = Calendar.getInstance().apply { timeInMillis = timestampMillis }
+    val sameDay = now.get(Calendar.YEAR) == then.get(Calendar.YEAR) &&
+        now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)
+    if (sameDay) {
+        return timeFormatter.format(Date(timestampMillis))
+    }
+    val pattern = if (now.get(Calendar.YEAR) == then.get(Calendar.YEAR)) "d MMM" else "d MMM yyyy"
+    return SimpleDateFormat(pattern, locale).format(Date(timestampMillis))
 }
 
 private fun sortContactsForMainList(
@@ -1804,67 +2486,23 @@ private fun isBleChatSession(contact: Contact): Boolean {
         normalizePreferredTransport(contact.preferredTransport) != PREFERRED_TRANSPORT_BLE_GATT
 }
 
+/**
+ * Name/code/address matching for the "Chats" section. Message-content matches are no longer
+ * folded in here — they surface as their own rows in the "Messages" section instead, via the
+ * ViewModel's debounced search flow. [normalizedQuery] must come from [normalizeForSearch].
+ */
 private fun filterContactsForGlobalSearch(
     contacts: List<Contact>,
-    allMessages: List<ChatMessage>,
-    query: String,
-    locale: Locale
+    normalizedQuery: String
 ): List<Contact> {
-    val normalizedQuery = query.trim().lowercase(locale)
     if (normalizedQuery.isEmpty()) {
         return contacts
     }
-
-    val matchedSessions = allMessages.asSequence()
-        .filter { message ->
-            doesMessageMatchSearchQuery(
-                message = message,
-                normalizedQuery = normalizedQuery,
-                locale = locale
-            )
-        }
-        .map { it.sessionCode }
-        .toHashSet()
-
     return contacts.filter { contact ->
-        val contactText = buildString {
-            append(contact.name)
-            if (contact.sessionCode.isNotBlank()) {
-                append(' ')
-                append(contact.sessionCode)
-            }
-            if (contact.address.isNotBlank()) {
-                append(' ')
-                append(contact.address)
-            }
-        }.lowercase(locale)
-
-        contactText.contains(normalizedQuery) ||
-            matchedSessions.contains(contact.sessionCode)
+        normalizeForSearch(contact.name).contains(normalizedQuery) ||
+            normalizeForSearch(contact.sessionCode).contains(normalizedQuery) ||
+            normalizeForSearch(contact.address).contains(normalizedQuery)
     }
-}
-
-private fun doesMessageMatchSearchQuery(
-    message: ChatMessage,
-    normalizedQuery: String,
-    locale: Locale
-): Boolean {
-    if (normalizedQuery.isBlank()) {
-        return false
-    }
-    val normalizedBody = message.text.trim()
-    val body = stripReplyMetadata(normalizedBody)
-        ?.takeIf { it.isNotBlank() }
-        ?: normalizedBody
-    val replyBody = parseReplyMetadata(normalizedBody)?.body.orEmpty()
-    val searchableText = buildString {
-        append(body)
-        if (replyBody.isNotBlank()) {
-            append(' ')
-            append(replyBody)
-        }
-    }.lowercase(locale)
-    return searchableText.contains(normalizedQuery)
 }
 
 @Immutable
@@ -1895,12 +2533,50 @@ private data class ContactListRowUi(
     val sessionCode: String,
     val stableKey: String,
     val preferredTransport: String,
+    val peerPhotoUrl: String,
     val supportingText: String,
     val timestampText: String?,
     val preview: ContactPreviewUi,
     val isConnected: Boolean,
     val isVerified: Boolean
 )
+
+/**
+ * One home-list row — either a normal contact chat or a cross-panel authority conversation. Both are
+ * merged into a single list sorted by the same keys ([sortIsRescuer] → [sortUnread] → [sortMillis]) so
+ * authority chats interleave with chats by recency instead of being pinned in a separate block.
+ */
+private sealed interface HomeRow {
+    val sortIsRescuer: Boolean
+    val sortUnread: Int
+    val sortMillis: Long
+    val key: String
+    val contentType: String
+
+    data class ContactRow(
+        val rowUi: ContactListRowUi,
+        val unread: Int,
+        override val sortIsRescuer: Boolean,
+        override val sortMillis: Long,
+    ) : HomeRow {
+        override val sortUnread get() = unread
+        override val key get() = rowUi.stableKey
+        override val contentType get() = "contact_item"
+    }
+
+    data class ChannelRow(
+        val conversation: ChannelConversation,
+        val preview: ContactPreviewUi,
+        val unread: Int,
+        val timestampText: String?,
+    ) : HomeRow {
+        override val sortIsRescuer get() = false
+        override val sortUnread get() = unread
+        override val sortMillis get() = conversation.lastAtMillis
+        override val key get() = "authch:${conversation.channelId}:${conversation.peerUid}"
+        override val contentType get() = "authority_channel_row"
+    }
+}
 
 private fun contactSupportingText(contact: Contact): String {
     return when {
@@ -1968,90 +2644,6 @@ private fun rememberActiveCallsBySession(): Map<String, CallUiState> {
     }
 
     return activeCalls
-}
-
-@Composable
-private fun rememberConnectedSessions(): Set<String> {
-    val context = LocalContext.current
-    var connectedSessions by remember { mutableStateOf<Set<String>>(emptySet()) }
-
-    DisposableEffect(context) {
-        val appContext = context.applicationContext
-        val p2pGattChatManager = P2pGattChatManager.shared(appContext)
-        val collectScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
-        var sessionsJob: Job? = null
-        var bleClientSessionsJob: Job? = null
-        var bleServerSessionsJob: Job? = null
-        var rfcommSessions = emptySet<String>()
-        var bleClientSessions = emptySet<String>()
-        var bleServerSessions = emptySet<String>()
-        fun updateConnectedSessions() {
-            connectedSessions = rfcommSessions + bleClientSessions + bleServerSessions
-        }
-        val connection = object : ServiceConnection {
-            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-                val boundService = (binder as? RfcommForegroundService.LocalBinder)?.getService() ?: return
-                sessionsJob?.cancel()
-                sessionsJob = collectScope.launch {
-                    boundService.activeSessions.collectLatest { sessions ->
-                        rfcommSessions = sessions
-                        updateConnectedSessions()
-                    }
-                }
-            }
-
-            override fun onServiceDisconnected(name: ComponentName?) {
-                sessionsJob?.cancel()
-                sessionsJob = null
-                rfcommSessions = emptySet()
-                updateConnectedSessions()
-            }
-        }
-        bleClientSessionsJob = collectScope.launch {
-            p2pGattChatManager.connectedSessions.collectLatest { sessions ->
-                bleClientSessions = sessions
-                updateConnectedSessions()
-            }
-        }
-        bleServerSessionsJob = collectScope.launch {
-            BlePeerStore.peers.collectLatest { peers ->
-                bleServerSessions = peers.values
-                    .mapNotNull { peer ->
-                        peer.sessionCode.trim().takeIf { it.isNotEmpty() }
-                    }
-                    .toSet()
-                updateConnectedSessions()
-            }
-        }
-        val bound = runCatching {
-            appContext.bindService(
-                Intent(appContext, RfcommForegroundService::class.java),
-                connection,
-                Context.BIND_AUTO_CREATE
-            )
-        }.getOrDefault(false)
-
-        onDispose {
-            sessionsJob?.cancel()
-            bleClientSessionsJob?.cancel()
-            bleServerSessionsJob?.cancel()
-            collectScope.cancel()
-            connectedSessions = emptySet()
-            if (bound) {
-                runCatching { appContext.unbindService(connection) }
-            }
-        }
-    }
-
-    // Debug screenshot demo: always report the scripted contact as connected
-    // so the `ConnectedInlineIndicator` appears on its row in the Messages
-    // list. Gated on BuildConfig.DEBUG via `isScreenshotDemoModeEnabledSync`;
-    // in release builds this call returns `false` and the set is untouched.
-    return if (isScreenshotDemoModeEnabledSync(context)) {
-        connectedSessions + ChatScreenshotDemoScenario.DEMO_SESSION_CODE
-    } else {
-        connectedSessions
-    }
 }
 
 @Composable
@@ -2123,6 +2715,79 @@ private fun latestContactActivityTimestampMillis(
         activeCallTimestampMillis(activeCall) ?: Long.MIN_VALUE
     )
     return latestTimestamp.takeIf { it != Long.MIN_VALUE }
+}
+
+/**
+ * Preview for a cross-panel conversation row, styled exactly like a normal chat row (buildCallEventPreviewUi):
+ * a call-log message (stored as a U+0001 sentinel + JSON) becomes a call indicator icon + clean label
+ * (no "📞" emoji), while plain text is shown verbatim.
+ */
+private fun buildChannelPreviewUi(context: Context, conversation: ChannelConversation): ContactPreviewUi {
+    val rawText = conversation.lastText
+    if (rawText.isBlank()) {
+        // Attachment-only last message → show its kind like ChatScreen ("Voice message"/"Photo"/"File").
+        val attachmentLabel = when (conversation.lastAttachmentKind) {
+            "audio" -> context.getString(R.string.conversation_preview_voice_message)
+            "image" -> context.getString(R.string.conversation_preview_photo_message)
+            "file" -> context.getString(R.string.chat_file_preview_label)
+            else -> ""
+        }
+        return ContactPreviewUi(
+            previewText = attachmentLabel,
+            previewWithSender = attachmentLabel,
+            showReadIndicator = false,
+            isRead = false,
+        )
+    }
+    if (rawText.startsWith('\u0001')) {
+        val (labelRes, missed, video) = runCatching {
+            val jsonPart = rawText.substringAfter('\u0001').substringAfter('\u0001')
+            val obj = org.json.JSONObject(jsonPart)
+            val isMissed = obj.optString("status") != "ended"
+            val isVideo = obj.optString("kind") == "video"
+            val res = when {
+                isMissed -> R.string.authority_channel_call_missed
+                isVideo -> R.string.authority_channel_call_video
+                else -> R.string.authority_channel_call_audio
+            }
+            Triple(res, isMissed, isVideo)
+        }.getOrElse { Triple(R.string.authority_channel_call_audio, false, false) }
+        val label = context.getString(labelRes)
+        return ContactPreviewUi(
+            previewText = label,
+            previewWithSender = label,
+            showReadIndicator = false,
+            isRead = false,
+            indicator = ContactPreviewIndicatorUi(
+                // Video calls get their own camera icon; audio calls keep the phone icon.
+                icon = when {
+                    video && missed -> Icons.Filled.MissedVideoCall
+                    video -> Icons.Filled.Videocam
+                    missed -> Icons.Filled.CallMissed
+                    else -> Icons.Filled.Call
+                },
+                contentDescription = label,
+                tone = if (missed) ContactPreviewIndicatorTone.Error else ContactPreviewIndicatorTone.Accent,
+            ),
+        )
+    }
+    // A shared location is a CC_LOC control payload — label it like the citizen rows do
+    // instead of leaking the raw coordinates string.
+    if (isChatLocationPayload(rawText)) {
+        val label = context.getString(R.string.chat_location_preview_label)
+        return ContactPreviewUi(
+            previewText = label,
+            previewWithSender = label,
+            showReadIndicator = false,
+            isRead = false,
+        )
+    }
+    return ContactPreviewUi(
+        previewText = rawText,
+        previewWithSender = rawText,
+        showReadIndicator = false,
+        isRead = false,
+    )
 }
 
 private fun buildContactPreviewUi(
@@ -2220,6 +2885,7 @@ private fun buildContactPreviewUi(
 
         MessageType.AUDIO -> context.getString(R.string.conversation_preview_voice_message)
         MessageType.IMAGE -> context.getString(R.string.conversation_preview_photo_message)
+        MessageType.SOS_ALERT -> context.getString(R.string.conversation_preview_sos)
     }
 
     val senderPrefix = when {
@@ -2513,6 +3179,8 @@ private fun ContactListItem(
     contactName: String,
     sessionCode: String,
     contactStableKey: String,
+    peerPhotoUrl: String? = null,
+    nameTag: String? = null,
     supportingText: String,
     timestampText: String?,
     preview: ContactPreviewUi,
@@ -2572,6 +3240,7 @@ private fun ContactListItem(
                     displayName = contactName,
                     stableKey = contactStableKey,
                     bitmap = contactAvatarBitmap,
+                    photoUrl = peerPhotoUrl,
                     modifier = Modifier.size(52.dp),
                     textStyle = MaterialTheme.typography.titleMedium
                 )
@@ -2603,6 +3272,23 @@ private fun ContactListItem(
                             overflow = TextOverflow.Ellipsis,
                             modifier = titleSharedModifier.weight(1f, fill = false)
                         )
+                        if (!nameTag.isNullOrBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    .widthIn(max = 132.dp)
+                            ) {
+                                Text(
+                                    text = nameTag,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                         if (isConnected) {
                             ConnectedInlineIndicator(showLabel = showConnectedLabel)
                         }
@@ -2741,7 +3427,9 @@ private fun MeshGeneralListItem(
     timestampText: String?,
     preview: ContactPreviewUi,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    titleRes: Int = R.string.mesh_chat_general_title,
+    subtitleRes: Int = R.string.mesh_chat_general_subtitle
 ) {
     Column(
         modifier = modifier
@@ -2765,7 +3453,7 @@ private fun MeshGeneralListItem(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = stringResource(R.string.mesh_chat_general_title),
+                        text = stringResource(titleRes),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -2818,7 +3506,7 @@ private fun MeshGeneralListItem(
                 } else {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = stringResource(R.string.mesh_chat_general_subtitle),
+                        text = stringResource(subtitleRes),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,

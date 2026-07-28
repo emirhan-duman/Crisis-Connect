@@ -8,8 +8,8 @@
 import Foundation
 import CoreLocation
 
-struct SOSSignalLocationPayload: Sendable, Equatable {
-    struct GPSPayload: Sendable, Equatable {
+struct SOSSignalLocationPayload: Sendable, Equatable, Codable {
+    struct GPSPayload: Sendable, Equatable, Codable {
         let latitude: Double
         let longitude: Double
         let horizontalAccuracyMeters: Double?
@@ -34,7 +34,7 @@ struct SOSSignalLocationPayload: Sendable, Equatable {
         }
     }
 
-    struct RelativeEstimate: Sendable, Equatable {
+    struct RelativeEstimate: Sendable, Equatable, Codable {
         let anchorGPS: GPSPayload
         let distanceMeters: Double
         let bearingDegrees: Double?

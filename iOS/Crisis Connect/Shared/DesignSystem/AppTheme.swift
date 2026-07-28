@@ -316,3 +316,49 @@ extension View {
         modifier(AppSurfaceModifier(style: style, padding: padding))
     }
 }
+
+struct AppCustomIconBadge<Icon: View>: View {
+    var tint: Color = .appPrimary
+    var size: CGFloat = 44
+    @ViewBuilder var icon: () -> Icon
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.appSurfaceMuted)
+
+            icon()
+                .frame(width: size * 0.52, height: size * 0.52)
+                .foregroundStyle(tint)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+struct CrisisSentinelSparklesIcon: Shape {
+    func path(in rect: CGRect) -> Path {
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(
+                x: rect.minX + (x / 24) * rect.width,
+                y: rect.minY + (y / 24) * rect.height
+            )
+        }
+
+        var path = Path()
+        path.move(to: point(10, 2))
+        path.addCurve(to: point(2, 10), control1: point(10, 6.418), control2: point(6.418, 10))
+        path.addCurve(to: point(10, 18), control1: point(6.418, 10), control2: point(10, 13.582))
+        path.addCurve(to: point(18, 10), control1: point(10, 13.582), control2: point(13.582, 10))
+        path.addCurve(to: point(10, 2), control1: point(13.582, 10), control2: point(10, 6.418))
+        path.closeSubpath()
+
+        path.move(to: point(19, 14))
+        path.addCurve(to: point(15.5, 17.5), control1: point(19, 15.933), control2: point(17.433, 17.5))
+        path.addCurve(to: point(19, 21), control1: point(17.433, 17.5), control2: point(19, 19.067))
+        path.addCurve(to: point(22.5, 17.5), control1: point(19, 19.067), control2: point(20.567, 17.5))
+        path.addCurve(to: point(19, 14), control1: point(20.567, 17.5), control2: point(19, 15.933))
+        path.closeSubpath()
+
+        return path
+    }
+}

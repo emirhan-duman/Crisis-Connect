@@ -1,72 +1,30 @@
-# Built application files
-*.apk
-*.aab
-*.ap_
-*.dex
-
-# Java / Android generated files
-*.class
-*.odex
-bin/
-gen/
-out/
-build/
-/build/
-/app/build/
-/feature_rescue/build/
-
-# Gradle / Kotlin
-.gradle/
-.kotlin/
-
-# Local IDE files
-.idea/
 *.iml
-.vscode/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Local SDK and signing config
-local.properties
+.gradle
 /local.properties
-keystore.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/app/build
+/feature_rescue/build
+/baselineprofile/build
+/app/release
+/captures
+.externalNativeBuild
+.cxx
+local.properties
 /keystore.properties
 *.jks
 *.keystore
-*.p12
-*.pem
-*.key
 
-# Firebase / local cloud config
+# Firebase config
 app/google-services.json
 app/src/internal/google-services.json
-.firebaserc
 .secrets/
-
-# Cloud Functions generated dependencies
-functions/node_modules/
-functions/lib/
-
-# Release artifacts and logs
-app/release/
-/app/release/
-captures/
-/captures/
-firestore-debug.log
-*.log
-output/
-/output/
-
-# External native build
-.externalNativeBuild/
-.cxx/
-
-# Third-party local source dependencies kept intentionally.
-*.aar
-!app/libs/
-!app/libs/opus.aar
 
 # Downloaded/generated on-device AI model artifacts are never bundled in the APK.
 *.task
@@ -76,3 +34,12 @@ output/
 *.safetensors
 *.onnx
 crisis_sentinel_models/
+
+# Firebase CLI local logs (regenerated on every command; never source)
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+*.firebase-debug.log
+
+# Kotlin 2.x build session metadata
+.kotlin/

@@ -37,6 +37,8 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
     var onStatusChange: ((RescueConnectionStatus) -> Void)?
     var onBroadcastId: ((String) -> Void)?
     var onPeerName: ((String) -> Void)?
+    var onPeerBattery: ((Int) -> Void)?
+    var onPeerMedical: ((RescueVictimMedical) -> Void)?
     var onSignalLocation: ((SOSSignalLocationPayload?) -> Void)?
 
     private let queue: DispatchQueue
@@ -63,6 +65,8 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
     private var secureAckCharacteristic: CBCharacteristic?
     private var secureChatInCharacteristic: CBCharacteristic?
     private var secureChatOutCharacteristic: CBCharacteristic?
+    private var callIoInCharacteristic: CBCharacteristic?
+    private var callIoOutCharacteristic: CBCharacteristic?
 
     private let serviceUUID = CBUUID(string: "0000CC00-0000-1000-8000-00805F9B34FB")
     private let idUUID = CBUUID(string: "0000CC01-0000-1000-8000-00805F9B34FB")
@@ -72,6 +76,8 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
     private let secureAckUUID = CBUUID(string: "0000CC21-0000-1000-8000-00805F9B34FB")
     private let secureChatInUUID = CBUUID(string: "0000CC30-0000-1000-8000-00805F9B34FB")
     private let secureChatOutUUID = CBUUID(string: "0000CC31-0000-1000-8000-00805F9B34FB")
+    private let callIoInUUID = CBUUID(string: "0000CC40-0000-1000-8000-00805F9B34FB")
+    private let callIoOutUUID = CBUUID(string: "0000CC41-0000-1000-8000-00805F9B34FB")
 
     private let handshakeAckValue = Data("OK".utf8)
     private let deliveredAckValue = Data("DELIVERED".utf8)
@@ -346,7 +352,8 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
         updateStatus(.discovering)
         let characteristicUUIDs = [
             idUUID, authChallengeUUID, authResponseUUID, secureInUUID,
-            secureAckUUID, secureChatInUUID, secureChatOutUUID
+            secureAckUUID, secureChatInUUID, secureChatOutUUID,
+            callIoInUUID, callIoOutUUID
         ]
         peripheral.discoverCharacteristics(characteristicUUIDs, for: service)
     }
@@ -376,6 +383,12 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
                 secureChatInCharacteristic = characteristic
             case secureChatOutUUID:
                 secureChatOutCharacteristic = characteristic
+            case callIoInUUID:
+                // Optional call-IO pair — only newer victims expose it; absence just disables
+                // live voice calls, never the connection.
+                callIoInCharacteristic = characteristic
+            case callIoOutUUID:
+                callIoOutCharacteristic = characteristic
             default:
                 break
             }
@@ -401,6 +414,9 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
         if let secureChatOutCharacteristic {
             peripheral.setNotifyValue(true, for: secureChatOutCharacteristic)
         }
+        if let callIoOutCharacteristic {
+            peripheral.setNotifyValue(true, for: callIoOutCharacteristic)
+        }
 
         if let idCharacteristic {
             peripheral.readValue(for: idCharacteristic)
@@ -420,6 +436,8 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
             handleAck(value)
         case secureChatOutUUID:
             handleChatChunk(value)
+        case callIoOutUUID:
+            RescueCallEngine.shared.onInboundPacket(sessionId: sessionId, packet: value)
         default:
             break
         }
@@ -573,11 +591,40 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
         }
     }
 
+    /// Registers this connection as the call transport for its chat session (idempotent).
+    private func registerCallTransport() {
+        guard let key = sessionKey, callIoInCharacteristic != nil else { return }
+        RescueCallEngine.shared.registerTransport(
+            RescueCallEngine.Transport(
+                sessionId: sessionId,
+                sendPacket: { [weak self] packet in
+                    guard let self, let characteristic = self.callIoInCharacteristic else {
+                        return false
+                    }
+                    // Best-effort single write; the offer loop retries signaling and the jitter
+                    // buffer conceals a lost audio packet (telsiz lesson: don't gate on
+                    // canSendWriteWithoutResponse, it flaps between connection events).
+                    self.peripheral.writeValue(
+                        packet,
+                        for: characteristic,
+                        type: .withoutResponse
+                    )
+                    return true
+                },
+                sessionKey: { key },
+                // Peer name resolution stays in the UI layer (SOSChatStore is main-bound and this
+                // closure runs on BLE/audio threads); the overlay shows the session name itself.
+                peerName: { nil }
+            )
+        )
+    }
+
     private func handleAck(_ value: Data) {
         if awaitingHandshakeAck, value == handshakeAckValue {
             awaitingHandshakeAck = false
             ackTimeoutWork?.cancel()
             updateStatus(.ready)
+            registerCallTransport()
             let resolvedRole: SOSChatRole = preSharedKey == nil ? .victim : .unknown
             DispatchQueue.main.async {
                 let stableIdentity = ContactStore.shared.contact(for: self.sessionId)?.verifiedIdentityKey
@@ -904,10 +951,32 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
         } else {
             avatarBase64 = nil
         }
+        // Victims report batteryPct in peer_info; dropping it here starved both the rescuer UI
+        // and the dashboard sync of the one triage datum the protocol already carries.
+        let batteryPercent = (numericValue(from: json["batteryPct"])).flatMap { value -> Int? in
+            let rounded = Int(value.rounded())
+            return (0...100).contains(rounded) ? rounded : nil
+        }
+        let medical = (json["medical"] as? [String: Any]).flatMap { medicalJson -> RescueVictimMedical? in
+            func field(_ key: String, max: Int) -> String? {
+                guard let raw = medicalJson[key] as? String else { return nil }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : String(trimmed.prefix(max))
+            }
+            let parsed = RescueVictimMedical(
+                bloodType: field("blood", max: 8),
+                allergies: field("allergies", max: 200),
+                medication: field("meds", max: 200),
+                notes: field("notes", max: 200)
+            )
+            return parsed.hasContent ? parsed : nil
+        }
         return PeerIdentity(
             name: name,
             role: role,
             avatarBase64: avatarBase64,
+            batteryPercent: batteryPercent,
+            medical: medical,
             signalLocation: SOSSignalLocationPayload.fromPeerInfoJSON(json["signalLocation"])
                 ?? SOSSignalLocationPayload.fromLegacyLocationJSON(json["location"])
         )
@@ -943,6 +1012,12 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
         let peerName = identity.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !peerName.isEmpty {
             onPeerName?(peerName)
+        }
+        if let batteryPercent = identity.batteryPercent {
+            onPeerBattery?(batteryPercent)
+        }
+        if let medical = identity.medical {
+            onPeerMedical?(medical)
         }
         let resolvedRole: SOSChatRole
         switch identity.role.lowercased() {
@@ -1311,6 +1386,9 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
 
     private func updateStatus(_ status: RescueConnectionStatus) {
         self.status = status
+        if status == .disconnected || status == .failed {
+            RescueCallEngine.shared.unregisterTransport(sessionId: sessionId)
+        }
         DispatchQueue.main.async {
             self.onStatusChange?(status)
         }
@@ -1363,5 +1441,19 @@ private struct PeerIdentity {
     let name: String
     let role: String
     let avatarBase64: String?
+    let batteryPercent: Int?
+    let medical: RescueVictimMedical?
     let signalLocation: SOSSignalLocationPayload?
+}
+
+/// Optional emergency medical details a victim shares over the encrypted rescue link.
+struct RescueVictimMedical: Equatable {
+    let bloodType: String?
+    let allergies: String?
+    let medication: String?
+    let notes: String?
+
+    var hasContent: Bool {
+        [bloodType, allergies, medication, notes].contains { !($0 ?? "").isEmpty }
+    }
 }
