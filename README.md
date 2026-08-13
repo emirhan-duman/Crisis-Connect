@@ -17,6 +17,7 @@
 <p align="center">
   <a href="https://play.google.com/store/apps/details?id=com.auralis.crisisconnect"><img src="https://img.shields.io/badge/Google%20Play-Download-3ddc84?style=for-the-badge&logo=google-play&logoColor=white" alt="Google Play" /></a>&nbsp;&nbsp;
   <a href="https://apps.apple.com/app/crisis-connect/id6759731195"><img src="https://img.shields.io/badge/App%20Store-Download-147efb?style=for-the-badge&logo=app-store&logoColor=white" alt="App Store" /></a>&nbsp;&nbsp;
+  <a href="https://github.com/emirhan-duman/Crisis-Connect/releases/download/v1.1.9/crisis-connect-1.1.9-64.apk"><img src="https://img.shields.io/badge/Android%20APK-1.1.9-24292f?style=for-the-badge&logo=android&logoColor=white" alt="Download Android APK" /></a>&nbsp;&nbsp;
   <a href="https://crisisconnect.network"><img src="https://img.shields.io/badge/Website-crisisconnect.network-0f172a?style=for-the-badge&logo=safari&logoColor=white" alt="Website" /></a>
 </p>
 
@@ -522,12 +523,18 @@ outside this public mirror.
 
 ### Download the App
 
-The easiest way to use Crisis Connect is to download it from the app stores:
+The easiest way to use Crisis Connect is to download it from the app stores. Android users can
+also install the exact universal APK generated and signed by Google Play for release 1.1.9:
 
 <p align="center">
   <a href="https://play.google.com/store/apps/details?id=com.auralis.crisisconnect"><img src="https://img.shields.io/badge/Google%20Play-Download-3ddc84?style=for-the-badge&logo=google-play&logoColor=white" alt="Google Play" /></a>&nbsp;&nbsp;
-  <a href="https://apps.apple.com/app/crisis-connect/id6759731195"><img src="https://img.shields.io/badge/App%20Store-Download-147efb?style=for-the-badge&logo=app-store&logoColor=white" alt="App Store" /></a>
+  <a href="https://apps.apple.com/app/crisis-connect/id6759731195"><img src="https://img.shields.io/badge/App%20Store-Download-147efb?style=for-the-badge&logo=app-store&logoColor=white" alt="App Store" /></a>&nbsp;&nbsp;
+  <a href="https://github.com/emirhan-duman/Crisis-Connect/releases/download/v1.1.9/crisis-connect-1.1.9-64.apk"><img src="https://img.shields.io/badge/Android%20APK-Direct%20download-24292f?style=for-the-badge&logo=android&logoColor=white" alt="Download Android APK" /></a>
 </p>
+
+The direct APK is `com.auralis.crisisconnect` version `1.1.9` (`versionCode` 64), supports
+Android 7.0+ and is signed with the Google Play app-signing certificate. Verify its SHA-256 before
+installing: `f690576ab7a1dd5d6266247a469bd5893bfbd082307d994982d918d69c3124e8`.
 
 ### Build From Source
 
@@ -535,7 +542,7 @@ The easiest way to use Crisis Connect is to download it from the app stores:
 
 | Platform | Requirements |
 |:--|:--|
-| **Android** | Android Studio Ladybug+ · JDK 17 · Android SDK 36 |
+| **Android** | Android Studio Ladybug+ · JDK 21 · Android SDK 36 |
 | **iOS** | Xcode 16+ · iOS 17+ deployment target · macOS Sequoia+ · Rust toolchain (to build the vendored native libraries) |
 | **Backend** | Node.js 20+ · Firebase CLI · Firebase project (Firestore, Auth, Functions) |
 
@@ -851,6 +858,7 @@ Crisis Connect is in production on both app stores and under active development.
 | **Website** | [crisisconnect.network](https://crisisconnect.network) |
 | **Website (TR)** | [crisisconnect.com.tr](https://crisisconnect.com.tr) |
 | **Google Play** | [Download for Android](https://play.google.com/store/apps/details?id=com.auralis.crisisconnect) |
+| **Android APK** | [Google Play-signed 1.1.9 universal APK](https://github.com/emirhan-duman/Crisis-Connect/releases/download/v1.1.9/crisis-connect-1.1.9-64.apk) |
 | **App Store** | [Download for iOS](https://apps.apple.com/app/crisis-connect/id6759731195) |
 
 </td>

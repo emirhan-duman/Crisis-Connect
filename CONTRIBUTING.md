@@ -27,7 +27,7 @@ Thank you for your interest in contributing to Crisis Connect. This document pro
 
 ### Android
 
-**Requirements:** Android Studio Ladybug+, JDK 17, Android SDK 36
+**Requirements:** Android Studio Ladybug+, JDK 21, Android SDK 36
 
 ```bash
 git clone https://github.com/<your-username>/Crisis-Connect.git

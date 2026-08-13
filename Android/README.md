@@ -10,11 +10,12 @@ It combines Bluetooth-based communication, offline map support, role-aware rescu
 - Cross-platform Android ↔ iOS Bluetooth voice calls over the GATT audio link (0xCD00), plus RFCOMM transport
 - End-to-end encrypted internet messaging over the Signal Protocol (libsignal, PQXDH), with 1:1 WebRTC voice and video calls
 - Crisis Sentinel: an on-device offline assistant (Google AI Edge LiteRT-LM) with an optional cloud engine
+- Secure Trust Dossiers for institutional-role documents, handwritten annotations, policy validation, and immutable manifests
 - Reliable image, voice, and file transfer with chunking, acknowledgements, and receipt tracking
 - SOS broadcasting and rescue-side discovery workflows
 - On-demand `feature_rescue` delivery for rescue operations
 - Offline map download, storage, and sharing powered by MapLibre
-- Built-in field tools such as compass, whistle, signal finder, and sensor-based utilities
+- Built-in field tools such as compass, whistle, signal finder, breadcrumb trail, CPR assist, flashlight patterns, and sensor-based utilities
 - Firebase Auth, Firestore, Functions, Crashlytics, Performance Monitoring, Analytics, and App Check integration
 - Android Keystore-backed identity material, encrypted local storage, and backend-issued role certificates
 
@@ -27,7 +28,7 @@ It combines Bluetooth-based communication, offline map support, role-aware rescu
 | `baselineprofile` | Baseline profile generator module for startup and scroll performance |
 | `functions` | Firebase Cloud Functions: role certificates, Play Integrity / App Attest verification, the encrypted messaging relay and prekey pool, VoIP push, SOS signal reporting, TURN credentials |
 | `dashboard` | Lightweight single-page summary surface for presenting the system at a high level |
-| `.github/workflows` | CI pipeline definitions for Android lint and unit-test validation |
+| `../.github/workflows` | Repository-level Android build and unit-test CI definitions |
 | `scripts` | Helper scripts such as Firebase config preparation |
 
 ## Core Product Areas
@@ -79,7 +80,7 @@ Firebase is used for identity, authorization-adjacent metadata, rescue telemetry
 Before building locally, make sure the following are available:
 
 - Android Studio with Android SDK 36
-- JDK 17 for Gradle / Android tooling compatibility
+- JDK 21 for Gradle and LiteRT-LM bytecode compatibility
 - Node.js 22 if you will build or deploy Firebase Functions
 - A Firebase project if you want live authentication, Firestore, App Check, or certificate issuance
 - Google Services configuration files for Android builds that use Firebase
