@@ -23,7 +23,7 @@ struct AgencyKey {
     }
 }
 
-enum AgencyMessageError: Error { case malformed }
+enum AgencyMessageError: Error { case malformed, legacyWriteDisabled }
 
 enum AgencyMessageCrypto {
     private static let tagBytes = 16

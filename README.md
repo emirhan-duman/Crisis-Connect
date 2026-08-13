@@ -23,10 +23,10 @@
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-8b0000.svg" alt="License" /></a>&nbsp;
   <img src="https://img.shields.io/badge/platforms-Android%20%7C%20iOS-blue" alt="Platforms" />&nbsp;
-  <img src="https://img.shields.io/badge/version-1.1.8-green" alt="Version" />&nbsp;
-  <img src="https://img.shields.io/badge/kotlin-149k%20LOC-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />&nbsp;
-  <img src="https://img.shields.io/badge/swift-82k%20LOC-F05138?logo=swift&logoColor=white" alt="Swift" />&nbsp;
-  <img src="https://img.shields.io/badge/tests-534-brightgreen" alt="Tests" />&nbsp;
+  <img src="https://img.shields.io/badge/version-1.1.9-green" alt="Version" />&nbsp;
+  <img src="https://img.shields.io/badge/kotlin-161k%20LOC-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />&nbsp;
+  <img src="https://img.shields.io/badge/swift-92k%20LOC-F05138?logo=swift&logoColor=white" alt="Swift" />&nbsp;
+  <img src="https://img.shields.io/badge/tests-611-brightgreen" alt="Tests" />&nbsp;
   <img src="https://img.shields.io/badge/languages-19-orange" alt="Languages" />
 </p>
 
@@ -400,8 +400,7 @@ Crisis-Connect/
 │   ├── BroadcastExtension/             ReplayKit screen-share upload extension
 │   ├── Packages/                       Vendored LibSignalClient and LiteRT-LM
 │   ├── Config/                         Info.plist, entitlements
-│   ├── Crisis ConnectTests/            144 unit tests
-│   └── codemagic.yaml                  CI pipeline
+│   └── Crisis ConnectTests/            175 unit tests
 │
 ├── docs/                               Screenshots and design notes
 ├── LICENSE                             AGPL-3.0
@@ -429,7 +428,7 @@ Crisis-Connect/
 | **Backend** | Firestore · Cloud Functions | Firestore · Cloud Functions |
 | **App Security** | Play Integrity · App Check | App Attest · App Check |
 | **Crash Reporting** | Firebase Crashlytics | Firebase Crashlytics |
-| **CI/CD** | GitHub Actions | Codemagic |
+| **Build verification** | GitHub Actions | Xcode 16+ |
 | **Min Version** | Android 7.0 (API 24) | iOS 17.0 |
 | **Target Version** | Android 16 (API 36) | iOS 18 |
 | **Test Frameworks** | JUnit · Espresso · MockK · Robolectric | XCTest |
@@ -515,7 +514,9 @@ Cloud Functions live under `Android/functions` and cover role certificate issuan
 | `internal` | QA / testing | Release keystore | Debug provider |
 | `release` | Production (Play Store) | Release keystore | Play Integrity |
 
-**iOS** builds on Codemagic, with App Attest configured for production builds and TestFlight distribution.
+**iOS** public-source builds use Xcode 16+ with code signing disabled. Production signing,
+App Attest credentials and App Store distribution configuration are intentionally maintained
+outside this public mirror.
 
 ## Getting Started
 
@@ -610,52 +611,51 @@ counted separately, not as first-party code.
 
 <table>
 <tr>
-<td align="center"><strong>276,352</strong><br/><sub>lines of first-party code</sub></td>
-<td align="center"><strong>230,855</strong><br/><sub>Kotlin + Swift</sub></td>
-<td align="center"><strong>903</strong><br/><sub>source files</sub></td>
+<td align="center"><strong>300,874</strong><br/><sub>lines of first-party code</sub></td>
+<td align="center"><strong>252,689</strong><br/><sub>Kotlin + Swift</sub></td>
+<td align="center"><strong>997</strong><br/><sub>source files</sub></td>
 <td align="center"><strong>21</strong><br/><sub>languages</sub></td>
-<td align="center"><strong>534</strong><br/><sub>tests</sub></td>
+<td align="center"><strong>611</strong><br/><sub>tests</sub></td>
 </tr>
 </table>
 
 ### Android
 
-`630 files · 192,986 lines of code`
+`685 files · 206,994 lines of code`
 
 | Language | Files | Code | Comments | Blank | Share | |
 |:--|--:|--:|--:|--:|--:|:--|
-| Kotlin | 468 | 149,255 | 6,695 | 10,825 | 77.34% | `███████████████` |
-| XML (resources, manifests) | 114 | 36,670 | 208 | 99 | 19.00% | `████` |
-| TypeScript (Cloud Functions) | 34 | 5,103 | 675 | 522 | 2.64% | `█` |
-| Firestore Rules | 1 | 987 | 0 | 52 | 0.51% | `▏` |
+| Kotlin | 516 | 160,594 | 7,081 | 11,602 | 77.58% | `████████████████` |
+| XML (resources, manifests) | 115 | 38,031 | 235 | 124 | 18.37% | `████` |
+| TypeScript (Cloud Functions) | 39 | 5,709 | 866 | 590 | 2.76% | `▌` |
+| Firestore Rules | 1 | 1,647 | 0 | 71 | 0.80% | `▏` |
 | Shell | 2 | 275 | 38 | 49 | 0.14% | `▏` |
-| C++ (MLS frame crypto, JNI) | 1 | 168 | 41 | 29 | 0.09% | `▏` |
-| TSX | 1 | 145 | 0 | 4 | 0.08% | `▏` |
-| JavaScript | 1 | 120 | 0 | 17 | 0.06% | `▏` |
-| JSON (config) | 3 | 85 | 0 | 0 | 0.04% | `▏` |
-| Batch | 1 | 68 | 0 | 21 | 0.04% | `▏` |
+| C++ (MLS frame crypto, JNI) | 1 | 168 | 46 | 29 | 0.08% | `▏` |
+| JavaScript | 2 | 161 | 0 | 21 | 0.08% | `▏` |
+| TSX | 1 | 145 | 0 | 4 | 0.07% | `▏` |
+| JSON (config) | 3 | 86 | 0 | 0 | 0.04% | `▏` |
+| Batch | 1 | 68 | 0 | 21 | 0.03% | `▏` |
 | ProGuard | 1 | 48 | 0 | 9 | 0.02% | `▏` |
 | TOML | 1 | 48 | 5 | 2 | 0.02% | `▏` |
 | CMake | 1 | 11 | 9 | 4 | 0.01% | `▏` |
 | SVG | 1 | 3 | 0 | 0 | 0.00% | `▏` |
-| **Total** | **630** | **192,986** | **7,671** | **11,633** | | |
+| **Total** | **685** | **206,994** | **8,280** | **12,526** | | |
 
 ### iOS
 
-`273 files · 83,366 lines of code`
+`312 files · 93,880 lines of code`
 
 | Language | Files | Code | Comments | Blank | Share | |
 |:--|--:|--:|--:|--:|--:|:--|
-| Swift | 249 | 81,600 | 5,672 | 8,667 | 97.88% | `████████████████████` |
-| HTML + inline CSS | 3 | 875 | 6 | 48 | 1.05% | `▏` |
-| JSON (asset catalogs, config) | 10 | 261 | 0 | 0 | 0.31% | `▏` |
-| Shell | 2 | 230 | 39 | 44 | 0.28% | `▏` |
-| Objective-C++ (MLS frame crypto) | 1 | 188 | 61 | 33 | 0.23% | `▏` |
-| Metal (LiDAR night-vision shaders) | 1 | 95 | 0 | 11 | 0.11% | `▏` |
-| YAML (Codemagic CI) | 1 | 75 | 16 | 1 | 0.09% | `▏` |
+| Swift | 287 | 92,095 | 5,983 | 9,524 | 98.10% | `████████████████████` |
+| HTML + inline CSS | 3 | 875 | 6 | 48 | 0.93% | `▏` |
+| JSON (asset catalogs, config) | 10 | 261 | 0 | 0 | 0.28% | `▏` |
+| Shell | 2 | 230 | 39 | 44 | 0.24% | `▏` |
+| Objective-C++ (MLS frame crypto) | 1 | 188 | 61 | 33 | 0.20% | `▏` |
+| C Header (bridging and MLS) | 4 | 105 | 32 | 23 | 0.11% | `▏` |
+| Metal (LiDAR night-vision shaders) | 1 | 95 | 0 | 11 | 0.10% | `▏` |
 | SVG | 4 | 31 | 0 | 0 | 0.04% | `▏` |
-| C Header (bridging) | 2 | 11 | 26 | 11 | 0.01% | `▏` |
-| **Total** | **273** | **83,366** | **5,820** | **8,815** | | |
+| **Total** | **312** | **93,880** | **6,121** | **9,683** | | |
 
 ### Not counted as first-party
 
@@ -678,17 +678,17 @@ tokei Android iOS --exclude Packages --sort code
 
 ## Testing
 
-The project includes 534 tests across both platforms:
+The project includes 611 tests across both platforms:
 
 ```bash
-# ── Android (370 unit tests + 20 instrumented tests) ──────────
+# ── Android (409 unit tests + 27 instrumented tests) ──────────
 cd Android
 ./gradlew :app:testDebugUnitTest              # Unit tests
 ./gradlew :app:connectedDebugAndroidTest      # Instrumented tests (physical device)
 ./gradlew :app:lintDebug                      # Static analysis
 ./gradlew :feature_rescue:testDebugUnitTest   # Rescue module tests
 
-# ── iOS (144 tests) ───────────────────────────────────────────
+# ── iOS (175 tests) ───────────────────────────────────────────
 cd iOS
 xcodebuild test \
   -scheme "Crisis Connect" \
@@ -784,7 +784,7 @@ We take security reports seriously and will respond as quickly as possible.
 
 Crisis Connect is in production on both app stores and under active development. The roadmap reflects what has been shipped and what comes next.
 
-### Shipped (v1.1.8)
+### Shipped (v1.1.9)
 
 **Offline core**
 - [x] BLE GATT peer-to-peer encrypted messaging (Android + iOS)
@@ -806,11 +806,14 @@ Crisis Connect is in production on both app stores and under active development.
 - [x] Agency and cross-agency (hierarchy) channels with deep-linked notifications
 - [x] Opt-in phone-number contact discovery behind phone verification
 - [x] Store-and-forward queueing across both transports
+- [x] Durable MLS authority sessions, encrypted state vaults and fail-closed call readiness gates
+- [x] Resource-alert wake queues with acknowledgement and retry handling
 
 **Assistant, tools and platform**
 - [x] Crisis Sentinel offline on-device assistant (LiteRT-LM) plus optional cloud engine
 - [x] Offline maps with downloadable regions (MapLibre)
-- [x] Emergency toolkit: compass, signal finder, metal detector, whistle, sensor dashboard
+- [x] Emergency toolkit: compass, signal finder, metal detector, whistle, breadcrumb trail, CPR assist, flashlight patterns, sensor dashboard
+- [x] Secure Trust Dossiers for institutional-role documents, annotations, policy checks and immutable manifests
 - [x] LiDAR scanner and night vision tool (iOS)
 - [x] Survival guide with step-by-step checklists
 - [x] Home-screen SOS + Recent Disasters widgets, Quick Settings tile (Android)
@@ -819,7 +822,7 @@ Crisis Connect is in production on both app stores and under active development.
 - [x] Rescuer ↔ victim voice calls, medical info hand-off and remote signal feed
 - [x] Localization in 19 languages
 - [x] Baseline profiles for startup and scroll performance (Android)
-- [x] 534 automated tests · GitHub Actions CI (Android) · Codemagic CI (iOS)
+- [x] 611 automated tests · GitHub Actions CI (Android) · Xcode build verification (iOS)
 - [x] Published on Google Play and App Store
 
 ### In Progress
@@ -876,5 +879,5 @@ Crisis Connect vendors [libsignal](https://github.com/signalapp/libsignal) (AGPL
 
 <p align="center">
   <strong>Built for resilience. Designed for crisis. Open for everyone.</strong><br/><br/>
-  <sub>276,000 lines of first-party code across Android and iOS, 534 tests,<br/>19 spoken languages, 2 platforms, 1 mission: keeping people connected when it matters most.</sub>
+  <sub>300,000 lines of first-party code across Android and iOS, 611 tests,<br/>19 spoken languages, 2 platforms, 1 mission: keeping people connected when it matters most.</sub>
 </p>

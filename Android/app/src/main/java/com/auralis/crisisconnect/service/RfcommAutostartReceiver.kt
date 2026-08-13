@@ -11,10 +11,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.auralis.crisisconnect.R
+import java.util.concurrent.Executors
 
 class RfcommAutostartReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -35,7 +37,7 @@ class RfcommAutostartReceiver : BroadcastReceiver() {
             val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
             when (state) {
                 BluetoothAdapter.STATE_ON -> {
-                    cancelBluetoothDisabledNotification(context)
+                    runNotificationWork(context) { cancelBluetoothDisabledNotification(it) }
                     runCatching {
                         ContextCompat.startForegroundService(
                             context,
@@ -50,9 +52,33 @@ class RfcommAutostartReceiver : BroadcastReceiver() {
                 }
 
                 BluetoothAdapter.STATE_OFF -> {
-                    showBluetoothDisabledNotification(context)
+                    runNotificationWork(context) { showBluetoothDisabledNotification(it) }
                 }
             }
+        }
+    }
+
+    /**
+     * NotificationManager calls cross a system-server Binder boundary and can stall on
+     * Android 16. Keep that work off BroadcastReceiver's main thread while retaining the
+     * process long enough for this short, best-effort notification operation to finish.
+     */
+    private fun runNotificationWork(context: Context, work: (Context) -> Unit) {
+        val pendingResult = goAsync()
+        val appContext = context.applicationContext
+        runCatching {
+            notificationExecutor.execute {
+                try {
+                    work(appContext)
+                } catch (throwable: Throwable) {
+                    Log.e(TAG, "Bluetooth notification work failed", throwable)
+                } finally {
+                    pendingResult.finish()
+                }
+            }
+        }.onFailure { throwable ->
+            pendingResult.finish()
+            Log.e(TAG, "Could not schedule Bluetooth notification work", throwable)
         }
     }
 
@@ -131,7 +157,11 @@ class RfcommAutostartReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        private const val TAG = "RfcommAutostart"
         private const val BLUETOOTH_ALERT_CHANNEL_ID = "bluetooth_alert_channel"
         private const val BLUETOOTH_DISABLED_NOTIFICATION_ID = 1002
+        private val notificationExecutor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "rfcomm-notification").apply { isDaemon = true }
+        }
     }
 }

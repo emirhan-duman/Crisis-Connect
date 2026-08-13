@@ -17,7 +17,8 @@
 // The per-frame crypto itself is the Rust `mls_*_frame` C ABI in liborange_mls_worker.so, resolved via
 // dlsym (no build-time link between the two .so files). That Rust path returns EMPTY bytes until the
 // MLS group handshake completes (WorkerState.mls_group == None) — exactly like the web — so before the
-// group is ready we simply emit empty frames (silence) and never crash.
+// group is ready WebRTC receives a recoverable-decrypt result, drops that frame and (for video) can
+// request a fresh keyframe instead of feeding an empty "successful" frame to the decoder.
 
 #include <jni.h>
 #include <dlfcn.h>
@@ -83,7 +84,9 @@ class FrameEncryptorInterface : public RefCountInterface {
 // GetMaxPlaintextByteSize slot 5.
 class FrameDecryptorInterface : public RefCountInterface {
  public:
-  enum class Status { kOk, kRecoverable, kUnknown };
+  // Exact WebRTC M124 order. kFailedToDecrypt was previously omitted, shifting the numeric value of
+  // kUnknown and making this ABI declaration diverge from the AAR's interface.
+  enum class Status { kOk, kRecoverable, kFailedToDecrypt, kUnknown };
   struct Result {
     Result(Status s, size_t n) : status(s), bytes_written(n) {}
     const Status status;
@@ -195,18 +198,20 @@ class MlsDecryptor final : public RefCounted<shim::FrameDecryptorInterface> {
                  shim::ArrayView<const uint8_t> /*additional_data*/,
                  shim::ArrayView<const uint8_t> encrypted_frame,
                  shim::ArrayView<uint8_t> frame) override {
-    // Always report kOk (never kRecoverable/kUnknown) so WebRTC doesn't mute/error the stream on the
-    // brief pre-handshake window; a failed/early frame just yields 0 bytes (silence), matching the web.
-    if (!resolveRust()) return Result(Status::kOk, 0);
+    // A zero-byte plaintext is not a successfully decrypted media frame. kRecoverable keeps the
+    // receiver alive while allowing WebRTC's video pipeline to request a new keyframe; reporting
+    // kOk/0 here caused every subsequent VP9 frame to be dropped forever when the first keyframe was
+    // received before the MLS group became ready.
+    if (!resolveRust()) return Result(Status::kRecoverable, 0);
     size_t out_len = 0;
     uint8_t* out = g_decrypt(encrypted_frame.data(), encrypted_frame.size(), &out_len);
     if (out_len == 0) {
       if (out) g_free(out, out_len);
-      return Result(Status::kOk, 0);
+      return Result(Status::kRecoverable, 0);
     }
     if (out_len > frame.size()) {
       g_free(out, out_len);
-      return Result(Status::kOk, 0);
+      return Result(Status::kRecoverable, 0);
     }
     memcpy(frame.data(), out, out_len);
     g_free(out, out_len);

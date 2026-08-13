@@ -1,0 +1,59 @@
+"FLASHLIGHT_TITLE" = "Flashlight";
+"FLASHLIGHT_TOOL_DESCRIPTION" = "Torch, SOS, safe strobe, screen light and rescue beacon";
+"FLASHLIGHT_INFO" = "Flashlight information";
+"FLASHLIGHT_DONE" = "Done";
+"FLASHLIGHT_CANCEL" = "Cancel";
+
+"FLASHLIGHT_MODE_HEADING" = "Light mode";
+"FLASHLIGHT_MODE_NORMAL" = "Normal";
+"FLASHLIGHT_MODE_NORMAL_DESCRIPTION" = "Steady rear torch with adjustable intensity.";
+"FLASHLIGHT_MODE_SOS" = "SOS";
+"FLASHLIGHT_MODE_SOS_DESCRIPTION" = "Repeats the international Morse distress pattern: three short, three long, three short.";
+"FLASHLIGHT_MODE_STROBE" = "Strobe";
+"FLASHLIGHT_MODE_STROBE_DESCRIPTION" = "Attention light capped at three flashes per second for safety.";
+"FLASHLIGHT_MODE_LOW_POWER" = "Low Power";
+"FLASHLIGHT_MODE_LOW_POWER_DESCRIPTION" = "Uses a low torch level to extend battery life.";
+"FLASHLIGHT_MODE_SCREEN" = "Screen Light";
+"FLASHLIGHT_MODE_SCREEN_DESCRIPTION" = "Full-screen white, warm or night-safe red light; works without a camera flash.";
+"FLASHLIGHT_MODE_BEACON" = "Emergency Beacon";
+"FLASHLIGHT_MODE_BEACON_DESCRIPTION" = "Mountain distress cycle: six light signals in one minute, then a one-minute pause.";
+
+"FLASHLIGHT_STATUS_READY" = "Ready";
+"FLASHLIGHT_STATUS_ACTIVE" = "Light active";
+"FLASHLIGHT_START" = "Start light";
+"FLASHLIGHT_STOP" = "Stop";
+"FLASHLIGHT_BRIGHTNESS_HEADING" = "Torch intensity";
+"FLASHLIGHT_LOW" = "Low";
+"FLASHLIGHT_HIGH" = "High";
+"FLASHLIGHT_LOW_POWER_NOTE" = "Low Power uses 10% torch intensity. The system may reduce it further when the device is warm.";
+
+"FLASHLIGHT_STROBE_RATE_HEADING" = "Strobe speed";
+"FLASHLIGHT_STROBE_RATE_NOTE" = "Limited to 3 Hz. Stop immediately if flashing causes discomfort.";
+"FLASHLIGHT_STROBE_WARNING_TITLE" = "Flashing-light warning";
+"FLASHLIGHT_STROBE_WARNING_BODY" = "Rapid flashing can trigger seizures, migraines, dizziness or nausea. Do not point the light at faces, drivers or aircraft.";
+"FLASHLIGHT_STROBE_WARNING_CONFIRM" = "I understand";
+
+"FLASHLIGHT_SCREEN_SETTINGS_HEADING" = "Screen light";
+"FLASHLIGHT_SCREEN_COLOR_WHITE" = "White";
+"FLASHLIGHT_SCREEN_COLOR_WARM" = "Warm";
+"FLASHLIGHT_SCREEN_COLOR_RED" = "Red";
+"FLASHLIGHT_SCREEN_BRIGHTNESS" = "Screen brightness";
+"FLASHLIGHT_SCREEN_ACTIVE" = "Screen light is on";
+
+"FLASHLIGHT_AUTO_OFF_HEADING" = "Automatic shutoff";
+"FLASHLIGHT_AUTO_OFF_NEVER" = "Off";
+"FLASHLIGHT_AUTO_OFF_5" = "5 min";
+"FLASHLIGHT_AUTO_OFF_15" = "15 min";
+"FLASHLIGHT_AUTO_OFF_30" = "30 min";
+
+"FLASHLIGHT_SAFETY_NOTE" = "The torch may become hot and may dim automatically. Do not cover the flash or stare into it. This visual aid does not contact emergency services.";
+"FLASHLIGHT_ERROR_UNAVAILABLE" = "No usable camera torch was found. Screen Light is still available.";
+"FLASHLIGHT_ERROR_CAMERA_PERMISSION" = "Camera permission is required for the rear torch. You can still use Screen Light.";
+"FLASHLIGHT_ERROR_CAMERA_IN_USE" = "The torch is unavailable because another camera feature is using it. Close the camera and try again.";
+
+"FLASHLIGHT_INFO_MODES_TITLE" = "Offline by design";
+"FLASHLIGHT_INFO_MODES_BODY" = "All light modes run locally and require no internet. Normal and Low Power are steady; SOS and Strobe repeat until stopped or automatically shut off.";
+"FLASHLIGHT_INFO_BEACON_TITLE" = "Emergency Beacon timing";
+"FLASHLIGHT_INFO_BEACON_BODY" = "The beacon follows the mountain-rescue visual signal: six one-second flashes spaced across one minute, followed by one minute of darkness, then repeat.";
+"FLASHLIGHT_INFO_SAFETY_TITLE" = "Use responsibly";
+"FLASHLIGHT_INFO_SAFETY_BODY" = "Call local emergency services whenever possible. A phone light is only a visibility aid and is not a certified radio or satellite distress beacon.";

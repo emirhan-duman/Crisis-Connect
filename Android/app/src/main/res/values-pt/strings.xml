@@ -1776,4 +1776,18 @@ Data: %4$s</string>
     <string name="rescue_remote_signals_empty_title">Tudo calmo</string>
     <string name="rescue_remote_hero_count">%1$d sinais ativos</string>
     <string name="rescue_remote_signals_subtitle">Transmissão ao vivo do painel da sua agência</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">Excluir conta e dados</string>
+    <string name="profile_delete_account_progress">Excluindo…</string>
+    <string name="profile_delete_account_dialog_title">Excluir sua conta permanentemente?</string>
+    <string name="profile_delete_account_dialog_body">Esta ação não pode ser desfeita. Sua conta, seu perfil, as correspondências do diretório, suas chaves de criptografia, os registros de notificação e o histórico de conversas neste dispositivo serão excluídos. Os sinais de emergência que você enviou são mantidos como registro de resgate, separados da sua identidade.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">Digite %1$s para confirmar.</string>
+    <string name="profile_delete_account_confirm_word">EXCLUIR</string>
+    <string name="profile_delete_account_dialog_confirm">Excluir permanentemente</string>
+    <string name="profile_delete_account_success">Sua conta e seus dados foram excluídos.</string>
+    <string name="profile_delete_account_error">Não foi possível concluir a exclusão. Verifique sua conexão e tente novamente.</string>
+    <string name="profile_delete_account_error_verification">Não foi possível verificar a exclusão neste dispositivo. Verifique sua conexão e tente novamente.</string>
+    <string name="profile_delete_account_error_signed_out">Você precisa estar conectado para excluir sua conta.</string>
+    <string name="profile_delete_account_reauth_needed">Por segurança, precisamos confirmar que é você antes de excluir. Saia da conta, entre novamente e tente de novo.</string>
 </resources>

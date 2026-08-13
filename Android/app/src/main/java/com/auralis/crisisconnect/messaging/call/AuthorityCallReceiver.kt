@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.messaging.HierarchyMessagingClient
+import com.auralis.crisisconnect.messaging.AuthorityMlsCallGate
+import com.auralis.crisisconnect.messaging.AuthorityMlsScopeType
 import com.auralis.crisisconnect.security.SecurityRepository
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -13,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 
 /**
  * App-wide receiver for authority channel calls, so an incoming call rings from ANY screen (not only
@@ -29,13 +32,16 @@ object AuthorityCallReceiver {
 
     private val lock = Any()
     private var started = false
+    private var generation = 0L
     private val registrations = mutableListOf<ListenerRegistration>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun start(context: Context) {
-        synchronized(lock) {
+        val startGeneration = synchronized(lock) {
             if (started) return
             started = true
+            generation += 1L
+            generation
         }
         val appContext = context.applicationContext
         scope.launch {
@@ -43,7 +49,9 @@ object AuthorityCallReceiver {
             val slug = uid?.let { resolveAgencySlug(appContext, it) }
             if (uid == null || slug.isNullOrBlank()) {
                 // Not an agency member (e.g. a citizen) — nothing to receive; allow a later retry.
-                synchronized(lock) { started = false }
+                synchronized(lock) {
+                    if (generation == startGeneration) started = false
+                }
                 return@launch
             }
             val genericName = appContext.getString(R.string.internet_call_unknown_peer)
@@ -57,7 +65,7 @@ object AuthorityCallReceiver {
                     myUid = uid,
                     kind = AuthorityCallSignaling.ChannelKind.AGENCY,
                     peerNameResolver = { genericName }
-                ).apply { attachSfuRouting(slug, AuthorityCallSignaling.ChannelKind.AGENCY, uid) }.listen()
+                ).apply { attachSfuRouting(appContext, slug, AuthorityCallSignaling.ChannelKind.AGENCY, uid) }.listen()
             }.getOrNull()?.let { regs.add(it) }
 
             val channels = runCatching { HierarchyMessagingClient().fetchChannels() }.getOrDefault(emptyList())
@@ -68,20 +76,36 @@ object AuthorityCallReceiver {
                         myUid = uid,
                         kind = AuthorityCallSignaling.ChannelKind.HIERARCHY,
                         peerNameResolver = { u -> channel.peers.firstOrNull { it.uid == u }?.name ?: genericName }
-                    ).apply { attachSfuRouting(channel.channelId, AuthorityCallSignaling.ChannelKind.HIERARCHY, uid) }.listen()
+                    ).apply {
+                        attachSfuRouting(appContext, channel.channelId, AuthorityCallSignaling.ChannelKind.HIERARCHY, uid)
+                    }.listen()
                 }.getOrNull()?.let { regs.add(it) }
             }
-            synchronized(lock) { registrations.addAll(regs) }
-            Log.d(TAG, "Listening for authority calls on ${regs.size} channel(s)")
+            val retained = synchronized(lock) {
+                if (started && generation == startGeneration) {
+                    registrations.addAll(regs)
+                    true
+                } else {
+                    false
+                }
+            }
+            if (retained) {
+                Log.d(TAG, "Listening for authority calls on ${regs.size} channel(s)")
+            } else {
+                regs.forEach { runCatching { it.remove() } }
+            }
         }
     }
 
     fun stop() {
-        synchronized(lock) {
-            registrations.forEach { runCatching { it.remove() } }
+        val stale = synchronized(lock) {
+            val result = registrations.toList()
             registrations.clear()
             started = false
+            generation += 1L
+            result
         }
+        stale.forEach { runCatching { it.remove() } }
     }
 
     private suspend fun resolveAgencySlug(context: Context, uid: String): String? {
@@ -96,12 +120,45 @@ object AuthorityCallReceiver {
 
 /** When SFU is enabled, route this channel's SFU (roomId) signals to the SFU manager instead of P2P. */
 private fun AuthorityCallSignaling.attachSfuRouting(
+    context: Context,
     channelId: String,
     kind: AuthorityCallSignaling.ChannelKind,
     uid: String,
 ) {
     if (!com.auralis.crisisconnect.messaging.call.sfu.SfuCallConfig.ENABLED) return
     onSfuSignal = { from, signal ->
-        com.auralis.crisisconnect.messaging.call.sfu.SfuAuthorityCallManager.onSfuSignal(channelId, kind, uid, from, signal)
+        if (signal.optString("type") != "offer") {
+            com.auralis.crisisconnect.messaging.call.sfu.SfuAuthorityCallManager
+                .onSfuSignal(channelId, kind, uid, from, signal)
+        } else {
+            authorityCallGateScope.launch {
+                val verified = AuthorityMlsCallGate.isVerified(
+                    context = context,
+                    selfUid = uid,
+                    peerUid = from,
+                    scopeType = if (kind == AuthorityCallSignaling.ChannelKind.HIERARCHY) {
+                        AuthorityMlsScopeType.HIERARCHY
+                    } else {
+                        AuthorityMlsScopeType.AGENCY
+                    },
+                    channelId = channelId,
+                )
+                if (!verified) {
+                    sendSfuSignal(
+                        from,
+                        org.json.JSONObject()
+                            .put("type", "reject")
+                            .put("callId", signal.optString("callId")),
+                    )
+                    return@launch
+                }
+                withContext(Dispatchers.Main.immediate) {
+                    com.auralis.crisisconnect.messaging.call.sfu.SfuAuthorityCallManager
+                        .onSfuSignal(channelId, kind, uid, from, signal)
+                }
+            }
+        }
     }
 }
+
+private val authorityCallGateScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

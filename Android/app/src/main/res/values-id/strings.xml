@@ -1767,4 +1767,18 @@
     <string name="rescue_remote_signals_empty_title">Semua tenang</string>
     <string name="rescue_remote_hero_count">%1$d sinyal aktif</string>
     <string name="rescue_remote_signals_subtitle">Siaran langsung dari panel lembaga Anda</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">Hapus akun dan data</string>
+    <string name="profile_delete_account_progress">Menghapus…</string>
+    <string name="profile_delete_account_dialog_title">Hapus akun Anda secara permanen?</string>
+    <string name="profile_delete_account_dialog_body">Tindakan ini tidak dapat dibatalkan. Akun, profil, kecocokan direktori kontak, kunci enkripsi, catatan notifikasi, dan riwayat obrolan di perangkat ini akan dihapus. Sinyal darurat yang Anda kirim tetap disimpan sebagai catatan penyelamatan, terpisah dari identitas Anda.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">Ketik %1$s untuk mengonfirmasi.</string>
+    <string name="profile_delete_account_confirm_word">HAPUS</string>
+    <string name="profile_delete_account_dialog_confirm">Hapus permanen</string>
+    <string name="profile_delete_account_success">Akun dan data Anda telah dihapus.</string>
+    <string name="profile_delete_account_error">Penghapusan tidak dapat diselesaikan. Periksa koneksi Anda dan coba lagi.</string>
+    <string name="profile_delete_account_error_verification">Penghapusan tidak dapat diverifikasi di perangkat ini. Periksa koneksi Anda dan coba lagi.</string>
+    <string name="profile_delete_account_error_signed_out">Anda harus masuk untuk menghapus akun.</string>
+    <string name="profile_delete_account_reauth_needed">Demi keamanan Anda, kami perlu memastikan ini benar Anda sebelum menghapus. Keluar, masuk lagi, lalu coba kembali.</string>
 </resources>

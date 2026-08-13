@@ -5,8 +5,8 @@ Bluetooth, with an end-to-end encrypted internet layer on top.
 
 - **Deployment target:** iOS 17.0
 - **Toolchain:** Xcode 16+, Swift 6 language mode where the package sets it
-- **CI:** Codemagic (`codemagic.yaml`), TestFlight distribution
-- **Version:** 1.1.8
+- **Build verification:** Xcode 16+ with code signing disabled for public-source checks
+- **Version:** 1.1.9 (build 36)
 
 ## Targets
 
@@ -15,7 +15,7 @@ Bluetooth, with an end-to-end encrypted internet layer on top.
 | `Crisis Connect` | Main app |
 | `WidgetExtension` | WidgetKit SOS + Recent Disasters widgets, iOS 18 SOS control, SOS Live Activity |
 | `BroadcastExtension` | ReplayKit upload extension for full-device screen sharing during calls |
-| `Crisis ConnectTests` | 144 unit tests |
+| `Crisis ConnectTests` | 175 unit tests |
 | `Crisis ConnectUITests` | UI tests |
 
 ## Layout

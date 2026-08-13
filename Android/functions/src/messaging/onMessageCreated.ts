@@ -9,6 +9,7 @@ import {
   apnsKeyId,
   apnsTeamId,
 } from "./apnsVoip";
+import { isPushAllowed } from "./pushPreference";
 
 const IOS_BUNDLE_ID = "com.auralis.crisisconnect";
 
@@ -98,6 +99,17 @@ export const onMessageCreated = onDocumentCreated(
           })
         );
       }
+    }
+
+    // Settings > Bildirimler > Push. Checked after the VoIP ring above on purpose: an incoming
+    // call must ring even for someone who switched message notifications off. Recorded as
+    // undelivered rather than silently dropped, so the sender's state stays truthful.
+    if (!isCallRing && !(await isPushAllowed(msg.recipientUid))) {
+      await snap.ref.set(
+        { delivered: false, pushSuppressedByPreference: true },
+        { merge: true }
+      );
+      return;
     }
 
     // VoIP (PushKit) tokens are NOT valid FCM/APNs alert tokens — never fan the data push to them.

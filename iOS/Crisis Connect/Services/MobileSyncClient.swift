@@ -74,6 +74,52 @@ enum MobileSyncClient {
         }
     }
 
+    /// Mirrors Android's MobileSyncClient.syncEvents: pushes Crisis Link "location"/"signal"
+    /// events to the self-hosted dashboard so a panel running off /api/mobile/sync (not Firestore)
+    /// still sees iOS rescuers. Same envelope as syncProfile, same base-URL rules, and the same
+    /// silent no-op when no valid base URL is configured.
+    static func syncEvents(
+        panelId: String,
+        deviceId: String,
+        clientEventId: String,
+        events: [[String: Any]]
+    ) async {
+        guard !events.isEmpty, let url = endpointURL() else { return }
+        FirebaseRuntime.ensureConfigured()
+        guard let user = Auth.auth().currentUser, !user.isAnonymous else { return }
+        guard let token = try? await user.getIDToken(), !token.isEmpty else {
+            NSLog("MobileSyncClient: skipping event sync, no ID token")
+            return
+        }
+        let resolvedDeviceId = deviceId.isEmpty
+            ? SecureLocalStore.shared.getOrCreateRescueDeviceId()
+            : deviceId
+        var body: [String: Any] = [
+            "clientEventId": clientEventId,
+            "source": "ios",
+            "deviceId": resolvedDeviceId,
+            "events": events,
+        ]
+        let trimmedPanelId = panelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedPanelId.isEmpty {
+            body["panelId"] = trimmedPanelId
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = data
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                NSLog("MobileSyncClient: event sync rejected status=%d", http.statusCode)
+            }
+        } catch {
+            NSLog("MobileSyncClient: event sync failed: %@", String(describing: error))
+        }
+    }
+
     /// The dashboard origin from Info.plist, https-only — a plaintext or malformed override must
     /// disable sync rather than send the profile somewhere insecure. Same default Android's
     /// enterprise-SSO base uses, so sync works out of the box.

@@ -12,15 +12,31 @@ import MapKit
 /// only these without touching the user-location annotation).
 final class SentinelPinAnnotation: MKPointAnnotation {}
 
+final class BreadcrumbMapAnnotation: MKPointAnnotation {
+    enum Kind { case start, current }
+    let kind: Kind
+
+    init(kind: Kind) {
+        self.kind = kind
+        super.init()
+    }
+}
+
 struct OfflineMapView: View {
     @StateObject private var viewModel = OfflineMapViewModel()
     @State private var tileProvider = OfflineTileProvider(tileStore: OfflineTileStore())
     /// Optional markers to drop and fit on appear (Crisis Sentinel "show on map").
     var initialPins: [OfflineMapPin] = []
+    /// Optional breadcrumb geometry supplied by the return-route tool.
+    var breadcrumbTrail: [CLLocationCoordinate2D] = []
 
     var body: some View {
         ZStack {
-            OfflineMapRepresentable(viewModel: viewModel, tileProvider: tileProvider)
+            OfflineMapRepresentable(
+                viewModel: viewModel,
+                tileProvider: tileProvider,
+                breadcrumbTrail: breadcrumbTrail
+            )
                 .ignoresSafeArea()
 
             VStack {
@@ -412,6 +428,7 @@ private struct OfflineRegionRow: View {
 private struct OfflineMapRepresentable: UIViewRepresentable {
     @ObservedObject var viewModel: OfflineMapViewModel
     let tileProvider: OfflineTileProvider
+    let breadcrumbTrail: [CLLocationCoordinate2D]
 
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView(frame: .zero)
@@ -444,6 +461,7 @@ private struct OfflineMapRepresentable: UIViewRepresentable {
 
         context.coordinator.updateRegionOverlays(on: uiView, regions: viewModel.regions)
         context.coordinator.updateExternalPins(on: uiView, pins: viewModel.externalPins)
+        context.coordinator.updateBreadcrumbTrail(on: uiView, coordinates: breadcrumbTrail)
 
         if context.coordinator.lastFocusToken != viewModel.focusToken {
             context.coordinator.lastFocusToken = viewModel.focusToken
@@ -488,6 +506,8 @@ private struct OfflineMapRepresentable: UIViewRepresentable {
         private var regionOverlaySignature: [String] = []
         private var overlayStatus: [ObjectIdentifier: OfflineRegionStatus] = [:]
         private var externalPinSignature: [String] = []
+        private var breadcrumbSignature = ""
+        private var didFitBreadcrumb = false
         private let viewModel: OfflineMapViewModel
 
         init(viewModel: OfflineMapViewModel) {
@@ -509,6 +529,14 @@ private struct OfflineMapRepresentable: UIViewRepresentable {
                 renderer.strokeColor = statusColor(status).withAlphaComponent(0.9)
                 renderer.fillColor = statusColor(status).withAlphaComponent(0.18)
                 renderer.lineWidth = 2
+                return renderer
+            }
+            if let polyline = overlay as? MKPolyline, polyline.title == "breadcrumb-trail" {
+                let renderer = MKPolylineRenderer(polyline: polyline)
+                renderer.strokeColor = UIColor(Color.appPrimary)
+                renderer.lineWidth = 5
+                renderer.lineCap = .round
+                renderer.lineJoin = .round
                 return renderer
             }
             return MKOverlayRenderer(overlay: overlay)
@@ -547,6 +575,16 @@ private struct OfflineMapRepresentable: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            if let breadcrumb = annotation as? BreadcrumbMapAnnotation {
+                let id = "breadcrumb-\(breadcrumb.kind == .start ? "start" : "current")"
+                let view = (mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKMarkerAnnotationView)
+                    ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: id)
+                view.annotation = annotation
+                view.markerTintColor = breadcrumb.kind == .start ? .systemOrange : UIColor(Color.appPrimary)
+                view.glyphImage = UIImage(systemName: breadcrumb.kind == .start ? "flag.fill" : "location.fill")
+                view.canShowCallout = true
+                return view
+            }
             guard annotation is SentinelPinAnnotation else { return nil }
             let id = "sentinel-pin"
             let view = (mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKMarkerAnnotationView)
@@ -556,6 +594,76 @@ private struct OfflineMapRepresentable: UIViewRepresentable {
             view.glyphImage = UIImage(systemName: "mappin")
             view.canShowCallout = true
             return view
+        }
+
+        func updateBreadcrumbTrail(
+            on mapView: MKMapView,
+            coordinates: [CLLocationCoordinate2D]
+        ) {
+            let signature = coordinates.map { "\($0.latitude),\($0.longitude)" }.joined(separator: ";")
+            guard signature != breadcrumbSignature else { return }
+            breadcrumbSignature = signature
+
+            let existingLines = mapView.overlays.filter {
+                ($0 as? MKPolyline)?.title == "breadcrumb-trail"
+            }
+            mapView.removeOverlays(existingLines)
+            let existingAnnotations = mapView.annotations.compactMap { $0 as? BreadcrumbMapAnnotation }
+            mapView.removeAnnotations(existingAnnotations)
+            guard let first = coordinates.first else { return }
+
+            if coordinates.count > 1 {
+                let line = MKPolyline(coordinates: coordinates, count: coordinates.count)
+                line.title = "breadcrumb-trail"
+                mapView.addOverlay(line, level: .aboveLabels)
+            }
+
+            let start = BreadcrumbMapAnnotation(kind: .start)
+            start.coordinate = first
+            start.title = NSLocalizedString(
+                "BREADCRUMB_MAP_START",
+                tableName: "Breadcrumb",
+                bundle: .main,
+                value: "Trail start",
+                comment: ""
+            )
+            mapView.addAnnotation(start)
+
+            if let last = coordinates.last, coordinates.count > 1 {
+                let current = BreadcrumbMapAnnotation(kind: .current)
+                current.coordinate = last
+                current.title = NSLocalizedString(
+                    "BREADCRUMB_MAP_CURRENT",
+                    tableName: "Breadcrumb",
+                    bundle: .main,
+                    value: "Last recorded point",
+                    comment: ""
+                )
+                mapView.addAnnotation(current)
+            }
+
+            if !didFitBreadcrumb {
+                didFitBreadcrumb = true
+                if coordinates.count > 1,
+                   let line = mapView.overlays.first(where: {
+                       ($0 as? MKPolyline)?.title == "breadcrumb-trail"
+                   }) as? MKPolyline {
+                    mapView.setVisibleMapRect(
+                        line.boundingMapRect,
+                        edgePadding: UIEdgeInsets(top: 90, left: 45, bottom: 90, right: 45),
+                        animated: false
+                    )
+                } else {
+                    mapView.setRegion(
+                        MKCoordinateRegion(
+                            center: first,
+                            latitudinalMeters: 500,
+                            longitudinalMeters: 500
+                        ),
+                        animated: false
+                    )
+                }
+            }
         }
 
         func updateRegionOverlays(on mapView: MKMapView, regions: [OfflineMapRegion]) {

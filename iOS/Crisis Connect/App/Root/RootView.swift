@@ -190,13 +190,15 @@ private struct OnboardingView: View {
     }
 
     /// The permissions step can only be passed once Bluetooth — the app's core transport — is
-    /// actually granted, and the other prompts have at least been answered (a conscious denial
-    /// of location/notifications is allowed; skipping the prompts entirely is not). Previously
-    /// Continue was unconditionally enabled, so onboarding could finish fully permissionless.
+    /// actually granted, and the location prompt has at least been answered (a conscious denial
+    /// of location is allowed; skipping the prompt entirely is not).
+    ///
+    /// Notifications are deliberately NOT part of this gate: App Review guideline 4.5.4 requires
+    /// push to stay optional, and gating Continue on the notification prompt read as "the app
+    /// requires push notifications in order to function" (rejection of 1.1.8, July 30 2026).
     private var requiredPermissionsSatisfied: Bool {
         permissions.bluetoothStatus == .granted &&
-            permissions.locationStatus.isResolved &&
-            permissions.notificationsStatus.isResolved
+            permissions.locationStatus.isResolved
     }
 
     private var footerMessage: String {
@@ -818,7 +820,9 @@ private struct OnboardingView: View {
     ) -> some View {
         switch status {
         case .notDetermined:
-            Button("Allow", action: onRequest)
+            // "Continue", not "Allow": App Review guideline 5.1.1(iv) forbids a custom
+            // pre-permission prompt whose button pre-empts the system dialog's own wording.
+            Button("Continue", action: onRequest)
                 .font(.footnote.weight(.semibold))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)

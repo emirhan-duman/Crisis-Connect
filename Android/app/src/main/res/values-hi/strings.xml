@@ -1759,4 +1759,18 @@
     <string name="rescue_remote_signals_empty_title">सब शांत है</string>
     <string name="rescue_remote_hero_count">%1$d सक्रिय सिग्नल</string>
     <string name="rescue_remote_signals_subtitle">आपकी एजेंसी पैनल से लाइव फ़ीड</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">खाता और डेटा हटाएं</string>
+    <string name="profile_delete_account_progress">हटाया जा रहा है…</string>
+    <string name="profile_delete_account_dialog_title">अपना खाता स्थायी रूप से हटाएं?</string>
+    <string name="profile_delete_account_dialog_body">ये कार्रवाई वापस नहीं ली जा सकती। आपका खाता, प्रोफाइल, संपर्क डायरेक्टरी मिलान, एन्क्रिप्शन कुंजियां, सूचना रिकॉर्ड और इस डिवाइस पर चैट इतिहास हटा दिया जाएगा। आपके भेजे गए आपात संकेत बचाव रिकॉर्ड के रूप में, आपकी पहचान से अलग करके रखे जाते हैं।</string>
+    <string name="profile_delete_account_dialog_confirm_hint">पुष्टि के लिए %1$s टाइप करें।</string>
+    <string name="profile_delete_account_confirm_word">हटाएं</string>
+    <string name="profile_delete_account_dialog_confirm">स्थायी रूप से हटाएं</string>
+    <string name="profile_delete_account_success">आपका खाता और डेटा हटा दिया गया है।</string>
+    <string name="profile_delete_account_error">हटाना पूरा नहीं हो सका। अपना कनेक्शन जांचें और पुनः प्रयास करें।</string>
+    <string name="profile_delete_account_error_verification">इस डिवाइस पर हटाने की पुष्टि नहीं हो सकी। अपना कनेक्शन जांचें और पुनः प्रयास करें।</string>
+    <string name="profile_delete_account_error_signed_out">खाता हटाने के लिए साइन इन करना जरूरी है।</string>
+    <string name="profile_delete_account_reauth_needed">आपकी सुरक्षा के लिए हटाने से पहले पुष्टि करनी होगी कि यह आप ही हैं। साइन आउट करें, दोबारा साइन इन करें और फिर से कोशिश करें।</string>
 </resources>

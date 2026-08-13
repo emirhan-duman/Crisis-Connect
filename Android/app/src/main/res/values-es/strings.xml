@@ -1759,4 +1759,18 @@
     <string name="rescue_remote_signals_empty_title">Todo en calma</string>
     <string name="rescue_remote_hero_count">%1$d señales activas</string>
     <string name="rescue_remote_signals_subtitle">Transmisión en vivo del panel de tu agencia</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">Eliminar cuenta y datos</string>
+    <string name="profile_delete_account_progress">Eliminando…</string>
+    <string name="profile_delete_account_dialog_title">¿Eliminar tu cuenta permanentemente?</string>
+    <string name="profile_delete_account_dialog_body">Esta acción no se puede deshacer. Se eliminarán tu cuenta, tu perfil, las coincidencias del directorio, tus claves de cifrado, los registros de notificaciones y el historial de chat de este dispositivo. Las señales de emergencia que enviaste se conservan como registro de rescate, separadas de tu identidad.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">Escribe %1$s para confirmar.</string>
+    <string name="profile_delete_account_confirm_word">ELIMINAR</string>
+    <string name="profile_delete_account_dialog_confirm">Eliminar permanentemente</string>
+    <string name="profile_delete_account_success">Tu cuenta y tus datos se han eliminado.</string>
+    <string name="profile_delete_account_error">No se pudo completar la eliminación. Comprueba tu conexión e inténtalo de nuevo.</string>
+    <string name="profile_delete_account_error_verification">No se pudo verificar la eliminación en este dispositivo. Comprueba tu conexión e inténtalo de nuevo.</string>
+    <string name="profile_delete_account_error_signed_out">Debes iniciar sesión para eliminar tu cuenta.</string>
+    <string name="profile_delete_account_reauth_needed">Por tu seguridad, debemos confirmar tu identidad antes de eliminar. Cierra sesión, vuelve a iniciarla e inténtalo de nuevo.</string>
 </resources>

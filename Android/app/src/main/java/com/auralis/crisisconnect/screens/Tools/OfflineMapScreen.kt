@@ -89,6 +89,7 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.annotations.MarkerOptions
+import org.maplibre.android.annotations.PolylineOptions
 import org.maplibre.android.geometry.LatLngBounds
 import org.json.JSONArray
 import com.auralis.crisisconnect.ai.CrisisSentinelMapPoint
@@ -117,13 +118,29 @@ private fun parseMapPointsJson(pointsJson: String?): List<CrisisSentinelMapPoint
     }.getOrDefault(emptyList())
 }
 
+private fun parseBreadcrumbTrailJson(trailJson: String?): List<LatLng> {
+    if (trailJson.isNullOrBlank()) return emptyList()
+    return runCatching {
+        val array = JSONArray(trailJson)
+        buildList {
+            for (index in 0 until array.length()) {
+                val point = array.optJSONObject(index) ?: continue
+                val lat = point.optDouble("lat", Double.NaN)
+                val lng = point.optDouble("lng", Double.NaN)
+                if (lat.isFinite() && lng.isFinite()) add(LatLng(lat, lng))
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
 @Composable
 fun OfflineMapScreen(
     navController: NavController,
     initialLat: Double? = null,
     initialLng: Double? = null,
     initialLabel: String? = null,
-    pointsJson: String? = null
+    pointsJson: String? = null,
+    trailJson: String? = null
 ) {
     val context = LocalContext.current
     // The offline-map tool needs the MapLibre GL runtime (OpenGL ES 3.0). On devices without it,
@@ -139,7 +156,8 @@ fun OfflineMapScreen(
         initialLat = initialLat,
         initialLng = initialLng,
         initialLabel = initialLabel,
-        pointsJson = pointsJson
+        pointsJson = pointsJson,
+        trailJson = trailJson
     )
 }
 
@@ -175,7 +193,8 @@ private fun OfflineMapScreenContent(
     initialLat: Double? = null,
     initialLng: Double? = null,
     initialLabel: String? = null,
-    pointsJson: String? = null
+    pointsJson: String? = null,
+    trailJson: String? = null
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -195,8 +214,37 @@ private fun OfflineMapScreenContent(
 
     LaunchedEffect(mapLibreMapState.value) {
         val map = mapLibreMapState.value ?: return@LaunchedEffect
+        val trail = parseBreadcrumbTrailJson(trailJson)
         val points = parseMapPointsJson(pointsJson)
-        if (points.size > 1) {
+        if (trail.isNotEmpty()) {
+            val bounds = LatLngBounds.Builder()
+            trail.forEach(bounds::include)
+            if (trail.size > 1) {
+                map.addPolyline(
+                    PolylineOptions()
+                        .addAll(trail)
+                        .color(android.graphics.Color.rgb(22, 111, 160))
+                        .width(7f)
+                )
+            }
+            map.addMarker(
+                MarkerOptions()
+                    .position(trail.first())
+                    .title(context.getString(R.string.breadcrumb_map_start))
+            )
+            if (trail.size > 1) {
+                map.addMarker(
+                    MarkerOptions()
+                        .position(trail.last())
+                        .title(context.getString(R.string.breadcrumb_map_current))
+                )
+                runCatching {
+                    map.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), 96))
+                }
+            } else {
+                map.moveCamera(CameraUpdateFactory.newLatLngZoom(trail.first(), 15.0))
+            }
+        } else if (points.size > 1) {
             // Multi-point payload (e.g. AI "show on map"): drop all markers, fit the camera.
             val bounds = LatLngBounds.Builder()
             points.forEach { point ->

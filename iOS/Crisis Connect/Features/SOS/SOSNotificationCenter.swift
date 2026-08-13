@@ -146,6 +146,9 @@ enum SOSNotificationCenter {
         kind: AppNotificationMessageKind = .contactUpdate,
         route: AppNotificationRoute? = nil
     ) {
+        // Internal AuthorityChat-over-nearby frames contain only MLS ciphertext. They are
+        // consumed by AuthorityChat and must never appear as a citizen-chat notification.
+        guard !body.hasPrefix("CC_AMLS2:") else { return }
         guard shouldNotify(kind: kind) else { return }
         let resolvedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !resolvedBody.isEmpty else { return }

@@ -4,17 +4,8 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.view.HapticFeedbackConstants
 import android.widget.Toast
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,26 +18,25 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
@@ -56,31 +46,29 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,207 +83,263 @@ import com.auralis.crisisconnect.ui.components.AppBottomBar
 import java.text.Normalizer
 import java.util.Locale
 
-private const val ALL_CATEGORIES_ID = "all"
-private val CheckedChecklistItemsSaver = Saver<Set<String>, ArrayList<String>>(
+private const val GUIDE_PREFERENCES = "survival_guide_preferences"
+private const val CHECKED_ITEMS_KEY = "checked_checklist_items"
+
+private val CheckedItemsSaver = Saver<Set<String>, ArrayList<String>>(
     save = { ArrayList(it) },
     restore = { it.toSet() }
 )
 
-private data class GuideItemEntry(
-    val category: GuideCategory,
-    val article: GuideArticle
-)
+private data class GuideItemEntry(val category: GuideCategory, val article: GuideArticle)
+private data class GuideEmergencyContact(val number: String, val service: String)
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun GuideTopBar(
-    onOpenSettings: () -> Unit
-) {
-    val containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
-    val scrolledContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(4.dp)
-    val isDarkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val titleStyle = MaterialTheme.typography.titleLarge.copy(
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 0.1.sp
-    )
+private enum class GuideMode {
+    NOW, PREPARE, AFTER;
 
-    Column {
-        CenterAlignedTopAppBar(
-            title = {
-                Text(
-                    text = stringResource(R.string.Guide),
-                    style = titleStyle,
-                    color = if (isDarkTheme) Color.White else Color(0xFF042C43),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            },
-            actions = {
-                IconButton(
-                    onClick = onOpenSettings,
-                    modifier = Modifier.padding(end = 12.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = stringResource(R.string.Settings),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = containerColor,
-                scrolledContainerColor = scrolledContainerColor
-            )
-        )
-        HorizontalDivider(
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f)
-        )
+    @Composable
+    fun title() = when (this) {
+        NOW -> stringResource(R.string.guide_redesign_mode_now)
+        PREPARE -> stringResource(R.string.guide_redesign_mode_prepare)
+        AFTER -> stringResource(R.string.guide_redesign_mode_after)
+    }
+
+    @Composable
+    fun heading() = when (this) {
+        NOW -> stringResource(R.string.guide_redesign_heading_now)
+        PREPARE -> stringResource(R.string.guide_redesign_heading_prepare)
+        AFTER -> stringResource(R.string.guide_redesign_heading_after)
+    }
+
+    @Composable
+    fun subtitle() = when (this) {
+        NOW -> stringResource(R.string.guide_redesign_subtitle_now)
+        PREPARE -> stringResource(R.string.guide_redesign_subtitle_prepare)
+        AFTER -> stringResource(R.string.guide_redesign_subtitle_after)
+    }
+
+    fun contains(articleId: String) = when (this) {
+        PREPARE -> articleId in setOf("G-002", "G-003", "G-004", "E-001")
+        AFTER -> articleId in setOf("E-003", "E-004", "MH-001")
+        NOW -> articleId in setOf("G-001", "E-002", "F-001", "F-002", "F-003", "W-001", "P-001", "FA-001", "FA-002", "FA-003", "FA-004", "FA-005")
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GuideTopBar(title: String, onBack: (() -> Unit)?, onSettings: (() -> Unit)?) {
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    Column {
+        CenterAlignedTopAppBar(
+            title = {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.1.sp),
+                    color = if (dark) Color.White else Color(0xFF042C43),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            navigationIcon = {
+                onBack?.let { back ->
+                    IconButton(onClick = back) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            },
+            actions = {
+                onSettings?.let { open ->
+                    IconButton(onClick = open) {
+                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.Settings))
+                    }
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp))
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f))
+    }
+}
+
 @Composable
 fun GuideMainScreen(navController: NavController) {
     val context = LocalContext.current
     val locale = Locale.getDefault()
     val categories = remember { GuideMainScreenViewModel.CATEGORIES }
-    val emergencyInfo = remember(context) { EmergencyNumberResolver.resolveWithRegion(context) }
-    val listState = rememberLazyListState()
+    val entries = remember(categories) {
+        categories.flatMap { category -> category.guides.map { GuideItemEntry(category, it) } }
+    }
+    val regionalEmergency = remember(context) { EmergencyNumberResolver.resolveWithRegion(context) }
+    val emergencyContacts = remember(context, locale, regionalEmergency) { emergencyContacts(context, regionalEmergency) }
+    val preferences = remember(context) { context.getSharedPreferences(GUIDE_PREFERENCES, Context.MODE_PRIVATE) }
 
-    var selectedCategoryId by rememberSaveable { mutableStateOf(ALL_CATEGORIES_ID) }
+    var selectedModeName by rememberSaveable { mutableStateOf(GuideMode.NOW.name) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
-    var expandedGuideId by rememberSaveable { mutableStateOf<String?>(null) }
-    var checkedChecklistItems by rememberSaveable(stateSaver = CheckedChecklistItemsSaver) {
-        mutableStateOf(emptySet<String>())
-    }
-    val hasActiveFilters by remember(selectedCategoryId, searchQuery) {
-        derivedStateOf {
-            selectedCategoryId != ALL_CATEGORIES_ID || searchQuery.isNotBlank()
-        }
-    }
-    val stickyHeaderElevated by remember {
-        derivedStateOf {
-            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
-        }
+    var selectedArticleId by rememberSaveable { mutableStateOf<String?>(null) }
+    var checkedItems by rememberSaveable(stateSaver = CheckedItemsSaver) {
+        mutableStateOf(preferences.getStringSet(CHECKED_ITEMS_KEY, emptySet()).orEmpty().toSet())
     }
 
-    val visibleGuides = remember(categories, selectedCategoryId, searchQuery, locale) {
-        val selectedCategories = if (selectedCategoryId == ALL_CATEGORIES_ID) {
-            categories
-        } else {
-            categories.filter { category -> category.id == selectedCategoryId }
-        }
-
-        val allEntries = selectedCategories.flatMap { category ->
-            category.guides.map { article ->
-                GuideItemEntry(category = category, article = article)
-            }
-        }
-
-        val queryTokens = searchQuery.toSearchTokens(locale)
-        if (queryTokens.isEmpty()) {
-            allEntries
-        } else {
-            allEntries.filter { entry -> entry.matchesQuery(queryTokens, locale) }
-        }
+    val selectedMode = GuideMode.valueOf(selectedModeName)
+    val selectedEntry = entries.firstOrNull { it.article.id == selectedArticleId }
+    val visibleEntries = remember(entries, selectedMode, searchQuery, locale) {
+        val tokens = searchQuery.toSearchTokens(locale)
+        if (tokens.isEmpty()) entries.filter { selectedMode.contains(it.article.id) }
+        else entries.filter { it.matchesQuery(tokens, locale) }
     }
 
-    LaunchedEffect(visibleGuides, expandedGuideId) {
-        if (expandedGuideId != null && visibleGuides.none { it.article.id == expandedGuideId }) {
-            expandedGuideId = null
-        }
+    LaunchedEffect(checkedItems) {
+        preferences.edit().putStringSet(CHECKED_ITEMS_KEY, checkedItems.toSet()).apply()
     }
+    BackHandler(enabled = selectedEntry != null) { selectedArticleId = null }
 
     Scaffold(
         topBar = {
             GuideTopBar(
-                onOpenSettings = { navController.navigate("settings") }
+                title = selectedEntry?.category?.title?.resolve(locale) ?: stringResource(R.string.Guide),
+                onBack = selectedEntry?.let { { selectedArticleId = null } },
+                onSettings = if (selectedEntry == null) ({ navController.navigate("settings") }) else null
             )
         },
-        bottomBar = {
-            AppBottomBar(navController = navController)
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            GuideStickyFiltersPanel(
+        bottomBar = { if (selectedEntry == null) AppBottomBar(navController) }
+    ) { padding ->
+        if (selectedEntry == null) {
+            GuideHome(
+                modifier = Modifier.fillMaxSize().padding(padding),
                 locale = locale,
-                categories = categories,
-                selectedCategoryId = selectedCategoryId,
-                onSelectCategory = { selectedCategoryId = it },
+                entries = entries,
+                visibleEntries = visibleEntries,
+                selectedMode = selectedMode,
+                onModeChange = { selectedModeName = it.name; searchQuery = "" },
                 searchQuery = searchQuery,
-                onSearchQueryChange = { searchQuery = it },
-                visibleGuideCount = visibleGuides.size,
-                hasActiveFilters = hasActiveFilters,
-                onClearFilters = {
-                    searchQuery = ""
-                    selectedCategoryId = ALL_CATEGORIES_ID
-                    expandedGuideId = null
-                },
-                elevated = stickyHeaderElevated,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                onSearchChange = { searchQuery = it },
+                regionalEmergency = regionalEmergency,
+                emergencyContacts = emergencyContacts,
+                checkedItems = checkedItems,
+                onOpen = { selectedArticleId = it.article.id },
+                onCall = { dialEmergency(context, it) },
+                onOfficialAssembly = { openOfficialAssemblyLookup(context) }
             )
+        } else {
+            GuideFocus(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                locale = locale,
+                entry = selectedEntry,
+                emergencyContacts = emergencyContacts,
+                checkedItems = checkedItems,
+                onToggle = { index -> checkedItems = checkedItems.toggle("${selectedEntry.article.id}#$index") },
+                onCall = { dialEmergency(context, it) }
+            )
+        }
+    }
+}
 
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                state = listState,
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                item {
-                    GuideIntroPanel(
-                        locale = locale,
-                        emergencyInfo = emergencyInfo,
-                        onCallEmergency = {
-                            dialEmergency(
-                                context = context,
-                                number = emergencyInfo.number
-                            )
-                        },
-                        onOpenAssemblyArea = { openAssemblyAreaMap(context) }
-                    )
-                }
+@Composable
+private fun GuideHome(
+    modifier: Modifier,
+    locale: Locale,
+    entries: List<GuideItemEntry>,
+    visibleEntries: List<GuideItemEntry>,
+    selectedMode: GuideMode,
+    onModeChange: (GuideMode) -> Unit,
+    searchQuery: String,
+    onSearchChange: (String) -> Unit,
+    regionalEmergency: EmergencyNumberResolver.RegionalEmergencyNumber,
+    emergencyContacts: List<GuideEmergencyContact>,
+    checkedItems: Set<String>,
+    onOpen: (GuideItemEntry) -> Unit,
+    onCall: (String) -> Unit,
+    onOfficialAssembly: () -> Unit
+) {
+    LazyColumn(
+        modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainerLowest),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item { OfflineStatus(locale, regionalEmergency.countryIso) }
+        item { ModeSelector(selectedMode, onModeChange) }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(selectedMode.heading(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                Text(selectedMode.subtitle(), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (selectedMode == GuideMode.NOW) {
+            item { EmergencyPanel(emergencyContacts, hasVerifiedGuideEmergencyRegion(regionalEmergency.countryIso), onCall) }
+            item { HazardGrid(entries, onOpen) }
+        }
+        if (selectedMode == GuideMode.PREPARE) {
+            item { PreparationProgress(entries, checkedItems) }
+            if (regionalEmergency.countryIso.equals("TR", true)) {
+                item { OfficialAssemblyCard(onOfficialAssembly) }
+            }
+        }
+        item { SearchField(searchQuery, onSearchChange) }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    if (searchQuery.isBlank()) selectedMode.title() else stringResource(R.string.guide_redesign_search_results),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.semantics { heading() }
+                )
+                Text(visibleEntries.size.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (visibleEntries.isEmpty()) item { EmptyState() }
+        else items(visibleEntries, key = { it.article.id }) { entry ->
+            CompactGuideRow(locale, entry, checkedItems) { onOpen(entry) }
+        }
+    }
+}
 
-                if (visibleGuides.isEmpty()) {
-                    item {
-                        EmptyGuidesState()
-                    }
-                } else {
-                    items(
-                        items = visibleGuides,
-                        key = { entry -> entry.article.id },
-                        contentType = { "guide_card" }
-                    ) { entry ->
-                        val isExpanded = expandedGuideId == entry.article.id
-                        GuideArticleCard(
-                            locale = locale,
-                            entry = entry,
-                            isExpanded = isExpanded,
-                            checkedChecklistItems = checkedChecklistItems,
-                            onToggleExpanded = {
-                                expandedGuideId = if (isExpanded) null else entry.article.id
-                            },
-                            onStartChecklist = {
-                                expandedGuideId = entry.article.id
-                                checkedChecklistItems = checkedChecklistItems.filterNot { key ->
-                                    key.startsWith("${entry.article.id}#")
-                                }.toSet()
-                            },
-                            onToggleChecklist = { index ->
-                                val key = "${entry.article.id}#$index"
-                                checkedChecklistItems = if (checkedChecklistItems.contains(key)) {
-                                    checkedChecklistItems - key
-                                } else {
-                                    checkedChecklistItems + key
-                                }
-                            }
+@Composable
+private fun OfflineStatus(locale: Locale, countryIso: String?) {
+    val country = countryIso?.let { Locale.Builder().setRegion(it).build().getDisplayCountry(locale).ifBlank { it } }
+        ?: stringResource(R.string.guide_redesign_unknown_region)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Text(stringResource(R.string.guide_redesign_offline_available), fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            Text(country, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun ModeSelector(selected: GuideMode, onSelect: (GuideMode) -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow
+    ) {
+        Row(Modifier.padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            GuideMode.entries.forEach { mode ->
+                val active = selected == mode
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .defaultMinSize(minHeight = 48.dp)
+                        .selectable(selected = active, role = Role.Tab, onClick = { onSelect(mode) }),
+                    shape = RoundedCornerShape(11.dp),
+                    color = if (active) MaterialTheme.colorScheme.surface else Color.Transparent,
+                    tonalElevation = if (active) 2.dp else 0.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            mode.title(),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                            color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -305,190 +349,78 @@ fun GuideMainScreen(navController: NavController) {
 }
 
 @Composable
-private fun GuideIntroPanel(
-    locale: Locale,
-    emergencyInfo: EmergencyNumberResolver.RegionalEmergencyNumber,
-    onCallEmergency: () -> Unit,
-    onOpenAssemblyArea: () -> Unit
+private fun EmergencyPanel(
+    contacts: List<GuideEmergencyContact>,
+    regionVerified: Boolean,
+    onCall: (String) -> Unit
 ) {
-    val unknownCountryLabel = stringResource(R.string.guide_country_unknown)
-    val countryLabel = remember(locale, emergencyInfo.countryIso) {
-        emergencyInfo.countryIso
-            ?.let { iso -> Locale("", iso).getDisplayCountry(locale).ifBlank { iso } }
-            ?: unknownCountryLabel
-    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-        border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-        )
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.2f))
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.guide_screen_intro_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = stringResource(R.string.guide_screen_intro_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.errorContainer) {
+                    Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.padding(11.dp), tint = MaterialTheme.colorScheme.error)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(stringResource(R.string.guide_redesign_immediate_danger), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.guide_redesign_emergency_instruction), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-
-            Text(
-                text = stringResource(
-                    R.string.guide_screen_region_value,
-                    countryLabel,
-                    emergencyInfo.number
-                ),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            contacts.forEach { contact ->
                 Button(
-                    onClick = onCallEmergency,
-                    modifier = Modifier
-                        .weight(1f)
-                        .defaultMinSize(minHeight = 44.dp)
+                    onClick = { onCall(contact.number) },
+                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 52.dp),
+                    shape = RoundedCornerShape(14.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Call,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = stringResource(R.string.guide_screen_action_call_local, emergencyInfo.number),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Icon(Icons.Default.Call, contentDescription = null)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                        Text(stringResource(R.string.guide_screen_action_call_local, contact.number), fontWeight = FontWeight.Bold)
+                        Text(contact.service, style = MaterialTheme.typography.labelSmall)
+                    }
                 }
-
-                OutlinedButton(
-                    onClick = onOpenAssemblyArea,
-                    modifier = Modifier
-                        .weight(1f)
-                        .defaultMinSize(minHeight = 44.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Place,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = stringResource(R.string.guide_screen_action_open_assembly),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+            }
+            if (!regionVerified) {
+                Text(
+                    stringResource(R.string.guide_redesign_region_unverified),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
             }
         }
     }
 }
 
 @Composable
-private fun GuideStickyFiltersPanel(
-    locale: Locale,
-    categories: List<GuideCategory>,
-    selectedCategoryId: String,
-    onSelectCategory: (String) -> Unit,
-    searchQuery: String,
-    onSearchQueryChange: (String) -> Unit,
-    visibleGuideCount: Int,
-    hasActiveFilters: Boolean,
-    onClearFilters: () -> Unit,
-    elevated: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val panelElevation by animateDpAsState(
-        targetValue = if (elevated) 6.dp else 0.dp,
-        label = "guide_sticky_panel_elevation"
+private fun HazardGrid(entries: List<GuideItemEntry>, onOpen: (GuideItemEntry) -> Unit) {
+    val hazards = listOf(
+        Triple("E-002", stringResource(R.string.guide_redesign_hazard_earthquake), Icons.Default.Place),
+        Triple("F-001", stringResource(R.string.guide_redesign_hazard_fire_smoke), Icons.Default.Warning),
+        Triple("FA-002", stringResource(R.string.guide_redesign_hazard_severe_bleeding), Icons.Default.Warning),
+        Triple("FA-005", stringResource(R.string.guide_redesign_hazard_cannot_breathe), Icons.Default.Call),
+        Triple("W-001", stringResource(R.string.guide_redesign_hazard_flood), Icons.Default.Place),
+        Triple("P-001", stringResource(R.string.guide_redesign_hazard_poisoning_co), Icons.Default.Warning)
     )
-    val panelColor by animateColorAsState(
-        targetValue = if (elevated) {
-            MaterialTheme.colorScheme.surface
-        } else {
-            MaterialTheme.colorScheme.surface.copy(alpha = 0.98f)
-        },
-        label = "guide_sticky_panel_color"
-    )
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 2.dp),
-            shape = RoundedCornerShape(18.dp),
-            color = panelColor,
-            tonalElevation = panelElevation,
-            shadowElevation = panelElevation,
-            border = BorderStroke(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-            )
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
-                    .animateContentSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                CompactSearchField(
-                    query = searchQuery,
-                    onQueryChange = onSearchQueryChange,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                CategoryFilters(
-                    locale = locale,
-                    categories = categories,
-                    selectedCategoryId = selectedCategoryId,
-                    onSelectCategory = onSelectCategory
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = stringResource(R.string.guide_screen_results_count, visibleGuideCount),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    AnimatedVisibility(
-                        visible = hasActiveFilters,
-                        enter = fadeIn(),
-                        exit = fadeOut()
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(stringResource(R.string.guide_redesign_choose_situation), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+        hazards.chunked(2).forEach { pair ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                pair.forEachIndexed { index, hazard ->
+                    val entry = entries.firstOrNull { it.article.id == hazard.first }
+                    val tint = if (index == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    Surface(
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 76.dp).clickable(enabled = entry != null) { entry?.let(onOpen) },
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ) {
-                        TextButton(onClick = onClearFilters) {
-                            Text(
-                                text = stringResource(R.string.guide_screen_clear_filters),
-                                style = MaterialTheme.typography.labelMedium
-                            )
+                        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(hazard.third, contentDescription = null, tint = tint)
+                            Text(hazard.second, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -498,145 +430,83 @@ private fun GuideStickyFiltersPanel(
 }
 
 @Composable
-private fun CategoryFilters(
-    locale: Locale,
-    categories: List<GuideCategory>,
-    selectedCategoryId: String,
-    onSelectCategory: (String) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+private fun PreparationProgress(entries: List<GuideItemEntry>, checkedItems: Set<String>) {
+    val preparation = entries.filter { GuideMode.PREPARE.contains(it.article.id) }
+    val total = preparation.sumOf { it.article.checklist.size }
+    val completed = preparation.sumOf { entry ->
+        entry.article.checklist.indices.count { index -> checkedItems.contains("${entry.article.id}#$index") }
+    }
+    val progress = if (total == 0) 0f else completed.toFloat() / total.toFloat()
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
-        CategoryFilterTab(
-            label = stringResource(R.string.guide_screen_filter_all),
-            selected = selectedCategoryId == ALL_CATEGORIES_ID,
-            onClick = { onSelectCategory(ALL_CATEGORIES_ID) }
-        )
-
-        categories.forEach { category ->
-            CategoryFilterTab(
-                label = category.title.resolve(locale),
-                selected = selectedCategoryId == category.id,
-                onClick = { onSelectCategory(category.id) }
-            )
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.guide_redesign_readiness), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("$completed/$total", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            }
+            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
         }
     }
 }
 
 @Composable
-private fun CategoryFilterTab(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    val containerColor by animateColorAsState(
-        targetValue = if (selected) {
-            MaterialTheme.colorScheme.surfaceContainerHigh
-        } else {
-            MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f)
-        },
-        label = "guide_category_tab_container"
-    )
-    val borderColor by animateColorAsState(
-        targetValue = if (selected) {
-            MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-        } else {
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
-        },
-        label = "guide_category_tab_border"
-    )
-    val labelColor by animateColorAsState(
-        targetValue = if (selected) {
-            MaterialTheme.colorScheme.onSurface
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
-        label = "guide_category_tab_label"
-    )
-
+private fun OfficialAssemblyCard(onOpen: () -> Unit) {
     Surface(
-        modifier = Modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(10.dp),
-        color = containerColor,
-        border = BorderStroke(1.dp, borderColor)
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            color = labelColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Place, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.guide_screen_assembly_query), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            Text(stringResource(R.string.guide_redesign_official_assembly_body), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp)) {
+                Icon(Icons.Default.Check, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.guide_screen_action_open_assembly))
+            }
+        }
     }
 }
 
 @Composable
-private fun CompactSearchField(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    modifier: Modifier = Modifier
-) {
+private fun SearchField(query: String, onQueryChange: (String) -> Unit) {
     Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.7f),
-        border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)
-        )
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(44.dp)
-                .padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 52.dp).padding(start = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Default.Search,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Box(modifier = Modifier.weight(1f)) {
-                if (query.isBlank()) {
-                    Text(
-                        text = stringResource(R.string.guide_screen_search_placeholder),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
+            Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Box(Modifier.weight(1f)) {
+                if (query.isBlank()) Text(stringResource(R.string.guide_screen_search_placeholder), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 BasicTextField(
                     value = query,
                     onValueChange = onQueryChange,
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(
-                        color = MaterialTheme.colorScheme.onSurface
-                    ),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
                 )
             }
-
             if (query.isNotBlank()) {
-                IconButton(
-                    onClick = { onQueryChange("") },
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = stringResource(R.string.guide_screen_clear_search),
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                IconButton(onClick = { onQueryChange("") }, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.guide_screen_clear_search))
                 }
             }
         }
@@ -644,43 +514,27 @@ private fun CompactSearchField(
 }
 
 @Composable
-private fun EmptyGuidesState() {
+private fun CompactGuideRow(locale: Locale, entry: GuideItemEntry, checkedItems: Set<String>, onClick: () -> Unit) {
+    val completed = entry.article.checklist.indices.count { checkedItems.contains("${entry.article.id}#$it") }
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
-        tonalElevation = 1.dp,
         color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-        )
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 72.dp).padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.8f)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = null,
-                    modifier = Modifier.padding(8.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.padding(11.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
             }
-
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(entry.article.title.resolve(locale), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    text = stringResource(R.string.guide_screen_empty_title),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = stringResource(R.string.guide_screen_empty_body),
-                    style = MaterialTheme.typography.bodySmall,
+                    entry.category.title.resolve(locale) + if (completed > 0) " • $completed/${entry.article.checklist.size}" else "",
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -689,331 +543,159 @@ private fun EmptyGuidesState() {
 }
 
 @Composable
-private fun GuideArticleCard(
+private fun EmptyState() {
+    Column(Modifier.fillMaxWidth().padding(vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Icon(Icons.Default.Search, contentDescription = null)
+        Text(stringResource(R.string.guide_screen_empty_title), fontWeight = FontWeight.Bold)
+        Text(stringResource(R.string.guide_screen_empty_body), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun GuideFocus(
+    modifier: Modifier,
     locale: Locale,
     entry: GuideItemEntry,
-    isExpanded: Boolean,
-    checkedChecklistItems: Set<String>,
-    onToggleExpanded: () -> Unit,
-    onStartChecklist: () -> Unit,
-    onToggleChecklist: (Int) -> Unit
+    emergencyContacts: List<GuideEmergencyContact>,
+    checkedItems: Set<String>,
+    onToggle: (Int) -> Unit,
+    onCall: (String) -> Unit
 ) {
     val article = entry.article
-    val category = entry.category
-    val context = LocalContext.current
-    val view = LocalView.current
-    val quickActions = if (isExpanded) article.in30Seconds else article.in30Seconds.take(2)
-    val hiddenQuickActionCount = article.in30Seconds.size - quickActions.size
-    val metadata = remember(article, category, context, locale) {
-        "${article.id} • ${category.title.resolve(locale)} • ${readDurationLabel(context, article.readMinutes)} • ${article.priority.resolve(locale)}"
-    }
-    val expandIconAnimationSpec = remember {
-        spring<Float>(
-            dampingRatio = 0.92f,
-            stiffness = Spring.StiffnessMedium
-        )
-    }
-    val toggleExpandedWithFeedback = {
-        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-        onToggleExpanded()
-    }
-    val expandIconRotation by animateFloatAsState(
-        targetValue = if (isExpanded) 180f else 0f,
-        animationSpec = expandIconAnimationSpec,
-        label = "guide_expand_icon_rotation"
-    )
+    val completed = article.checklist.indices.count { checkedItems.contains("${article.id}#$it") }
+    val progress = if (article.checklist.isEmpty()) 0f else completed.toFloat() / article.checklist.size.toFloat()
+    val emergencyText: (String) -> String = { it.withEmergencyContacts(emergencyContacts) }
 
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .animateContentSize(
-                animationSpec = spring(
-                    dampingRatio = 0.92f,
-                    stiffness = Spring.StiffnessMedium
-                )
-            ),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-        border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-        )
+    LazyColumn(
+        modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainerLowest),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = toggleExpandedWithFeedback),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = article.title.resolve(locale),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = metadata,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Icon(
-                    imageVector = Icons.Default.ExpandMore,
-                    contentDescription = if (isExpanded) {
-                        stringResource(R.string.guide_screen_collapse_details)
-                    } else {
-                        stringResource(R.string.guide_screen_expand_details)
-                    },
-                    modifier = Modifier
-                        .padding(top = 2.dp)
-                        .size(20.dp)
-                        .rotate(expandIconRotation),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            GuideSection(
-                title = stringResource(R.string.guide_screen_section_30_seconds),
-                items = quickActions.map { it.resolve(locale) },
-                warning = false
-            )
-
-            if (!isExpanded && hiddenQuickActionCount > 0) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(entry.category.title.resolve(locale), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text(emergencyText(article.title.resolve(locale)), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                 Text(
-                    text = stringResource(R.string.guide_screen_more_quick_steps, hiddenQuickActionCount),
-                    style = MaterialTheme.typography.labelSmall,
+                    "${stringResource(R.string.guide_redesign_offline_available)} • ${stringResource(R.string.guide_screen_read_minutes_format, article.readMinutes)}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-
-            if (isExpanded) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    GuideSection(
-                        title = stringResource(R.string.guide_screen_section_step_by_step),
-                        items = article.stepByStep.map { it.resolve(locale) },
-                        warning = false
-                    )
-
-                    GuideSection(
-                        title = stringResource(R.string.guide_screen_section_dont),
-                        items = article.dontDo.map { it.resolve(locale) },
-                        warning = true
-                    )
-
-                    GuideChecklistSection(
-                        title = stringResource(R.string.guide_screen_section_checklist),
-                        article = article,
-                        locale = locale,
-                        checkedChecklistItems = checkedChecklistItems,
-                        onToggleChecklist = onToggleChecklist
-                    )
-
-                    article.sourceNote?.let { sourceNote ->
-                        Text(
-                            text = "${stringResource(R.string.guide_screen_source_note)} ${sourceNote.resolve(locale)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+        }
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(stringResource(R.string.guide_screen_section_30_seconds), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                    article.in30Seconds.take(3).forEachIndexed { index, item ->
+                        NumberedAction(index + 1, emergencyText(item.resolve(locale)))
                     }
                 }
             }
-
-            if (article.checklist.isNotEmpty()) {
-                OutlinedButton(
-                    onClick = onStartChecklist,
-                    modifier = Modifier.defaultMinSize(minHeight = 38.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = stringResource(R.string.guide_screen_action_start_checklist),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
         }
-    }
-}
-
-@Composable
-private fun GuideSection(
-    title: String,
-    items: List<String>,
-    warning: Boolean
-) {
-    if (items.isEmpty()) return
-
-    val titleColor = if (warning) {
-        MaterialTheme.colorScheme.error
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-    val textColor = if (warning) {
-        MaterialTheme.colorScheme.error
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-    val bulletColor = if (warning) {
-        MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-    val sectionBody: @Composable (Modifier) -> Unit = { modifier ->
-        Column(
-            modifier = modifier,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = titleColor
-            )
-
-            items.forEach { line ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 7.dp)
-                            .size(6.dp)
-                            .background(color = bulletColor, shape = CircleShape)
-                    )
-                    Text(
-                        text = line,
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = textColor
-                    )
-                }
-            }
-        }
-    }
-
-    if (warning) {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.22f),
-            border = BorderStroke(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
-            )
-        ) {
-            sectionBody(Modifier.padding(horizontal = 12.dp, vertical = 10.dp))
-        }
-    } else {
-        sectionBody(Modifier)
-    }
-}
-
-@Composable
-private fun GuideChecklistSection(
-    title: String,
-    article: GuideArticle,
-    locale: Locale,
-    checkedChecklistItems: Set<String>,
-    onToggleChecklist: (Int) -> Unit
-) {
-    val completedCount = remember(article.id, article.checklist.size, checkedChecklistItems) {
-        article.checklist.indices.count { index ->
-            checkedChecklistItems.contains("${article.id}#$index")
-        }
-    }
-    val totalCount = article.checklist.size
-    val progress = if (totalCount == 0) 0f else completedCount.toFloat() / totalCount.toFloat()
-
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.6f),
-        border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = stringResource(
-                        R.string.guide_screen_checklist_progress,
-                        completedCount,
-                        totalCount
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp),
-                trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-            )
-
-            article.checklist.forEachIndexed { index, item ->
-                val key = "${article.id}#$index"
-                val isChecked = checkedChecklistItems.contains(key)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onToggleChecklist(index) },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = isChecked,
-                        onCheckedChange = { onToggleChecklist(index) }
-                    )
-                    Text(
-                        text = item.resolve(locale),
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = if (isChecked) FontWeight.Medium else FontWeight.Normal,
-                        color = if (isChecked) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        textDecoration = if (isChecked) {
-                            TextDecoration.LineThrough
-                        } else {
-                            TextDecoration.None
+        if (GuideMode.NOW.contains(article.id)) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(stringResource(R.string.guide_redesign_emergency_help), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                    emergencyContacts.forEach { contact ->
+                        Button(onClick = { onCall(contact.number) }, modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 52.dp), shape = RoundedCornerShape(14.dp)) {
+                            Icon(Icons.Default.Call, contentDescription = null)
+                            Spacer(Modifier.width(10.dp))
+                            Text("${contact.number} • ${contact.service}", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
                         }
+                    }
+                }
+            }
+        }
+        if (article.stepByStep.isNotEmpty()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(stringResource(R.string.guide_screen_section_step_by_step), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                    article.stepByStep.forEachIndexed { index, item ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+                            Text("${index + 1}.", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text(emergencyText(item.resolve(locale)), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+        if (article.dontDo.isNotEmpty()) {
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.38f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.22f))
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                            Text(stringResource(R.string.guide_screen_section_dont), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { heading() })
+                        }
+                        article.dontDo.forEach { item ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+                                Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                                Text(emergencyText(item.resolve(locale)), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (article.checklist.isNotEmpty()) {
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(stringResource(R.string.guide_screen_section_checklist), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                                Text("$completed/${article.checklist.size}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text("${(progress * 100).toInt()}%", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+                        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                        article.checklist.forEachIndexed { index, item ->
+                            val checked = checkedItems.contains("${article.id}#$index")
+                            Row(
+                                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 52.dp).toggleable(value = checked, role = Role.Checkbox, onValueChange = { onToggle(index) }),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = checked, onCheckedChange = null)
+                                Text(
+                                    emergencyText(item.resolve(locale)),
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = if (checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                                    textDecoration = if (checked) TextDecoration.LineThrough else TextDecoration.None
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(stringResource(R.string.guide_redesign_source_verification), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                    Text(
+                        if (article.id == "G-001") emergencyContacts.joinToString(" • ") { "${it.service}: ${it.number}" }
+                        else article.sourceNote?.resolve(locale)?.let(emergencyText).orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        stringResource(R.string.guide_redesign_reviewer_missing),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
             }
@@ -1021,17 +703,59 @@ private fun GuideChecklistSection(
     }
 }
 
-private fun readDurationLabel(context: Context, minutes: Int): String {
-    return context.getString(R.string.guide_screen_read_minutes_format, minutes)
+@Composable
+private fun NumberedAction(number: Int, text: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary) {
+            Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
+                Text(number.toString(), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
+            }
+        }
+        Text(text, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f).defaultMinSize(minHeight = 32.dp))
+    }
 }
 
-private fun String.toSearchTokens(locale: Locale): List<String> {
-    return trim()
-        .split(Regex("\\s+"))
-        .map { token -> token.toSearchKey(locale) }
-        .filter { token -> token.isNotBlank() }
-        .distinct()
+private fun emergencyContacts(context: Context, regional: EmergencyNumberResolver.RegionalEmergencyNumber): List<GuideEmergencyContact> {
+    val all = context.getString(R.string.guide_redesign_service_all)
+    val medicalFire = context.getString(R.string.guide_redesign_service_fire_medical)
+    val medical = context.getString(R.string.guide_redesign_service_medical)
+    val fire = context.getString(R.string.guide_redesign_service_fire)
+    val police = context.getString(R.string.guide_redesign_service_police)
+    return when (regional.countryIso?.uppercase(Locale.US)) {
+        "TR" -> listOf(GuideEmergencyContact("112", all))
+        "US", "CA", "MX" -> listOf(GuideEmergencyContact("911", all))
+        "GB" -> listOf(GuideEmergencyContact("999", all))
+        "IE" -> listOf(GuideEmergencyContact("112", all))
+        "AU" -> listOf(GuideEmergencyContact("000", all))
+        "NZ" -> listOf(GuideEmergencyContact("111", all))
+        "JP" -> listOf(GuideEmergencyContact("119", medicalFire), GuideEmergencyContact("110", police))
+        "KR" -> listOf(GuideEmergencyContact("119", medicalFire), GuideEmergencyContact("112", police))
+        "CN" -> listOf(GuideEmergencyContact("120", medical), GuideEmergencyContact("119", fire), GuideEmergencyContact("110", police))
+        "BR" -> listOf(GuideEmergencyContact("192", medical), GuideEmergencyContact("193", fire), GuideEmergencyContact("190", police))
+        else -> listOf(GuideEmergencyContact(regional.number, context.getString(R.string.guide_redesign_service_regional)))
+    }
 }
+
+private fun hasVerifiedGuideEmergencyRegion(countryIso: String?): Boolean =
+    countryIso?.uppercase(Locale.US) in setOf("TR", "US", "CA", "MX", "GB", "IE", "AU", "NZ", "JP", "KR", "CN", "BR")
+
+private fun Set<String>.toggle(key: String): Set<String> = if (contains(key)) this - key else this + key
+
+private fun String.withEmergencyContacts(contacts: List<GuideEmergencyContact>): String {
+    val primary = contacts.firstOrNull()?.number ?: return this
+    val contactNumbers = contacts.map { it.number }.toSet()
+    var output = this
+    listOf("112", "911", "999", "000", "111").forEach { generic ->
+        if (generic !in contactNumbers) output = output.replace(Regex("\\b$generic\\b"), primary)
+    }
+    return output
+}
+
+private fun String.toSearchTokens(locale: Locale): List<String> = trim()
+    .split(Regex("\\s+"))
+    .map { it.toSearchKey(locale) }
+    .filter { it.isNotBlank() }
+    .distinct()
 
 private fun String.toSearchKey(locale: Locale): String {
     val normalized = Normalizer.normalize(lowercase(locale), Normalizer.Form.NFD)
@@ -1046,68 +770,36 @@ private fun String.toSearchKey(locale: Locale): String {
     }
 }
 
-private fun GuideItemEntry.matchesQuery(queryTokens: List<String>, locale: Locale): Boolean {
-    if (queryTokens.isEmpty()) return true
-
+private fun GuideItemEntry.matchesQuery(tokens: List<String>, locale: Locale): Boolean {
     val haystack = buildString {
-        append(article.id)
-        append(' ')
-        append(article.id.filter { it.isLetterOrDigit() })
-        append(' ')
-        append(article.title.resolve(locale))
-        append(' ')
-        append(article.priority.resolve(locale))
-        append(' ')
-        append(category.title.resolve(locale))
-        append(' ')
-        append(category.description.resolve(locale))
-        append(' ')
+        append(article.title.resolve(locale)).append(' ')
+        append(article.priority.resolve(locale)).append(' ')
+        append(category.title.resolve(locale)).append(' ')
+        append(category.description.resolve(locale)).append(' ')
         article.in30Seconds.forEach { append(it.resolve(locale)).append(' ') }
         article.stepByStep.forEach { append(it.resolve(locale)).append(' ') }
         article.dontDo.forEach { append(it.resolve(locale)).append(' ') }
         article.checklist.forEach { append(it.resolve(locale)).append(' ') }
     }.toSearchKey(locale)
-
-    return queryTokens.all { token -> haystack.contains(token) }
+    return tokens.all { haystack.contains(it) }
 }
 
 private fun dialEmergency(context: Context, number: String) {
-    val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
-    if (!context.tryStartActivity(dialIntent)) {
-        Toast.makeText(
-            context,
-            context.getString(R.string.guide_screen_no_dial_app_with_number, number),
-            Toast.LENGTH_SHORT
-        ).show()
+    if (!context.tryStartActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number")))) {
+        Toast.makeText(context, context.getString(R.string.guide_screen_no_dial_app_with_number, number), Toast.LENGTH_SHORT).show()
     }
 }
 
-private fun openAssemblyAreaMap(context: Context) {
-    val query = Uri.encode(context.getString(R.string.guide_screen_assembly_query))
-    val geoIntent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$query"))
-    val webIntent = Intent(
-        Intent.ACTION_VIEW,
-        Uri.parse("https://www.google.com/maps/search/?api=1&query=$query")
-    )
-
-    if (context.tryStartActivity(geoIntent) || context.tryStartActivity(webIntent)) {
-        return
-    }
-
-    Toast.makeText(
-        context,
-        context.getString(R.string.guide_screen_no_map_app),
-        Toast.LENGTH_SHORT
-    ).show()
+private fun openOfficialAssemblyLookup(context: Context) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.turkiye.gov.tr/afet-ve-acil-durum-toplanma-alani-sorgulama"))
+    if (!context.tryStartActivity(intent)) Toast.makeText(context, context.getString(R.string.guide_screen_no_map_app), Toast.LENGTH_SHORT).show()
 }
 
-private fun Context.tryStartActivity(intent: Intent): Boolean {
-    return try {
-        startActivity(intent)
-        true
-    } catch (_: ActivityNotFoundException) {
-        false
-    } catch (_: SecurityException) {
-        false
-    }
+private fun Context.tryStartActivity(intent: Intent): Boolean = try {
+    startActivity(intent)
+    true
+} catch (_: ActivityNotFoundException) {
+    false
+} catch (_: SecurityException) {
+    false
 }

@@ -70,7 +70,7 @@ internal class RfcommCallNotificationDelegate(
         useCallStyle: Boolean
     ): NotificationCompat.Builder {
         val builder = NotificationCompat.Builder(context, callChannelId)
-            .setSmallIcon(R.drawable.ic_sos)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.chat_call_incoming_title, name))
             .setContentText(context.getString(R.string.chat_call_incoming_message))
             .setCategory(Notification.CATEGORY_CALL)
@@ -151,7 +151,7 @@ internal class RfcommCallNotificationDelegate(
         }
         val effectiveStartAt = connectedAt ?: startedAt
         val builder = NotificationCompat.Builder(context, ongoingCallChannelId)
-            .setSmallIcon(R.drawable.ic_sos)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.chat_call_ongoing_banner))
             .setContentText(remoteUserName)
             .setSubText(securityState)

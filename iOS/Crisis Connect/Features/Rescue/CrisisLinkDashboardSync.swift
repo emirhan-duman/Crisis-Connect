@@ -5,6 +5,7 @@
 //  Created by Assistant on 27.03.2026.
 //
 
+import CoreLocation
 import Foundation
 import FirebaseAuth
 import FirebaseFirestore
@@ -71,9 +72,28 @@ final class CrisisLinkDashboardSyncService {
 
     private var cachedProfile: RescuerProfile?
     private var profileFetchedAt: Date = .distantPast
+    // Persisted across relaunches (see loadSignalFirstSeenIfNeeded): purely in-memory, every app
+    // restart rewrote firstSeenMillis as "now" and regressed the earliest-contact time on the
+    // dashboard.
     private var signalFirstSeenMillisById: [String: Int64] = [:]
+    private var signalFirstSeenLoaded = false
+    // The last track point actually written, for the 60 s / 25 m spacing guard. In-memory only:
+    // a relaunch writes at most one extra point, which the dashboard timeline tolerates.
+    private var lastTrackPoint: (capturedAtMillis: Int64, latitude: Double, longitude: Double)?
 
     func syncLiveLocation(payload: LocationPayload) async -> Bool {
+        await syncResponderRoster(payload: payload)
+    }
+
+    /// A location-less roster heartbeat: the panel + responder docs exactly as syncLiveLocation
+    /// writes them, minus the "gps" field. Live location defaults OFF, so without this an iOS
+    /// rescuer with only Crisis Link enabled never appeared in the dashboard teams roster —
+    /// Android has always sent these location-less heartbeats.
+    func syncResponderPresence() async -> Bool {
+        await syncResponderRoster(payload: nil)
+    }
+
+    private func syncResponderRoster(payload: LocationPayload?) async -> Bool {
         guard let profile = await resolveRescuerProfile() else { return false }
 
         let responderDeviceId = secureStore.getOrCreateRescueDeviceId()
@@ -114,9 +134,11 @@ final class CrisisLinkDashboardSyncService {
             "activeSignalCount": ResponderSignalStats.shared.snapshot.active,
             "totalUniqueSignalCount": ResponderSignalStats.shared.snapshot.totalUnique,
             "totalScanEventCount": ResponderSignalStats.shared.snapshot.scanEvents,
-            "updatedAt": FieldValue.serverTimestamp(),
-            "gps": gpsMap(for: payload)
+            "updatedAt": FieldValue.serverTimestamp()
         ]
+        if let payload {
+            responderData["gps"] = gpsMap(for: payload)
+        }
 
         if !profile.operatorName.isEmpty {
             responderData["name"] = profile.operatorName
@@ -136,7 +158,57 @@ final class CrisisLinkDashboardSyncService {
             NSLog("Crisis Link dashboard sync failed: %@", String(describing: error))
             return false
         }
+        if let payload {
+            // Best-effort extras ride the successful sync; neither may fail it.
+            await writeTrackPointIfDue(profile: profile, responderDeviceId: responderDeviceId, payload: payload)
+            mirrorLiveLocationEvent(profile: profile, responderDeviceId: responderDeviceId, payload: payload)
+        }
         return true
+    }
+
+    /// Appends a breadcrumb to the responder's `track` subcollection for the dashboard timeline.
+    /// Create-only, spaced at 60 s / 25 m, and best effort by design: a lost track point must
+    /// never fail the roster sync that carried it.
+    private func writeTrackPointIfDue(
+        profile: RescuerProfile,
+        responderDeviceId: String,
+        payload: LocationPayload
+    ) async {
+        let capturedAtMillis = Int64(payload.capturedAt.timeIntervalSince1970 * 1_000)
+        if let last = lastTrackPoint {
+            let ageMillis = capturedAtMillis - last.capturedAtMillis
+            let movedMeters = CLLocation(latitude: payload.latitude, longitude: payload.longitude)
+                .distance(from: CLLocation(latitude: last.latitude, longitude: last.longitude))
+            if ageMillis < Self.trackPointMinIntervalMillis && movedMeters < Self.trackPointMinDistanceMeters {
+                return
+            }
+        }
+
+        let trackRef = firestore
+            .collection(Self.panelCollection)
+            .document(profile.agencySlug)
+            .collection(Self.respondersCollection)
+            .document(responderDeviceId)
+            .collection(Self.trackCollection)
+            .document(String(capturedAtMillis))
+        let data: [String: Any] = [
+            "uid": profile.uid,
+            "responderDeviceId": responderDeviceId,
+            "agency": profile.agency,
+            "gps": gpsMap(for: payload),
+            "capturedAtMillis": capturedAtMillis,
+            "activeSignalCount": ResponderSignalStats.shared.snapshot.active,
+            "recordedAt": FieldValue.serverTimestamp(),
+            // A Firestore TTL policy on expiresAt garbage-collects old breadcrumbs server-side.
+            "expiresAt": Timestamp(date: Date().addingTimeInterval(Self.trackPointRetention)),
+            "source": Self.panelSource
+        ]
+        do {
+            try await trackRef.setDataAsync(data)
+            lastTrackPoint = (capturedAtMillis, payload.latitude, payload.longitude)
+        } catch {
+            NSLog("Crisis Link track point write failed: %@", String(describing: error))
+        }
     }
 
     /// Syncs one victim sighting. `signalLocation` nil = an UNLOCATED sighting: Android has always
@@ -171,8 +243,7 @@ final class CrisisLinkDashboardSyncService {
         }
 
         let nowMillis = Int64(Date().timeIntervalSince1970 * 1_000)
-        let firstSeenMillis = signalFirstSeenMillisById[normalizedSignalId] ?? nowMillis
-        signalFirstSeenMillisById[normalizedSignalId] = firstSeenMillis
+        let firstSeenMillis = self.firstSeenMillis(for: normalizedSignalId, observedAt: nowMillis)
 
         let signalRef = firestore
             .collection(Self.panelCollection)
@@ -269,11 +340,22 @@ final class CrisisLinkDashboardSyncService {
 
         do {
             try await batch.commitAsync()
-            return true
         } catch {
             NSLog("Crisis Link signal sync failed: %@", String(describing: error))
             return false
         }
+        mirrorSignalEvent(
+            profile: profile,
+            responderDeviceId: responderDeviceId,
+            signalId: normalizedSignalId,
+            firstSeenMillis: firstSeenMillis,
+            lastSeenMillis: nowMillis,
+            signalLocation: signalLocation,
+            reporterLocation: reporterLocation,
+            victimName: victimName,
+            victimBatteryPercent: victimBatteryPercent
+        )
+        return true
     }
 
     func markResponderInactive() async -> Bool {
@@ -318,6 +400,159 @@ final class CrisisLinkDashboardSyncService {
             return false
         }
         return true
+    }
+
+    /// The earliest observation for a signal, kept at the MINIMUM of persisted and new so a
+    /// relaunch can never move earliest-contact forward. Backed by UserDefaults (JSON dictionary),
+    /// loaded lazily and pruned at 48 h — well past the dashboard's freshness window.
+    private func firstSeenMillis(for signalId: String, observedAt nowMillis: Int64) -> Int64 {
+        loadSignalFirstSeenIfNeeded()
+        let firstSeen = min(signalFirstSeenMillisById[signalId] ?? nowMillis, nowMillis)
+        if signalFirstSeenMillisById[signalId] != firstSeen {
+            signalFirstSeenMillisById[signalId] = firstSeen
+            persistSignalFirstSeen()
+        }
+        return firstSeen
+    }
+
+    private func loadSignalFirstSeenIfNeeded() {
+        guard !signalFirstSeenLoaded else { return }
+        signalFirstSeenLoaded = true
+        guard let data = UserDefaults.standard.data(forKey: Self.signalFirstSeenDefaultsKey),
+              let stored = try? JSONDecoder().decode([String: Int64].self, from: data) else {
+            return
+        }
+        let cutoff = Int64(Date().timeIntervalSince1970 * 1_000) - Self.signalFirstSeenRetentionMillis
+        signalFirstSeenMillisById = stored.filter { $0.value >= cutoff }
+        if signalFirstSeenMillisById.count != stored.count {
+            persistSignalFirstSeen()
+        }
+    }
+
+    private func persistSignalFirstSeen() {
+        guard let data = try? JSONEncoder().encode(signalFirstSeenMillisById) else { return }
+        UserDefaults.standard.set(data, forKey: Self.signalFirstSeenDefaultsKey)
+    }
+
+    private func mirrorLiveLocationEvent(
+        profile: RescuerProfile,
+        responderDeviceId: String,
+        payload: LocationPayload
+    ) {
+        let capturedAtMillis = Int64(payload.capturedAt.timeIntervalSince1970 * 1_000)
+        let stats = ResponderSignalStats.shared.snapshot
+        // The fix rides NESTED under "gps": /api/mobile/sync filters location payloads with
+        // RESPONDER_PAYLOAD_ALLOWLIST, which passes `gps` but not top-level lat/lon — a flattened
+        // fix is silently stripped and the responder never moves on a self-hosted map.
+        var eventPayload: [String: Any] = ["gps": gpsMap(for: payload)]
+        eventPayload["uid"] = profile.uid
+        eventPayload["responderDeviceId"] = responderDeviceId
+        eventPayload["agency"] = profile.agency
+        eventPayload["agencySlug"] = profile.agencySlug
+        eventPayload["role"] = profile.role
+        eventPayload["username"] = profile.username
+        eventPayload["operatorName"] = profile.operatorName
+        eventPayload["activeSignalCount"] = stats.active
+        eventPayload["totalUniqueSignalCount"] = stats.totalUnique
+        eventPayload["totalScanEventCount"] = stats.scanEvents
+        mirrorEventToSelfHostedDashboard(
+            panelId: profile.agencySlug,
+            responderDeviceId: responderDeviceId,
+            event: [
+                "id": "location-\(responderDeviceId)-\(capturedAtMillis)",
+                "type": "location",
+                "occurredAt": capturedAtMillis,
+                "payload": eventPayload
+            ]
+        )
+    }
+
+    private func mirrorSignalEvent(
+        profile: RescuerProfile,
+        responderDeviceId: String,
+        signalId: String,
+        firstSeenMillis: Int64,
+        lastSeenMillis: Int64,
+        signalLocation: SOSSignalLocationPayload?,
+        reporterLocation: LocationPayload?,
+        victimName: String?,
+        victimBatteryPercent: Int?
+    ) {
+        var payload: [String: Any] = [
+            "signalId": signalId,
+            "schemaVersion": Self.signalSchemaVersion,
+            "status": "active",
+            "source": "ble",
+            "firstSeenMillis": firstSeenMillis,
+            "lastSeenMillis": lastSeenMillis,
+            "lastReporterUid": profile.uid,
+            "lastReporterDeviceId": responderDeviceId,
+            "victimRole": "victim",
+            "reporter": [
+                "responderDeviceId": responderDeviceId,
+                "uid": profile.uid,
+                "agency": profile.agency,
+                "name": profile.operatorName,
+                "username": profile.username,
+                "lastSeenMillis": lastSeenMillis
+            ]
+        ]
+        if let gps = signalLocation?.gps {
+            payload["gps"] = gpsMap(for: gps)
+            if signalLocation?.relativeEstimate == nil {
+                payload["victimGps"] = gpsMap(for: gps)
+                payload["locationSource"] = Self.signalLocationSourceVictimGPS
+            } else {
+                payload["estimatedVictimGps"] = gpsMap(for: gps)
+                payload["locationSource"] = Self.signalLocationSourceRelativeEstimate
+            }
+        }
+        if let relativeEstimate = signalLocation?.relativeEstimate {
+            payload["relativeEstimate"] = relativeEstimateMap(for: relativeEstimate)
+        }
+        if let reporterLocation {
+            payload["lastReporterLocation"] = gpsMap(for: reporterLocation)
+        } else if let anchorGPS = signalLocation?.relativeEstimate?.anchorGPS {
+            payload["lastReporterLocation"] = gpsMap(for: anchorGPS)
+        }
+        if let victimName = victimName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !victimName.isEmpty {
+            payload["victimName"] = victimName
+            payload["victimDisplayName"] = victimName
+        }
+        if let victimBatteryPercent, (0...100).contains(victimBatteryPercent) {
+            payload["victimBatteryPercent"] = victimBatteryPercent
+        }
+        mirrorEventToSelfHostedDashboard(
+            panelId: profile.agencySlug,
+            responderDeviceId: responderDeviceId,
+            event: [
+                "id": "signal-\(signalId)-\(lastSeenMillis)",
+                "type": "signal",
+                "occurredAt": lastSeenMillis,
+                "payload": payload
+            ]
+        )
+    }
+
+    /// Fire-and-forget mirror to the self-hosted dashboard, Android parity with
+    /// CrisisLinkForegroundService.syncPayloadToSelfHostedDashboard. Best effort: Firestore is the
+    /// source of truth and must never wait on, or fail with, this POST.
+    private func mirrorEventToSelfHostedDashboard(
+        panelId: String,
+        responderDeviceId: String,
+        event: [String: Any]
+    ) {
+        let nowMillis = Int64(Date().timeIntervalSince1970 * 1_000)
+        let clientEventId = "ios-crisis-link-\(responderDeviceId)-\(nowMillis)"
+        Task {
+            await MobileSyncClient.syncEvents(
+                panelId: panelId,
+                deviceId: responderDeviceId,
+                clientEventId: clientEventId,
+                events: [event]
+            )
+        }
     }
 
     private func resolveRescuerProfile(allowCachedOnFailure: Bool = false) async -> RescuerProfile? {
@@ -506,6 +741,12 @@ final class CrisisLinkDashboardSyncService {
     private static let signalsCollection = "signals"
     private static let reportersCollection = "reporters"
     private static let rescueDevicesCollection = "rescueDevices"
+    private static let trackCollection = "track"
+    private static let trackPointMinIntervalMillis: Int64 = 60_000
+    private static let trackPointMinDistanceMeters: Double = 25
+    private static let trackPointRetention: TimeInterval = 7 * 24 * 3600
+    private static let signalFirstSeenDefaultsKey = "crisisLink.signalFirstSeenMillisById"
+    private static let signalFirstSeenRetentionMillis: Int64 = 48 * 3600 * 1_000
     private static let panelSource = "ios-crisislink"
     private static let panelSchemaVersion = 3
     private static let responderSchemaVersion = 1

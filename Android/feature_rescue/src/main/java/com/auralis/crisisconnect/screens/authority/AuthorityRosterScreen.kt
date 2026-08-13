@@ -3,20 +3,14 @@ package com.auralis.crisisconnect.screens.authority
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -47,11 +41,10 @@ import com.auralis.crisisconnect.messaging.AuthorityRosterMember
 @Composable
 fun AuthorityRosterScreen(
     onBack: () -> Unit,
-    onOpenConversation: (String) -> Unit,
+    onOpenConversation: (AuthorityRosterMember) -> Unit,
     viewModel: AuthorityRosterViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val addingUid by viewModel.addingUid.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -107,9 +100,7 @@ fun AuthorityRosterScreen(
                     items(s.members, key = { it.uid }) { member ->
                         MemberRow(
                             member = member,
-                            isAdding = addingUid == member.uid,
-                            enabled = addingUid == null,
-                            onClick = { viewModel.addAndOpen(member) }
+                            onClick = { viewModel.open(member) }
                         )
                         HorizontalDivider()
                     }
@@ -121,14 +112,12 @@ fun AuthorityRosterScreen(
 @Composable
 private fun MemberRow(
     member: AuthorityRosterMember,
-    isAdding: Boolean,
-    enabled: Boolean,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -144,26 +133,6 @@ private fun MemberRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (member.canLinkOffline) {
-                Spacer(Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Filled.BluetoothConnected,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = stringResource(R.string.authority_roster_offline_ready),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-        if (isAdding) {
-            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
         }
     }
 }

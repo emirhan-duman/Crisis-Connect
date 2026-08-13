@@ -40,6 +40,7 @@ import com.auralis.crisisconnect.security.SecurityRepository
 import com.auralis.crisisconnect.settingsDataStore
 import com.auralis.crisisconnect.sync.MobileSyncClient
 import com.google.android.gms.tasks.Task
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -48,6 +49,7 @@ import com.google.firebase.firestore.SetOptions
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.util.Date
 import java.util.Locale
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -93,6 +95,14 @@ class CrisisLinkForegroundService : Service() {
     private val queueFile by lazy(LazyThreadSafetyMode.NONE) {
         AtomicFile(File(applicationContext.filesDir, PENDING_QUEUE_FILE_NAME))
     }
+    private val firstSeenFile by lazy(LazyThreadSafetyMode.NONE) {
+        AtomicFile(File(applicationContext.filesDir, FIRST_SEEN_FILE_NAME))
+    }
+    private val persistedFirstSeenMillis = mutableMapOf<String, Long>()
+    private var firstSeenDirty = false
+    private var lastFirstSeenWriteAtMillis = 0L
+    private var lastTrackPointLocation: LocationSnapshot? = null
+    private var lastTrackPointWrittenAtMillis = 0L
     private val queueCodec by lazy(LazyThreadSafetyMode.NONE) {
         CrisisLinkQueueCodec(keyResolver = ::resolveQueueEncryptionKey)
     }
@@ -125,6 +135,7 @@ class CrisisLinkForegroundService : Service() {
                 stopSelf()
                 return@launch
             }
+            loadPersistedFirstSeen()
             registerNetworkCallback()
             observeBleSignals()
             startSyncLoop()
@@ -148,6 +159,7 @@ class CrisisLinkForegroundService : Service() {
         signalCollectorJob?.cancel()
         syncJob?.cancel()
         markResponderInactiveBestEffort()
+        persistFirstSeenIfNeeded(System.currentTimeMillis(), force = true)
         unregisterNetworkCallback()
         serviceScope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -170,7 +182,7 @@ class CrisisLinkForegroundService : Service() {
                         observedSignals[signalId] = SignalObservation(
                             signalId = signalId,
                             address = normalizeAddress(entry.address),
-                            firstSeenMillis = entry.lastSeen,
+                            firstSeenMillis = resolveFirstSeenMillis(signalId, entry.lastSeen),
                             lastSeenMillis = entry.lastSeen
                         )
                         totalScanEventCount += 1L
@@ -202,6 +214,75 @@ class CrisisLinkForegroundService : Service() {
                     requestImmediateSync(IMMEDIATE_REASON_ACTIVE_SIGNALS_CHANGED)
                 }
             }
+        }
+    }
+
+    /**
+     * First-contact time for a signal, surviving service restarts. `observedSignals` is memory-only,
+     * so without the persisted map a restart reset firstSeenMillis to "now" and the merge write
+     * regressed the earliest-contact time on the dashboard.
+     */
+    private fun resolveFirstSeenMillis(signalId: String, lastSeenMillis: Long): Long {
+        val persisted = persistedFirstSeenMillis[signalId]
+        val firstSeen = persisted?.coerceAtMost(lastSeenMillis) ?: lastSeenMillis
+        if (persisted != firstSeen) {
+            persistedFirstSeenMillis[signalId] = firstSeen
+            firstSeenDirty = true
+        }
+        persistFirstSeenIfNeeded(System.currentTimeMillis())
+        return firstSeen
+    }
+
+    private fun loadPersistedFirstSeen() {
+        val rawBytes = runCatching { firstSeenFile.readFully() }
+            .getOrElse { throwable ->
+                if (throwable !is FileNotFoundException) {
+                    Log.w(TAG, "Failed to read Crisis Link first-seen map", throwable)
+                }
+                return
+            }
+        val json = runCatching { JSONObject(rawBytes.toString(Charsets.UTF_8)) }
+            .getOrElse { throwable ->
+                Log.w(TAG, "Crisis Link first-seen map is corrupted. Ignoring it.", throwable)
+                return
+            }
+        val cutoff = System.currentTimeMillis() - FIRST_SEEN_RETENTION_MS
+        json.keys().forEach { key ->
+            val signalId = normalizeSignalId(key) ?: return@forEach
+            val firstSeenMillis = json.optLong(key, 0L)
+            if (firstSeenMillis > cutoff) {
+                persistedFirstSeenMillis[signalId] = firstSeenMillis
+            }
+        }
+    }
+
+    private fun persistFirstSeenIfNeeded(now: Long, force: Boolean = false) {
+        if (!firstSeenDirty) {
+            return
+        }
+        if (!force && now - lastFirstSeenWriteAtMillis < FIRST_SEEN_WRITE_THROTTLE_MS) {
+            return
+        }
+        val cutoff = now - FIRST_SEEN_RETENTION_MS
+        persistedFirstSeenMillis.entries.removeIf { it.value <= cutoff }
+        val json = JSONObject()
+        persistedFirstSeenMillis.forEach { (signalId, firstSeenMillis) ->
+            json.put(signalId, firstSeenMillis)
+        }
+        val stream = runCatching { firstSeenFile.startWrite() }
+            .getOrElse { throwable ->
+                Log.w(TAG, "Unable to open Crisis Link first-seen map for write", throwable)
+                return
+            }
+        try {
+            stream.write(json.toString().toByteArray(Charsets.UTF_8))
+            stream.flush()
+            firstSeenFile.finishWrite(stream)
+            firstSeenDirty = false
+            lastFirstSeenWriteAtMillis = now
+        } catch (throwable: Throwable) {
+            runCatching { firstSeenFile.failWrite(stream) }
+            Log.w(TAG, "Failed to persist Crisis Link first-seen map", throwable)
         }
     }
 
@@ -244,16 +325,19 @@ class CrisisLinkForegroundService : Service() {
 
             val now = System.currentTimeMillis()
             val liveLocationSyncSettings = readLiveLocationSyncSettings()
+            val activeSignalsSnapshot = snapshotActiveSignals(now).take(MAX_ACTIVE_SIGNALS_PER_SYNC)
             val locationSnapshot = resolveLocationSnapshot(
                 now = now,
-                liveLocationSyncSettings = liveLocationSyncSettings
+                liveLocationSyncSettings = liveLocationSyncSettings,
+                hasActiveSignals = activeSignalsSnapshot.isNotEmpty()
             )
             val payload = applyLiveLocationPolicy(
                 payload = buildSyncPayload(
                     uid = uid,
                     profile = profile,
                     now = now,
-                    location = locationSnapshot
+                    location = locationSnapshot,
+                    activeSignals = activeSignalsSnapshot
                 ),
                 liveLocationSyncSettings = liveLocationSyncSettings,
                 now = now
@@ -291,6 +375,7 @@ class CrisisLinkForegroundService : Service() {
                     DeliveryResult.Success -> {
                         consecutiveAuthorizationFailures = 0
                         recordSuccessfulSync(payload, now)
+                        writeTrackPointBestEffort(payload, now, liveLocationSyncSettings)
                     }
                     DeliveryResult.RecoverableFailure -> {
                         consecutiveAuthorizationFailures = 0
@@ -306,6 +391,7 @@ class CrisisLinkForegroundService : Service() {
                                 DeliveryResult.Success -> {
                                     consecutiveAuthorizationFailures = 0
                                     recordSuccessfulSync(recoveredPayload, now)
+                                    writeTrackPointBestEffort(recoveredPayload, now, liveLocationSyncSettings)
                                     return@withLock nextSyncDelayMillis(
                                         hasActiveSignals = recoveredPayload.activeSignals.isNotEmpty(),
                                         hasPendingQueue = pendingQueueSize() > 0,
@@ -473,8 +559,17 @@ class CrisisLinkForegroundService : Service() {
     }
 
     private fun requestImmediateSync(reason: String) {
+        // Delivering a payload needs internet; RECORDING one does not. syncSnapshot() persists the
+        // sighting to the store-and-forward queue when it cannot deliver, so gating the whole call on
+        // connectivity meant an offline sighting waited for the regular loop tick — 45 s on BALANCED,
+        // minutes on ECO or idle. A snapshot only carries signals seen in the last 60 s, so a rescuer
+        // who walks past a beacon and out of range again inside that window loses the victim before
+        // anything is written down. Signal-bearing reasons therefore bypass the gate too: offline the
+        // call is what commits the sighting to disk.
         val shouldBypassConnectivityGate = reason == IMMEDIATE_REASON_NETWORK_AVAILABLE ||
-            reason == IMMEDIATE_REASON_NETWORK_CAPABILITIES_CHANGED
+            reason == IMMEDIATE_REASON_NETWORK_CAPABILITIES_CHANGED ||
+            reason == IMMEDIATE_REASON_ACTIVE_SIGNALS_CHANGED ||
+            reason == IMMEDIATE_REASON_SIGNAL_LOCATION_CHANGED
         if (!shouldBypassConnectivityGate && !hasValidatedInternetConnection()) {
             return
         }
@@ -545,12 +640,28 @@ class CrisisLinkForegroundService : Service() {
             responderDoc["country"] = country
         }
 
-        serviceScope.launch {
+        // Snapshot everything the write still needs into locals BEFORE launching: the coroutine
+        // runs on the companion detachedWriteScope precisely because onDestroy cancels serviceScope
+        // before the first suspension point (device-id registration is a server round-trip) ever
+        // resumes — so it may outlive this instance and must not race with its teardown.
+        val appContext = applicationContext
+        val firestore = this.firestore
+        detachedWriteScope.launch {
             runCatching {
-                val registeredDeviceId = resolveSyncDeviceId(
-                    uid = uid,
-                    fallbackDeviceId = responderDeviceId
-                )
+                val registeredDeviceId = runCatching {
+                    RescueDeviceRegistry.registerLocalDevice(
+                        firestore = firestore,
+                        context = appContext,
+                        uid = uid
+                    )
+                }.getOrElse { throwable ->
+                    Log.w(
+                        TAG,
+                        "Rescue device ownership registration failed; marking responder inactive with local device id",
+                        throwable
+                    )
+                    responderDeviceId
+                }
                 val inactiveResponderDoc = if (registeredDeviceId == responderDeviceId) {
                     responderDoc
                 } else {
@@ -587,7 +698,8 @@ class CrisisLinkForegroundService : Service() {
         uid: String,
         profile: RescuerProfile,
         now: Long,
-        location: LocationSnapshot?
+        location: LocationSnapshot?,
+        activeSignals: List<SignalObservation>
     ): CrisisLinkSyncPayload {
         return CrisisLinkSyncPayload(
             uid = uid,
@@ -601,7 +713,7 @@ class CrisisLinkForegroundService : Service() {
             totalUniqueSignalCount = totalUniqueSignalCount,
             totalScanEventCount = totalScanEventCount,
             location = location,
-            activeSignals = snapshotActiveSignals(now).take(MAX_ACTIVE_SIGNALS_PER_SYNC),
+            activeSignals = activeSignals,
             capturedAtMillis = now
         )
     }
@@ -816,7 +928,12 @@ class CrisisLinkForegroundService : Service() {
         val clientEventId = "android-crisis-link-${syncPayload.rescuerDeviceId}-${syncPayload.capturedAtMillis}"
         val events = JSONArray()
         syncPayload.location?.let { location ->
-            val payload = JSONObject(location.toMap())
+            // The fix rides NESTED under "gps": /api/mobile/sync filters location payloads with
+            // RESPONDER_PAYLOAD_ALLOWLIST, which passes `gps` but not top-level lat/lon — the old
+            // flattened shape was silently stripped and the responder never moved on a self-hosted
+            // map. (The route also lifts the flattened shape for builds already in the field.)
+            val payload = JSONObject()
+                .put("gps", JSONObject(location.toMap()))
                 .put("uid", syncPayload.uid)
                 .put("responderDeviceId", syncPayload.rescuerDeviceId)
                 .put("agency", syncPayload.agency)
@@ -962,6 +1079,56 @@ class CrisisLinkForegroundService : Service() {
         }
     }
 
+    /**
+     * Union of two sighting lists, keyed by signalId. The newer observation wins for position and
+     * identity, but `firstSeenMillis` keeps the EARLIEST contact and any metadata the newer sighting
+     * lacks is inherited from the older one — a scan-only re-sighting must never erase the victim
+     * name or GPS an earlier authenticated read established.
+     */
+    private fun mergeObservations(
+        existing: List<SignalObservation>,
+        incoming: List<SignalObservation>
+    ): List<SignalObservation> {
+        val merged = LinkedHashMap<String, SignalObservation>(existing.size + incoming.size)
+        for (observation in existing) {
+            merged[observation.signalId] = observation
+        }
+        for (candidate in incoming) {
+            val previous = merged[candidate.signalId]
+            if (previous == null) {
+                merged[candidate.signalId] = candidate
+                continue
+            }
+            val fresh: SignalObservation
+            val stale: SignalObservation
+            if (candidate.lastSeenMillis >= previous.lastSeenMillis) {
+                fresh = candidate
+                stale = previous
+            } else {
+                fresh = previous
+                stale = candidate
+            }
+            merged[candidate.signalId] = fresh.copy(
+                firstSeenMillis = listOf(previous.firstSeenMillis, candidate.firstSeenMillis)
+                    .filter { it > 0L }
+                    .minOrNull() ?: fresh.firstSeenMillis,
+                victimLocation = fresh.victimLocation ?: stale.victimLocation,
+                estimatedVictimLocation = fresh.estimatedVictimLocation ?: stale.estimatedVictimLocation,
+                relativeEstimate = fresh.relativeEstimate ?: stale.relativeEstimate,
+                victimDisplayName = fresh.victimDisplayName?.takeIf { it.isNotBlank() }
+                    ?: stale.victimDisplayName,
+                victimBatteryPercent = fresh.victimBatteryPercent ?: stale.victimBatteryPercent,
+                locationMetadataUpdatedAtMillis = maxOf(
+                    previous.locationMetadataUpdatedAtMillis,
+                    candidate.locationMetadataUpdatedAtMillis
+                )
+            )
+        }
+        return merged.values
+            .sortedByDescending { it.lastSeenMillis }
+            .take(MAX_ACTIVE_SIGNALS_PER_SYNC)
+    }
+
     private fun enqueuePayload(payload: CrisisLinkSyncPayload): Int {
         synchronized(queueLock) {
             val queue = readQueuedPayloadsLocked().toMutableList()
@@ -971,10 +1138,24 @@ class CrisisLinkForegroundService : Service() {
                     it.agencySlug == payload.agencySlug
             }
             if (existingIndex >= 0) {
-                if (queue[existingIndex] == payload) {
+                // The three key fields are invariant for one signed-in rescuer on one device (and
+                // normalizeQueuedPayloadsForProfile rewrites the other two to the current profile
+                // before every tick), so this branch is taken on EVERY offline enqueue and the queue
+                // can only ever hold one entry — MAX_PENDING_PAYLOADS is unreachable. The payload
+                // carries only snapshotActiveSignals(), a 60-second window, while the offline retry
+                // cadence is 8 minutes: a straight replace therefore erased every victim heard more
+                // than a minute before the tick, which is the normal case for a rescuer sweeping a
+                // no-coverage area. Merge the sightings instead — delivery is idempotent (doc id is
+                // the signalId, written with merge), so re-sending an older sighting is safe while
+                // dropping one is not.
+                val existing = queue[existingIndex]
+                val combined = payload.copy(
+                    activeSignals = mergeObservations(existing.activeSignals, payload.activeSignals)
+                )
+                if (existing == combined) {
                     return queue.size
                 }
-                queue[existingIndex] = payload
+                queue[existingIndex] = combined
             } else {
                 queue += payload
             }
@@ -1489,6 +1670,63 @@ class CrisisLinkForegroundService : Service() {
         )
     }
 
+    /**
+     * One breadcrumb per successful location-bearing delivery, feeding the dashboard's responder
+     * timeline (`responders/{deviceId}/track`). Best-effort and create-only: losing a point is
+     * acceptable, so a failed write must never fail the sync that produced it.
+     */
+    private suspend fun writeTrackPointBestEffort(
+        payload: CrisisLinkSyncPayload,
+        now: Long,
+        liveLocationSyncSettings: LiveLocationSyncSettings
+    ) {
+        if (!liveLocationSyncSettings.enabled) {
+            // Live location OFF is a privacy choice (see resolveLocationSnapshot): a fix may still
+            // ride along as context for an active victim sighting, but it must never become a
+            // stored, replayable movement trail. iOS only writes track points on its live-location
+            // path — the toggle has to mean the same thing on both platforms.
+            return
+        }
+        val location = payload.location ?: return
+        val lastLocation = lastTrackPointLocation
+        if (lastLocation != null &&
+            now - lastTrackPointWrittenAtMillis < TRACK_POINT_MIN_INTERVAL_MS &&
+            distanceMeters(lastLocation, location) < TRACK_POINT_MIN_DISTANCE_METERS
+        ) {
+            return
+        }
+        runCatching {
+            // deliverPayload registers the device id on every delivery and may rotate it; after a
+            // success LocalKeyStorage holds whichever id the responder doc was just written under.
+            val responderDeviceId = LocalKeyStorage.getOrCreateRescueDeviceId(applicationContext)
+                .takeIf { it.isNotBlank() }
+                ?: payload.rescuerDeviceId
+            val trackData = hashMapOf<String, Any>(
+                "uid" to payload.uid,
+                "responderDeviceId" to responderDeviceId,
+                "agency" to payload.agency,
+                "gps" to location.toMap(),
+                "capturedAtMillis" to location.capturedAtMillis,
+                "activeSignalCount" to payload.activeSignals.size,
+                "recordedAt" to FieldValue.serverTimestamp(),
+                "expiresAt" to Timestamp(Date(now + TRACK_POINT_TTL_MS)),
+                "source" to PANEL_SOURCE
+            )
+            firestore.collection(PANEL_COLLECTION)
+                .document(payload.agencySlug)
+                .collection(RESPONDERS_COLLECTION)
+                .document(responderDeviceId)
+                .collection(TRACK_COLLECTION)
+                .document(location.capturedAtMillis.toString())
+                .set(trackData)
+                .awaitResult()
+            lastTrackPointLocation = location
+            lastTrackPointWrittenAtMillis = now
+        }.onFailure { throwable ->
+            Log.w(TAG, "Failed to write Crisis Link track point", throwable)
+        }
+    }
+
     private fun nextSyncDelayMillis(
         hasActiveSignals: Boolean,
         hasPendingQueue: Boolean,
@@ -1770,12 +2008,15 @@ class CrisisLinkForegroundService : Service() {
 
     private suspend fun resolveLocationSnapshot(
         now: Long,
-        liveLocationSyncSettings: LiveLocationSyncSettings
+        liveLocationSyncSettings: LiveLocationSyncSettings,
+        hasActiveSignals: Boolean
     ): LocationSnapshot? {
-        val bestLastKnown = readBestLocationSnapshot(now)
         if (!liveLocationSyncSettings.enabled) {
-            return bestLastKnown
+            // Live location OFF is a privacy choice: the rescuer's position rides along only as
+            // context for an active victim sighting; idle heartbeats carry no location at all.
+            return if (hasActiveSignals) readBestLocationSnapshot(now) else null
         }
+        val bestLastKnown = readBestLocationSnapshot(now)
         val maxLastKnownAgeMillis = liveLocationSyncSettings.intervalMillis
             .coerceAtLeast(LIVE_LOCATION_MIN_LAST_KNOWN_MAX_AGE_MS)
         val shouldRequestFreshFix = bestLastKnown == null ||
@@ -2438,6 +2679,12 @@ class CrisisLinkForegroundService : Service() {
         private const val MAX_SIGNAL_DISPLAY_NAME_LENGTH = 96
         private const val MAX_PENDING_PAYLOADS = 96
         private const val PENDING_QUEUE_FILE_NAME = "crisis_link_pending_queue.json"
+        private const val FIRST_SEEN_FILE_NAME = "crisis_link_first_seen.json"
+        private const val FIRST_SEEN_RETENTION_MS = 48 * 60 * 60 * 1000L
+        private const val FIRST_SEEN_WRITE_THROTTLE_MS = 30_000L
+        private const val TRACK_POINT_MIN_INTERVAL_MS = 60_000L
+        private const val TRACK_POINT_MIN_DISTANCE_METERS = 25f
+        private const val TRACK_POINT_TTL_MS = 7L * 24 * 60 * 60 * 1000
         private const val IMMEDIATE_REASON_ACTIVE_SIGNALS_CHANGED = "active_signals_changed"
         private const val IMMEDIATE_REASON_SIGNAL_LOCATION_CHANGED = "signal_location_changed"
         private const val IMMEDIATE_REASON_NETWORK_AVAILABLE = "network_available"
@@ -2447,6 +2694,7 @@ class CrisisLinkForegroundService : Service() {
         private const val RESPONDERS_COLLECTION = "responders"
         private const val SIGNALS_COLLECTION = "signals"
         private const val REPORTERS_COLLECTION = "reporters"
+        private const val TRACK_COLLECTION = "track"
         private const val PANEL_SOURCE = "android-crisislink"
         private const val PANEL_SCHEMA_VERSION = 3
         private const val RESPONDER_SCHEMA_VERSION = 1
@@ -2511,6 +2759,10 @@ class CrisisLinkForegroundService : Service() {
         }
 
         private val eligibilityScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        // Outlives any single service instance: onDestroy cancels serviceScope before a launched
+        // write's first suspension point resumes, so best-effort writes that must survive the
+        // teardown (marking the responder inactive) run here instead.
+        private val detachedWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         @Volatile
         private var cachedStartEligibility: Boolean? = null
         @Volatile

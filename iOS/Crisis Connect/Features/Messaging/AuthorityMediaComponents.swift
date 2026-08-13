@@ -5,13 +5,14 @@
 //  Media pieces for authority (hierarchy) threads: the voice-note recorder, the encrypted
 //  attachment bubble (image / audio / file) and image preparation. Recording is AAC/M4A
 //  ("audio/mp4") — the one format every member of the fleet can play (web <audio>, Android
-//  MediaPlayer, iOS AVAudioPlayer). Ogg/Opus notes from older Android builds can't be decoded
-//  on iOS (no Ogg demuxer in the OS); those render as an "unsupported format" row.
+//  MediaPlayer, iOS AVAudioPlayer). Ogg/Opus notes from web/older Android builds are converted
+//  locally through OggOpusTranscoder before playback; plaintext audio never enters the disk cache.
 //
 
 import AVFoundation
 import Combine
 import CryptoKit
+import PDFKit
 import SwiftUI
 import UIKit
 
@@ -115,8 +116,17 @@ final class AuthorityVoiceRecorderModel: NSObject, ObservableObject {
             AVNumberOfChannelsKey: 1,
             AVEncoderBitRateKey: 32_000
         ]
-        guard let recorder = try? AVAudioRecorder(url: url, settings: settings),
-              recorder.record() else {
+        guard let recorder = try? AVAudioRecorder(url: url, settings: settings) else {
+            return
+        }
+        // The short-lived recording is plaintext until it is sealed for upload. Keep it protected
+        // whenever the device is locked, while allowing the already-open recorder to finish safely.
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUnlessOpen],
+            ofItemAtPath: url.path
+        )
+        guard recorder.record() else {
+            try? FileManager.default.removeItem(at: url)
             return
         }
         self.recorder = recorder
@@ -184,9 +194,8 @@ final class ChannelAudioPlayerModel: NSObject, ObservableObject, AVAudioPlayerDe
 
 // MARK: - Attachment bubble
 
-/// Renders one encrypted channel attachment: downloads + decrypts (disk-cached) and shows an
-/// image thumbnail, an audio play row, or a generic file row. iOS can't demux Ogg — those audio
-/// notes get an explicit "unsupported" row instead of a broken player.
+/// Renders one encrypted channel attachment: downloads + decrypts in memory (ciphertext-cached) and shows an
+/// image thumbnail, an audio play row, or a generic file row.
 struct ChannelAttachmentBubbleView: View {
     let attachment: ChannelAttachment
     let key: SymmetricKey?
@@ -195,11 +204,8 @@ struct ChannelAttachmentBubbleView: View {
     @State private var data: Data?
     @State private var failed = false
     @State private var showsFullImage = false
+    @State private var showsFilePreview = false
     @StateObject private var audioPlayer = ChannelAudioPlayerModel()
-
-    private var isPlayableAudio: Bool {
-        attachment.isAudio && !attachment.mime.contains("ogg") && !attachment.mime.contains("webm")
-    }
 
     var body: some View {
         content
@@ -208,7 +214,15 @@ struct ChannelAttachmentBubbleView: View {
                 let fetched = await ChannelAttachments.fetchAttachmentBytes(
                     key: key, aad: aad, attachment: attachment
                 )
-                data = fetched
+                if let fetched, attachment.isAudio {
+                    let cacheKey = "authority-" + SHA256.hash(data: Data(attachment.path.utf8))
+                        .map { String(format: "%02x", $0) }.joined()
+                    data = await Task.detached(priority: .userInitiated) {
+                        OggOpusTranscoder.playableAudioData(for: fetched, cacheKey: cacheKey)
+                    }.value
+                } else {
+                    data = fetched
+                }
                 failed = fetched == nil
             }
     }
@@ -220,7 +234,7 @@ struct ChannelAttachmentBubbleView: View {
         } else if attachment.isAudio {
             audioContent
         } else {
-            fileRow(icon: "doc.fill", title: attachment.name, subtitle: byteCountLabel)
+            fileContent
         }
     }
 
@@ -263,13 +277,7 @@ struct ChannelAttachmentBubbleView: View {
 
     @ViewBuilder
     private var audioContent: some View {
-        if !isPlayableAudio {
-            fileRow(
-                icon: "waveform.slash",
-                title: NSLocalizedString("AUTHORITY_MEDIA_VOICE_NOTE", comment: ""),
-                subtitle: NSLocalizedString("AUTHORITY_MEDIA_AUDIO_UNSUPPORTED", comment: "")
-            )
-        } else if let data {
+        if let data {
             HStack(spacing: 10) {
                 Button {
                     audioPlayer.toggle(data: data)
@@ -304,6 +312,22 @@ struct ChannelAttachmentBubbleView: View {
         }
     }
 
+    @ViewBuilder
+    private var fileContent: some View {
+        let preview = data.flatMap { SafeAuthorityFilePreview.make(attachment: attachment, data: $0) }
+        fileRow(icon: "doc.fill", title: attachment.name, subtitle: failed
+            ? NSLocalizedString("AUTHORITY_MEDIA_UNAVAILABLE", comment: "") : byteCountLabel)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if preview != nil { showsFilePreview = true }
+            }
+            .sheet(isPresented: $showsFilePreview) {
+                if let preview {
+                    SafeAuthorityFilePreviewView(name: attachment.name, preview: preview)
+                }
+            }
+    }
+
     private func fileRow(icon: String, title: String, subtitle: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
@@ -328,6 +352,109 @@ struct ChannelAttachmentBubbleView: View {
 
     private var byteCountLabel: String {
         ByteCountFormatter.string(fromByteCount: Int64(attachment.size), countStyle: .file)
+    }
+}
+
+private enum SafeAuthorityFilePreview {
+    case text(String)
+    case pdf(Data)
+
+    private static let maxTextBytes = 2 * 1024 * 1024
+    private static let genericMimes: Set<String> = ["", "application/octet-stream", "binary/octet-stream"]
+    private static let textMimes: Set<String> = [
+        "application/json", "application/ld+json", "application/xml", "application/yaml"
+    ]
+    private static let textExtensions: Set<String> = [
+        "txt", "text", "log", "md", "markdown", "json", "xml", "yml", "yaml", "ini", "conf",
+        "cfg", "csv", "tsv", "js", "ts", "css", "html", "py", "rb", "go", "rs", "java", "kt",
+        "c", "h", "cpp", "hpp", "cs", "php", "sh", "zsh", "sql", "toml", "gradle", "properties"
+    ]
+
+    static func make(attachment: ChannelAttachment, data: Data) -> Self? {
+        guard data.count == attachment.size else { return nil }
+        let mime = attachment.mime.lowercased().split(separator: ";", maxSplits: 1).first.map(String.init) ?? ""
+        let ext = URL(fileURLWithPath: attachment.name).pathExtension.lowercased()
+        if mime == "application/pdf", ext == "pdf",
+           data.starts(with: [0x25, 0x50, 0x44, 0x46, 0x2D]), PDFDocument(data: data) != nil {
+            return .pdf(data)
+        }
+        let declaredText = mime.hasPrefix("text/") || textMimes.contains(mime)
+        let genericText = genericMimes.contains(mime) && textExtensions.contains(ext)
+        guard (declaredText || genericText), data.count <= maxTextBytes,
+              !data.prefix(4096).contains(0), let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return .text(text)
+    }
+}
+
+private struct SafeAuthorityFilePreviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    let name: String
+    let preview: SafeAuthorityFilePreview
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                switch preview {
+                case .text(let text):
+                    ScrollView([.horizontal, .vertical]) {
+                        Text(verbatim: text)
+                            .font(.system(.footnote, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                case .pdf(let data):
+                    SafeAuthorityPDFPreview(data: data)
+                }
+            }
+            .navigationTitle(name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// Renders static page thumbnails, not an interactive PDF surface, so embedded links/actions can
+/// never execute or navigate out of the app.
+private struct SafeAuthorityPDFPreview: View {
+    private let document: PDFDocument?
+
+    init(data: Data) {
+        document = PDFDocument(data: data)
+    }
+
+    var body: some View {
+        if let document {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(0..<min(document.pageCount, 100), id: \.self) { index in
+                        if let page = document.page(at: index) {
+                            let bounds = page.bounds(for: .cropBox)
+                            let ratio = bounds.width > 0 ? bounds.height / bounds.width : 1.4
+                            Image(uiImage: page.thumbnail(
+                                of: CGSize(width: 1_200, height: max(1, 1_200 * ratio)),
+                                for: .cropBox
+                            ))
+                            .resizable()
+                            .scaledToFit()
+                            .background(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+                        }
+                    }
+                }
+                .padding()
+            }
+            .background(Color.appSurfaceElevated)
+        } else {
+            ContentUnavailableView("AUTHORITY_MEDIA_UNAVAILABLE", systemImage: "doc.badge.xmark")
+        }
     }
 }
 

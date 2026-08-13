@@ -16,6 +16,10 @@ export { findContactsOnCrisisConnect } from "./messaging/contactDiscovery";
 export { registerPushToken, unregisterPushToken } from "./messaging/pushTokens";
 export { relayMessage } from "./messaging/relay";
 export { onMessageCreated } from "./messaging/onMessageCreated";
+export {
+  onAgencyAuthorityCallCreated,
+  onHierarchyAuthorityCallCreated,
+} from "./messaging/onAuthorityCallCreated";
 export { onAgencyMessageCreated, onHierarchyMessageCreated } from "./messaging/onChannelMessageCreated";
 export { acknowledgeMessage } from "./messaging/messageAck";
 export { purgeExpiredMessages } from "./messaging/purgeExpiredMessages";
@@ -25,4 +29,6 @@ export { turnCredentials } from "./messaging/turnCredentials";
 export { requestPhoneOtp, verifyPhoneOtp, twilioSpendAlert } from "./messaging/phoneOtp";
 export { otpConversionAlarm } from "./messaging/otpConversionAlarm";
 export { publishSignalPreKeys, checkSignalPreKeys, fetchSignalPreKeyBundle } from "./messaging/signalPreKeys";
+export { requestAuthorityMlsPreparation } from "./messaging/authorityMlsPreparation";
 export { reportSosSignal } from "./sos/reportSignal";
+export { deleteAccountAndData } from "./account/deleteAccount";

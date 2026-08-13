@@ -107,8 +107,16 @@ final class InternetMessageReceiver: @unchecked Sendable {
     /// and is skipped, matching Android: the realtime listener pulls the doc from Firestore the
     /// next time the app runs.
     func handleRemotePush(userInfo: [AnyHashable: Any]) async -> Bool {
+        if (userInfo["type"] as? String) == "authority_mls_prepare_v2" {
+            return await handleAuthorityMlsPrepareWake(userInfo: userInfo)
+        }
+        if (userInfo["type"] as? String) == "authority_mls_v2" {
+            return await handleAuthorityMlsWake(userInfo: userInfo)
+        }
         if (userInfo["type"] as? String) == "channel_chat" {
-            await handleChannelPush(userInfo: userInfo)
+            // Retired shared-key push. Do not decrypt legacy history into a lock-screen preview or
+            // let a stale backend preserve a downgrade notification path after the MLS-v2 cutover.
+            NSLog("InternetMessageReceiver: dropped retired channel_chat push")
             return false
         }
         guard (userInfo["type"] as? String) == "chat" else { return false }
@@ -118,6 +126,113 @@ final class InternetMessageReceiver: @unchecked Sendable {
             if let key = key as? String { data[key] = value }
         }
         return await handle(data: data, myUid: myUid)
+    }
+
+    /** Validates a content-free bootstrap wake against the canonical immutable MLS parent. */
+    private func handleAuthorityMlsPrepareWake(userInfo: [AnyHashable: Any]) async -> Bool {
+        guard let myUid = Auth.auth().currentUser?.uid,
+              let conversationId = userInfo["conversationId"] as? String,
+              conversationId.range(of: #"^am2_[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil else {
+            return false
+        }
+        do {
+            let parent = try await Firestore.firestore()
+                .document("authorityMlsV2/\(conversationId)")
+                .getDocument()
+            guard try exactInt64(parent.get("version")) == 2,
+                  let participants = parent.get("participants") as? [String],
+                  participants.count == 2,
+                  Set(participants).count == 2,
+                  participants.contains(myUid),
+                  let peerUid = participants.first(where: { $0 != myUid }),
+                  let scopeValue = parent.get("scopeType") as? String,
+                  let scopeType = AuthorityMlsScopeType(rawValue: scopeValue),
+                  let channelId = parent.get("channelId") as? String,
+                  !channelId.isEmpty else { return false }
+            let canonical = try AuthorityMlsIdentifiers.canonicalBinding(AuthorityMlsBinding(
+                scopeType: scopeType,
+                channelId: channelId,
+                participants: participants
+            ))
+            guard canonical.participants == participants,
+                  try AuthorityMlsIdentifiers.conversationId(canonical) == conversationId else { return false }
+            return await AuthorityMlsWakePrewarmer.shared.prepare(
+                selfUid: myUid,
+                peerUid: peerUid,
+                scopeType: scopeType,
+                channelId: channelId
+            )
+        } catch {
+            NSLog("Authority MLS prepare wake validation failed: %@", String(describing: error))
+            return false
+        }
+    }
+
+    /// Resolves a content-free Authority MLS wake-up against the immutable v2 parent/message docs.
+    /// The push handler intentionally does not instantiate another MLS session: that could race the
+    /// foreground session's durable ratchet. The verified thread decrypts when the user opens it.
+    private func handleAuthorityMlsWake(userInfo: [AnyHashable: Any]) async -> Bool {
+        guard let myUid = Auth.auth().currentUser?.uid,
+              let conversationId = userInfo["conversationId"] as? String,
+              conversationId.range(of: #"^am2_[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil,
+              let messageId = userInfo["messageId"] as? String,
+              messageId.range(of: #"^[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil else {
+            return false
+        }
+        do {
+            let database = Firestore.firestore()
+            let parent = try await database.document("authorityMlsV2/\(conversationId)").getDocument()
+            guard try exactInt64(parent.get("version")) == 2,
+                  let participants = parent.get("participants") as? [String],
+                  participants.count == 2,
+                  participants.contains(myUid),
+                  let peerUid = participants.first(where: { $0 != myUid }),
+                  let scopeTypeValue = parent.get("scopeType") as? String,
+                  let scopeType = AuthorityMlsScopeType(rawValue: scopeTypeValue),
+                  let channelId = parent.get("channelId") as? String,
+                  !channelId.isEmpty else { return false }
+            let canonical = try AuthorityMlsIdentifiers.canonicalBinding(AuthorityMlsBinding(
+                scopeType: scopeType,
+                channelId: channelId,
+                participants: participants
+            ))
+            guard canonical.participants == participants,
+                  try AuthorityMlsIdentifiers.conversationId(canonical) == conversationId else {
+                return false
+            }
+
+            let message = try await database
+                .document("authorityMlsV2/\(conversationId)/messages/\(messageId)")
+                .getDocument()
+            guard let senderDeviceId = message.get("senderDeviceId") as? String,
+                  senderDeviceId.range(of: #"^[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil,
+                  let senderCredential = message.get("senderCredential") as? String,
+                  let parsedCredential = AuthorityMlsCredential.decode(senderCredential),
+                  try exactInt64(message.get("sequence")) >= 0,
+                  try exactInt64(message.get("sequence")) < 9_007_199_254_740_991,
+                  let ciphertext = message.get("ciphertext") as? String,
+                  !ciphertext.isEmpty,
+                  ciphertext.utf8.count <= 900_000,
+                  ciphertext.range(of: #"^[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil,
+                  message.get("createdAt") is Timestamp,
+                  parsedCredential.accountUid == peerUid,
+                  parsedCredential.deviceId == senderDeviceId,
+                  try exactInt64(message.get("contentVersion")) == 2,
+                  message.get("messageId") as? String == messageId,
+                  message.get("senderUid") as? String == peerUid else { return false }
+
+            SOSNotificationCenter.postAuthorityChannelNotification(
+                senderUid: peerUid,
+                senderName: "",
+                channelId: channelId,
+                channelKind: scopeType.rawValue,
+                body: nil
+            )
+            return true
+        } catch {
+            NSLog("InternetMessageReceiver: Authority MLS wake validation failed: %@", String(describing: error))
+            return false
+        }
     }
 
     /// Authority CHANNEL message push (agency/hierarchy). The content is E2E — the push itself only

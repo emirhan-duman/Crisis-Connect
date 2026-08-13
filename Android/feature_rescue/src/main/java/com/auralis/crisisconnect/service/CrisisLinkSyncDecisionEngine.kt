@@ -144,6 +144,18 @@ internal class CrisisLinkSyncDecisionEngine(
         ) {
             return true
         }
+        // A victim we had not seen before outranks the rate limiter. The throttle exists to stop
+        // telemetry churn, not to hold a new casualty: checked before this, a freshly detected
+        // beacon was suppressed for up to the whole minimum-delivery interval, which on the ECO
+        // profile is minutes — and a rescuer sweeping a collapsed building can be out of range again
+        // by then, at which point the sighting is gone from the snapshot entirely.
+        //
+        // Deliberately asymmetric: only an ADDED id bypasses the throttle. A victim dropping out of
+        // range is not urgent, and letting that through too would let a flapping beacon at the edge
+        // of range defeat the rate limiter completely.
+        if (!previous.activeSignalIds.containsAll(payload.activeSignalIds)) {
+            return true
+        }
         if (elapsedSinceLastDelivery < minimumDeliveryIntervalMs(syncProfile)) {
             return false
         }

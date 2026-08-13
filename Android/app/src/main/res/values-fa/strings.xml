@@ -1767,4 +1767,18 @@
     <string name="rescue_remote_signals_empty_title">همه‌چیز آرام است</string>
     <string name="rescue_remote_hero_count">%1$d سیگنال فعال</string>
     <string name="rescue_remote_signals_subtitle">پخش زنده از پنل سازمان شما</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">حذف حساب و داده‌ها</string>
+    <string name="profile_delete_account_progress">در حال حذف…</string>
+    <string name="profile_delete_account_dialog_title">حساب شما برای همیشه حذف شود؟</string>
+    <string name="profile_delete_account_dialog_body">این کار قابل بازگشت نیست. حساب، نمایه، مطابقت‌های فهرست مخاطب، کلیدهای رمزنگاری، سوابق اعلان‌ها و تاریخچهٔ گفتگوی این دستگاه حذف می‌شود. سیگنال‌های اورژانسی ارسالی شما به‌عنوان سابقهٔ امداد، جدا از هویت شما نگه داشته می‌شود.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">برای تأیید %1$s را بنویسید.</string>
+    <string name="profile_delete_account_confirm_word">حذف</string>
+    <string name="profile_delete_account_dialog_confirm">حذف دائمی</string>
+    <string name="profile_delete_account_success">حساب و داده‌های شما حذف شد.</string>
+    <string name="profile_delete_account_error">حذف کامل نشد. اتصال خود را بررسی کنید و دوباره تلاش کنید.</string>
+    <string name="profile_delete_account_error_verification">حذف در این دستگاه تأیید نشد. اتصال خود را بررسی کنید و دوباره تلاش کنید.</string>
+    <string name="profile_delete_account_error_signed_out">برای حذف حساب باید وارد شده باشید.</string>
+    <string name="profile_delete_account_reauth_needed">برای امنیت شما، پیش از حذف باید هویتتان تأیید شود. خارج شوید، دوباره وارد شوید و سپس دوباره تلاش کنید.</string>
 </resources>

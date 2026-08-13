@@ -18,6 +18,7 @@ private enum PresentedChatDestination: Identifiable {
     case generalChat
     case authorityChannels
     case authorityThread(channelId: String, peerUid: String)
+    case authorityNearbyCall(AuthorityNearbyCallRoute)
 
     var id: String {
         switch self {
@@ -29,6 +30,8 @@ private enum PresentedChatDestination: Identifiable {
             return "authority-channels"
         case .authorityThread(let channelId, let peerUid):
             return "authority-thread.\(channelId).\(peerUid)"
+        case .authorityNearbyCall(let route):
+            return "authority-nearby-call.\(route.channel.channelId).\(route.peer.uid)"
         }
     }
 }
@@ -280,11 +283,27 @@ struct ContentView: View {
             AuthorityChannelsListView()
         case .authorityThread(let channelId, let peerUid):
             AuthorityThreadDeepLinkView(channelId: channelId, peerUid: peerUid)
+        case .authorityNearbyCall(let route):
+            HierarchyThreadView(
+                channel: route.channel,
+                peer: route.peer,
+                scopeType: route.scopeType
+            )
         }
     }
 
     private func openCallSession(_ sessionId: UUID) {
         viewModel.selectedTab = .messages
+        if let contact = ContactStore.shared.contact(for: sessionId),
+           contact.isAuthorityBridge == true {
+            if let route = AuthorityNearbyCallRouteRegistry.route(for: sessionId) {
+                presentedChatDestination = .authorityNearbyCall(route)
+            } else {
+                // Never expose the hidden transport contact as a citizen conversation.
+                presentedChatDestination = .authorityChannels
+            }
+            return
+        }
         presentedChatDestination = .session(sessionId)
     }
 
@@ -385,9 +404,17 @@ struct ContentView: View {
                         }
                     }
 
+                    flashlightToolLink
+
                     toolLink(title: NSLocalizedString("Whistle", comment: ""), subtitle: NSLocalizedString("TOOLS_WHISTLE_SUBTITLE", comment: ""), systemImage: "speaker.wave.3.fill", tint: .appWarning) {
                         WhistleView()
                     }
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("CPR_TOOL_SECTION", tableName: "CPR")
+                        .font(.headline)
+                    cprAssistToolLink
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -402,11 +429,24 @@ struct ContentView: View {
                     ) {
                         OfflineMapView()
                     }
+
+                    breadcrumbTrailToolLink
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
                     Text("TOOLS_SECTION_AWARENESS")
                         .font(.headline)
+                    if showRescueTools {
+                        toolLink(
+                            title: NSLocalizedString("Secure Dossiers", comment: "Institutional secure dossier tool"),
+                            subtitle: NSLocalizedString("Prepare, annotate, approve and deliver official files without requiring an incident.", comment: ""),
+                            systemImage: "folder.badge.gearshape",
+                            tint: .appPrimary,
+                            accessibilityIdentifier: "tool-link-secure-dossiers"
+                        ) {
+                            TrustDossierCenterView()
+                        }
+                    }
                     toolLink(
                         title: NSLocalizedString("RECENT_DISASTERS_TITLE", comment: ""),
                         subtitle: NSLocalizedString("TOOLS_RECENT_DISASTERS_SUBTITLE", comment: ""),
@@ -807,6 +847,96 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("tool-link-crisis-sentinel")
+    }
+
+    private var flashlightToolLink: some View {
+        NavigationLink(destination: LazyNavigationDestination {
+            FlashlightView()
+        }) {
+            HStack(spacing: 14) {
+                AppIconBadge(systemName: "flashlight.on.fill", tint: .appWarning)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("FLASHLIGHT_TITLE", tableName: "Flashlight")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("FLASHLIGHT_TOOL_DESCRIPTION", tableName: "Flashlight")
+                        .font(.footnote)
+                        .foregroundStyle(Color.appTextSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(Color.appTextSecondary)
+            }
+            .appSurface(style: .regular, padding: 16)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("tool-link-flashlight")
+    }
+
+    private var breadcrumbTrailToolLink: some View {
+        NavigationLink(destination: LazyNavigationDestination {
+            BreadcrumbTrailView()
+        }) {
+            HStack(spacing: 14) {
+                AppIconBadge(
+                    systemName: "point.topleft.down.to.point.bottomright.curvepath",
+                    tint: .appPrimary
+                )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("BREADCRUMB_TITLE", tableName: "Breadcrumb")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("BREADCRUMB_TOOL_DESCRIPTION", tableName: "Breadcrumb")
+                        .font(.footnote)
+                        .foregroundStyle(Color.appTextSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(Color.appTextSecondary)
+            }
+            .appSurface(style: .regular, padding: 16)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("tool-link-breadcrumb-trail")
+    }
+
+    private var cprAssistToolLink: some View {
+        NavigationLink(destination: LazyNavigationDestination {
+            CPRAssistView()
+        }) {
+            HStack(spacing: 14) {
+                AppIconBadge(systemName: "heart.fill", tint: .appDanger)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("CPR_TITLE", tableName: "CPR")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("CPR_TOOL_DESCRIPTION", tableName: "CPR")
+                        .font(.footnote)
+                        .foregroundStyle(Color.appTextSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(Color.appTextSecondary)
+            }
+            .appSurface(style: .regular, padding: 16)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("tool-link-cpr-assist")
     }
 
     private func toolLink<Destination: View>(

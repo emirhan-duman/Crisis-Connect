@@ -7,12 +7,17 @@ import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FlashlightOn
+import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Radio
+import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Sports
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.data.database.LocalKeyStorage
 
 class ToolsMainScreenViewModel {
     data class ToolItem(
@@ -25,6 +30,12 @@ class ToolsMainScreenViewModel {
 
     companion object {
         val DEFAULT_TOOLS = listOf(
+            ToolItem(
+                R.string.tool_secure_dossiers_title,
+                R.string.tool_secure_dossiers_description,
+                route = "secure_dossiers",
+                icon = Icons.Filled.FolderSpecial
+            ),
             ToolItem(
                 R.string.tool_crisis_sentinel_title,
                 R.string.tool_crisis_sentinel_description,
@@ -50,6 +61,18 @@ class ToolsMainScreenViewModel {
                 icon = Icons.Filled.Sports
             ),
             ToolItem(
+                R.string.tool_flashlight_title,
+                R.string.tool_flashlight_description,
+                route = "flashlight",
+                icon = Icons.Filled.FlashlightOn
+            ),
+            ToolItem(
+                R.string.tool_cpr_assist_title,
+                R.string.tool_cpr_assist_description,
+                route = "cpr_assist",
+                icon = Icons.Filled.Favorite
+            ),
+            ToolItem(
                 R.string.tool_sensor_monitor_title,
                 R.string.tool_sensor_monitor_description,
                 route = "sensor_tool",
@@ -60,6 +83,12 @@ class ToolsMainScreenViewModel {
                 R.string.tool_offline_maps_description,
                 route = "offline_map",
                 icon = Icons.Filled.Map
+            ),
+            ToolItem(
+                R.string.tool_breadcrumb_title,
+                R.string.tool_breadcrumb_description,
+                route = "breadcrumb_trail",
+                icon = Icons.Filled.Route
             ),
             ToolItem(
                 R.string.tool_compass_title,
@@ -77,8 +106,10 @@ class ToolsMainScreenViewModel {
 
         fun getVisibleTools(context: Context): List<ToolItem> {
             val capabilities = resolveToolDeviceCapabilities(context.applicationContext)
+            val hasInstitutionalRole = LocalKeyStorage.getSavedRole(context.applicationContext) != null
             return DEFAULT_TOOLS.filter { tool ->
-                isToolSupported(tool.route, capabilities)
+                isToolSupported(tool.route, capabilities) &&
+                    (tool.route != "secure_dossiers" || hasInstitutionalRole)
             }
         }
     }

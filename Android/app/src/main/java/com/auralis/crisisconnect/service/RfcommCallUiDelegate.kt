@@ -164,7 +164,7 @@ internal class RfcommCallUiDelegate(
             )
             .build()
         val notification = NotificationCompat.Builder(context, callEventChannelId)
-            .setSmallIcon(R.drawable.ic_sos)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(contentText)
             .setContentIntent(contentIntent)

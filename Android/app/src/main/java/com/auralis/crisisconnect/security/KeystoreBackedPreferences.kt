@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.security
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
@@ -40,6 +41,14 @@ class KeystoreBackedPreferences(
         }
         val encoded = encode(value) ?: return
         prefs.edit().putString(key, encoded).apply()
+    }
+
+    /** Synchronous durability boundary for tiny security receipts that must survive process death. */
+    @SuppressLint("ApplySharedPref", "UseKtx")
+    fun putStringCommitted(key: String, value: String?): Boolean {
+        if (value == null) return prefs.edit().remove(key).commit()
+        val encoded = encode(value) ?: return false
+        return prefs.edit().putString(key, encoded).commit()
     }
 
     fun getInt(key: String, defaultValue: Int): Int {

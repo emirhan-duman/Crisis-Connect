@@ -142,6 +142,14 @@ class InternetMessagingClient(
         Unit
     }
 
+    /** Content-free, authenticated wake; the backend derives the recipient from the MLS parent. */
+    suspend fun requestAuthorityMlsPreparation(conversationId: String) = withContext(Dispatchers.IO) {
+        functions.getHttpsCallable("requestAuthorityMlsPreparation")
+            .call(hashMapOf("conversationId" to conversationId))
+            .await()
+        Unit
+    }
+
     /**
      * Confirms a message was received and stored, so the server deletes its copy (WhatsApp-style).
      * Best-effort: failure just means the server's safety-net purge cleans it up later.

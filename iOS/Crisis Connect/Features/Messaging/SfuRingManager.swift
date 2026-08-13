@@ -17,6 +17,11 @@ enum SfuCallState: Equatable {
     case idle, outgoing, incoming, connecting, connected, ended
 }
 
+enum SfuProtocolVersion: Int {
+    case legacy = 1
+    case secure = 2
+}
+
 @MainActor
 final class SfuRingManager {
 
@@ -31,12 +36,14 @@ final class SfuRingManager {
     /// the offer signal (callee), so a voice call never lights up either side's camera.
     private(set) var video = false
     private(set) var roomId: String?
+    /// Authority calls are secure-v2 only; missing/legacy capabilities are rejected.
+    private(set) var protocolVersion: SfuProtocolVersion = .secure
     private(set) var state: SfuCallState = .idle
 
     private let sender: (_ toUid: String, _ signal: [String: Any]) -> Void
     private let onState: (SfuCallState) -> Void
     /// Fires once the call is accepted on both sides with the shared room to join (isCaller role).
-    private let onRoom: (_ roomId: String, _ isCaller: Bool) -> Void
+    private let onRoom: (_ roomId: String, _ isCaller: Bool, _ version: SfuProtocolVersion) -> Void
 
     private var ringTask: Task<Void, Never>?
     private var cleanupTask: Task<Void, Never>?
@@ -44,7 +51,7 @@ final class SfuRingManager {
     init(
         sender: @escaping (_ toUid: String, _ signal: [String: Any]) -> Void,
         onState: @escaping (SfuCallState) -> Void,
-        onRoom: @escaping (_ roomId: String, _ isCaller: Bool) -> Void
+        onRoom: @escaping (_ roomId: String, _ isCaller: Bool, _ version: SfuProtocolVersion) -> Void
     ) {
         self.sender = sender
         self.onState = onState
@@ -88,15 +95,19 @@ final class SfuRingManager {
         roomId = UUID().uuidString.lowercased()
         set(.outgoing)
         startRing()
-        sender(peerUid, signal("offer").merging(["roomId": roomId ?? "", "video": video]) { _, new in new })
+        sender(peerUid, signal("offer").merging([
+            "roomId": roomId ?? "", "video": video, "sfuVersion": SfuProtocolVersion.secure.rawValue
+        ]) { _, new in new })
     }
 
     /// Accept the ringing call and join the invited room.
     func accept() {
         guard state == .incoming, let peer = peerUid, let room = roomId, callId != nil else { return }
         set(.connecting)
-        sender(peer, signal("answer"))
-        onRoom(room, false)
+        var answer = signal("answer")
+        answer["sfuVersion"] = SfuProtocolVersion.secure.rawValue
+        sender(peer, answer)
+        onRoom(room, false, protocolVersion)
         set(.connected)
     }
 
@@ -114,6 +125,7 @@ final class SfuRingManager {
     func handleSignal(fromUid: String, signal: [String: Any]) {
         let type = signal["type"] as? String ?? ""
         let signalCallId = (signal["callId"] as? String ?? "")
+        guard type == "offer" || (peerUid != nil && fromUid == peerUid) else { return }
         switch type {
         case "offer":
             guard !signalCallId.isEmpty else { return }
@@ -125,19 +137,30 @@ final class SfuRingManager {
             // Duplicate delivery of the SAME offer (a listener re-attach replays the collection):
             // ignore — re-entering INCOMING while ringing/connected re-rings and can double-join.
             if callId == signalCallId && state != .idle { return }
+            guard (signal["sfuVersion"] as? Int) == SfuProtocolVersion.secure.rawValue else {
+                sender(fromUid, ["type": "reject", "callId": signalCallId])
+                return
+            }
             guard let room = (signal["roomId"] as? String), !room.isEmpty else { return } // not an SFU invite
             peerUid = fromUid
             callId = signalCallId
             roomId = room
             video = signal["video"] as? Bool ?? false
+            protocolVersion = .secure
             set(.incoming)
             startRing()
         case "answer":
             guard signalCallId == callId else { return }
             // Only the caller, and only ONCE: a replayed answer must not fire onRoom (join) again.
-            guard state == .outgoing, let room = roomId else { return }
+            guard state == .outgoing else { return }
+            guard (signal["sfuVersion"] as? Int) == SfuProtocolVersion.secure.rawValue else {
+                end()
+                return
+            }
+            guard let room = roomId else { return }
+            protocolVersion = .secure
             set(.connecting)
-            onRoom(room, true)
+            onRoom(room, true, protocolVersion)
             set(.connected)
             // Answered elsewhere: the callee may have other ringing sessions (web tabs) — tell them
             // the call is taken so they stop ringing. The answering session ignores this ("cancel"
@@ -175,6 +198,7 @@ final class SfuRingManager {
             self.peerName = nil
             self.roomId = nil
             self.video = false
+            self.protocolVersion = .secure
             if self.state == .ended { self.set(.idle) }
         }
     }

@@ -44,6 +44,31 @@ service cloud.firestore {
       );
     }
 
+    // Phase 3 enforcement: the server keeps a denormalized copy of the
+    // user's assigned org-chart role permissions at users/{uid}.orgRole
+    // (rules cannot query orgNodes by linkedUid themselves). A resolved
+    // role whose dashboard toggle is explicitly false revokes panel data
+    // access. Absent/malformed cache = no restriction (legacy behavior);
+    // admin/authority are exempt (lockout guard, mirrors the server
+    // resolver). Clients cannot write orgRole — see validUserCreate /
+    // validUserUpdate.
+    function orgRoleDeniesDashboard() {
+      return ("orgRole" in userDoc())
+        && userDoc().orgRole is map
+        && ("permissions" in userDoc().orgRole)
+        && userDoc().orgRole.permissions is map
+        && ("dashboard" in userDoc().orgRole.permissions)
+        && userDoc().orgRole.permissions.dashboard == false
+        && !isAdminRole(userDoc().role)
+        && !isAuthorityRole(userDoc().role)
+        // Platform-admin flags exempt too — matches hasPlatformAdminFlag in
+        // lib/dashboard-access.ts so the exemption truly mirrors the server
+        // resolver's super-role short-circuit.
+        && !(("superAdmin" in userDoc()) && userDoc().superAdmin == true)
+        && !(("platformAdmin" in userDoc()) && userDoc().platformAdmin == true)
+        && !(("globalDashboardAccess" in userDoc()) && userDoc().globalDashboardAccess == true);
+    }
+
     function hasDashboardAccess() {
       return isSignedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
@@ -56,7 +81,8 @@ service cloud.firestore {
             userDoc().dashboardAccess is string
             && userDoc().dashboardAccess.lower() in ["true", "1", "yes", "on", "enabled"]
           )
-        );
+        )
+        && !orgRoleDeniesDashboard();
     }
 
     function isDashboardAdminUser() {
@@ -100,10 +126,6 @@ service cloud.firestore {
         && deviceId.matches('^cc-[0-9a-f]{24}$');
     }
 
-    function currentUserAgency() {
-      return userDoc().agency;
-    }
-
     function currentUserAgencySlug() {
       return userDoc().agencySlug;
     }
@@ -112,11 +134,19 @@ service cloud.firestore {
       return userDoc().agencyKey;
     }
 
+    // Write-side panel binding. Accepts the SAME candidates as the read side
+    // (canReadAgencyByKey): mobile clients resolve their panel id from
+    // agencySlug OR agencyKey on the users doc, so a doc that carries only
+    // agencyKey must still be able to write — slug-only here turned every
+    // Crisis Link upload into PERMISSION_DENIED and the Android service
+    // silently stops after 5 consecutive auth failures.
     function canWriteRescuePanel(agencyId) {
       return hasRescueClaim()
         && hasRescueProfileRole()
-        && currentUserAgencySlug() is string
-        && currentUserAgencySlug() == agencyId;
+        && (
+          (currentUserAgencySlug() is string && currentUserAgencySlug() == agencyId)
+          || (currentUserAgencyKey() is string && currentUserAgencyKey() == agencyId)
+        );
     }
 
     function hasPanelReadAccess() {
@@ -153,6 +183,23 @@ service cloud.firestore {
           || (("authority" in userDoc()) && userDoc().authority is string && data.agency == userDoc().authority)
           || (("institution" in userDoc()) && userDoc().institution is string && data.agency == userDoc().institution)
           || (("organization" in userDoc()) && userDoc().organization is string && data.agency == userDoc().organization)
+        );
+    }
+
+    // Write-side counterpart of canReadAgencyByName: clients resolve their display agency from the
+    // first non-blank of agency/agencyName/authority/institution/organization on the users doc, so
+    // the value they stamp on panel writes must be accepted against ANY of those fields — an exact
+    // match on userDoc().agency alone rejects legitimate writes from docs that only carry e.g.
+    // agencyName.
+    function writeAgencyMatchesUser(value) {
+      return isSignedIn()
+        && value is string
+        && (
+          (("agency" in userDoc()) && userDoc().agency is string && value == userDoc().agency)
+          || (("agencyName" in userDoc()) && userDoc().agencyName is string && value == userDoc().agencyName)
+          || (("authority" in userDoc()) && userDoc().authority is string && value == userDoc().authority)
+          || (("institution" in userDoc()) && userDoc().institution is string && value == userDoc().institution)
+          || (("organization" in userDoc()) && userDoc().organization is string && value == userDoc().organization)
         );
     }
 
@@ -193,7 +240,12 @@ service cloud.firestore {
         );
     }
 
-    function canManageAgencyByTrustedBinding(panelCollection, panelId) {
+    // Deliberately key-only: managing a panel's access control requires the
+    // user's OWN agencyKey/agencySlug to name this panel. A name or hierarchy
+    // match (parent/HQ) is enough to READ a panel but never to rewrite who may
+    // enter it. The panel collection is not a parameter here — every call site
+    // is already inside an isAgencyPanelCollection() gate.
+    function canManageAgencyByTrustedBinding(panelId) {
       return isSignedIn()
         && canReadAgencyByKey(panelId);
     }
@@ -218,11 +270,22 @@ service cloud.firestore {
         );
     }
 
-    function canManageAgencyAccessControl(panelCollection, panelId) {
+    // Membership gate for the zero-knowledge agenda KEY layer. Deliberately NARROWER than the agenda
+    // item read audience: only the panel's OWN key-holding members (never a parent/HQ or name/
+    // hierarchy match) may touch the key material, and it ties to deprovisioning via
+    // hasPanelReadAccess() so revoking dashboard access also revokes key-layer access. Excludes the
+    // legacy afadpanel alias — the ZK layer lives only under agencyPanels.
+    function isAgendaKeyMember(panelCollection, panelId) {
+      return panelCollection == "agencyPanels"
+        && hasPanelReadAccess()
+        && canReadAgencyByKey(panelId);
+    }
+
+    function canManageAgencyAccessControl(panelId) {
       return isDashboardAccessManager()
         && (
           isPlatformAdminUser()
-          || canManageAgencyByTrustedBinding(panelCollection, panelId)
+          || canManageAgencyByTrustedBinding(panelId)
         );
     }
 
@@ -238,6 +301,34 @@ service cloud.firestore {
         && signalId.matches("^cc-[0-9a-f]{24}$");
     }
 
+    // Every field a BLE relay legitimately writes on a signal — the union of what the Android
+    // (CrisisLinkForegroundService) and iOS (CrisisLinkDashboardSync) rescuer relays send, plus
+    // `updatedAt`. Anything NOT on this list is server-owned and must reach the document only
+    // through the reportSosSignal Cloud Function or /api/dashboard/sos, both of which use the Admin
+    // SDK and bypass these rules.
+    //
+    // `victimUid` is the field that matters most. The SOS detail endpoint joins it against the
+    // GLOBAL users/{uid} directory to show the victim's name and phone, so a relay that could set it
+    // to an arbitrary uid would turn the dashboard into a cross-tenant PII lookup. The relays never
+    // write it; only the Cloud Function does, where it is pinned to the authenticated victim.
+    // `ops` (operator lifecycle), `resolvedAt`/`resolvedMillis` and `victimPhone` are excluded for
+    // the same reason: a client must not be able to forge triage state or victim contact details.
+    //
+    // KEEP IN SYNC with the copy in the crisis-connect-web repo — both files target the same
+    // Firebase project, so whichever is deployed last wins.
+    function clientWritableSignalKeys() {
+      return [
+        "signalId", "schemaVersion", "status", "source",
+        "firstSeenMillis", "lastSeenMillis", "lastSeenAt", "lastSeenAddress",
+        "lastReporterUid", "lastReporterDeviceId", "lastReporterLocation",
+        "victimRole", "reporterIds",
+        "gps", "victimGps", "estimatedVictimGps", "locationSource",
+        "relativeEstimate", "locationUpdatedAtMillis",
+        "victimName", "victimDisplayName", "victimBatteryPercent",
+        "updatedAt"
+      ];
+    }
+
     function validActiveSignalWrite(signalId, data) {
       return validSignalDocId(signalId, data)
         && data.lastReporterUid == request.auth.uid
@@ -249,6 +340,21 @@ service cloud.firestore {
         && data.firstSeenMillis > 0
         && data.lastSeenMillis is int
         && data.lastSeenMillis >= data.firstSeenMillis;
+    }
+
+    // Key-scoping for a signal CREATE: the whole document is the client's, so every key must be
+    // client-writable.
+    function signalCreateKeysAllowed() {
+      return request.resource.data.keys().hasOnly(clientWritableSignalKeys());
+    }
+
+    // Key-scoping for a signal UPDATE. Checked on the DIFF, not on the merged result: a relay
+    // sighting of a victim who already self-reported merges into a document that legitimately
+    // carries server-owned fields, so `hasOnly` over request.resource.data would reject the
+    // legitimate write. Only the keys this write actually adds, changes or removes are constrained.
+    function signalUpdateKeysAllowed() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(clientWritableSignalKeys());
     }
 
     function validUserCreate(userId) {
@@ -267,9 +373,11 @@ service cloud.firestore {
         && !("panelId" in data)
         && !("platformAdmin" in data)
         && !("globalDashboardAccess" in data)
+        && !("superAdmin" in data)
         && !("workflowRole" in data)
         && !("workflowRoleUpdatedAt" in data)
         && !("workflowRoleUpdatedBy" in data)
+        && !("orgRole" in data)
         && !("photoURL" in data);
     }
 
@@ -329,9 +437,11 @@ service cloud.firestore {
         && unchangedField("panelId")
         && unchangedField("platformAdmin")
         && unchangedField("globalDashboardAccess")
+        && unchangedField("superAdmin")
         && unchangedField("workflowRole")
         && unchangedField("workflowRoleUpdatedAt")
         && unchangedField("workflowRoleUpdatedBy")
+        && unchangedField("orgRole")
         && (
           unchangedField("verified")
           || (
@@ -442,32 +552,104 @@ service cloud.firestore {
       allow write: if false;
 
       // Immutable ciphertext log, readable and postable by members of either linked panel.
+      // Cross-panel messages are 1:1 on every client, so channel membership alone is not a reason
+      // to read someone else's conversation: scoped to the two participants, same shape as
+      // /directMessages (see the long note there for why `list` needs array-contains rather than
+      // an OR, and for why there is deliberately no supervisor read path).
+      //
+      // Backfilled by scripts/migrate_direct_messages.mjs — every stored message carries
+      // `participants` before this rule ships, otherwise the scoped query returns nothing and the
+      // history looks deleted.
+      // STAGED ROLLOUT — read is still channel-wide on purpose. Phones in the field run the old
+      // unscoped query (`orderBy createdAt` over the whole channel); Firestore rejects a list
+      // query the rule cannot prove safe, so tightening this before those builds ship would break
+      // cross-panel messaging on every un-updated device mid-pilot.
+      //
+      // Everything else is already in place: web and Android both write `participants` and query
+      // with array-contains, the composite index is deployed, and all stored messages are
+      // backfilled (scripts/migrate_direct_messages.mjs). When the Android release has landed,
+      // scope `read` the same way /directMessages does and add the participants checks to
+      // `create` — nothing else needs to change.
       match /secureMessages/{messageId} {
         allow read: if isHierarchyChannelMember(channelId);
+        // The UNION of what all three clients write here, which is why it can ship without breaking
+        // phones: web adds participants, lpMeta/lpNonce and replyToId; Android and iOS add
+        // clientUuid (their Bluetooth backfill's idempotency token). The one non-literal write on
+        // each mobile client — Android's `doc.putAll(attachmentFields)` and iOS's
+        // `doc.merge(attachmentFields)` — resolves to a two-key literal, attMeta + attMetaNonce, and
+        // nothing else; for Android that was confirmed in the shipped 1.1.8/59 bytecode rather than
+        // the working tree, which is known to be ahead of what field devices run.
+        //
+        // Everything else a message carries rides INSIDE the encrypted blobs: filenames, sizes,
+        // voice-note durations, shared locations and call logs are all in `ciphertext` or `attMeta`,
+        // never as document fields. So this list cannot be grown by anything a user does — only by
+        // a client release, which is when it must be revisited.
+        //
+        // No size cap alongside it, deliberately. `ciphertext` is unbounded on every client and a
+        // ~765 KB message would fit Firestore's own 1 MiB ceiling, but a cap is the one constraint
+        // here a legitimate user could trip — by pasting a long report — and it would fail the way
+        // everything else on this path failed today: silently, because Android wraps the send in
+        // runCatching{} and iOS in try?. Insider storage abuse is not worth that trade.
         allow create: if isHierarchyChannelMember(channelId)
-          && request.resource.data.senderUid == request.auth.uid;
+          && request.resource.data.keys().hasOnly([
+            "senderUid", "senderName", "recipientUid", "recipientName", "participants",
+            "keyId", "nonce", "ciphertext", "createdAt",
+            "attMeta", "attMetaNonce", "lpMeta", "lpNonce", "replyToId", "clientUuid",
+            // See the note on the directMessages allowlist above.
+            "senderDeviceId", "envelopes",
+          ])
+          && (!("envelopes" in request.resource.data) || request.resource.data.envelopes is map)
+          && request.resource.data.senderUid == request.auth.uid
+          // Same reason as directMessages: an unconstrained createdAt lets 200 future-dated writes
+          // evict a channel's whole visible history from an append-only log. Verified safe for every
+          // client — web `serverTimestamp()` (secure-channel.ts:185), Android
+          // `FieldValue.serverTimestamp()` (HierarchyMessaging.kt:411), iOS the same
+          // (HierarchyMessagingClient.swift:269) — so the server substitutes request.time in all
+          // three before the rule runs.
+          && request.resource.data.createdAt == request.time;
         allow update, delete: if false;
       }
 
       // Read-receipt cursors (metadata only). A member may write only their own cursor
       // (doc id `${viewerUid}__${partnerUid}`, guarded by viewerUid == uid).
+      // Doc id is `${viewerUid}__${partnerUid}`, and every client reads it by id (never lists),
+      // so the pair can be gated straight off the id — no query change, no index. Content is
+      // already scoped; this stops the metadata from leaking who is talking to whom.
       match /readReceipts/{receiptId} {
-        allow read: if isHierarchyChannelMember(channelId);
+        allow read: if isHierarchyChannelMember(channelId)
+          && (receiptId.split("__")[0] == request.auth.uid
+            || receiptId.split("__")[1] == request.auth.uid);
         allow write: if isHierarchyChannelMember(channelId)
           && request.resource.data.viewerUid == request.auth.uid;
       }
 
       // Typing indicators (metadata only). A member writes only their own doc (id == uid).
+      // Read by id (the partner's uid) on every client. `to` names the intended reader, so only
+      // that person — or the author — may see that someone is typing.
       match /typing/{typingUid} {
-        allow read: if isHierarchyChannelMember(channelId);
+        // `resource == null` FIRST, and it is not cosmetic: every client reads this by the PARTNER's
+        // uid, so `typingUid == request.auth.uid` never helps them and the read rests entirely on
+        // `resource.data.to`. On a thread where the partner has never typed the document does not
+        // exist, `resource` is null, dereferencing it ERRORS, and the whole rule denies — so the
+        // indicator was dead on exactly the threads where it had never yet been used. Verified in
+        // the emulator on both mobile clients and reproduced for the web, which reads the same shape.
+        // Allowing the miss leaks nothing: a document that does not exist has no contents.
+        allow read: if isHierarchyChannelMember(channelId)
+          && (typingUid == request.auth.uid
+            || resource == null
+            || resource.data.to == request.auth.uid);
         allow write: if isHierarchyChannelMember(channelId)
           && request.resource.data.uid == request.auth.uid;
       }
 
       // WebRTC call signals (SDP/ICE metadata). Members read; a member creates only their own
       // (from == uid) and may delete their own. Never edited.
+      // Every client already listens with `where("to", "==", myUid)`, so scoping the rule to the
+      // addressee is provable for list and needs no client change. SDP/ICE is not content, but it
+      // reveals who called whom and when.
       match /callSignals/{signalId} {
-        allow read: if isHierarchyChannelMember(channelId);
+        allow read: if isHierarchyChannelMember(channelId)
+          && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
         allow create: if isHierarchyChannelMember(channelId)
           && request.resource.data.from == request.auth.uid;
         allow delete: if isHierarchyChannelMember(channelId)
@@ -504,13 +686,38 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // The group call's relay. `hasPanelReadAccess()` is deliberately the whole gate on both this and
+    // mlsMessages below — anyone who learns the roomId can read them. That is less alarming than it
+    // looks, and also not nothing, so both halves are worth stating rather than leaving the next
+    // reader to guess which.
+    //
+    // Not alarming: MLS is designed to run over an UNTRUSTED delivery service. Handshake messages are
+    // broadcast to the room by design (lib/messaging/e2ee-mls.ts: every emitted message goes to
+    // everyone and each worker decides in Rust whether it is relevant), joining a group requires an
+    // existing member to commit an Add, and media frames are encrypted under the group key. So a
+    // reader of this relay does not get the call, and a writer cannot talk their way into the group —
+    // the worst a forged blob achieves is noise the workers reject.
+    //
+    // Not nothing: the participant roster is METADATA this rule does leak — who is on a call, to any
+    // signed-in panel user who learns the roomId. roomIds are per-call UUIDs handed out over
+    // channel-scoped signalling, so learning one already implies some access, but that is
+    // capability-by-obscurity, not authorisation.
+    //
+    // It cannot be closed here. The room document is pinned by its own create rule to
+    // {mlsCreator, createdAt, expireAt} and carries NO channel or panel binding, so a rule has
+    // nothing to match a caller against. Requiring the caller to already be a participant would not
+    // help: anyone who knows the roomId may write their own participant doc, so the gate would still
+    // be roomId knowledge — it would only add an audit trail. Closing it properly means binding the
+    // room to its channel in the document, which changes the shape all three clients write: a
+    // migration, not a rule edit.
     match /sfuRooms/{roomId}/participants/{participantUid} {
       allow read: if hasPanelReadAccess();
       allow write: if hasPanelReadAccess() && participantUid == request.auth.uid;
     }
 
     // Faz 0b-2 — MLS E2EE handshake relay. Opaque, already-serialized MLS blobs (KeyPackage / Welcome /
-    // Commit); no plaintext or keys. A dashboard/panel member reads all and creates only their own (from==uid).
+    // Commit); no plaintext or keys. A dashboard/panel member reads all and creates only their own
+    // (from==uid). See the note above on why this audience is wider than the call's.
     match /sfuRooms/{roomId}/mlsMessages/{msgId} {
       allow read: if hasPanelReadAccess();
       allow create: if hasPanelReadAccess() && request.resource.data.from == request.auth.uid;
@@ -569,6 +776,21 @@ service cloud.firestore {
     }
 
     match /system/{docId} {
+      allow read, write: if false;
+    }
+
+    // Per-panel AI budget overrides. Written and read ONLY by the platform-admin
+    // route and the quota gate (Admin SDK bypasses rules). A panel admin who
+    // could edit their own ceiling would make the budget meaningless, so no
+    // client path exists at all.
+    match /aiQuotaOverrides/{panelId} {
+      allow read, write: if false;
+    }
+
+    // Proof that an account+data erase ran, written by the deleteAccountAndData callable.
+    // Holds counts and a timestamp only — never anything about the person who left, which
+    // would defeat the erase it records. Server-only in both directions.
+    match /accountDeletions/{uid} {
       allow read, write: if false;
     }
 
@@ -691,7 +913,19 @@ service cloud.firestore {
           && request.resource.data.schemaVersion is int
           && request.resource.data.schemaVersion >= 3
           && request.resource.data.agency is string
-          && request.resource.data.agency == currentUserAgency()
+          && writeAgencyMatchesUser(request.resource.data.agency)
+          // Unlike the responder/signal/track leaf docs, the panel doc's `agency` is an
+          // AUTHORIZATION input: canReadAgencyByName compares it against every reader's five
+          // org-name fields, so whoever sets it chooses the panel's read audience. A member may
+          // label the panel they are creating, but must never RE-label an existing one —
+          // writeAgencyMatchesUser alone would let a client stamp a broader org name from its own
+          // user doc (e.g. organization="AFAD" next to a blank agency) and widen who can read the
+          // panel's signals, responders and track history.
+          && (
+            resource == null
+            || !("agency" in resource.data)
+            || request.resource.data.agency == resource.data.agency
+          )
           && request.resource.data.agencySlug is string
           && request.resource.data.agencySlug == panelId
           && request.resource.data.updatedByUid == request.auth.uid
@@ -713,21 +947,21 @@ service cloud.firestore {
         allow read: if isAgencyPanelCollection(panelCollection)
           && canReadAgencyPanelFromParent(panelCollection, panelId);
         allow create, update, delete: if isAgencyPanelCollection(panelCollection)
-          && canManageAgencyAccessControl(panelCollection, panelId);
+          && canManageAgencyAccessControl(panelId);
       }
 
       match /orgNodes/{nodeId} {
         allow read: if isAgencyPanelCollection(panelCollection)
           && canReadAgencyPanelFromParent(panelCollection, panelId);
         allow create, update, delete: if isAgencyPanelCollection(panelCollection)
-          && canManageAgencyAccessControl(panelCollection, panelId);
+          && canManageAgencyAccessControl(panelId);
       }
 
       match /config/{docId} {
         allow read: if isAgencyPanelCollection(panelCollection)
           && canReadAgencyPanelFromParent(panelCollection, panelId);
         allow create, update, delete: if isAgencyPanelCollection(panelCollection)
-          && canManageAgencyAccessControl(panelCollection, panelId);
+          && canManageAgencyAccessControl(panelId);
       }
 
       match /auditLogs/{logId} {
@@ -797,6 +1031,21 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // Multi-agent run audit log — admin SDK only, and append-only even there.
+      //
+      // These records are how the agency answers "why did the assistant
+      // recommend evacuating that district". A client that could write them
+      // could forge one; a client that could delete them could erase the
+      // answer. Reads go through GET /api/ai/agents/runs, which applies the
+      // same panel scoping as the chat that produced the run.
+      //
+      // The roster itself lives at settings/agentRoster, which has no match
+      // block and is therefore denied by default — writes go through
+      // PUT /api/ai/agents, which re-validates every specialist.
+      match /agentRuns/{runId} {
+        allow read, write: if false;
+      }
+
       match /chats/{chatId} {
         // Split per-operation so the Firestore analyzer can verify list queries.
         // A combined `read, write` rule with a ternary on `resource == null`
@@ -831,10 +1080,132 @@ service cloud.firestore {
         }
       }
 
-      // Agency-internal encrypted messaging channel: any member of this agency panel
-      // (authorities via dashboard access + field teams via their agency binding) can read the
-      // history and post. Content is E2E-encrypted with the per-agency key (issueAgencyMessagingKey),
-      // so the server only ever stores ciphertext. Messages are an immutable log (no edit/delete).
+      // Private 1:1 staff conversations. Separate from /secureMessages on purpose: that one is the
+      // panel's shared ROOM (the phones render every message in it to every member — Android's
+      // authority thread "has no single peer"), so it cannot also carry private pairs. It used to,
+      // with the pairing enforced only by a client-side filter in the dashboard, which meant a
+      // message an operator believed was private was rendered in full on every phone in the panel.
+      //
+      // Scoped to the two participants here, at the rules layer, from the first write. `list`
+      // cannot be gated on `senderUid == uid || recipientUid == uid` — Firestore rejects a query
+      // whose rule is an OR because it cannot prove every result is authorised (the citizen
+      // /messages rules above hit the same wall) — so the denormalized `participants` array gives
+      // one provable array-contains condition that the client query mirrors.
+      //
+      // No manager/supervisor read path, deliberately: AYM (E.Ü., B. No: 2016/13010) requires
+      // prior, clear disclosure before any content monitoring and AFAD's published aydınlatma
+      // metni discloses none, while KVKK art. 12/1 obliges the controller to prevent unauthorised
+      // access (Kurul 2021/1187, 250.000 TL for this shape of access). Oversight, if it is ever
+      // required, belongs in a disclosed archival channel behind a policy — not in this rule.
+      match /directMessages/{messageId} {
+        function inPanel() {
+          return isAgencyPanelCollection(panelCollection)
+            && canReadAgencyPanelFromParent(panelCollection, panelId);
+        }
+        // `read` covers get AND list, and the two cannot carry the same conditions here. A list is
+        // authorised against the QUERY's constraints, never against the documents it would return:
+        // `array-contains` discharges `uid in resource.data.participants`, but no query constraint
+        // can express a TYPE assertion, so `participants is list` is undischargeable and Firestore
+        // refuses the whole subscription with permission-denied. Written as a single `read` rule it
+        // took the dashboard's entire 1:1 messaging offline for every user in every panel.
+        //
+        // So: keep the type guard on `get`, where it is evaluable and load-bearing — CEL's `in`
+        // tests MAP KEYS too, so without it a document whose `participants` is a map keyed by the
+        // caller's uid would read as authorised. Clients cannot write that shape (create below
+        // demands a list of 1..2), but an Admin-SDK path could. On `list` the guard is unnecessary
+        // as well as impossible: array-contains matches only array members, so a map-valued field
+        // can never appear in the result set.
+        allow get: if inPanel()
+          && resource.data.participants is list
+          && request.auth.uid in resource.data.participants;
+        allow list: if inPanel()
+          && request.auth.uid in resource.data.participants;
+        // The full set the dashboard writes — this collection has exactly one writer
+        // (lib/messaging/direct.ts sendDirectMessage), and its three object spreads are closed:
+        // attachments contribute attMeta+attMetaNonce, link previews lpMeta+lpNonce, replies
+        // replyToId. Everything else a message carries — filenames, sizes, voice-note durations,
+        // shared locations, call logs — rides INSIDE the encrypted blobs, not as document fields.
+        // Without this, a member can bury arbitrary payload in a log that is immutable and
+        // undeletable at the rules layer (update/delete are both false below).
+        allow create: if inPanel()
+          && request.resource.data.keys().hasOnly([
+            "senderUid", "senderName", "recipientUid", "recipientName", "participants",
+            "keyId", "nonce", "ciphertext", "createdAt",
+            "attMeta", "attMetaNonce", "lpMeta", "lpNonce", "replyToId",
+            // Per-conversation encryption (lib/messaging/per-message-seal.ts). Ship these BEFORE any
+            // client writes the shape: a rules deploy and a client deploy are not atomic, and an
+            // allowlist that omits them denies the write outright rather than degrading it.
+            "senderDeviceId", "envelopes",
+          ])
+          && (!("envelopes" in request.resource.data) || request.resource.data.envelopes is map)
+          && request.resource.data.senderUid == request.auth.uid
+          // `hasOnly` is a SUBSET check, so without this `createdAt` could be omitted entirely or
+          // set to any value. The listener is `orderBy createdAt desc, limit 200` with no pagination
+          // (lib/messaging/direct.ts:150-157), so 200 documents dated in the year 2100 permanently
+          // occupy the top of every query and evict a colleague's whole visible history — in a
+          // collection where update and delete are both false, so there is no undoing it.
+          // All three clients write serverTimestamp(), which the server substitutes before rules
+          // run, so pinning it to request.time costs them nothing.
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.participants is list
+          && request.resource.data.participants.size() >= 1
+          && request.resource.data.participants.size() <= 2
+          && request.resource.data.senderUid in request.resource.data.participants
+          && request.resource.data.recipientUid in request.resource.data.participants;
+        allow update, delete: if false;
+      }
+
+      // Per-DEVICE key directory. Substrate for per-conversation encryption: today a member has one
+      // key at /memberKeys/{uid} which may be updated in place, so "enrolled a second laptop" and
+      // "someone replaced this member's key" are the same event, and the capability to read belongs
+      // to the ACCOUNT rather than to a device. Here a member publishes one entry per device.
+      //
+      // The audience is deliberately canReadAgencyPanelFromParent — the SAME predicate as
+      // /directMessages above, NOT the narrower isAgendaKeyMember used by /memberKeys. That one is
+      // agencyPanels + own-panel-key only, so a device directory behind it would silently strand
+      // exactly the HQ and cross-panel conversations that need it: the peer would be unable to read
+      // the devices of someone they can already message. Key audience must not be narrower than
+      // message audience, or sending fails for pairs that can legitimately talk.
+      //
+      // The document id is the SHA-256 of the published key (see lib/messaging/device-directory.ts),
+      // so the id commits to the key and a substitution cannot occupy the same id. Rules have no
+      // SHA-256 and CANNOT enforce that — listDevices() re-derives it on read and drops mismatches.
+      // What the rules do enforce is the part that matters most and that a client cannot: only the
+      // owner may publish under their own uid, which is what blocks planting a key under a victim's
+      // identity. `update` exists solely to refresh the label; the key is pinned to its stored value,
+      // so an entry's key can never change once written.
+      match /memberDevices/{memberUid}/devices/{deviceId} {
+        allow read: if isAgencyPanelCollection(panelCollection)
+          && canReadAgencyPanelFromParent(panelCollection, panelId);
+        allow create: if isAgencyPanelCollection(panelCollection)
+          && canReadAgencyPanelFromParent(panelCollection, panelId)
+          && request.auth.uid == memberUid
+          && request.resource.data.keys().hasOnly(["uid", "publicKey", "label", "addedAt"])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.publicKey is string
+          && request.resource.data.publicKey.size() > 0
+          && request.resource.data.publicKey.size() <= 200
+          && request.resource.data.label is string
+          && request.resource.data.label.size() <= 64
+          && request.resource.data.addedAt == request.time;
+        allow update: if isAgencyPanelCollection(panelCollection)
+          && canReadAgencyPanelFromParent(panelCollection, panelId)
+          && request.auth.uid == memberUid
+          && request.resource.data.keys().hasOnly(["uid", "publicKey", "label", "addedAt"])
+          && request.resource.data.publicKey == resource.data.publicKey
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.label is string
+          && request.resource.data.label.size() <= 64
+          && request.resource.data.addedAt == request.time;
+        allow delete: if isAgencyPanelCollection(panelCollection)
+          && canReadAgencyPanelFromParent(panelCollection, panelId)
+          && request.auth.uid == memberUid;
+      }
+
+      // The panel's shared ROOM. Every member reads and posts here — that is the intent, not a
+      // gap: the mobile authority screens render it as a single agency-wide thread. Private pairs
+      // live in /directMessages above. Content is encrypted with the per-agency key
+      // (issueAgencyMessagingKey), so the server only ever stores ciphertext. Immutable log.
       match /secureMessages/{messageId} {
         allow read: if isAgencyPanelCollection(panelCollection)
           && canReadAgencyPanelFromParent(panelCollection, panelId);
@@ -846,18 +1217,28 @@ service cloud.firestore {
 
       // Read-receipt cursors (metadata only). Any agency member reads; a member may write only
       // their own cursor (doc id `${viewerUid}__${partnerUid}`, guarded by viewerUid == uid).
+      // See the hierarchy copy above: doc id is `${viewerUid}__${partnerUid}` and clients read it
+      // by id, so the pair is gated off the id itself.
       match /readReceipts/{receiptId} {
         allow read: if isAgencyPanelCollection(panelCollection)
-          && canReadAgencyPanelFromParent(panelCollection, panelId);
+          && canReadAgencyPanelFromParent(panelCollection, panelId)
+          && (receiptId.split("__")[0] == request.auth.uid
+            || receiptId.split("__")[1] == request.auth.uid);
         allow write: if isAgencyPanelCollection(panelCollection)
           && canReadAgencyPanelFromParent(panelCollection, panelId)
           && request.resource.data.viewerUid == request.auth.uid;
       }
 
       // Typing indicators (metadata only). A member writes only their own doc (id == uid).
+      // `resource == null` for the same reason as the hierarchy copy above: read by the PARTNER's
+      // uid, so a thread whose partner has never typed has no document, and dereferencing a null
+      // `resource` errors the rule into a denial. See the note there.
       match /typing/{typingUid} {
         allow read: if isAgencyPanelCollection(panelCollection)
-          && canReadAgencyPanelFromParent(panelCollection, panelId);
+          && canReadAgencyPanelFromParent(panelCollection, panelId)
+          && (typingUid == request.auth.uid
+            || resource == null
+            || resource.data.to == request.auth.uid);
         allow write: if isAgencyPanelCollection(panelCollection)
           && canReadAgencyPanelFromParent(panelCollection, panelId)
           && request.resource.data.uid == request.auth.uid;
@@ -867,7 +1248,8 @@ service cloud.firestore {
       // (from == uid) and may delete their own. Never edited.
       match /callSignals/{signalId} {
         allow read: if isAgencyPanelCollection(panelCollection)
-          && canReadAgencyPanelFromParent(panelCollection, panelId);
+          && canReadAgencyPanelFromParent(panelCollection, panelId)
+          && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
         allow create: if isAgencyPanelCollection(panelCollection)
           && canReadAgencyPanelFromParent(panelCollection, panelId)
           && request.resource.data.from == request.auth.uid;
@@ -875,6 +1257,179 @@ service cloud.firestore {
           && canReadAgencyPanelFromParent(panelCollection, panelId)
           && resource.data.from == request.auth.uid;
         allow update: if false;
+      }
+
+      // Agency-internal encrypted agenda (calendar / notes / checklist). Reads share the
+      // secureMessages audience (own panel + vertical hierarchy); content is AES-GCM ciphertext
+      // under the per-agency key with an item-scoped AAD, so the server only ever stores sealed
+      // blobs. Unlike the append-only secureMessages log this board is mutable, so WRITES are
+      // held to the key-holding panel itself (canReadAgencyByKey) — hierarchy readers are never
+      // issued this panel's key and must not be able to corrupt or wipe the board. Updates may
+      // only rotate the sealed payload (keyId/nonce/ciphertext/updatedAt); author and creation
+      // time are immutable, and timestamps must be server time so the createdAt-ordered query
+      // window can't be gamed.
+      match /agendaItems/{itemId} {
+        allow read: if isAgencyPanelCollection(panelCollection)
+          && canReadAgencyPanelFromParent(panelCollection, panelId);
+        allow create: if isAgencyPanelCollection(panelCollection)
+          && hasPanelReadAccess()
+          && canReadAgencyByKey(panelId)
+          && request.resource.data.keys()
+            .hasOnly(["authorUid", "keyId", "nonce", "ciphertext", "createdAt", "updatedAt"])
+          && request.resource.data.authorUid == request.auth.uid
+          && request.resource.data.keyId is string
+          && request.resource.data.keyId.size() <= 128
+          && request.resource.data.nonce is string
+          && request.resource.data.nonce.size() <= 64
+          && request.resource.data.ciphertext is string
+          && request.resource.data.ciphertext.size() <= 24000
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isAgencyPanelCollection(panelCollection)
+          && hasPanelReadAccess()
+          && canReadAgencyByKey(panelId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(["keyId", "nonce", "ciphertext", "updatedAt"])
+          && request.resource.data.keyId is string
+          && request.resource.data.keyId.size() <= 128
+          && request.resource.data.nonce is string
+          && request.resource.data.nonce.size() <= 64
+          && request.resource.data.ciphertext is string
+          && request.resource.data.ciphertext.size() <= 24000
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if isAgencyPanelCollection(panelCollection)
+          && hasPanelReadAccess()
+          && canReadAgencyByKey(panelId);
+      }
+
+      // Per-user PRIVATE agenda. Same sealed-blob storage as agendaItems, but the path names the
+      // owner and every operation requires auth.uid == ownerUid — no other member (any role, any
+      // hierarchy position) can read, write, or even enumerate someone else's personal items. The
+      // owner must still be a key-holding member of this panel (the payload is sealed with the
+      // panel's agency key under a personal AAD namespace).
+      match /personalAgenda/{ownerUid}/items/{itemId} {
+        allow read: if isAgencyPanelCollection(panelCollection)
+          && request.auth.uid == ownerUid
+          && hasPanelReadAccess()
+          && canReadAgencyByKey(panelId);
+        allow create: if isAgencyPanelCollection(panelCollection)
+          && request.auth.uid == ownerUid
+          && hasPanelReadAccess()
+          && canReadAgencyByKey(panelId)
+          && request.resource.data.keys()
+            .hasOnly(["keyId", "nonce", "ciphertext", "createdAt", "updatedAt"])
+          && request.resource.data.keyId is string
+          && request.resource.data.keyId.size() <= 128
+          && request.resource.data.nonce is string
+          && request.resource.data.nonce.size() <= 64
+          && request.resource.data.ciphertext is string
+          && request.resource.data.ciphertext.size() <= 24000
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isAgencyPanelCollection(panelCollection)
+          && request.auth.uid == ownerUid
+          && hasPanelReadAccess()
+          && canReadAgencyByKey(panelId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(["keyId", "nonce", "ciphertext", "updatedAt"])
+          && request.resource.data.keyId is string
+          && request.resource.data.keyId.size() <= 128
+          && request.resource.data.nonce is string
+          && request.resource.data.nonce.size() <= 64
+          && request.resource.data.ciphertext is string
+          && request.resource.data.ciphertext.size() <= 24000
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if isAgencyPanelCollection(panelCollection)
+          && request.auth.uid == ownerUid
+          && hasPanelReadAccess()
+          && canReadAgencyByKey(panelId);
+      }
+
+      // ── Zero-knowledge agenda key layer ────────────────────────────────────────────────────────
+      // The Agenda Content Key is generated on a client and wrapped to each member's identity key;
+      // the server stores only sealed wraps and can decrypt nothing. NOTE: these rules are necessary
+      // but NOT sufficient for the "operator can't read" guarantee — a Firestore-admin can self-add
+      // as a member, so the property ultimately rests on honest clients only ever wrapping the key to
+      // members whose identity a HUMAN has approved (safety-number verified). See lib/messaging/
+      // agenda-keyring.ts (approval-gated backfill) + agenda-pinning.ts (TOFU + approval).
+
+      // Panel-scoped identity SPKI mirror. A member may publish/rotate ONLY their own key
+      // (auth.uid == uid — the single most load-bearing constraint here: it blocks publishing a key
+      // under a victim's uid, the real MITM). Peers TOFU-pin + re-verify on change client-side.
+      match /memberKeys/{uid} {
+        allow read: if isAgendaKeyMember(panelCollection, panelId);
+        allow create, update: if isAgendaKeyMember(panelCollection, panelId)
+          && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(["publicKey", "alg", "updatedAt"])
+          && request.resource.data.publicKey is string
+          && request.resource.data.publicKey.size() > 0
+          && request.resource.data.publicKey.size() <= 200
+          && request.resource.data.alg is string
+          && request.resource.data.alg.size() <= 32
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
+
+      // Immutable epoch metadata. The doc id MUST equal the epoch number (string(epoch)), which both
+      // gives one doc per epoch and makes create-if-absent the concurrency guard (a second minter of
+      // the same epoch loses the transaction). createdBy is the author; epochs are never edited.
+      match /agendaKeys/{epochId} {
+        allow read: if isAgendaKeyMember(panelCollection, panelId);
+        // Epoch 1 bootstraps; any higher epoch must be CONTIGUOUS (epoch-1 already exists), so a
+        // member can't mint an arbitrarily high epoch. The doc id must equal the epoch number, which
+        // makes create-if-absent the concurrency guard (colliding minters — one wins). Clients also
+        // only ever adopt an epoch they can actually unwrap, so a phantom epoch is harmless.
+        allow create: if isAgendaKeyMember(panelCollection, panelId)
+          && request.resource.data.keys().hasOnly(["epoch", "createdBy", "createdAt"])
+          && request.resource.data.epoch is int
+          && request.resource.data.epoch > 0
+          && epochId == string(request.resource.data.epoch)
+          && (
+            request.resource.data.epoch == 1
+            || exists(/databases/$(database)/documents/$(panelCollection)/$(panelId)/agendaKeys/$(string(request.resource.data.epoch - 1)))
+          )
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+
+        // The content key sealed to one recipient's identity key. Anyone may READ any wrap (the seal,
+        // not the ACL, provides confidentiality — a wrap is undecryptable without the recipient's
+        // device key), which lets a key-holder see who still needs a wrap. A member may CREATE only
+        // wraps they authored (wrappedBy == auth.uid). Wraps are immutable; only the RECIPIENT may
+        // delete their own (device recovery + poison eviction) — no insider can evict another member.
+        match /wraps/{recipientUid} {
+          allow read: if isAgendaKeyMember(panelCollection, panelId);
+          allow create: if isAgendaKeyMember(panelCollection, panelId)
+            && request.resource.data.keys().hasOnly(["ephemeralPublicKey", "nonce", "ciphertext", "wrappedBy", "alg", "createdAt"])
+            && request.resource.data.wrappedBy == request.auth.uid
+            && request.resource.data.ephemeralPublicKey is string
+            && request.resource.data.ephemeralPublicKey.size() <= 200
+            && request.resource.data.nonce is string
+            && request.resource.data.nonce.size() <= 64
+            && request.resource.data.ciphertext is string
+            && request.resource.data.ciphertext.size() <= 512
+            && request.resource.data.alg is string
+            && request.resource.data.alg.size() <= 64
+            && request.resource.data.createdAt == request.time;
+          allow update: if false;
+          allow delete: if isAgendaKeyMember(panelCollection, panelId)
+            && request.auth.uid == recipientUid;
+        }
+      }
+
+      // A new device asks to be re-wrapped into the current epoch. A member posts only their own
+      // request (auth.uid == uid); any member may DELETE a request (the fulfiller clears it after
+      // wrapping — a self-only delete would break fulfilment).
+      match /keyRequests/{uid} {
+        allow read: if isAgendaKeyMember(panelCollection, panelId);
+        allow create, update: if isAgendaKeyMember(panelCollection, panelId)
+          && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(["publicKey", "requestedAt"])
+          && request.resource.data.publicKey is string
+          && request.resource.data.publicKey.size() > 0
+          && request.resource.data.publicKey.size() <= 200
+          && request.resource.data.requestedAt == request.time;
+        allow delete: if isAgendaKeyMember(panelCollection, panelId);
       }
 
       match /accountDeletionRequests/{requestUid} {
@@ -938,7 +1493,7 @@ service cloud.firestore {
             canWriteRescuePanel(panelId)
             && request.resource.data.uid == request.auth.uid
             && request.resource.data.agency is string
-            && request.resource.data.agency == currentUserAgency()
+            && writeAgencyMatchesUser(request.resource.data.agency)
             && request.resource.data.responderDeviceId == responderId
           )
         );
@@ -951,7 +1506,7 @@ service cloud.firestore {
             && resource.data.uid == request.auth.uid
             && request.resource.data.uid == resource.data.uid
             && request.resource.data.agency is string
-            && request.resource.data.agency == currentUserAgency()
+            && writeAgencyMatchesUser(request.resource.data.agency)
             && (
               !("agency" in resource.data)
               || request.resource.data.agency == resource.data.agency
@@ -964,6 +1519,43 @@ service cloud.firestore {
           )
         );
         allow delete: if false;
+
+        // Breadcrumb trail of the responder's own movement — one point per SUCCESSFUL online
+        // delivery that carried a responder GPS fix (clients space points out: skip if the last
+        // written point is < 60 s old AND the new fix moved < 25 m). Doc id is the GPS capture
+        // epoch millis. Create-only from clients — the trail is an append-only log, never edited
+        // or pruned by devices; `expiresAt` (now + 7 days) feeds a Firestore TTL policy that
+        // garbage-collects old points instead.
+        match /track/{pointId} {
+          allow read: if isAgencyPanelCollection(panelCollection)
+            && canReadAgencyPanelFromParent(panelCollection, panelId);
+          allow create: if isAgencyPanelCollection(panelCollection)
+            && (
+              isPlatformAdminUser()
+            || (
+              canWriteRescuePanel(panelId)
+              && request.resource.data.keys().hasOnly([
+                "uid", "responderDeviceId", "agency", "gps", "capturedAtMillis",
+                "activeSignalCount", "recordedAt", "expiresAt", "source",
+              ])
+              && request.resource.data.uid == request.auth.uid
+              && request.resource.data.responderDeviceId == responderId
+              // Bind the path's {responderId} to the CALLER, not merely to payload fields the
+              // caller controls — without this any panel member could append points under a
+              // colleague's device and fabricate their movement trail in an append-only log no
+              // client can prune. The rescueDevices registry is owner-pinned (create/update bind
+              // uid to auth.uid) and both mobile clients register the device id there on every
+              // delivery that precedes a track write.
+              && exists(/databases/$(database)/documents/rescueDevices/$(responderId))
+              && get(/databases/$(database)/documents/rescueDevices/$(responderId)).data.uid == request.auth.uid
+              && request.resource.data.agency is string
+              && writeAgencyMatchesUser(request.resource.data.agency)
+              && request.resource.data.capturedAtMillis is int
+              && request.resource.data.capturedAtMillis > 0
+            )
+          );
+          allow update, delete: if false;
+        }
       }
 
       match /signals/{signalId} {
@@ -974,6 +1566,7 @@ service cloud.firestore {
             isPlatformAdminUser()
           || (
             canWriteRescuePanel(panelId)
+            && signalCreateKeysAllowed()
             && validActiveSignalWrite(signalId, request.resource.data)
           )
         );
@@ -982,6 +1575,7 @@ service cloud.firestore {
             isPlatformAdminUser()
           || (
             canWriteRescuePanel(panelId)
+            && signalUpdateKeysAllowed()
             && validActiveSignalWrite(signalId, request.resource.data)
             && (
               !("signalId" in resource.data)
@@ -1001,7 +1595,7 @@ service cloud.firestore {
               canWriteRescuePanel(panelId)
               && request.resource.data.uid == request.auth.uid
               && request.resource.data.agency is string
-              && request.resource.data.agency == currentUserAgency()
+              && writeAgencyMatchesUser(request.resource.data.agency)
               && request.resource.data.responderDeviceId == responderId
             )
           );
@@ -1014,7 +1608,7 @@ service cloud.firestore {
               && resource.data.uid == request.auth.uid
               && request.resource.data.uid == resource.data.uid
               && request.resource.data.agency is string
-              && request.resource.data.agency == currentUserAgency()
+              && writeAgencyMatchesUser(request.resource.data.agency)
               && (
                 !("agency" in resource.data)
                 || request.resource.data.agency == resource.data.agency
@@ -1028,7 +1622,92 @@ service cloud.firestore {
           );
           allow delete: if false;
         }
+
+        // SOS ops timeline (acknowledge/assign/resolve/reopen/note). Written
+        // ONLY server-side via /api/dashboard/sos (Admin SDK bypasses rules);
+        // panel members read it live on the SOS operations page.
+        match /events/{eventId} {
+          allow read: if isAgencyPanelCollection(panelCollection)
+            && canReadAgencyPanelFromParent(panelCollection, panelId);
+          allow write: if false;
+        }
       }
+
+      // Managed inventory (personnel, vehicles, equipment, supplies,
+      // facilities). Written ONLY server-side via /api/dashboard/resources
+      // (Admin SDK bypasses rules); panel members read it.
+      match /resources/{resourceId} {
+        allow read: if isAgencyPanelCollection(panelCollection)
+          && canReadAgencyPanelFromParent(panelCollection, panelId);
+        allow write: if false;
+      }
+
+      // Operator-drawn map annotations (perimeters, evacuation zones, sector
+      // boundaries, routes). Written ONLY server-side via
+      // /api/dashboard/map-annotations (Admin SDK bypasses rules), which is
+      // what enforces the author-or-manager delete rule and audits every
+      // change; panel members read the shared picture.
+      match /mapAnnotations/{annotationId} {
+        allow read: if isAgencyPanelCollection(panelCollection)
+          && canReadAgencyPanelFromParent(panelCollection, panelId);
+        allow write: if false;
+      }
+
+      // Resource-request / tasking flow (ICS-213RR). Written ONLY server-side
+      // via /api/dashboard/resource-requests (Admin SDK bypasses rules); panel
+      // members read the kanban board + each request's timeline.
+      match /resourceRequests/{requestId} {
+        allow read: if isAgencyPanelCollection(panelCollection)
+          && canReadAgencyPanelFromParent(panelCollection, panelId);
+        allow write: if false;
+
+        match /events/{eventId} {
+          allow read: if isAgencyPanelCollection(panelCollection)
+            && canReadAgencyPanelFromParent(panelCollection, panelId);
+          allow write: if false;
+        }
+      }
+
+      // Append-only stock ledger explaining every quantity change on a supply.
+      // Written ONLY server-side via /api/dashboard/resources inside a storage
+      // transaction (Admin SDK bypasses rules); panel members read it. `write:
+      // false` is what keeps it append-only from the client's side — the route
+      // never issues an update or delete against this collection either.
+      match /stockTransactions/{txId} {
+        allow read: if isAgencyPanelCollection(panelCollection)
+          && canReadAgencyPanelFromParent(panelCollection, panelId);
+        allow write: if false;
+      }
+    }
+
+    // Cross-panel sight of an SOS signal, at COLLECTION GROUP scope.
+    //
+    // A signal lives in the subcollection of the panel that took the report, and the queue rule
+    // above scopes reads to that panel. But the panel that took the report is often not the one that
+    // drives to the address: a victim's internet self-report resolves to the NATIONAL agency, while
+    // first response is district-owned. `panelPath` is the audience — the panels that may see this
+    // signal — and it only ever grows, because removing a panel that has seen a victim is the
+    // failure mode that kills people, while an extra pair of eyes costs one alert.
+    //
+    // Written ONLY by the server (the reportSosSignal callable and the transfer action in
+    // /api/dashboard/sos, both Admin SDK): clientWritableSignalKeys deliberately excludes it, so a
+    // relay cannot grant itself sight of another panel's victims.
+    //
+    // `list` only, and deliberately no `get`: the queue is the cross-panel need, and per-signal
+    // detail already goes through /api/dashboard/sos. Granting `get` here would widen the surface
+    // for nothing.
+    //
+    // The conditions are exactly what the query can discharge. A list is authorised against the
+    // QUERY's constraints, never the documents it would return, so `array-contains` on panelPath is
+    // provable while a type assertion (`panelPath is list`) is not — writing one here would make
+    // Firestore refuse the whole subscription with permission-denied. That mistake took the
+    // dashboard's 1:1 messaging offline for every user once; see the note on /directMessages.
+    // Safe to omit: array-contains matches only array members, so a map-valued panelPath can never
+    // appear in the result set.
+    match /{path=**}/signals/{signalId} {
+      allow list: if hasPanelReadAccess()
+        && currentUserAgencySlug() is string
+        && currentUserAgencySlug() in resource.data.panelPath;
     }
 
     match /contact/{document=**} {

@@ -22,6 +22,8 @@ import java.io.IOException
  * sfu-call.ts. Every call returns the parsed JSON or throws.
  */
 class SfuApiClient(
+    private val roomId: String,
+    private val callId: String,
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
 ) {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -36,11 +38,12 @@ class SfuApiClient(
             .build()
     }
 
-    /** POST `sessions/new` with our first offer → `{ sessionId, sessionDescription:{type:answer,sdp} }`. */
-    suspend fun createSession(offerSdp: String): JSONObject = post(
-        "sessions/new",
-        JSONObject().put("sessionDescription", sdpObj("offer", offerSdp)),
-    )
+    /**
+     * Allocate an empty Cloudflare Realtime session. The first and only initial SDP offer belongs to
+     * `tracks/new`; sending an offer here and another one while publishing leaves native WebRTC clients
+     * in a double-negotiation state that Cloudflare can reject with an internal backend error.
+     */
+    suspend fun createSession(): JSONObject = post("sessions/new", JSONObject())
 
     /** POST `sessions/{id}/tracks/new` to PUBLISH local tracks (we offer, the SFU answers). */
     suspend fun publishTracks(sessionId: String, offerSdp: String, tracks: List<JSONObject>): JSONObject = post(
@@ -76,6 +79,8 @@ class SfuApiClient(
                 .url(url)
                 .header("Authorization", "Bearer $token")
                 .header("Content-Type", "application/json")
+                .header("X-CC-SFU-Room-ID", roomId)
+                .header("X-CC-SFU-Call-ID", callId)
                 .method(method, reqBody)
                 .build()
             android.util.Log.i("SfuApiClient", "$method $path → $url")

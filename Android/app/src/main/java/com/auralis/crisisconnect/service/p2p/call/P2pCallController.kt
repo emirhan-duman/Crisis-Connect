@@ -383,10 +383,20 @@ internal class P2pCallController private constructor(private val appContext: Con
         val rxKey = call.rxKey ?: return
         val decoded = P2pCallProtocol.decodeAudioFrame(rxKey, call.callTag, packet) ?: return
         val frames = P2pCallProtocol.unpackFrameBundle(decoded.bundle) ?: return
+        val packetEnd = decoded.seq + frames.size
+        var expected: Long
+        while (true) {
+            expected = call.rxExpectedSeq.get()
+            // GCM authenticates bytes but does not by itself reject a previously valid packet.
+            // Real-time voice cannot use late audio, so reject both replays and out-of-order
+            // packets before they reach the jitter buffer. This is receiver-only and therefore
+            // remains wire-compatible with already-installed clients.
+            if (decoded.seq < expected) return
+            if (call.rxExpectedSeq.compareAndSet(expected, packetEnd)) break
+        }
         call.lastRxAtMillis = System.currentTimeMillis()
         // Loss accounting for receiver-driven adaptation: gaps in the frame sequence are
         // frames the sender emitted but we never got (dropped writes/notifications).
-        val expected = call.rxExpectedSeq.getAndSet(decoded.seq + frames.size)
         if (expected in 1 until decoded.seq) {
             call.rxFramesLost.addAndGet(
                 (decoded.seq - expected).toInt().coerceAtMost(MAX_COUNTED_GAP_FRAMES)

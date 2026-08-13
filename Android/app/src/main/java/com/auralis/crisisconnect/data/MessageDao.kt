@@ -46,6 +46,13 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE messageUuid = :messageUuid LIMIT 1")
     suspend fun getMessageByUuid(messageUuid: String): MessageEntity?
 
+    /** Removes only an already-consumed internal AuthorityChat MLS transport row. */
+    @Query(
+        "DELETE FROM messages WHERE sessionCode = :sessionCode AND messageUuid = :messageUuid " +
+            "AND isLocal = 0 AND messageType = 'TEXT' AND text LIKE 'CC_AMLS2:%'"
+    )
+    suspend fun deleteInboundAuthorityMlsTransportRow(sessionCode: String, messageUuid: String): Int
+
     @Query("UPDATE messages SET sessionCode = :newSessionCode WHERE sessionCode = :oldSessionCode")
     suspend fun migrateSessionCode(oldSessionCode: String, newSessionCode: String)
 

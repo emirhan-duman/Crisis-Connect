@@ -1920,6 +1920,47 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
                 return
             }
             incomingFileTransfers.removeValue(forKey: key)
+            if transfer.mimeType == ChannelAttachments.authorityMlsEnvelopeMime {
+                guard let encoded = String(data: fileData, encoding: .utf8),
+                      AuthorityMlsOfflineEnvelopeCodec.decode(encoded) != nil else {
+                    sendTransferControlPacket(
+                        BleFilePayload.buildAbortPacket(payload.transferId, reason: "invalid_envelope"),
+                        to: central,
+                        peripheral: peripheral
+                    )
+                    return
+                }
+                _ = appendRemoteMessageOnMain(
+                    sessionId: sessionId,
+                    text: encoded,
+                    transportMessageId: transfer.messageId
+                )
+                sendTransferControlPacket(
+                    BleFilePayload.buildDonePacket(payload.transferId),
+                    to: central,
+                    peripheral: peripheral
+                )
+                return
+            }
+            if transfer.mimeType == ChannelAttachments.authorityMlsBlobMime {
+                guard ChannelAttachments.cacheAuthorityMlsCiphertext(
+                    path: transfer.displayName,
+                    cipher: fileData
+                ) else {
+                    sendTransferControlPacket(
+                        BleFilePayload.buildAbortPacket(payload.transferId, reason: "persist_failed"),
+                        to: central,
+                        peripheral: peripheral
+                    )
+                    return
+                }
+                sendTransferControlPacket(
+                    BleFilePayload.buildDonePacket(payload.transferId),
+                    to: central,
+                    peripheral: peripheral
+                )
+                return
+            }
             guard P2pSharedTransferSupport.persistSharedDocumentData(
                 fileData,
                 messageId: transfer.messageId,

@@ -145,8 +145,12 @@ enum SfuApiError: Error, Equatable {
 /// the web's api() in sfu-call.ts and Android's SfuApiClient, including the cold-edge retry.
 final class SfuApiClient: @unchecked Sendable {
     private let session: URLSession
+    private let roomId: String
+    private let callId: String
 
-    init() {
+    init(roomId: String, callId: String) {
+        self.roomId = roomId
+        self.callId = callId
         let config = URLSessionConfiguration.default
         // The Cloudflare proxy can exceed 10s when the edge is cold; give it the same window
         // Android does (25s read) with one retry on timeout.
@@ -154,11 +158,9 @@ final class SfuApiClient: @unchecked Sendable {
         session = URLSession(configuration: config)
     }
 
-    /// POST `sessions/new` with our first offer → { sessionId, sessionDescription: {type, sdp} }.
-    func createSession(offerSdp: String) async throws -> [String: Any] {
-        try await execute(path: "sessions/new", method: "POST", body: [
-            "sessionDescription": ["type": "offer", "sdp": offerSdp]
-        ])
+    /// Allocate an empty session. The single initial SDP offer is sent by `tracks/new` below.
+    func createSession() async throws -> [String: Any] {
+        try await execute(path: "sessions/new", method: "POST", body: [:])
     }
 
     /// POST `sessions/{id}/tracks/new` to PUBLISH local tracks (we offer, the SFU answers).
@@ -204,6 +206,8 @@ final class SfuApiClient: @unchecked Sendable {
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(roomId, forHTTPHeaderField: "X-CC-SFU-Room-ID")
+        request.setValue(callId, forHTTPHeaderField: "X-CC-SFU-Call-ID")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         var lastTimeout: Error?

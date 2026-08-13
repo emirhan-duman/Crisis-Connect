@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -76,6 +77,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -89,6 +91,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -98,6 +102,8 @@ import androidx.compose.ui.unit.dp
 import com.auralis.crisisconnect.screens.Chat.ChatTextureBackground
 import com.auralis.crisisconnect.ui.components.ContactAvatar
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -108,7 +114,9 @@ import com.auralis.crisisconnect.data.AppDatabase
 import com.auralis.crisisconnect.data.AuthorityChannelReadEntity
 import com.auralis.crisisconnect.data.ChatMessage
 import com.auralis.crisisconnect.data.MessageType
+import com.auralis.crisisconnect.data.PREFERRED_TRANSPORT_BLE_GATT
 import com.auralis.crisisconnect.data.getContact
+import com.auralis.crisisconnect.data.normalizePreferredTransport
 import com.auralis.crisisconnect.data.observeMessages
 import com.auralis.crisisconnect.data.imageMessageFile
 import com.auralis.crisisconnect.data.saveLocalAudioMessage
@@ -117,10 +125,12 @@ import com.auralis.crisisconnect.data.saveLocalMessage
 import com.auralis.crisisconnect.data.voiceMessageFile
 import com.auralis.crisisconnect.data.voiceMessageFileName
 import com.auralis.crisisconnect.data.toAuthorityEntity
+import com.auralis.crisisconnect.data.toAuthorityConversationEntity
 import com.auralis.crisisconnect.data.toHierarchyMessage
 import com.auralis.crisisconnect.getSavedUserName
 import com.auralis.crisisconnect.screens.Chat.AudioMessageContent
 import com.auralis.crisisconnect.screens.Chat.CallEventRow
+import com.auralis.crisisconnect.screens.Chat.CallOverlay
 import com.auralis.crisisconnect.screens.Chat.FILE_COMPRESSION_NONE
 import com.auralis.crisisconnect.screens.Chat.FileMessageContent
 import com.auralis.crisisconnect.screens.Chat.ImageMessageContent
@@ -141,6 +151,9 @@ import com.auralis.crisisconnect.screens.Chat.parseSharedLocationPayload
 import com.auralis.crisisconnect.screens.Chat.rememberOwnLocationSnapshot
 import com.auralis.crisisconnect.screens.Chat.LOCATION_SOURCE_GPS
 import com.auralis.crisisconnect.nearby.NearbyAutoLink
+import com.auralis.crisisconnect.service.CallAudioRoute
+import com.auralis.crisisconnect.service.CallState
+import com.auralis.crisisconnect.service.CallUiState
 import com.auralis.crisisconnect.service.RfcommForegroundService
 import com.auralis.crisisconnect.service.RfcommForegroundService.CallDirection
 import com.auralis.crisisconnect.service.RfcommForegroundService.CallEvent
@@ -148,13 +161,20 @@ import com.auralis.crisisconnect.service.RfcommForegroundService.CallResult
 import com.auralis.crisisconnect.ui.components.rememberConnectedSessions
 import com.auralis.crisisconnect.messaging.ChannelAttachment
 import com.auralis.crisisconnect.messaging.ChannelAttachments
+import com.auralis.crisisconnect.messaging.AuthorityMlsChatChannel
+import com.auralis.crisisconnect.messaging.AuthorityMlsChatMessage
+import com.auralis.crisisconnect.messaging.AuthorityMlsMessagePayload
+import com.auralis.crisisconnect.messaging.AuthorityMlsOfflineEnvelopeCodec
+import com.auralis.crisisconnect.messaging.AuthorityMlsPreparation
+import com.auralis.crisisconnect.messaging.AuthorityMlsScopeType
 import com.auralis.crisisconnect.messaging.InternetChatTransport
 import com.auralis.crisisconnect.messaging.InternetConversation
-import com.auralis.crisisconnect.messaging.HierarchyChannelKey
 import com.auralis.crisisconnect.messaging.HierarchyMessage
 import com.auralis.crisisconnect.messaging.HierarchyMessagingClient
 import com.auralis.crisisconnect.messaging.PendingChannelAttachment
 import com.auralis.crisisconnect.messaging.call.AuthorityCallSignaling
+import com.auralis.crisisconnect.service.p2p.P2pGattChatManager
+import com.auralis.crisisconnect.service.p2p.call.P2pCallController
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ListenerRegistration
 import java.io.File
@@ -163,17 +183,22 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /** UI state for a single cross-panel (hierarchy) 1:1 thread. */
 data class ChannelThreadState(
@@ -181,31 +206,41 @@ data class ChannelThreadState(
     val error: String? = null,
     val messages: List<HierarchyMessage> = emptyList(),
     val sending: Boolean = false,
+    val mlsPreparation: AuthorityMlsPreparation? = null,
+    val mlsStagingReady: Boolean = false,
+    val mlsSendReady: Boolean = false,
+    val securityError: String? = null,
+    val mlsApprovalUid: String? = null,
+    val mlsApprovalError: Boolean = false,
 )
 
 /**
- * Drives one hierarchy channel thread with a specific peer. Fetches the shared channel key, subscribes
- * to the (E2E) message log and keeps only the 1:1 messages between me and the peer, and sends addressed
- * replies. The transport ([HierarchyMessagingClient]) is byte-compatible with the web dashboard, so this
- * mirrors what the panel sees. Nav args are supplied via [start] from the screen (no custom factory).
+ * Drives one hierarchy channel thread with a specific peer. Cloud content uses only the verified MLS-v2
+ * session; the retired server-issued shared AES key and its Firestore history are never requested.
+ * Nav args are supplied via [start] from the screen (no custom factory).
  */
 class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) {
     private val client = HierarchyMessagingClient()
     private val auth = FirebaseAuth.getInstance()
     private val dao by lazy { AppDatabase.getInstance(getApplication()).authorityMessageDao() }
-    private var listener: ListenerRegistration? = null
     private var readCursorListener: ListenerRegistration? = null
+    private var deliveryCursorListener: ListenerRegistration? = null
     private var typingListener: ListenerRegistration? = null
     private var typingExpiryJob: Job? = null
     private var lastWrittenCursor = 0L
+    @Volatile private var readEligible = false
     private var roomJob: Job? = null
-    private var keyFetchJob: Job? = null
-    // Nullable until the shared key arrives; exposed as a flow so attachment loads can await it. Bubbles
-    // now render from Room before the key is fetched, so media must wait for the key rather than give up.
-    private val channelKeyState = MutableStateFlow<HierarchyChannelKey?>(null)
-    private val channelKey: HierarchyChannelKey? get() = channelKeyState.value
+    private var mlsJob: Job? = null
+    private var cloudRetryJob: Job? = null
+    private val mlsTeardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var mlsChannel: AuthorityMlsChatChannel? = null
+    private var lastMlsPreparationDiagnostic: String? = null
     private var channelId: String = ""
     private var peerUid: String = ""
+    private var scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY
+    private var peerDisplayName: String = ""
+    private var peerAgencyName: String = ""
+    private var peerRole: String = ""
 
     private val _state = MutableStateFlow(ChannelThreadState())
     val state: StateFlow<ChannelThreadState> = _state.asStateFlow()
@@ -213,6 +248,10 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
     /** How far the peer has read MY messages (millis) — drives ✓✓ ticks. Web-compatible readReceipts. */
     private val _partnerReadAt = MutableStateFlow(0L)
     val partnerReadAt: StateFlow<Long> = _partnerReadAt.asStateFlow()
+
+    /** How far the peer client has decrypted MY messages — drives the gray ✓✓ state. */
+    private val _partnerDeliveredAt = MutableStateFlow(0L)
+    val partnerDeliveredAt: StateFlow<Long> = _partnerDeliveredAt.asStateFlow()
 
     /** Whether the peer is currently typing to me. */
     private val _partnerTyping = MutableStateFlow(false)
@@ -237,6 +276,11 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
     private var bluetoothLinked = false
     private val internetTransport by lazy { InternetChatTransport(getApplication()) }
     private var bridgeMessagesJob: Job? = null
+    private val pendingOfflineEnvelopes = ConcurrentHashMap<String, String>()
+    private val pendingBluetoothSends = ConcurrentHashMap<String, String>()
+    private val pendingBluetoothAttachments = ConcurrentHashMap<String, List<ChannelAttachment>>()
+    private val offlineDrainMutex = Mutex()
+    private val bluetoothDrainMutex = Mutex()
     // The thread renders one merged, time-sorted timeline: cloud channel messages (Room cache of
     // Firestore) + plain-text Bluetooth messages exchanged with the peer's bridge contact.
     private val cloudMessages = MutableStateFlow<List<HierarchyMessage>>(emptyList())
@@ -250,20 +294,128 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
     /** Whether the E2E internet relay can currently carry traffic (drives call/send routing). */
     fun isInternetAvailable(): Boolean = internetTransport.isAvailable()
 
-    /** Places a classic Bluetooth (RFCOMM) voice call to the peer's bridge contact. */
+    private val p2pCallController by lazy { P2pCallController.shared(getApplication()) }
+    private var gattCallsSnapshot: Map<String, CallUiState> = emptyMap()
+    private var rfcommCallsSnapshot: Map<String, CallUiState> = emptyMap()
+    private var btCallStateJob: Job? = null
+    private val _nearbyCall = MutableStateFlow<CallUiState?>(null)
+    val nearbyCall: StateFlow<CallUiState?> = _nearbyCall.asStateFlow()
+
+    init {
+        // This is the same process-wide GATT call engine observed by the normal ChatScreen.
+        // Android<->iOS authority calls therefore use the already-tested cross-platform wire path.
+        viewModelScope.launch {
+            p2pCallController.calls.collect { calls ->
+                gattCallsSnapshot = calls
+                publishNearbyCall()
+            }
+        }
+    }
+
+    private fun publishNearbyCall() {
+        val session = _bridgeSessionCode.value
+        _nearbyCall.value = session?.let { code ->
+            gattCallsSnapshot.values.firstOrNull {
+                it.sessionCode.equals(code, ignoreCase = true)
+            } ?: rfcommCallsSnapshot[code]
+        }
+    }
+
+    /** Places the same authenticated nearby voice call used by the normal ChatScreen. */
     fun startBluetoothCall(onResult: (Boolean) -> Unit) {
         val session = _bridgeSessionCode.value
-        val service = btService
-        if (session == null || service == null) {
-            session?.let { requestBluetoothConnect(it) }
+        if (session == null) {
             onResult(false)
             return
         }
-        service.startVoipCall(session) { started -> onResult(started) }
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val contact = withContext(Dispatchers.IO) { getContact(context, session) }
+            if (contact == null || contact.aesKey.isBlank()) {
+                requestBluetoothConnect(session)
+                onResult(false)
+                return@launch
+            }
+
+            if (normalizePreferredTransport(contact.preferredTransport) == PREFERRED_TRANSPORT_BLE_GATT) {
+                val gatt = P2pGattChatManager.shared(context)
+                gatt.updateContact(contact)
+                gatt.start()
+                val started = if (gatt.isReady() || p2pCallController.isCallReachable(session)) {
+                    withContext(Dispatchers.IO) { p2pCallController.startCall(session) }
+                } else {
+                    false
+                }
+                onResult(started)
+                return@launch
+            }
+
+            val service = btService
+            if (service == null) {
+                requestBluetoothConnect(session)
+                onResult(false)
+                return@launch
+            }
+            service.startVoipCall(session) { started -> onResult(started) }
+        }
+    }
+
+    fun acceptBluetoothCall(callId: String) {
+        val session = _bridgeSessionCode.value ?: return
+        if (gattCallsSnapshot.values.any { it.callId == callId }) {
+            viewModelScope.launch(Dispatchers.IO) {
+                p2pCallController.acceptCall(session, callId)
+            }
+        } else {
+            btService?.acceptIncomingCall(session, callId) { }
+        }
+    }
+
+    fun rejectBluetoothCall(callId: String) {
+        val session = _bridgeSessionCode.value ?: return
+        if (gattCallsSnapshot.values.any { it.callId == callId }) {
+            p2pCallController.rejectCall(session, callId)
+        } else {
+            btService?.rejectIncomingCall(session, callId)
+        }
+    }
+
+    fun endBluetoothCall(callId: String) {
+        val session = _bridgeSessionCode.value ?: return
+        if (gattCallsSnapshot.values.any { it.callId == callId }) {
+            p2pCallController.endCall(session)
+        } else {
+            btService?.endVoipCall(session, callId)
+        }
+    }
+
+    fun setBluetoothCallMuted(muted: Boolean) {
+        val session = _bridgeSessionCode.value ?: return
+        val call = _nearbyCall.value ?: return
+        if (gattCallsSnapshot.values.any { it.callId == call.callId }) {
+            p2pCallController.setMuted(session, muted)
+        } else {
+            btService?.setCallMicMuted(session, muted)
+        }
+    }
+
+    fun setBluetoothCallAudioRoute(route: CallAudioRoute) {
+        val session = _bridgeSessionCode.value ?: return
+        val call = _nearbyCall.value ?: return
+        if (route !in call.availableRoutes) return
+        if (gattCallsSnapshot.values.any { it.callId == call.callId }) {
+            p2pCallController.setSpeakerEnabled(session, route == CallAudioRoute.Speaker)
+        } else {
+            btService?.setCallAudioRoute(session, route)
+        }
     }
 
     fun setBluetoothLinked(linked: Boolean) {
         bluetoothLinked = linked
+        if (linked) viewModelScope.launch {
+            queuePendingMlsForBluetooth()
+            drainBluetoothSends()
+        }
     }
 
     private fun publishMergedMessages() {
@@ -280,123 +432,29 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
         _state.value = _state.value.copy(loading = false, messages = merged)
     }
 
-    private var backfillJob: Job? = null
-
-    /**
-     * Once the channel key is available and the internet is back, posts every Bluetooth-carried
-     * text/location of this thread that never reached the channel (keyed by clientUuid) — so the
-     * web dashboard catches up on the offline conversation. Media backfill is deliberately out
-     * for now (blobs would need re-encryption + upload).
-     */
-    private suspend fun backfillBluetoothMessages(key: HierarchyChannelKey) {
-        if (!internetTransport.isAvailable()) return
-        val session = _bridgeSessionCode.value ?: return
-        val context = getApplication<Application>()
-        val cloudClientUuids = withContext(Dispatchers.IO) {
-            runCatching {
-                dao.observeThread(channelId, peerUid).first()
-                    .mapNotNullTo(HashSet()) { it.clientUuid.takeIf { u -> u.isNotBlank() } }
-            }.getOrDefault(hashSetOf())
-        }
-        val rows = withContext(Dispatchers.IO) {
-            runCatching { observeMessages(context, session).first() }.getOrDefault(emptyList())
-        }
-        val senderName = runCatching { getSavedUserName(context).first() }.getOrDefault("")
-            .ifBlank { auth.currentUser?.displayName.orEmpty() }
-        val peerName = cloudMessages.value.firstOrNull { it.senderUid == peerUid }?.senderName.orEmpty()
-        for (msg in rows) {
-            if (!msg.isLocal || msg.messageUuid in cloudClientUuids) continue
-            when (msg.messageType) {
-                MessageType.TEXT -> {
-                    val trimmed = msg.text.trim()
-                    if (trimmed.isEmpty()) continue
-                    // CC_FILE payloads stay Bluetooth-only: the raw blob isn't kept on the row
-                    // and the web doesn't speak that wire format anyway.
-                    if (trimmed.startsWith("CC_") && parseSharedLocationPayload(trimmed) == null) {
-                        continue
-                    }
-                    runCatching {
-                        client.send(
-                            key, senderName, peerUid, peerName, trimmed,
-                            clientUuid = msg.messageUuid
-                        )
-                    }
-                }
-                MessageType.AUDIO -> {
-                    val attachment = withContext(Dispatchers.IO) {
-                        val file = msg.audioFilePath?.let(::File)?.takeIf { it.exists() }
-                        val bytes = file?.let { runCatching { it.readBytes() }.getOrNull() }
-                        if (file == null || bytes == null || bytes.isEmpty()) {
-                            null
-                        } else {
-                            PendingChannelAttachment(
-                                bytes = bytes,
-                                name = file.name,
-                                mime = audioMimeForFileName(file.name),
-                                durationSec = msg.audioDurationMillis
-                                    ?.let { (it / 1000L).toInt() }
-                                    ?.takeIf { it > 0 }
-                            )
-                        }
-                    } ?: continue
-                    runCatching {
-                        client.send(
-                            key, senderName, peerUid, peerName, "",
-                            attachments = listOf(attachment),
-                            clientUuid = msg.messageUuid
-                        )
-                    }
-                }
-                MessageType.IMAGE -> {
-                    val attachment = withContext(Dispatchers.IO) {
-                        val file = msg.imageFilePath?.let(::File)?.takeIf { it.exists() }
-                        val bytes = file?.let { runCatching { it.readBytes() }.getOrNull() }
-                        if (file == null || bytes == null || bytes.isEmpty()) {
-                            null
-                        } else {
-                            PendingChannelAttachment(
-                                bytes = bytes,
-                                name = file.name,
-                                mime = msg.imageMimeType?.takeIf { it.isNotBlank() } ?: "image/jpeg",
-                                width = msg.imageWidth,
-                                height = msg.imageHeight
-                            )
-                        }
-                    } ?: continue
-                    runCatching {
-                        client.send(
-                            key, senderName, peerUid, peerName, "",
-                            attachments = listOf(attachment),
-                            clientUuid = msg.messageUuid
-                        )
-                    }
-                }
-                else -> continue
-            }
-        }
-    }
-
-    private fun audioMimeForFileName(fileName: String): String = when {
-        fileName.endsWith(".ogg", ignoreCase = true) ||
-            fileName.endsWith(".opus", ignoreCase = true) -> "audio/ogg"
-        fileName.endsWith(".mp3", ignoreCase = true) -> "audio/mpeg"
-        fileName.endsWith(".aac", ignoreCase = true) -> "audio/aac"
-        fileName.endsWith(".3gp", ignoreCase = true) -> "audio/3gpp"
-        else -> "audio/mp4"
-    }
-
     private var btService: RfcommForegroundService? = null
     private var btServiceBound = false
     private var pendingBtConnectSession: String? = null
     private val btServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             btService = (binder as? RfcommForegroundService.LocalBinder)?.getService()
+            btCallStateJob?.cancel()
+            btCallStateJob = viewModelScope.launch {
+                btService?.calls?.collect { calls ->
+                    rfcommCallsSnapshot = calls
+                    publishNearbyCall()
+                }
+            }
             pendingBtConnectSession?.let { code -> btService?.connectToContact(code) { } }
             pendingBtConnectSession = null
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            btCallStateJob?.cancel()
+            btCallStateJob = null
+            rfcommCallsSnapshot = emptyMap()
             btService = null
+            publishNearbyCall()
         }
     }
 
@@ -426,6 +484,15 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
                 bridgeMessages.value = rows.mapNotNull { msg ->
                     val trimmed = msg.text.trim()
                     when {
+                        msg.messageType == MessageType.TEXT &&
+                            trimmed.startsWith(AuthorityMlsOfflineEnvelopeCodec.PREFIX) -> {
+                            val envelope = AuthorityMlsOfflineEnvelopeCodec.decode(trimmed)
+                            if (envelope != null) {
+                                pendingOfflineEnvelopes[msg.messageUuid] = trimmed
+                                viewModelScope.launch { drainOfflineEnvelopes() }
+                            }
+                            null
+                        }
                         msg.messageType == MessageType.AUDIO &&
                             !msg.audioFilePath.isNullOrBlank() -> {
                             mediaById["bt:${msg.messageUuid}"] = msg
@@ -466,8 +533,15 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
                 }
             }
             val refreshed = withContext(Dispatchers.IO) { getContact(context, session) } ?: return@launch
-            if (refreshed.aesKey.isNotBlank() && refreshed.address.isNotBlank()) {
-                requestBluetoothConnect(session)
+            if (refreshed.aesKey.isNotBlank()) {
+                if (normalizePreferredTransport(refreshed.preferredTransport) == PREFERRED_TRANSPORT_BLE_GATT) {
+                    P2pGattChatManager.shared(context).apply {
+                        updateContact(refreshed)
+                        start()
+                    }
+                } else if (refreshed.address.isNotBlank()) {
+                    requestBluetoothConnect(session)
+                }
             }
         }
     }
@@ -490,43 +564,208 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
         }.getOrDefault(false)
     }
 
-    fun start(channelId: String, peerUid: String) {
-        startBluetoothBridge(peerUid)
-        if (this.channelId == channelId && this.peerUid == peerUid && channelKey != null) return
+    private suspend fun drainOfflineEnvelopes() = offlineDrainMutex.withLock {
+        val channel = mlsChannel ?: return@withLock
+        for ((storeId, encoded) in pendingOfflineEnvelopes.entries.toList()) {
+            val accepted = runCatching { channel.acceptOfflineEnvelope(encoded) }
+                .onFailure { android.util.Log.w("AuthorityChat", "Nearby MLS delivery rejected", it) }
+                .isSuccess
+            if (accepted) {
+                pendingOfflineEnvelopes.remove(storeId, encoded)
+                _bridgeSessionCode.value?.let { session ->
+                    withContext(Dispatchers.IO) {
+                        AppDatabase.getInstance(getApplication())
+                            .messageDao()
+                            .deleteInboundAuthorityMlsTransportRow(session, storeId)
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun sendBluetoothEnvelope(
+        messageId: String,
+        encoded: String,
+        attachments: List<ChannelAttachment>,
+    ): Boolean {
+        val session = _bridgeSessionCode.value ?: return false
+        val context = getApplication<Application>()
+        val contact = withContext(Dispatchers.IO) { getContact(context, session) } ?: return false
+
+        // Prefer the cross-platform BLE GATT lane; it is the only nearby lane available on iOS.
+        val gatt = P2pGattChatManager.shared(context)
+        gatt.updateContact(contact)
+        gatt.start()
+        if (gatt.isReady()) {
+            val blobsSent = attachments.withIndex().all { (index, attachment) ->
+                val cipher = ChannelAttachments.readCachedAuthorityMlsCiphertext(context, attachment.path)
+                    ?: return@all false
+                runCatching {
+                    gatt.sendFileMessage(
+                        contact = contact,
+                        messageId = "amlsa_${messageId.takeLast(80)}_$index",
+                        displayName = attachment.path,
+                        mimeType = ChannelAttachments.AUTHORITY_MLS_BLOB_MIME,
+                        originalSizeBytes = cipher.size.toLong(),
+                        bytes = cipher,
+                    )
+                }.getOrDefault(false)
+            }
+            val envelopeBytes = encoded.toByteArray(Charsets.UTF_8)
+            if (blobsSent && runCatching {
+                    gatt.sendFileMessage(
+                        contact = contact,
+                        messageId = "amls_$messageId",
+                        displayName = "authority-mls-envelope",
+                        mimeType = ChannelAttachments.AUTHORITY_MLS_ENVELOPE_MIME,
+                        originalSizeBytes = envelopeBytes.size.toLong(),
+                        bytes = envelopeBytes,
+                    )
+                }.getOrDefault(false)) return true
+        }
+
+        // Android ↔ Android may already own a faster RFCOMM stream.
+        if (attachments.isNotEmpty()) {
+            requestBluetoothConnect(session)
+            return false
+        }
+        val service = btService
+        if (service != null) {
+            val result = CompletableDeferred<Boolean>()
+            service.sendMessage(session, "amls_$messageId", encoded) { result.complete(it) }
+            if (result.await()) return true
+        }
+        requestBluetoothConnect(session)
+        return false
+    }
+
+    private suspend fun drainBluetoothSends() = bluetoothDrainMutex.withLock {
+        for ((messageId, encoded) in pendingBluetoothSends.entries.toList()) {
+            val attachments = pendingBluetoothAttachments[messageId].orEmpty()
+            if (sendBluetoothEnvelope(messageId, encoded, attachments)) {
+                pendingBluetoothSends.remove(messageId, encoded)
+                pendingBluetoothAttachments.remove(messageId)
+            }
+        }
+    }
+
+    private fun queueBluetoothSend(
+        messageId: String,
+        encoded: String,
+        attachments: List<ChannelAttachment> = emptyList(),
+    ) {
+        pendingBluetoothSends[messageId] = encoded
+        if (attachments.isNotEmpty()) pendingBluetoothAttachments[messageId] = attachments
+        viewModelScope.launch { drainBluetoothSends() }
+        schedulePendingCloudFlush()
+    }
+
+    private fun schedulePendingCloudFlush() {
+        if (cloudRetryJob?.isActive == true) return
+        val expectedConversation = mlsChannel?.conversationId ?: return
+        cloudRetryJob = viewModelScope.launch {
+            while (mlsChannel?.conversationId == expectedConversation) {
+                val channel = mlsChannel ?: return@launch
+                if (isInternetAvailable() && _state.value.mlsSendReady) {
+                    val flushed = runCatching {
+                        channel.flushPending().forEach { delivered ->
+                            persistMlsMessage(delivered)
+                            pendingBluetoothSends.remove(delivered.id)
+                            pendingBluetoothAttachments.remove(delivered.id)
+                        }
+                    }.isSuccess
+                    if (flushed) return@launch
+                }
+                delay(1_500L)
+            }
+        }
+    }
+
+    private suspend fun queuePendingMlsForBluetooth() {
+        val channel = mlsChannel ?: return
+        runCatching {
+            channel.pendingOfflineEnvelopes() to channel.pendingAttachmentDescriptors()
+        }.onSuccess { (envelopes, attachments) ->
+            envelopes.forEach { (id, value) ->
+                pendingBluetoothSends[id] = value
+                attachments[id]?.takeIf { it.isNotEmpty() }?.let {
+                    pendingBluetoothAttachments[id] = it
+                }
+            }
+        }
+            .onFailure { android.util.Log.w("AuthorityChat", "Unable to prepare nearby MLS outbox", it) }
+    }
+
+    fun start(
+        channelId: String,
+        peerUid: String,
+        scopeType: AuthorityMlsScopeType,
+        peerDisplayName: String,
+        peerAgencyName: String,
+        peerRole: String,
+    ) {
+        if (this.channelId == channelId && this.peerUid == peerUid && this.scopeType == scopeType &&
+            (mlsChannel != null || mlsJob?.isActive == true)
+        ) return
         this.channelId = channelId
         this.peerUid = peerUid
+        this.scopeType = scopeType
+        this.peerDisplayName = peerDisplayName
+        this.peerAgencyName = peerAgencyName
+        this.peerRole = peerRole
         lastWrittenCursor = 0L
-        channelKeyState.value = null
         cloudMessages.value = emptyList()
         bridgeMessages.value = emptyList()
-        _state.value = _state.value.copy(loading = true, error = null)
-        // Backfill Bluetooth-era messages into the channel as soon as the shared key is here.
-        backfillJob?.cancel()
-        backfillJob = viewModelScope.launch {
-            val key = channelKeyState.filterNotNull().first()
-            backfillBluetoothMessages(key)
-        }
-        listener?.remove()
-        listener = null
+        _state.value = _state.value.copy(
+            loading = true,
+            error = null,
+            mlsPreparation = null,
+            mlsStagingReady = false,
+            mlsSendReady = false,
+            securityError = null,
+        )
+        mlsJob?.cancel()
+        cloudRetryJob?.cancel()
+        cloudRetryJob = null
+        mlsChannel?.let { previous -> viewModelScope.launch { previous.close() } }
+        mlsChannel = null
+        // The nearby link is transport-only: it carries the exact MLS application ciphertext and
+        // never receives AuthorityChat plaintext or attachment keys outside MLS.
+        startBluetoothBridge(peerUid)
 
         // Read-receipt (✓✓) + typing subscriptions — metadata only, so they work without the channel key.
         val me = myUid
         _partnerReadAt.value = 0L
+        _partnerDeliveredAt.value = 0L
         _partnerTyping.value = false
         readCursorListener?.remove()
-        readCursorListener = client.listenReadCursor(channelId, me, peerUid) { at -> _partnerReadAt.value = at }
+        readCursorListener = client.listenReadCursor(
+            channelId, me, peerUid,
+            onAt = { at -> _partnerReadAt.value = at },
+            scopeType = scopeType,
+        )
+        deliveryCursorListener?.remove()
+        deliveryCursorListener = client.listenDeliveredCursor(
+            channelId, me, peerUid,
+            onAt = { at -> _partnerDeliveredAt.value = at },
+            scopeType = scopeType,
+        )
         typingListener?.remove()
         typingExpiryJob?.cancel()
-        typingListener = client.listenTyping(channelId, me, peerUid) { typing ->
-            typingExpiryJob?.cancel()
-            if (typing) {
-                _partnerTyping.value = true
-                // Local safety expiry in case the peer's "stopped typing" write never lands (tab closed).
-                typingExpiryJob = viewModelScope.launch { delay(6000); _partnerTyping.value = false }
-            } else {
-                _partnerTyping.value = false
-            }
-        }
+        typingListener = client.listenTyping(
+            channelId, me, peerUid,
+            onTyping = { typing ->
+                typingExpiryJob?.cancel()
+                if (typing) {
+                    _partnerTyping.value = true
+                    // Local safety expiry in case the peer's "stopped typing" write never lands (tab closed).
+                    typingExpiryJob = viewModelScope.launch { delay(6000); _partnerTyping.value = false }
+                } else {
+                    _partnerTyping.value = false
+                }
+            },
+            scopeType = scopeType,
+        )
 
         // Offline-first: the local (SQLCipher) cache is the single source of truth for what we render, so
         // the thread shows instantly and keeps working with no connectivity.
@@ -539,122 +778,271 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
                     error = if (msgs.isNotEmpty()) null else _state.value.error,
                 )
                 publishMergedMessages()
-                // Having the thread open (and re-emitting as new messages arrive) means the user has seen
-                // up to the newest message, so advance the read cursor — this clears the home-list badge
-                // and (via Firestore) shows the peer ✓✓ on their messages.
-                if (msgs.isNotEmpty()) {
-                    val newest = msgs.maxOf { it.atMillis }
-                    runCatching {
-                        dao.upsertRead(
-                            AuthorityChannelReadEntity(
-                                channelId = channelId,
-                                peerUid = peerUid,
-                                lastReadAtMillis = newest,
-                            ),
-                        )
-                    }
-                    if (newest > lastWrittenCursor) {
-                        lastWrittenCursor = newest
-                        client.writeReadCursor(channelId, me, peerUid, newest)
-                    }
-                }
+                if (readEligible) advanceReadCursor(msgs)
             }
         }
 
-        ensureChannelKey()
+        startMls(channelId, peerUid)
+    }
+
+    /** The UI enables this only while resumed and genuinely showing the newest row. */
+    fun setReadEligible(eligible: Boolean) {
+        readEligible = eligible
+        if (eligible) {
+            viewModelScope.launch(Dispatchers.IO) { advanceReadCursor(cloudMessages.value) }
+        }
+    }
+
+    private suspend fun advanceReadCursor(messages: List<HierarchyMessage>) {
+        if (!readEligible) return
+        val newest = messages.asSequence()
+            .filter { it.senderUid == peerUid }
+            .maxOfOrNull { it.atMillis } ?: return
+        runCatching {
+            dao.upsertRead(
+                AuthorityChannelReadEntity(
+                    channelId = channelId,
+                    peerUid = peerUid,
+                    lastReadAtMillis = newest,
+                ),
+            )
+        }
+        if (readEligible && newest > lastWrittenCursor) {
+            lastWrittenCursor = newest
+            client.writeReadCursor(channelId, myUid, peerUid, newest, scopeType)
+        }
+    }
+
+    private fun startMls(channelId: String, peerUid: String) {
+        val me = myUid
+        if (me.isBlank() || peerUid.isBlank()) {
+            android.util.Log.w("AuthorityChat", "MLS setup skipped because the authenticated binding is incomplete")
+            return
+        }
+        mlsJob = viewModelScope.launch {
+            var attempt = 0
+            while (true) {
+                try {
+                    val channel = mlsChannel ?: AuthorityMlsChatChannel.prepare(
+                        context = getApplication(),
+                        selfUid = me,
+                        peerUid = peerUid,
+                        scopeType = scopeType,
+                        channelId = channelId,
+                        deviceLabel = "Android ${android.os.Build.MODEL}".take(64),
+                    ).also { mlsChannel = it }
+                    if (!_state.value.mlsStagingReady) {
+                        _state.value = _state.value.copy(mlsStagingReady = true)
+                    }
+                    val preparation = channel.refreshPreparation()
+                    val diagnostic = buildString {
+                        append("ready=").append(preparation.ready)
+                        append(" rejected=").append(preparation.rejectedDirectoryRecords)
+                        append(" approved=").append(preparation.trust.count { it.approved })
+                            .append('/').append(preparation.trust.size)
+                        append(" deviceSets=")
+                        append(preparation.trust.joinToString(",") { it.deviceCommitments.size.toString() })
+                    }
+                    if (diagnostic != lastMlsPreparationDiagnostic) {
+                        lastMlsPreparationDiagnostic = diagnostic
+                        android.util.Log.i("AuthorityChat", "MLS preparation $diagnostic")
+                    }
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        mlsPreparation = preparation,
+                        mlsSendReady = false,
+                        securityError = "automatic-retry",
+                    )
+                    if (preparation.ready) {
+                        activateMls(channel)
+                        if (channel.isReadyToSend()) {
+                            channel.flushPending().forEach { delivered ->
+                                persistMlsMessage(delivered)
+                            }
+                            _state.value = _state.value.copy(mlsSendReady = true, securityError = null)
+                            return@launch
+                        }
+                    }
+                    // A complete device directory is not sufficient: this fresh Android leaf must
+                    // receive a Welcome and both accounts must be represented in the live MLS group.
+                    runCatching { channel.requestPeerPreparation() }.onFailure {
+                        android.util.Log.w("AuthorityChat", "MLS preparation wake failed", it)
+                    }
+                } catch (error: Throwable) {
+                    android.util.Log.w("AuthorityChat", "MLS setup will retry automatically", error)
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        mlsStagingReady = mlsChannel != null,
+                        mlsSendReady = false,
+                        securityError = "automatic-retry",
+                    )
+                }
+                // Directory convergence is normally sub-second; a 30-second exponential backoff
+                // made a healthy protected thread feel frozen after one transient miss.
+                delay(if (attempt < 10) 400L else 1_500L)
+                attempt += 1
+            }
+        }
+    }
+
+    fun approveDeviceSet(uid: String, expectedFingerprint: String) {
+        val channel = mlsChannel ?: return
+        if (uid.isBlank() || expectedFingerprint.isBlank() || _state.value.mlsApprovalUid != null) return
+        _state.value = _state.value.copy(mlsApprovalUid = uid, mlsApprovalError = false)
+        viewModelScope.launch {
+            runCatching { channel.approveDeviceSet(uid, expectedFingerprint) }
+                .onSuccess { preparation ->
+                    _state.value = _state.value.copy(
+                        mlsPreparation = preparation,
+                        mlsApprovalUid = null,
+                        mlsApprovalError = false,
+                    )
+                }
+                .onFailure { error ->
+                    android.util.Log.w("AuthorityChat", "Device-set approval failed closed", error)
+                    _state.value = _state.value.copy(mlsApprovalUid = null, mlsApprovalError = true)
+                }
+        }
+    }
+
+    private suspend fun activateMls(channel: AuthorityMlsChatChannel) {
+        channel.activate(
+            onMessage = { message -> persistMlsMessage(message) },
+            onSecurityError = { error ->
+                viewModelScope.launch {
+                    android.util.Log.w("AuthorityChat", "MLS transport will reconnect automatically", error)
+                    _state.value = _state.value.copy(
+                        mlsPreparation = null,
+                        mlsStagingReady = false,
+                        mlsSendReady = false,
+                        securityError = "automatic-retry",
+                    )
+                    if (mlsChannel === channel) mlsChannel = null
+                    runCatching { channel.close() }
+                    delay(1_000L)
+                    startMls(channelId, peerUid)
+                }
+            },
+        )
+        drainOfflineEnvelopes()
+        if (bluetoothLinked) {
+            queuePendingMlsForBluetooth()
+            drainBluetoothSends()
+        }
+    }
+
+    private suspend fun persistMlsMessage(message: AuthorityMlsChatMessage) {
+        val payload = message.payload
+        val row = HierarchyMessage(
+            id = message.id,
+            senderUid = message.senderUid,
+            senderName = payload.senderName,
+            recipientUid = payload.recipientUid,
+            recipientName = payload.recipientName,
+            text = payload.text,
+            atMillis = payload.sentAtMillis,
+            attachments = payload.attachments,
+            clientUuid = if (message.pending) "authority-mls-pending-v2" else "",
+        )
+        withContext(Dispatchers.IO) {
+            dao.upsertAll(listOf(row.toAuthorityEntity(channelId, myUid)))
+            val firstAttachment = payload.attachments.firstOrNull()
+            dao.upsertConversations(
+                listOf(
+                    ChannelConversation(
+                        channelId = channelId,
+                        peerUid = peerUid,
+                        peerName = peerDisplayName.ifBlank {
+                            if (message.senderUid == peerUid) payload.senderName else payload.recipientName
+                        }.ifBlank { peerUid },
+                        peerPanelName = peerAgencyName.ifBlank { channelId },
+                        group = if (scopeType == AuthorityMlsScopeType.AGENCY) "agency" else "hierarchy",
+                        lastText = payload.text,
+                        lastAtMillis = payload.sentAtMillis,
+                        lastSenderUid = message.senderUid,
+                        lastAttachmentKind = when {
+                            firstAttachment?.isAudio == true -> "audio"
+                            firstAttachment?.isImage == true -> "image"
+                            firstAttachment != null -> "file"
+                            else -> ""
+                        },
+                        peerRole = peerRole,
+                    ).toAuthorityConversationEntity(),
+                ),
+            )
+        }
+        if (message.senderUid == peerUid) {
+            client.writeDeliveredCursor(channelId, myUid, peerUid, payload.sentAtMillis, scopeType)
+        }
     }
 
     /** Publishes my typing state toward the peer (best-effort; web-compatible). */
     fun setTyping(typing: Boolean) {
         val cid = channelId.takeIf { it.isNotBlank() } ?: return
-        client.setTyping(cid, myUid, peerUid, typing)
-    }
-
-    /**
-     * Fetches the shared key + subscribes to Firestore (write-through into Room). Idempotent and
-     * retryable: if the first attempt failed offline, calling this again (e.g. when media is retried or
-     * a send is attempted after reconnecting) picks the key back up — otherwise a thread opened offline
-     * would never recover once the network returned.
-     */
-    private fun ensureChannelKey() {
-        if (channelKeyState.value != null || keyFetchJob?.isActive == true) return
-        val cid = channelId
-        val peer = peerUid
-        keyFetchJob = viewModelScope.launch {
-            try {
-                val key = client.fetchChannelKey(cid)
-                channelKeyState.value = key
-                listener?.remove()
-                listener = client.listen(key) { all ->
-                    val me = myUid
-                    val mine = all.filter { m ->
-                        (m.senderUid == peer && m.recipientUid == me) ||
-                            (m.senderUid == me && m.recipientUid == peer)
-                    }
-                    if (mine.isEmpty()) return@listen
-                    viewModelScope.launch(Dispatchers.IO) {
-                        runCatching { dao.upsertAll(mine.map { it.toAuthorityEntity(cid, me) }) }
-                    }
-                }
-            } catch (e: Exception) {
-                android.util.Log.w("AuthorityChannels", "thread sync failed channelId=$cid", e)
-                // Keep showing whatever is cached; only surface the error when there's nothing to show.
-                _state.value = _state.value.copy(
-                    loading = false,
-                    error = if (_state.value.messages.isEmpty()) e.message else null,
-                )
-            }
-        }
+        client.setTyping(cid, myUid, peerUid, typing, scopeType)
     }
 
     fun send(
         peerName: String,
         text: String,
         attachments: List<PendingChannelAttachment> = emptyList(),
+        onAccepted: () -> Unit = {},
     ) {
         val body = text.trim()
         if ((body.isEmpty() && attachments.isEmpty()) || _state.value.sending) return
-        Analytics.messageSent(
-            kind = when {
-                attachments.isEmpty() -> "text"
-                attachments.any { it.mime.startsWith("audio/") } -> "voice"
-                attachments.any { it.mime.startsWith("image/") } -> "image"
-                else -> "file"
-            },
-            transport = if (bluetoothLinked && !internetTransport.isAvailable()) "bluetooth" else "internet",
-            chat = "authority_channel"
-        )
-        // Offline Bluetooth path: plain text and shared locations (CC_LOC renders as the same map
-        // bubble on both ends). Cloud stays the transport of record whenever the internet can
-        // carry the message (web parity); Bluetooth takes over exactly when it can't and the
-        // bridge link is up.
-        val isLocationPayload = parseSharedLocationPayload(body) != null
-        if (attachments.isEmpty() && (!body.startsWith("CC_") || isLocationPayload) &&
-            bluetoothLinked && !internetTransport.isAvailable()
-        ) {
-            sendViaBluetoothBridge(body)
+        val analyticsKind = when {
+            attachments.isEmpty() -> "text"
+            attachments.any { it.mime.startsWith("audio/") } -> "voice"
+            attachments.any { it.mime.startsWith("image/") } -> "image"
+            else -> "file"
+        }
+        val mls = mlsChannel ?: run {
+            _state.value = _state.value.copy(securityError = "MLS conversation is not ready.")
             return
         }
-        // Attachments ride Bluetooth too when the cloud can't carry them — the citizen streams
-        // chunk + encrypt over the link, and the receiver persists them as normal media rows.
-        val single = attachments.singleOrNull()
-        if (single != null && body.isEmpty() &&
-            bluetoothLinked && !internetTransport.isAvailable()
-        ) {
-            when {
-                single.mime.startsWith("audio/") -> sendVoiceViaBluetoothBridge(single)
-                single.mime.startsWith("image/") -> sendImageViaBluetoothBridge(single)
-                else -> sendFileViaBluetoothBridge(single)
-            }
+        if (!_state.value.mlsStagingReady) {
+            _state.value = _state.value.copy(securityError = "MLS conversation is not ready for local staging.")
             return
         }
-        val key = channelKey ?: return
         _state.value = _state.value.copy(sending = true)
         viewModelScope.launch {
             val senderName = runCatching { getSavedUserName(getApplication()).first() }.getOrDefault("")
                 .ifBlank { auth.currentUser?.displayName.orEmpty() }
                 .ifBlank { getApplication<Application>().getString(R.string.internet_message_notification_title) }
-            runCatching { client.send(key, senderName, peerUid, peerName, body, attachments) }
+            var preparedAttachments = emptyList<ChannelAttachment>()
+            runCatching {
+                preparedAttachments = ChannelAttachments.prepareAuthorityMlsAttachments(
+                    context = getApplication(),
+                    conversationId = mls.conversationId,
+                    pendings = attachments,
+                )
+                val message = mls.stage(AuthorityMlsMessagePayload(
+                    recipientUid = peerUid,
+                    recipientName = peerName,
+                    senderName = senderName,
+                    text = body,
+                    sentAtMillis = System.currentTimeMillis(),
+                    attachments = preparedAttachments,
+                ))
+                persistMlsMessage(message)
+                onAccepted()
+                val cloudDelivered = if (_state.value.mlsSendReady && isInternetAvailable()) {
+                    runCatching {
+                        mls.flushPending().forEach { delivered -> persistMlsMessage(delivered) }
+                    }.isSuccess
+                } else false
+                if (!cloudDelivered) {
+                    val encoded = mls.offlineEnvelope(message.id)
+                    queueBluetoothSend(message.id, encoded, preparedAttachments)
+                    Analytics.messageSent(analyticsKind, "bluetooth_mls", "authority_channel")
+                } else if (cloudDelivered) {
+                    Analytics.messageSent(analyticsKind, "internet", "authority_channel")
+                } else if (isInternetAvailable()) {
+                    runCatching { mls.requestPeerPreparation() }
+                }
+            }.onFailure { error ->
+                _state.value = _state.value.copy(securityError = error.message ?: "MLS send failed")
+            }
             _state.value = _state.value.copy(sending = false)
         }
     }
@@ -785,46 +1173,51 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
         }
     }
 
-    /**
-     * Downloads + decrypts an attachment blob (for rendering an image / playing a voice note). Bubbles
-     * render from Room before the channel key is fetched, so wait (briefly) for the key to arrive rather
-     * than failing immediately — otherwise media would never load on a cold thread open.
-     */
+    /** Downloads an MLS-v2 attachment. Its independent per-file key is inside the MLS plaintext. */
     suspend fun loadAttachmentBytes(att: ChannelAttachment): ByteArray? {
-        // Cached blobs live on-device, so try the fetch even before the key arrives; the disk cache is
-        // served key-free. Only if it's not cached yet (a cold, still-syncing open) do we wait for the key.
-        val current = channelKeyState.value
-        runCatching {
-            ChannelAttachments.fetchAttachmentBytes(getApplication(), current?.key, current?.channelId, att)
-        }.getOrNull()?.let { return it }
-        // Not cached and no key yet — kick the (idempotent) key fetch in case it failed offline, then wait.
-        if (channelKeyState.value == null) ensureChannelKey()
-        val key = withTimeoutOrNull(20_000) { channelKeyState.filterNotNull().first() } ?: return null
         return runCatching {
-            ChannelAttachments.fetchAttachmentBytes(getApplication(), key.key, key.channelId, att)
+            ChannelAttachments.fetchAttachmentBytes(getApplication(), null, null, att)
         }.getOrNull()
     }
 
     override fun onCleared() {
-        listener?.remove()
-        listener = null
         readCursorListener?.remove()
         readCursorListener = null
+        deliveryCursorListener?.remove()
+        deliveryCursorListener = null
         typingListener?.remove()
         typingListener = null
         typingExpiryJob?.cancel()
         // Leaving the thread: clear my typing flag so the peer's "…yazıyor" indicator disappears.
-        if (channelId.isNotBlank()) client.setTyping(channelId, myUid, peerUid, false)
+        if (channelId.isNotBlank()) client.setTyping(channelId, myUid, peerUid, false, scopeType)
         roomJob?.cancel()
         roomJob = null
-        keyFetchJob?.cancel()
-        keyFetchJob = null
+        mlsJob?.cancel()
+        mlsJob = null
+        cloudRetryJob?.cancel()
+        cloudRetryJob = null
+        val channelToClose = mlsChannel
+        mlsChannel = null
+        if (channelToClose != null) {
+            // viewModelScope is already being cancelled when onCleared runs. Closing there can be
+            // skipped entirely, leaking the native MLS context and keeping every action disabled on
+            // the next visit. This one-shot independent scope releases the ratchet lease reliably.
+            mlsTeardownScope.launch {
+                try {
+                    channelToClose.close()
+                } finally {
+                    mlsTeardownScope.cancel()
+                }
+            }
+        } else {
+            mlsTeardownScope.cancel()
+        }
         bridgeAutoLinkJob?.cancel()
         bridgeAutoLinkJob = null
         bridgeMessagesJob?.cancel()
         bridgeMessagesJob = null
-        backfillJob?.cancel()
-        backfillJob = null
+        btCallStateJob?.cancel()
+        btCallStateJob = null
         if (btServiceBound) {
             runCatching { getApplication<Application>().unbindService(btServiceConnection) }
             btServiceBound = false
@@ -842,12 +1235,18 @@ fun AuthorityChannelThreadScreen(
     title: String,
     agency: String = "",
     role: String = "",
+    scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
 ) {
     val viewModel: AuthorityChannelThreadViewModel = viewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val partnerReadAt by viewModel.partnerReadAt.collectAsStateWithLifecycle()
+    val partnerDeliveredAt by viewModel.partnerDeliveredAt.collectAsStateWithLifecycle()
     val partnerTyping by viewModel.partnerTyping.collectAsStateWithLifecycle()
-    LaunchedEffect(channelId, peerUid) { viewModel.start(channelId, peerUid) }
+    val securityReady = state.mlsStagingReady
+    val callReady = state.mlsPreparation?.ready == true
+    LaunchedEffect(channelId, peerUid, scopeType, title, agency, role) {
+        viewModel.start(channelId, peerUid, scopeType, title, agency, role)
+    }
 
     // Offline Bluetooth bridge status: green subtitle when this peer's hidden bridge contact has a
     // live BT link (same connected-sessions source the home list pills use).
@@ -856,6 +1255,14 @@ fun AuthorityChannelThreadScreen(
     val isBluetoothLinked = bridgeSessionCode != null && bridgeSessionCode in connectedSessions
     LaunchedEffect(isBluetoothLinked) { viewModel.setBluetoothLinked(isBluetoothLinked) }
     val bridgeMediaMessages by viewModel.bridgeMediaMessages.collectAsStateWithLifecycle()
+    val nearbyCall by viewModel.nearbyCall.collectAsStateWithLifecycle()
+    var isNearbyCallScreenVisible by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(nearbyCall?.callId) {
+        val call = nearbyCall
+        if (call != null && call.state != CallState.Idle && call.state != CallState.Ended) {
+            isNearbyCallScreenVisible = true
+        }
+    }
 
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -923,6 +1330,23 @@ fun AuthorityChannelThreadScreen(
     LaunchedEffect(isAtBottom) {
         if (isAtBottom) seenMessageCount = state.messages.size
     }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var screenResumed by remember {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, _ ->
+            screenResumed = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.setReadEligible(false)
+        }
+    }
+    LaunchedEffect(screenResumed, hasInitialized, isAtBottom, state.messages.lastOrNull()?.id) {
+        viewModel.setReadEligible(screenResumed && hasInitialized && isAtBottom)
+    }
 
     // Defensive: a title routed from a stale Room row or a deep-link may still be the peer's login
     // email — prettify it here too so the thread never shows a raw email (home rows resolve it fully,
@@ -946,55 +1370,62 @@ fun AuthorityChannelThreadScreen(
     // call overlay (MainActivity) renders the identical call screen. AuthorityCallReceiver already
     // handles the receive side app-wide; here we only place the outgoing offer over this channel.
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val callFailedText = stringResource(R.string.chat_call_failed)
-    val placeCall = call@{ video: Boolean ->
-        // Offline + bridge link up → classic Bluetooth voice call to the hidden bridge contact
-        // (same call UI as citizen BT calls). Video needs the internet-side stacks.
-        if (!video && isBluetoothLinked && !viewModel.isInternetAvailable()) {
-            val micGranted = ContextCompat.checkSelfPermission(
-                context, Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!micGranted) {
-                Toast.makeText(context, callFailedText, Toast.LENGTH_SHORT).show()
-                return@call
-            }
-            viewModel.startBluetoothCall { started ->
-                if (!started) {
-                    Toast.makeText(context, callFailedText, Toast.LENGTH_SHORT).show()
-                }
-            }
+    val placeSfuCall = call@{ video: Boolean ->
+        if (!com.auralis.crisisconnect.messaging.call.sfu.SfuCallConfig.ENABLED) {
+            Toast.makeText(context, callFailedText, Toast.LENGTH_SHORT).show()
             return@call
         }
-        android.util.Log.i("SfuAuthorityCall", "placeCall path=${if (com.auralis.crisisconnect.messaging.call.sfu.SfuCallConfig.ENABLED) "SFU" else "P2P"} channel=$channelId peer=$peerUid video=$video")
-        if (com.auralis.crisisconnect.messaging.call.sfu.SfuCallConfig.ENABLED) {
-            // SFU (Cloudflare Realtime) authority call — interoperable with the web dashboard.
-            com.auralis.crisisconnect.messaging.call.sfu.SfuAuthorityCallManager.init(context)
-            com.auralis.crisisconnect.messaging.call.sfu.SfuAuthorityCallManager.startOutgoing(
-                channelId = channelId,
-                kind = AuthorityCallSignaling.ChannelKind.HIERARCHY,
-                myUid = viewModel.myUid,
-                peerUid = peerUid,
-                peerName = heading,
-                video = video,
-            )
+        android.util.Log.i("SfuAuthorityCall", "placeCall path=SFU-v2 channel=$channelId peer=$peerUid video=$video")
+        com.auralis.crisisconnect.messaging.call.sfu.SfuAuthorityCallManager.init(context)
+        com.auralis.crisisconnect.messaging.call.sfu.SfuAuthorityCallManager.startOutgoing(
+            channelId = channelId,
+            kind = if (scopeType == AuthorityMlsScopeType.AGENCY) {
+                AuthorityCallSignaling.ChannelKind.AGENCY
+            } else {
+                AuthorityCallSignaling.ChannelKind.HIERARCHY
+            },
+            myUid = viewModel.myUid,
+            peerUid = peerUid,
+            peerName = heading,
+            video = video,
+        )
+    }
+    val placeCall = { video: Boolean ->
+        // Video remains on the MLS-protected SFU. Audio prefers the already-authenticated nearby
+        // link, exactly like ChatScreen; if that link disappears between tap and dial, retry SFU.
+        if (!video && isBluetoothLinked) {
+            viewModel.startBluetoothCall { started ->
+                if (!started) {
+                    if (viewModel.isInternetAvailable()) placeSfuCall(false)
+                    else Toast.makeText(context, callFailedText, Toast.LENGTH_SHORT).show()
+                }
+            }
         } else {
-            AuthorityCallSignaling(
-                channelId = channelId,
-                myUid = viewModel.myUid,
-                kind = AuthorityCallSignaling.ChannelKind.HIERARCHY,
-                peerNameResolver = { heading },
-            ).startCall(peerUid)
+            placeSfuCall(video)
         }
     }
     var pendingVideoCall by remember { mutableStateOf(false) }
+    var pendingNearbyAcceptCallId by remember { mutableStateOf<String?>(null) }
     val callPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
         val micOk = grants[Manifest.permission.RECORD_AUDIO] == true
-        if (micOk) placeCall(pendingVideoCall && grants[Manifest.permission.CAMERA] == true)
+        val acceptCallId = pendingNearbyAcceptCallId
+        pendingNearbyAcceptCallId = null
+        if (micOk && acceptCallId != null) {
+            viewModel.acceptBluetoothCall(acceptCallId)
+        } else if (micOk) {
+            placeCall(pendingVideoCall && grants[Manifest.permission.CAMERA] == true)
+        }
     }
     val startCallWithPermissions = { video: Boolean ->
+        // The call overlay shares this activity. Leaving the composer focused keeps the IME above
+        // the ringing screen and can cover its controls, so release focus before permission/call UI.
+        focusManager.clearFocus(force = true)
         pendingVideoCall = video
+        pendingNearbyAcceptCallId = null
         val needed = buildList {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
                 PackageManager.PERMISSION_GRANTED
@@ -1165,13 +1596,17 @@ fun AuthorityChannelThreadScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = onVideoCallClick) {
+                    IconButton(
+                        onClick = onVideoCallClick,
+                        enabled = callReady &&
+                            com.auralis.crisisconnect.messaging.call.sfu.SfuCallConfig.ENABLED,
+                    ) {
                         Icon(
                             imageVector = Icons.Filled.Videocam,
                             contentDescription = stringResource(R.string.authority_channel_call_video),
                         )
                     }
-                    IconButton(onClick = onCallClick) {
+                    IconButton(onClick = onCallClick, enabled = callReady || isBluetoothLinked) {
                         Icon(
                             Icons.Filled.Phone,
                             contentDescription = stringResource(R.string.chat_call_contact),
@@ -1186,28 +1621,32 @@ fun AuthorityChannelThreadScreen(
         },
         bottomBar = {
             Box(modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)) {
-                ChannelComposer(
-                    value = input,
-                    onValueChange = onInputChange,
-                    sending = state.sending,
-                    isRecording = isRecording,
-                    recordSeconds = recordSeconds,
-                    onSend = {
-                        val body = input.trim()
-                        if (body.isNotEmpty()) {
-                            viewModel.send(heading, body)
-                            input = ""
-                            lastTypingWrite = 0L
-                            viewModel.setTyping(false)
-                        }
-                    },
-                    onAttach = { attachmentPicker.launch("*/*") },
-                    onShareLocation = onLocationClick,
-                    sharingLocation = sharingLocation,
-                    onStartRecord = onStartRecord,
-                    onStopRecord = onStopRecord,
-                    onCancelRecord = onCancelRecord,
-                )
+                Column {
+                    ChannelComposer(
+                        value = input,
+                        onValueChange = onInputChange,
+                        sending = state.sending,
+                        securityReady = securityReady,
+                        isRecording = isRecording,
+                        recordSeconds = recordSeconds,
+                        onSend = {
+                            val body = input.trim()
+                            if (body.isNotEmpty() && securityReady) {
+                                viewModel.send(heading, body) {
+                                    if (input.trim() == body) input = ""
+                                    lastTypingWrite = 0L
+                                    viewModel.setTyping(false)
+                                }
+                            }
+                        },
+                        onAttach = { attachmentPicker.launch("*/*") },
+                        onShareLocation = onLocationClick,
+                        sharingLocation = sharingLocation,
+                        onStartRecord = onStartRecord,
+                        onStopRecord = onStopRecord,
+                        onCancelRecord = onCancelRecord,
+                    )
+                }
             }
         },
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -1266,9 +1705,74 @@ fun AuthorityChannelThreadScreen(
                                 message = message,
                                 mine = message.senderUid == viewModel.myUid,
                                 loadBytes = viewModel::loadAttachmentBytes,
+                                deliveredToPeer = message.atMillis <= partnerDeliveredAt,
                                 readByPeer = message.atMillis <= partnerReadAt,
                                 ownLocation = currentOwnLocation,
                                 bridgeMedia = bridgeMediaMessages[message.id],
+                            )
+                        }
+                    }
+                }
+            }
+
+            val pendingDeviceSets = state.mlsPreparation?.trust.orEmpty()
+                .filter { !it.approved && it.fingerprint.isNotBlank() }
+            if (pendingDeviceSets.isNotEmpty()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.97f),
+                    shape = RoundedCornerShape(16.dp),
+                    tonalElevation = 8.dp,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(12.dp)
+                        .widthIn(max = 640.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.authority_device_verification_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = stringResource(R.string.authority_device_verification_body),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        pendingDeviceSets.forEach { assessment ->
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(
+                                        text = assessment.safetyNumber,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Button(
+                                        enabled = state.mlsApprovalUid == null,
+                                        onClick = { viewModel.approveDeviceSet(assessment.uid, assessment.fingerprint) },
+                                    ) {
+                                        Text(
+                                            if (state.mlsApprovalUid == assessment.uid) {
+                                                stringResource(R.string.authority_device_verification_busy)
+                                            } else {
+                                                stringResource(R.string.authority_device_verification_approve)
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (state.mlsApprovalError) {
+                            Text(
+                                text = stringResource(R.string.authority_device_verification_changed),
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
                             )
                         }
                     }
@@ -1292,6 +1796,33 @@ fun AuthorityChannelThreadScreen(
             }
         }
     }
+
+    nearbyCall
+        ?.takeIf { it.state != CallState.Idle && it.state != CallState.Ended && isNearbyCallScreenVisible }
+        ?.let { call ->
+            CallOverlay(
+                modifier = Modifier.fillMaxSize(),
+                call = call,
+                contactName = heading,
+                avatarStableKey = bridgeSessionCode ?: peerUid,
+                avatarBitmap = null,
+                onAccept = {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        viewModel.acceptBluetoothCall(call.callId)
+                    } else {
+                        pendingNearbyAcceptCallId = call.callId
+                        callPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                    }
+                },
+                onReject = { viewModel.rejectBluetoothCall(call.callId) },
+                onHangup = { viewModel.endBluetoothCall(call.callId) },
+                onToggleMute = viewModel::setBluetoothCallMuted,
+                onSelectAudioRoute = viewModel::setBluetoothCallAudioRoute,
+                onMinimize = { isNearbyCallScreenVisible = false },
+            )
+        }
 }
 
 private val clockFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -1319,6 +1850,7 @@ private fun ChannelBubble(
     message: HierarchyMessage,
     mine: Boolean,
     loadBytes: suspend (ChannelAttachment) -> ByteArray?,
+    deliveredToPeer: Boolean,
     readByPeer: Boolean,
     ownLocation: Location? = null,
     bridgeMedia: ChatMessage? = null,
@@ -1573,10 +2105,10 @@ private fun ChannelBubble(
                             color = contentColor.copy(alpha = 0.7f),
                             textAlign = TextAlign.Start,
                         )
-                        // ✓ sent / ✓✓ read on my own messages (WhatsApp-style, web-compatible receipts).
+                        // ✓ sent, gray ✓✓ decrypted by peer, blue ✓✓ read.
                         if (mine) {
                             Icon(
-                                imageVector = if (readByPeer) {
+                                imageVector = if (readByPeer || deliveredToPeer) {
                                     Icons.Filled.DoneAll
                                 } else {
                                     Icons.Filled.Done
@@ -1633,6 +2165,7 @@ private fun ChannelComposer(
     value: String,
     onValueChange: (String) -> Unit,
     sending: Boolean,
+    securityReady: Boolean,
     isRecording: Boolean,
     recordSeconds: Int,
     onSend: () -> Unit,
@@ -1669,7 +2202,7 @@ private fun ChannelComposer(
                 IconButton(onClick = onCancelRecord) {
                     Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.authority_call_cancel))
                 }
-                FilledIconButton(onClick = onStopRecord, modifier = Modifier.size(52.dp)) {
+                FilledIconButton(onClick = onStopRecord, enabled = securityReady, modifier = Modifier.size(52.dp)) {
                     Icon(
                         Icons.AutoMirrored.Filled.Send,
                         contentDescription = stringResource(R.string.authority_channel_send),
@@ -1684,7 +2217,7 @@ private fun ChannelComposer(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                IconButton(onClick = onAttach, modifier = Modifier.size(44.dp)) {
+                IconButton(onClick = onAttach, enabled = securityReady, modifier = Modifier.size(44.dp)) {
                     Icon(
                         Icons.Filled.AttachFile,
                         contentDescription = stringResource(R.string.chat_add_attachment),
@@ -1692,7 +2225,7 @@ private fun ChannelComposer(
                 }
                 IconButton(
                     onClick = onShareLocation,
-                    enabled = !sharingLocation,
+                    enabled = securityReady && !sharingLocation,
                     modifier = Modifier.size(44.dp),
                 ) {
                     if (sharingLocation) {
@@ -1729,7 +2262,7 @@ private fun ChannelComposer(
                 if (value.isNotBlank()) {
                     FilledIconButton(
                         onClick = onSend,
-                        enabled = !sending,
+                        enabled = securityReady && !sending,
                         modifier = Modifier.size(52.dp),
                     ) {
                         Icon(
@@ -1740,7 +2273,7 @@ private fun ChannelComposer(
                 } else {
                     FilledIconButton(
                         onClick = onStartRecord,
-                        enabled = !sending,
+                        enabled = securityReady && !sending,
                         modifier = Modifier.size(52.dp),
                     ) {
                         Icon(

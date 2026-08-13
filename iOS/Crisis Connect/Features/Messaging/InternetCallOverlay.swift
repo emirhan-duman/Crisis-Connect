@@ -59,7 +59,7 @@ private struct RTCVideoTrackView: UIViewRepresentable {
 /// (notably invisible on iPad), so we draw our OWN styled circle+icon and lay a transparent, still-
 /// tappable picker on top to catch the tap and present the OS broadcast sheet (targeting our
 /// extension). The app is already listening once the call is active, so frames flow when it starts.
-private struct BroadcastPickerButton: View {
+struct BroadcastPickerButton: View {
     let active: Bool
 
     var body: some View {

@@ -33,6 +33,7 @@ object BleMessageNotifier {
     private const val MESSAGING_STYLE_HISTORY_LIMIT = 5
     private const val CHAT_LOCATION_PREFIX = "CC_LOC:"
     private const val CHAT_FILE_PREFIX = "CC_FILE:"
+    private const val AUTHORITY_MLS_PREFIX = "CC_AMLS2:"
 
     @SuppressLint("MissingPermission")
     fun notifyIncoming(
@@ -43,6 +44,7 @@ object BleMessageNotifier {
         timestamp: Long = System.currentTimeMillis(),
         contentIntent: PendingIntent? = null
     ) {
+        if (body.trimStart().startsWith(AUTHORITY_MLS_PREFIX)) return
         if (ActiveChatTracker.isSessionActive(sessionCode)) return
         if (!hasPostNotificationsPermission(context)) return
 

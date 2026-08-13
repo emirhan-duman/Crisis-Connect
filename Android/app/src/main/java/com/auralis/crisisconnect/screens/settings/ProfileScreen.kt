@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Visibility
@@ -249,7 +250,8 @@ fun ProfileScreen(
                 ProfileHeader(
                     state = uiState,
                     localDisplayName = settingsViewModel.userName,
-                    onChangePhoto = { imagePicker.launch("image/*") }
+                    onChangePhoto = { imagePicker.launch("image/*") },
+                    onRemovePhoto = profileViewModel::removeProfilePhoto
                 )
                 ProfileInfoCard(uiState = uiState)
                 // Phone sign-in / sign-up card (mirrors the welcome flow): available to regular
@@ -351,6 +353,12 @@ fun ProfileScreen(
                             fontWeight = FontWeight.Bold
                         )
                     }
+                    DeleteAccountSection(
+                        isDeleting = uiState.isDeletingAccount,
+                        // The Activity is what lets a stale federated session reauthenticate in
+                        // place instead of sending the user back through a full sign-out.
+                        onConfirm = { profileViewModel.deleteAccountAndData(activity) }
+                    )
                 } else {
                     AuthorizedInstitutionNotice()
 
@@ -672,6 +680,7 @@ private fun PhoneAuthCard(
     var nationalNumber by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
     var codeSent by rememberSaveable { mutableStateOf(false) }
+    var serverCodeSent by rememberSaveable { mutableStateOf(false) }
     var errorText by rememberSaveable { mutableStateOf<String?>(null) }
 
     val country = remember(selectedIso, countries) {
@@ -681,11 +690,10 @@ private fun PhoneAuthCard(
             ?: fallbackCountry()
     }
 
-    // Once we've asked for the code, listen for the incoming SMS (User Consent API) so a single
-    // "allow" tap drops it into the field. On success the user becomes signed in and this whole
-    // card leaves the composition, so there is no separate "verified" state to render.
+    // User Consent is safe only for the server/Twilio OTP path. Firebase Phone Auth listens to
+    // the same broadcast action with a different payload and must be allowed to own it alone.
     SmsOtpAutoFillEffect(
-        isListening = isLoading || codeSent,
+        isListening = serverCodeSent && codeSent,
         onCodeReceived = { code = it }
     )
 
@@ -707,9 +715,11 @@ private fun PhoneAuthCard(
         }
         val e164 = composeE164(country, nationalNumber)
         if (!codeSent) {
+            serverCodeSent = false
             profileViewModel.startPhoneSignIn(
                 activity = hostActivity,
                 phoneNumber = e164,
+                onServerCodeSent = { serverCodeSent = true },
                 onCodeSent = { codeSent = true },
                 onResult = { success -> if (success) onPhoneVerified() },
                 onError = { errorText = it }
@@ -1042,7 +1052,8 @@ private fun SocialLoginIconButton(
 private fun ProfileHeader(
     state: ProfileUiState,
     localDisplayName: String,
-    onChangePhoto: () -> Unit
+    onChangePhoto: () -> Unit,
+    onRemovePhoto: () -> Unit
 ) {
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -1077,8 +1088,8 @@ private fun ProfileHeader(
                 contentAlignment = Alignment.Center
             ) {
                 val bitmap = state.profileBitmap
-                val avatarDisplayName = localDisplayName.ifBlank {
-                    state.username.ifBlank {
+                val avatarDisplayName = state.username.ifBlank {
+                    localDisplayName.ifBlank {
                         state.email.substringBefore("@")
                     }
                 }
@@ -1126,6 +1137,21 @@ private fun ProfileHeader(
 
             TextButton(onClick = onChangePhoto) {
                 Text(text = stringResource(R.string.profile_change_photo))
+            }
+
+            if (state.profileBitmap != null || !state.photoUrl.isNullOrBlank()) {
+                TextButton(onClick = onRemovePhoto) {
+                    Icon(
+                        imageVector = Icons.Outlined.DeleteForever,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = stringResource(R.string.profile_remove_photo),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
 
             Row(
@@ -1394,6 +1420,117 @@ private fun ProfileVerificationRow(
             )
         }
     }
+}
+
+/**
+ * Account + data deletion, the path Google Play requires of any app that lets users create an
+ * account (and the reason the store listing can stop saying "data can't be deleted").
+ *
+ * Type-to-confirm rather than a plain "are you sure": this erase cannot be undone and the button
+ * sits on a screen a user may hand to a rescuer, so an accidental double-tap must not be enough.
+ * The word is localised — a Turkish user should not have to type an English one.
+ */
+// internal rather than private so DeleteAccountSectionTest can drive the type-to-confirm gate
+// directly. The gate is the only thing standing between a stray tap and an irreversible erase, so it
+// is worth a test that does not need a signed-in account to reach it.
+@Composable
+internal fun DeleteAccountSection(
+    isDeleting: Boolean,
+    onConfirm: () -> Unit
+) {
+    var showDialog by rememberSaveable { mutableStateOf(false) }
+    var typedConfirmation by rememberSaveable { mutableStateOf("") }
+    val confirmationWord = stringResource(R.string.profile_delete_account_confirm_word)
+
+    TextButton(
+        onClick = {
+            typedConfirmation = ""
+            showDialog = true
+        },
+        enabled = !isDeleting,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.textButtonColors(
+            contentColor = MaterialTheme.colorScheme.error
+        )
+    ) {
+        if (isDeleting) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.error
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(text = stringResource(R.string.profile_delete_account_progress))
+        } else {
+            Icon(
+                imageVector = Icons.Outlined.DeleteForever,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(text = stringResource(R.string.profile_delete_account_button))
+        }
+    }
+
+    if (!showDialog) {
+        return
+    }
+
+    AlertDialog(
+        onDismissRequest = { showDialog = false },
+        icon = {
+            Icon(
+                imageVector = Icons.Outlined.DeleteForever,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error
+            )
+        },
+        title = { Text(text = stringResource(R.string.profile_delete_account_dialog_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = stringResource(R.string.profile_delete_account_dialog_body),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = stringResource(
+                        R.string.profile_delete_account_dialog_confirm_hint,
+                        confirmationWord
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                OutlinedTextField(
+                    value = typedConfirmation,
+                    onValueChange = { typedConfirmation = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    showDialog = false
+                    onConfirm()
+                },
+                enabled = typedConfirmation.trim().equals(confirmationWord, ignoreCase = true),
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text(
+                    text = stringResource(R.string.profile_delete_account_dialog_confirm),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { showDialog = false }) {
+                Text(text = stringResource(R.string.cancel))
+            }
+        }
+    )
 }
 
 @Composable

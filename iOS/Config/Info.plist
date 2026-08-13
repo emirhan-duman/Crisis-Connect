@@ -8,6 +8,7 @@
 		<string>com.auralis.crisisconnect.offline-map-download</string>
 		<string>com.auralis.crisisconnect.cert-renewal</string>
 		<string>com.auralis.crisisconnect.sos-followup</string>
+		<string>com.auralis.crisisconnect.resource-alert-wake-ack</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
@@ -23,6 +24,13 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<!-- Mirrors the export-compliance answer already on file with Apple for build 34
+	     ("App Uses Non-Exempt Encryption: No"). Declaring it here rather than in App Store
+	     Connect stops the questionnaire blocking every upload; the declaration itself is
+	     unchanged. Revisit if the app ever ships crypto outside the published-standard /
+	     mass-market exemption it relies on today. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleURLTypes</key>
@@ -67,17 +75,22 @@
 		<string>_ccvoicechat._udp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>Camera access is required to scan QR codes and power Night Vision obstacle awareness.</string>
+	<string>Camera access is required to scan QR codes, use the rear flashlight, and power Night Vision obstacle awareness.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Crisis Connect matches your address book against its directory to find contacts who already use the app. Numbers are hashed for lookup and never stored.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Local network access is required to discover nearby iOS contacts and start encrypted voice calls.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Always-on location access keeps rescue live location updates running as reliably as iOS allows during crisis coordination.</string>
+	<string>Always-on location access keeps an active Breadcrumb Trail or rescue live-location session running when the screen is locked.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
-	<string>Always-on location access keeps rescue live location updates running as reliably as iOS allows during crisis coordination.</string>
+	<string>Always-on location access keeps an active Breadcrumb Trail or rescue live-location session running when the screen is locked.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Location access is used to center offline maps and share your live position during SOS rescue coordination.</string>
+	<string>Location access centers offline maps, records your private Breadcrumb Trail for return guidance, and shares live position during SOS rescue coordination.</string>
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<dict>
+		<key>BreadcrumbTrail</key>
+		<string>Precise location is needed while Breadcrumb Trail is active so the recorded path can be retraced safely.</string>
+	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Microphone access is required to record and send voice messages and start nearby iOS voice calls.</string>
 	<key>NSMotionUsageDescription</key>

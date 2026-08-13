@@ -207,6 +207,10 @@ import com.auralis.crisisconnect.data.AppDatabase
 import com.auralis.crisisconnect.data.toAuthorityConversationEntity
 import com.auralis.crisisconnect.data.toChannelConversation
 import com.auralis.crisisconnect.messaging.AuthorityBridgeContacts
+import com.auralis.crisisconnect.messaging.AuthorityMlsPrewarmer
+import com.auralis.crisisconnect.messaging.AuthorityMlsPrewarmTarget
+import com.auralis.crisisconnect.messaging.AuthorityMlsScopeType
+import com.auralis.crisisconnect.messaging.AuthorityRosterClient
 import com.auralis.crisisconnect.messaging.HierarchyMessagingClient
 import com.auralis.crisisconnect.messaging.InternetConversation
 import com.auralis.crisisconnect.screens.authority.ChannelConversation
@@ -1260,6 +1264,28 @@ private fun MainConversationContent(
     // (channel:peer) → the peer's hidden Bluetooth-bridge sessionCode, so channel rows can show the
     // same connected pill citizen rows get when the offline link is up.
     val myUid = remember { FirebaseAuth.getInstance().currentUser?.uid.orEmpty() }
+    // Enrol this device for the full reachable authority roster without requiring either person to
+    // open a thread. KeyPackage/Welcome convergence remains MLS-only and is bounded to four workers.
+    LaunchedEffect(myUid) {
+        if (myUid.isBlank()) return@LaunchedEffect
+        val targets = withContext(Dispatchers.IO) {
+            coroutineScope {
+                val roster = async { runCatching { AuthorityRosterClient().listRoster("") }.getOrDefault(emptyList()) }
+                val channels = async { runCatching { HierarchyMessagingClient().fetchChannels() }.getOrDefault(emptyList()) }
+                buildList {
+                    addAll(roster.await().map { member ->
+                        AuthorityMlsPrewarmTarget(member.uid, AuthorityMlsScopeType.AGENCY, member.agencySlug)
+                    })
+                    addAll(channels.await().flatMap { channel ->
+                        channel.peers.map { peer ->
+                            AuthorityMlsPrewarmTarget(peer.uid, AuthorityMlsScopeType.HIERARCHY, channel.channelId)
+                        }
+                    })
+                }
+            }
+        }
+        AuthorityMlsPrewarmer.prewarm(appContext, myUid, targets)
+    }
     val channelBridgeSessions = remember(channelConversations, myUid) {
         if (myUid.isBlank()) {
             emptyMap()
@@ -1310,7 +1336,9 @@ private fun MainConversationContent(
                         }
                     }.awaitAll().filterNotNull()
                 }
-                authorityDao.replaceConversations(fresh.map { it.toAuthorityConversationEntity() })
+                // Upsert the hierarchy refresh without erasing agency-scoped MLS conversations that
+                // were written through by their thread. Both scopes share the offline home list.
+                authorityDao.upsertConversations(fresh.map { it.toAuthorityConversationEntity() })
             } catch (e: Exception) {
                 android.util.Log.w("AuthorityChannels", "channel roster refresh failed", e)
                 // Offline / transient failure: keep whatever conversations are already cached.
@@ -1676,7 +1704,8 @@ private fun MainConversationContent(
                             "authority_channel/${Uri.encode(conversation.channelId)}/" +
                                 "${Uri.encode(conversation.peerUid)}?title=${Uri.encode(conversation.peerName)}" +
                                 "&agency=${Uri.encode(conversation.peerPanelName)}" +
-                                "&role=${Uri.encode(conversation.peerRole)}"
+                                "&role=${Uri.encode(conversation.peerRole)}" +
+                                "&scope=${if (conversation.group == "agency") "agency" else "hierarchy"}"
                         )
                     },
                     meshGeneralUnreadCount = meshGeneralUnreadCount,

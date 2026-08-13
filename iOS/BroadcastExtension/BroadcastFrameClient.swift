@@ -30,7 +30,7 @@ enum ScreenBroadcast {
     // Body = tightly packed Y plane (width*height) followed by CbCr (width*(height/2)).
     static let headerSize = 28
     static let magic: UInt32 = 0x53435232 // "SCR2" — NV12 wire format
-    static let targetFps: Double = 15
+    static let defaultTargetFps: Double = 15
 
     static func packHeader(
         width: UInt32,
@@ -54,6 +54,7 @@ final class BroadcastFrameClient {
     private var fd: Int32 = -1
     private let lock = NSLock()
     private var lastSentAt: CFTimeInterval = 0
+    private var targetFps = ScreenBroadcast.defaultTargetFps
     private var inFlight = false
     private let sendQueue = DispatchQueue(label: "cc.broadcast.send", qos: .userInitiated)
 
@@ -83,6 +84,11 @@ final class BroadcastFrameClient {
             var sndbuf: Int32 = 1 << 20
             setsockopt(s, SOL_SOCKET, SO_SNDBUF, &sndbuf, socklen_t(MemoryLayout<Int32>.size))
             fd = s
+            // The app writes one control byte immediately after accept (15/30/60 fps).
+            var configuredFps: UInt8 = 0
+            if Darwin.recv(s, &configuredFps, 1, 0) == 1, configuredFps > 0 {
+                targetFps = Double(configuredFps)
+            }
         } else {
             Darwin.close(s)
         }
@@ -103,7 +109,12 @@ final class BroadcastFrameClient {
             connectLocked()
             if fd < 0 { lock.unlock(); return }
         }
-        if now - lastSentAt < (1.0 / ScreenBroadcast.targetFps) { lock.unlock(); return }
+        // Drain a live quality change without blocking ReplayKit's sample-buffer queue.
+        var configuredFps: UInt8 = 0
+        while Darwin.recv(fd, &configuredFps, 1, MSG_DONTWAIT) == 1 {
+            if configuredFps > 0 { targetFps = Double(configuredFps) }
+        }
+        if now - lastSentAt < (1.0 / targetFps) { lock.unlock(); return }
         if inFlight { lock.unlock(); return } // previous frame still going out → drop this one
         lastSentAt = now
         inFlight = true

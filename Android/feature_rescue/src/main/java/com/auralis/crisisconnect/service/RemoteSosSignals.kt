@@ -3,10 +3,12 @@ package com.auralis.crisisconnect.service
 import android.content.Context
 import android.util.Log
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -90,6 +92,30 @@ object RemoteSosSignals {
                         if (now - lastSeenMillis > FRESHNESS_WINDOW_MS) return@mapNotNull null
                         val status = doc.getString("status")?.lowercase(Locale.US) ?: "active"
                         if (status != "active") return@mapNotNull null
+                        // Resolved wins, mirroring the web's readEffectiveResolveMillis precedence
+                        // (lib/dashboard/signal-resolution.ts). Resolve stamps come from TWO
+                        // writers: the victim's own stop (top-level resolvedAt/resolvedMillis via
+                        // reportSosSignal) and an operator resolve (ops.resolvedAt*). An operator
+                        // REOPEN stamps ops.reopenedAt* WITHOUT clearing either resolve, and the
+                        // victim resolve leaves lastSeenMillis == resolvedMillis — so a reopen must
+                        // cancel the resolve here too, or the reopened SOS stays hidden on every
+                        // phone until the beacon is next heard. Only a sighting NEWER than a
+                        // still-effective resolve reactivates.
+                        val ops = doc.get("ops") as? Map<*, *>
+                        val resolveMillis = maxOf(
+                            epochMillisOrZero(doc.get("resolvedMillis")),
+                            epochMillisOrZero(doc.get("resolvedAt")),
+                            epochMillisOrZero(ops?.get("resolvedAtMillis")),
+                            epochMillisOrZero(ops?.get("resolvedAt"))
+                        )
+                        val reopenMillis = maxOf(
+                            epochMillisOrZero(ops?.get("reopenedAtMillis")),
+                            epochMillisOrZero(ops?.get("reopenedAt"))
+                        )
+                        val resolveInEffect = resolveMillis > 0L && reopenMillis < resolveMillis
+                        if (resolveInEffect && lastSeenMillis <= resolveMillis) {
+                            return@mapNotNull null
+                        }
                         val gps = (doc.get("gps") as? Map<*, *>)
                             ?: (doc.get("victimGps") as? Map<*, *>)
                             ?: (doc.get("estimatedVictimGps") as? Map<*, *>)
@@ -113,6 +139,22 @@ object RemoteSosSignals {
             }
         }
         awaitClose { registrations.forEach { it.remove() } }
+    }
+
+    /**
+     * Epoch millis from the shapes these stamps actually land in on-device: epoch numbers
+     * (resolvedMillis and the ops `*Millis` twins the SOS console always writes alongside its ISO
+     * strings) and Firestore Timestamps (reportSosSignal's resolvedAt). Zero when absent/invalid so
+     * callers can fold with maxOf, matching the web helper.
+     */
+    private fun epochMillisOrZero(value: Any?): Long {
+        val millis = when (value) {
+            is Number -> value.toLong()
+            is Timestamp -> value.toDate().time
+            is Date -> value.time
+            else -> 0L
+        }
+        return if (millis > 0L) millis else 0L
     }
 
     /** Own panel first, then its ancestors (parent/national), distinct, order-preserving. */

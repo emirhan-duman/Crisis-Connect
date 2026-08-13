@@ -15,6 +15,62 @@ struct SurvivalGuideEntry: Identifiable, Hashable {
     var id: String { article.id }
 }
 
+enum SurvivalGuideEmergencyService: String, Hashable {
+    case all
+    case medicalAndFire
+    case medical
+    case fire
+    case police
+    case regional
+
+    func label(locale: Locale) -> String {
+        switch self {
+        case .all:
+            return survivalGuideString("guide_redesign_service_all", locale: locale)
+        case .medicalAndFire:
+            return survivalGuideString("guide_redesign_service_fire_medical", locale: locale)
+        case .medical:
+            return survivalGuideString("guide_redesign_service_medical", locale: locale)
+        case .fire:
+            return survivalGuideString("guide_redesign_service_fire", locale: locale)
+        case .police:
+            return survivalGuideString("guide_redesign_service_police", locale: locale)
+        case .regional:
+            return survivalGuideString("guide_redesign_service_regional", locale: locale)
+        }
+    }
+}
+
+func survivalGuideString(_ key: String, locale: Locale) -> String {
+    let languageCode = locale.language.languageCode?.identifier.lowercased()
+        ?? locale.identifier.split(separator: "_").first.map(String.init)?.lowercased()
+
+    if let languageCode,
+       let path = Bundle.main.path(forResource: languageCode, ofType: "lproj"),
+       let bundle = Bundle(path: path) {
+        return bundle.localizedString(forKey: key, value: nil, table: nil)
+    }
+
+    return Bundle.main.localizedString(forKey: key, value: nil, table: nil)
+}
+
+struct SurvivalGuideEmergencyContact: Identifiable, Hashable {
+    let number: String
+    let service: SurvivalGuideEmergencyService
+
+    var id: String { "\(service.rawValue)-\(number)" }
+}
+
+struct SurvivalGuideEmergencyRegion: Hashable {
+    let countryCode: String?
+    let contacts: [SurvivalGuideEmergencyContact]
+    let usesFallback: Bool
+
+    var primaryContact: SurvivalGuideEmergencyContact {
+        contacts[0]
+    }
+}
+
 final class SurvivalGuideViewModel: ObservableObject {
     @Published var selectedCategoryID: String = SurvivalGuideData.allCategoryID
     @Published var searchQuery: String = ""
@@ -70,10 +126,12 @@ final class SurvivalGuideViewModel: ObservableObject {
 
     func startChecklist(for article: SurvivalGuideArticle) {
         expandedGuideID = article.id
-        checkedChecklistItemIDs = checkedChecklistItemIDs.filter { key in
-            key.hasPrefix("\(article.id)#") == false
+    }
+
+    func hasChecklistProgress(for article: SurvivalGuideArticle) -> Bool {
+        article.checklist.indices.contains { index in
+            isChecklistItemChecked(articleID: article.id, index: index)
         }
-        persistCheckedChecklistItems()
     }
 
     func toggleChecklist(articleID: String, index: Int) {
@@ -115,35 +173,75 @@ final class SurvivalGuideViewModel: ObservableObject {
         return "\(minutes) min"
     }
 
-    func emergencyNumber(locale: Locale) -> String {
-        let languageCode = localeLanguageCode(locale)
-        if languageCode.hasPrefix("tr") {
-            return "112"
-        }
-        if languageCode.hasPrefix("ja") {
-            return "119"
-        }
-        if languageCode.hasPrefix("en") {
-            return "911"
+    func emergencyRegion(locale: Locale) -> SurvivalGuideEmergencyRegion {
+        let countryCode = localeRegionCode(locale)?.uppercased()
+        let contacts: [SurvivalGuideEmergencyContact]
+        let usesFallback: Bool
+
+        switch countryCode {
+        case "TR":
+            contacts = [.init(number: "112", service: .all)]
+            usesFallback = false
+        case "US", "CA", "MX":
+            contacts = [.init(number: "911", service: .all)]
+            usesFallback = false
+        case "GB":
+            contacts = [.init(number: "999", service: .all)]
+            usesFallback = false
+        case "IE":
+            contacts = [.init(number: "112", service: .all)]
+            usesFallback = false
+        case "AU":
+            contacts = [.init(number: "000", service: .all)]
+            usesFallback = false
+        case "NZ":
+            contacts = [.init(number: "111", service: .all)]
+            usesFallback = false
+        case "JP":
+            contacts = [
+                .init(number: "119", service: .medicalAndFire),
+                .init(number: "110", service: .police)
+            ]
+            usesFallback = false
+        case "KR":
+            contacts = [
+                .init(number: "119", service: .medicalAndFire),
+                .init(number: "112", service: .police)
+            ]
+            usesFallback = false
+        case "CN":
+            contacts = [
+                .init(number: "120", service: .medical),
+                .init(number: "119", service: .fire),
+                .init(number: "110", service: .police)
+            ]
+            usesFallback = false
+        case "BR":
+            contacts = [
+                .init(number: "192", service: .medical),
+                .init(number: "193", service: .fire),
+                .init(number: "190", service: .police)
+            ]
+            usesFallback = false
+        default:
+            contacts = [.init(number: "112", service: .regional)]
+            usesFallback = true
         }
 
-        let countryCode = localeRegionCode(locale)?.uppercased() ?? ""
-        switch countryCode {
-        case "TR": return "112"
-        case "US", "CA", "MX": return "911"
-        case "GB", "IE": return "999"
-        case "AU": return "000"
-        case "NZ": return "111"
-        case "JP", "KR": return "119"
-        case "CN": return "120"
-        case "BR": return "190"
-        default: return "911"
-        }
+        return SurvivalGuideEmergencyRegion(
+            countryCode: countryCode,
+            contacts: contacts,
+            usesFallback: usesFallback
+        )
+    }
+
+    func emergencyNumber(locale: Locale) -> String {
+        emergencyRegion(locale: locale).primaryContact.number
     }
 
     func countryLabel(locale: Locale) -> String {
         guard let regionCode = localeRegionCode(locale), regionCode.isEmpty == false else {
-            return "N/A"
+            return survivalGuideString("guide_redesign_unknown_region", locale: locale)
         }
         return locale.localizedString(forRegionCode: regionCode) ?? regionCode.uppercased()
     }

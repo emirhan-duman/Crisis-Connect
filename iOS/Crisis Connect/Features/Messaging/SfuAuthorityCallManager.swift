@@ -18,10 +18,9 @@
 //  wrong one, so answering an incoming 1:1 call never connected. One provider per app is required.)
 //  Only one call is active at a time, so a single delegate-swapping provider is safe.
 //  This buys foreground/background native ringing, lock-screen answer, and the documented
-//  manual-audio handoff (WebRTC's audio unit starts in the provider's didActivate). PushKit VoIP
-//  ringing for a FORCE-QUIT app is still absent — that needs a backend raw-APNs VoIP sender and
-//  is deferred with the 1:1 VoIP work; here CallKit only rings while the process is alive to
-//  receive the Firestore call signal.
+//  manual-audio handoff (WebRTC's audio unit starts in the provider's didActivate). A raw APNs
+//  PushKit wake reports a placeholder immediately; the authoritative Firestore offer then adopts
+//  the same CallKit UUID after scope + MLS-device verification.
 //
 
 import AVFoundation
@@ -73,6 +72,10 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
     /// a redundant end/report is a cheap no-op.
     private var cxCallUUID: UUID?
     private var reportedConnected = false
+    private var voipWakeCallId: String?
+    private var voipWakeTimeoutTask: Task<Void, Never>?
+    private var pendingVoipAnswer = false
+    private var pendingVoipEnd = false
 
     private var boundChannelId = ""
     private var boundKind: SfuAuthorityCallSignaling.ChannelKind = .hierarchy
@@ -114,6 +117,65 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
     /// True when this manager currently owns an active/ringing call.
     var hasActiveCall: Bool { uiCall != nil }
 
+    /// PushKit entry point. CallKit must be notified before the PushKit completion fires, even
+    /// though the content-free wake still needs to fetch and verify the real offer.
+    func reportVoipWake(
+        callId: String,
+        senderUid: String,
+        callerName: String,
+        hasVideo: Bool,
+        completion: @escaping () -> Void
+    ) {
+        guard let uuid = UUID(uuidString: callId), ring == nil, voipWakeCallId == nil else {
+            completion()
+            return
+        }
+        incoming = true
+        usedVideo = hasVideo
+        cxCallUUID = uuid
+        voipWakeCallId = callId.lowercased()
+        pendingVoipAnswer = false
+        pendingVoipEnd = false
+        reportedConnected = false
+        SharedCallProvider.shared.makeActive(self)
+        let update = CXCallUpdate()
+        let display = callerName.isEmpty ? senderUid : callerName
+        update.remoteHandle = CXHandle(type: .generic, value: display.isEmpty ? " " : display)
+        update.localizedCallerName = callerName.isEmpty
+            ? NSLocalizedString("VOICE_CALL_NOTIFICATION_BODY", comment: "")
+            : callerName
+        update.hasVideo = hasVideo
+        cxProvider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
+            if error != nil {
+                Task { @MainActor [weak self] in self?.clearVoipWake() }
+            }
+            completion()
+        }
+        voipWakeTimeoutTask?.cancel()
+        voipWakeTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard let self, !Task.isCancelled, self.ring == nil else { return }
+            self.cancelVoipWake(callId: callId)
+        }
+    }
+
+    func cancelVoipWake(callId: String) {
+        guard voipWakeCallId == callId.lowercased(), ring == nil else { return }
+        if let uuid = cxCallUUID {
+            cxProvider.reportCall(with: uuid, endedAt: Date(), reason: .failed)
+        }
+        clearVoipWake()
+        cxCallUUID = nil
+    }
+
+    private func clearVoipWake() {
+        voipWakeTimeoutTask?.cancel()
+        voipWakeTimeoutTask = nil
+        voipWakeCallId = nil
+        pendingVoipAnswer = false
+        pendingVoipEnd = false
+    }
+
     /// Place an outgoing authority SFU call to `peerUid` over `channelId`.
     func startOutgoing(
         channelId: String,
@@ -144,13 +206,9 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
                 }
             }
             self.ring?.startCall(peerUid: peerUid, peerName: peerName, video: video)
-            // PRE-WARM: the caller knows the room id the moment it rings — join the SFU, publish,
-            // and run the MLS claim NOW so the answer only has the pull left (~2s instead of ~7s
-            // to two-way audio). The mic stays muted (hold) until the callee actually accepts
-            // (privacy); an unanswered/rejected ring tears the media down via onRingState.
-            if let roomId = self.ring?.roomId {
-                self.joinMedia(roomId: roomId, micHold: true)
-            }
+            // Media starts after the answer because only then do we know whether the peer supports
+            // secure v2. Pre-warming before negotiation could strand a mixed-version call in the
+            // v2 namespace that an old client cannot read.
         }
     }
 
@@ -167,6 +225,7 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
     ) {
         NSLog("SfuAuthorityCall: onSfuSignal type=%@ from=%@ channel=%@",
               signal["type"] as? String ?? "?", fromUid, channelId)
+        if (ring == nil || uiCall == nil), signal["type"] as? String != "offer" { return }
         if ring == nil || uiCall == nil {
             incoming = true
             bindSignaling(channelId: channelId, kind: kind, myUid: myUid)
@@ -178,6 +237,13 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
             ring?.peerName = peerName
         }
         ring?.handleSignal(fromUid: fromUid, signal: signal)
+        if pendingVoipEnd, ring?.state == .incoming {
+            pendingVoipEnd = false
+            ring?.reject()
+        } else if pendingVoipAnswer, ring?.state == .incoming {
+            pendingVoipAnswer = false
+            performAccept()
+        }
     }
 
     func accept() {
@@ -195,6 +261,10 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
     }
 
     private func performAccept() {
+        guard ring != nil else {
+            if voipWakeCallId != nil { pendingVoipAnswer = true }
+            return
+        }
         requestCallPermissions(video: false) { [weak self] granted in
             guard let self, granted else { return }
             self.ring?.accept()
@@ -263,7 +333,7 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
         ring = SfuRingManager(
             sender: { toUid, signal in signaling.send(toUid: toUid, signal: signal) },
             onState: { [weak self] state in self?.onRingState(state) },
-            onRoom: { [weak self] roomId, _ in self?.onRoom(roomId: roomId) }
+            onRoom: { [weak self] roomId, _, version in self?.onRoom(roomId: roomId, version: version) }
         )
     }
 
@@ -296,6 +366,7 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
                           state: state, connectedAt: nil, video: $0.video)
             }
             if state == .idle {
+                clearVoipWake()
                 ring = nil
                 signaling = nil
                 cxCallUUID = nil
@@ -318,6 +389,12 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
         update.localizedCallerName = name.isEmpty ? nil : name
         update.hasVideo = ring?.video ?? false
         SharedCallProvider.shared.makeActive(self)
+        if voipWakeCallId == ring?.callId?.lowercased(), cxCallUUID == uuid {
+            voipWakeTimeoutTask?.cancel()
+            voipWakeTimeoutTask = nil
+            cxProvider.reportCall(with: uuid, updated: update)
+            return
+        }
         cxProvider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
             if let error {
                 NSLog("SfuAuthorityCall: reportNewIncomingCall failed: %@", String(describing: error))
@@ -348,22 +425,43 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
     }
 
     /// Ring accepted on both sides → join the SFU room and start audio.
-    private func onRoom(roomId: String) {
-        NSLog("SfuAuthorityCall: onRoom roomId=%@ (preWarmed=%d)", roomId, media != nil ? 1 : 0)
-        if let media {
-            // Pre-warmed during the outgoing ring — the callee accepted, open the mic and go.
-            media.setMicHold(false)
-            return
-        }
-        joinMedia(roomId: roomId, micHold: false)
+    private func onRoom(roomId: String, version: SfuProtocolVersion) {
+        NSLog("SfuAuthorityCall: onRoom roomId=%@ protocol=%d", roomId, version.rawValue)
+        joinMedia(roomId: roomId, micHold: false, version: version)
     }
 
-    private func joinMedia(roomId: String, micHold: Bool) {
+    private func joinMedia(roomId: String, micHold: Bool, version: SfuProtocolVersion) {
+        guard let callId = ring?.callId,
+              let peerUid = ring?.peerUid else {
+            ring?.end()
+            return
+        }
+        let scopeType: SfuRoomScopeType = boundKind == .agency ? .agency : .hierarchy
+        let binding: SfuRoomBinding
+        do {
+            binding = try SfuRoomBinding(
+                scopeType: scopeType,
+                channelId: boundChannelId,
+                callId: callId,
+                selfUid: myUid,
+                peerUid: peerUid
+            )
+        } catch {
+            NSLog("SfuAuthorityCall: refusing unbound room: %@", String(describing: error))
+            ring?.end()
+            return
+        }
         // Audio activation is CallKit's job now: WebRTC's audio unit starts in the provider's
         // didActivate handoff. Configure the category up front so the route is right when it fires.
         configureAudioCategory()
         let name = ProfileMetadataStore.preferredDisplayName() ?? "iOS"
-        let engine = SfuCallManager(roomId: roomId, displayName: name, photoUrl: selfPhotoUrl)
+        let engine = SfuCallManager(
+            roomId: roomId,
+            binding: binding,
+            protocolVersion: version,
+            displayName: name,
+            photoUrl: selfPhotoUrl
+        )
         media = engine
         engine.setMicHold(micHold)
         // A failed media join/connection ends the whole call (Android's onState → FAILED → end).
@@ -377,7 +475,7 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
             await engine?.join(video: self?.ring?.video == true)
             guard let self, let engine, self.media === engine else { return }
             self.emitUi()
-            self.startLivenessWatchdog(roomId: roomId)
+            self.startLivenessWatchdog(roomId: roomId, binding: binding, version: version)
         }
     }
 
@@ -385,21 +483,31 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
     /// the other side never sends an "end" signal and never deletes its roster doc, which would
     /// leave THIS side sitting in a ghost call forever. The media engine already heartbeats our
     /// own roster entry; this watchdog only OBSERVES the peers' freshness.
-    private func startLivenessWatchdog(roomId: String) {
+    private func startLivenessWatchdog(
+        roomId: String, binding: SfuRoomBinding, version: SfuProtocolVersion
+    ) {
         lastPeerAlive = Date()
         everSawPeer = false
         livenessListener?.remove()
-        livenessListener = SfuRoomClient(roomId: roomId, selfUid: myUid)
-            .listenRoster { [weak self] remotes in
-                let fresh = remotes.contains { remote in
-                    remote.updatedAt.map { Date().timeIntervalSince($0) < Self.peerStale } ?? true
+        livenessListener = SfuRoomClient(
+            roomId: roomId, selfUid: myUid, binding: binding, protocolVersion: version
+        )
+            .listenRoster(
+                onRoster: { [weak self] remotes in
+                    let fresh = remotes.contains { remote in
+                        remote.updatedAt.map { Date().timeIntervalSince($0) < Self.peerStale } ?? true
+                    }
+                    Task { @MainActor [weak self] in
+                        guard let self, fresh else { return }
+                        self.lastPeerAlive = Date()
+                        self.everSawPeer = true
+                    }
+                },
+                onError: { [weak self] error in
+                    NSLog("SfuAuthorityCall: authorized room liveness listener failed: %@", String(describing: error))
+                    Task { @MainActor [weak self] in self?.end() }
                 }
-                Task { @MainActor [weak self] in
-                    guard let self, fresh else { return }
-                    self.lastPeerAlive = Date()
-                    self.everSawPeer = true
-                }
-            }
+            )
         livenessTask?.cancel()
         livenessTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -416,40 +524,12 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
         }
     }
 
-    /// WhatsApp-style call summary in the chat, matching web/Android exactly: only the CALLER
-    /// writes it (the shared encrypted message shows in both threads), wire format
-    /// `call{"kind","status","durationSec"}` — rendered by the authority thread's call card.
+    /// Call history must use the verified Authority MLS chat session. Until the app-wide session
+    /// broker owns that session, fail closed instead of writing a new shared-key v1 message.
     private func maybeWriteCallLog() {
         guard !callLogged, !incoming, boundKind == .hierarchy else { return }
-        guard !boundChannelId.isEmpty,
-              let peerUid = ring?.peerUid, !peerUid.isEmpty else { return }
-        let peerName = ring?.peerName ?? ""
         callLogged = true
-        let connected = connectedAt
-        let durationSec = connected.map { max(0, Int(Date().timeIntervalSince($0))) } ?? 0
-        let payload: [String: Any] = [
-            "kind": usedVideo ? "video" : "audio",
-            "status": connected != nil ? "ended" : "missed",
-            "durationSec": durationSec
-        ]
-        guard let json = try? JSONSerialization.data(withJSONObject: payload) else { return }
-        let body = "call" + String(decoding: json, as: UTF8.self)
-        let channelId = boundChannelId
-        Task {
-            do {
-                let client = HierarchyMessagingClient()
-                let key = try await client.fetchChannelKey(channelId: channelId)
-                try await client.send(
-                    channelKey: key,
-                    senderName: ProfileMetadataStore.preferredDisplayName() ?? "iOS",
-                    recipientUid: peerUid,
-                    recipientName: peerName,
-                    text: body
-                )
-            } catch {
-                NSLog("SfuAuthorityCall: call log write failed: %@", String(describing: error))
-            }
-        }
+        NSLog("SfuAuthorityCall: skipped call-log persistence because no verified MLS chat session was supplied")
     }
 
     private func teardownMedia() {
@@ -525,6 +605,10 @@ extension SfuAuthorityCallManager: CXProviderDelegate {
     nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
         Task { @MainActor [weak self] in
             guard let self else { return }
+            if self.ring == nil, self.voipWakeCallId != nil {
+                self.pendingVoipEnd = true
+                return
+            }
             // Reject if still ringing, else hang up — ring.end()/reject() send the right signal.
             if self.ring?.state == .incoming {
                 self.ring?.reject()

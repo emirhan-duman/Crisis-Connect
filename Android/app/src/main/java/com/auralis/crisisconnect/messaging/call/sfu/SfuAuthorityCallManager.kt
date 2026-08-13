@@ -31,6 +31,8 @@ data class SfuUiCall(
     val video: Boolean = false,
     val cameraOn: Boolean = false,
     val sharingScreen: Boolean = false,
+    /** MLS group fingerprint; users can compare this out-of-band with the other participant. */
+    val safetyNumber: String? = null,
 )
 
 /**
@@ -46,6 +48,8 @@ data class SfuUiCall(
  */
 object SfuAuthorityCallManager {
     private const val TAG = "SfuAuthorityCall"
+    private const val PREFERENCES_NAME = "authority_call_preferences"
+    private const val SCREEN_SHARE_QUALITY_KEY = "screen_share_quality"
     private const val HEARTBEAT_INTERVAL_MS = 10_000L
     private const val PEER_STALE_MS = 30_000L
     private const val PEER_LOST_END_MS = 30_000L
@@ -73,6 +77,7 @@ object SfuAuthorityCallManager {
     private var boundKind: AuthorityCallSignaling.ChannelKind = AuthorityCallSignaling.ChannelKind.HIERARCHY
     private var usedVideo = false
     private var callLogged = false
+    private var safetyNumber: String? = null
     @Volatile private var lastPeerAliveMillis = 0L
     @Volatile private var everSawPeer = false
 
@@ -83,6 +88,8 @@ object SfuAuthorityCallManager {
     // subscribe unconditionally from its very first composition and never miss a remote track.
     private val _videoStreams = MutableStateFlow(SfuVideoStreams())
     val videoStreamsFlow: StateFlow<SfuVideoStreams> = _videoStreams.asStateFlow()
+    private val _screenShareQuality = MutableStateFlow(ScreenShareQualityPreset.AUTO)
+    val screenShareQuality: StateFlow<ScreenShareQualityPreset> = _screenShareQuality.asStateFlow()
 
     private var initialized = false
 
@@ -90,6 +97,10 @@ object SfuAuthorityCallManager {
         if (initialized) return
         initialized = true
         appContext = context.applicationContext
+        _screenShareQuality.value = ScreenShareQualityPreset.fromWireValue(
+            appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .getString(SCREEN_SHARE_QUALITY_KEY, null),
+        )
         // Keep our display name fresh for the room roster (publishSelf).
         scope.launch { runCatching { getSavedUserName(appContext).collect { selfName = it } } }
         // Profile photo for the roster: without it the web call UI renders an empty black circle for us
@@ -121,11 +132,8 @@ object SfuAuthorityCallManager {
         bindSignaling(channelId, kind, myUid)
         usedVideo = video
         ring?.startCall(peerUid, peerName, video)
-        // PRE-WARM: the caller knows the room id the moment it rings — join the SFU, publish, and run
-        // the MLS claim NOW so the answer only has the pull left (~2s instead of ~7s to two-way audio).
-        // The mic track stays DISABLED until the callee actually accepts (privacy), and an unanswered/
-        // rejected ring tears the media down via onRingState like before.
-        ring?.roomId?.let { joinMedia(it, micHold = true) }
+        // Wait for the answer before media: only then is v1/v2 negotiation complete. Pre-warming a
+        // v2 room would make a mixed-version call invisible to an old peer.
     }
 
     /**
@@ -139,8 +147,10 @@ object SfuAuthorityCallManager {
         myUid: String,
         fromUid: String,
         signal: JSONObject,
+        peerName: String? = null,
     ) {
         Log.i(TAG, "onSfuSignal type=${signal.optString("type")} from=$fromUid channel=$channelId ringNull=${ring == null}")
+        if ((ring == null || _uiCall.value == null) && signal.optString("type") != "offer") return
         if (ring == null || _uiCall.value == null) {
             incoming = true
             bindSignaling(channelId, kind, myUid)
@@ -148,6 +158,7 @@ object SfuAuthorityCallManager {
             // A signal for a different channel while we're busy — ignore (ring will busy/ignore anyway).
             return
         }
+        if (!peerName.isNullOrBlank() && ring?.peerName.isNullOrBlank()) ring?.peerName = peerName
         ring?.handleSignal(fromUid, signal)
     }
 
@@ -171,6 +182,7 @@ object SfuAuthorityCallManager {
                 muted = muted,
                 sessionId = sessionId,
                 tracks = tracks,
+                onError = { error -> failCoordination(room, error) },
             )
         }
         emitUi()
@@ -180,7 +192,10 @@ object SfuAuthorityCallManager {
     /** Camera on/off (voice→video upgrade publishes the camera mid-call, like the web). */
     fun toggleCamera() {
         scope.launch {
-            runCatching { media?.toggleCamera() }.onFailure { Log.w(TAG, "toggleCamera failed", it) }
+            runCatching { media?.toggleCamera() }.onFailure {
+                Log.w(TAG, "toggleCamera failed", it)
+                end()
+            }
             if (media?.cameraOn == true) usedVideo = true
             emitUi()
         }
@@ -192,16 +207,27 @@ object SfuAuthorityCallManager {
     fun startScreenShare(projectionData: android.content.Intent) {
         scope.launch {
             runCatching { media?.startScreenShare(projectionData) }
-                .onFailure { Log.w(TAG, "startScreenShare failed", it) }
+                .onFailure { Log.w(TAG, "startScreenShare failed", it); end() }
             emitUi()
         }
     }
 
     fun stopScreenShare() {
         scope.launch {
-            runCatching { media?.stopScreenShare() }.onFailure { Log.w(TAG, "stopScreenShare failed", it) }
+            runCatching { media?.stopScreenShare() }.onFailure { Log.w(TAG, "stopScreenShare failed", it); end() }
             emitUi()
         }
+    }
+
+    fun setScreenShareQuality(preset: ScreenShareQualityPreset) {
+        _screenShareQuality.value = preset
+        if (::appContext.isInitialized) {
+            appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(SCREEN_SHARE_QUALITY_KEY, preset.wireValue)
+                .apply()
+        }
+        media?.setScreenShareQuality(preset)
     }
 
     /** True when this manager currently owns an active/ringing call (so callers can skip the P2P path). */
@@ -224,7 +250,7 @@ object SfuAuthorityCallManager {
             scope = scope,
             sender = sender,
             onState = { st -> onRingState(st) },
-            onRoom = { roomId, _ -> onRoom(roomId) },
+            onRoom = { roomId, _, version -> onRoom(roomId, version) },
         )
     }
 
@@ -272,31 +298,52 @@ object SfuAuthorityCallManager {
                 video = r.video,
                 cameraOn = media?.cameraOn == true,
                 sharingScreen = media?.sharingScreen == true,
+                safetyNumber = safetyNumber,
             )
         }
     }
 
     /** Ring accepted on both sides → join the SFU room and start audio. */
-    private fun onRoom(roomId: String) {
-        Log.i(TAG, "onRoom roomId=$roomId — joining SFU media (preWarmed=${media != null})")
-        if (media != null) {
-            // Pre-warmed during the outgoing ring — the callee accepted, open the mic and go.
-            media?.setMicHold(false)
-            return
-        }
-        joinMedia(roomId, micHold = false)
+    private fun onRoom(roomId: String, version: SfuProtocolVersion) {
+        Log.i(TAG, "onRoom roomId=$roomId protocol=${version.wireValue}")
+        joinMedia(roomId, micHold = false, version = version)
     }
 
-    private fun joinMedia(roomId: String, micHold: Boolean) {
-        val roomClient = SfuRoomClient(roomId, myUid)
+    private fun joinMedia(roomId: String, micHold: Boolean, version: SfuProtocolVersion) {
+        val currentRing = ring ?: return
+        val callId = currentRing.callId ?: return
+        val peerUid = currentRing.peerUid ?: return
+        val binding = runCatching {
+            SfuRoomBinding.create(
+                scopeType = if (boundKind == AuthorityCallSignaling.ChannelKind.AGENCY) {
+                    SfuRoomScopeType.AGENCY
+                } else SfuRoomScopeType.HIERARCHY,
+                channelId = boundChannelId,
+                callId = callId,
+                selfUid = myUid,
+                peerUid = peerUid,
+            )
+        }.getOrElse {
+            Log.e(TAG, "refusing unbound SFU room", it)
+            end()
+            return
+        }
+        val roomClient = SfuRoomClient(roomId, myUid, binding, version)
         this.room = roomClient
-        // E2EE requires BOTH native libs: the MLS handshake worker AND the frame-crypto bridge. The web
-        // dashboard enforces MLS, so without them audio can't interop (it stays plaintext → web drops it).
+        // E2EE requires BOTH native libs: the MLS handshake worker AND the frame-crypto bridge. No
+        // unencrypted media is permitted when either component is unavailable.
         val e2ee = MlsWorker.available && MlsFrameCrypto.available
         Log.i(TAG, "onRoom e2ee=$e2ee (mlsWorker=${MlsWorker.available} frameCrypto=${MlsFrameCrypto.available})")
+        if (!e2ee) {
+            Log.e(TAG, "refusing SFU join because mandatory MLS E2EE is unavailable")
+            end()
+            return
+        }
         val mediaClient = SfuCallManager(
             context = appContext,
             scope = scope,
+            roomId = roomId,
+            callId = callId,
             e2ee = e2ee,
             onState = { st -> if (st == SfuMediaState.FAILED) end() },
             onPublished = { sessionId, tracks ->
@@ -308,11 +355,13 @@ object SfuAuthorityCallManager {
                     muted = muted,
                     sessionId = sessionId,
                     tracks = tracks,
+                    onError = { error -> failCoordination(roomClient, error) },
                 )
                 emitUi()
             },
         )
         this.media = mediaClient
+        mediaClient.setScreenShareQuality(_screenShareQuality.value)
         mediaClient.setMicHold(micHold)
         // Mirror this call's video into the manager-stable flow. Cancelled + replaced per call so a
         // finished call's engine (whose StateFlow lives on forever) never leaks a collector.
@@ -322,35 +371,53 @@ object SfuAuthorityCallManager {
         }
         runCatching { InternetCallForegroundService.start(appContext) }
         scope.launch {
-            runCatching { mediaClient.join(video = ring?.video == true) }
-                .onFailure { Log.w(TAG, "SFU join failed", it) }
+            val isCreator = runCatching { roomClient.claimMlsCreator() }.getOrElse {
+                Log.e(TAG, "authorized MLS room claim failed", it)
+                end()
+                return@launch
+            }
+            if (media !== mediaClient) return@launch
+            Log.i(TAG, "MLS start (creator=$isCreator)")
+            mlsSession = MlsSession(
+                myUid = myUid,
+                room = roomClient,
+                onSafetyNumber = { number ->
+                    scope.launch {
+                        if (room === roomClient) {
+                            safetyNumber = number.chunked(5).joinToString(" ")
+                            emitUi()
+                        }
+                    }
+                },
+                onFailure = { error -> failCoordination(roomClient, error) },
+            ).also { it.start(isCreator) }
+            runCatching { mediaClient.join(video = ring?.video == true) }.getOrElse {
+                Log.w(TAG, "SFU join failed", it)
+                end()
+                return@launch
+            }
             // The call may have been torn down while join() was in flight (rejected / ring timeout /
             // hung up) — don't attach a roster listener or watchdog to a dead engine (they'd leak).
             if (media !== mediaClient) return@launch
             emitUi() // surface the initial camera state to the overlay
-            rosterReg = roomClient.listenRoster { remotes ->
-                val now = System.currentTimeMillis()
-                val fresh = remotes.any { r ->
-                    r.updatedAtMillis == null || now - r.updatedAtMillis < PEER_STALE_MS
-                }
-                if (fresh) {
-                    lastPeerAliveMillis = now
-                    everSawPeer = true
-                }
-                scope.launch { runCatching { mediaClient.setRoster(remotes) } }
-            }
+            rosterReg = roomClient.listenRoster(
+                onRoster = { remotes ->
+                    val now = System.currentTimeMillis()
+                    val fresh = remotes.any { r ->
+                        r.updatedAtMillis == null || now - r.updatedAtMillis < PEER_STALE_MS
+                    }
+                    if (fresh) {
+                        lastPeerAliveMillis = now
+                        everSawPeer = true
+                    }
+                    scope.launch {
+                        runCatching { mediaClient.setRoster(remotes) }
+                            .onFailure { failCoordination(roomClient, it) }
+                    }
+                },
+                onError = { error -> failCoordination(roomClient, error) },
+            )
             startLivenessWatchdog(roomClient)
-        }
-        // MLS-E2EE group (Faz C). Drive the group handshake over Firestore so the native FrameEncryptor/
-        // Decryptor (attached in SfuCallManager) have a ready group to encrypt/decrypt against. Only when
-        // both native libs are present — otherwise frames stay plaintext and the handshake is pointless.
-        if (e2ee) {
-            scope.launch {
-                val isCreator = runCatching { roomClient.claimMlsCreator() }.getOrDefault(false)
-                if (media !== mediaClient) return@launch // torn down mid-claim — don't strand an MlsSession
-                Log.i(TAG, "MLS start (creator=$isCreator)")
-                mlsSession = MlsSession(myUid, roomClient).also { it.start(isCreator) }
-            }
         }
     }
 
@@ -367,7 +434,7 @@ object SfuAuthorityCallManager {
         livenessJob = scope.launch {
             while (true) {
                 kotlinx.coroutines.delay(HEARTBEAT_INTERVAL_MS)
-                roomClient.heartbeat()
+                roomClient.heartbeat { error -> failCoordination(roomClient, error) }
                 val connected = ring?.state == SfuCallState.CONNECTED
                 if (connected && everSawPeer &&
                     System.currentTimeMillis() - lastPeerAliveMillis > PEER_LOST_END_MS
@@ -380,40 +447,12 @@ object SfuAuthorityCallManager {
         }
     }
 
-    /**
-     * WhatsApp-style call summary in the chat, matching the web exactly: only the CALLER writes it
-     * (the shared encrypted message shows in both threads — writing on both sides would duplicate it),
-     * wire format `call{"kind","status","durationSec"}` (web secure-channel.ts encodeCallLog; rendered
-     * by ChannelBubble→CallEventRow on Android and the dashboard's call bubble on web). Web-originated
-     * calls were already logged by the web; without this, Android-originated calls left no history.
-     */
+    /** Call history must be written through the verified Authority MLS chat session. */
     private fun maybeWriteCallLog() {
         if (callLogged || incoming) return
         if (boundKind != AuthorityCallSignaling.ChannelKind.HIERARCHY) return // agency calls have no 1:1 thread
-        val channelId = boundChannelId.takeIf { it.isNotBlank() } ?: return
-        val peerUid = ring?.peerUid ?: return
-        val peerName = ring?.peerName.orEmpty()
         callLogged = true
-        val connected = connectedAtMillis
-        val durationSec = connected?.let { ((System.currentTimeMillis() - it) / 1000L).coerceAtLeast(0L) } ?: 0L
-        val body = "call" + JSONObject()
-            .put("kind", if (usedVideo) "video" else "audio")
-            .put("status", if (connected != null) "ended" else "missed")
-            .put("durationSec", durationSec)
-            .toString()
-        scope.launch {
-            runCatching {
-                val client = com.auralis.crisisconnect.messaging.HierarchyMessagingClient()
-                val key = client.fetchChannelKey(channelId)
-                client.send(
-                    channelKey = key,
-                    senderName = selfName,
-                    recipientUid = peerUid,
-                    recipientName = peerName,
-                    text = body,
-                )
-            }.onFailure { Log.w(TAG, "call log write failed", it) }
-        }
+        Log.i(TAG, "Skipped call-log persistence because no verified MLS chat session was supplied")
     }
 
     private fun teardownMedia() {
@@ -422,6 +461,7 @@ object SfuAuthorityCallManager {
         videoCollectJob?.cancel()
         videoCollectJob = null
         published = null
+        safetyNumber = null
         _videoStreams.value = SfuVideoStreams()
         rosterReg?.remove()
         rosterReg = null
@@ -432,6 +472,12 @@ object SfuAuthorityCallManager {
         media?.leave()
         media = null
         runCatching { InternetCallForegroundService.stop(appContext) }
+    }
+
+    private fun failCoordination(roomClient: SfuRoomClient?, error: Throwable) {
+        if (roomClient == null || room !== roomClient) return
+        Log.e(TAG, "mandatory SFU/MLS coordination failed", error)
+        scope.launch { end() }
     }
 
     // Non-blank peerPublicKey so Contact.supportsInternet is true (channel calls carry no E2E envelope).
