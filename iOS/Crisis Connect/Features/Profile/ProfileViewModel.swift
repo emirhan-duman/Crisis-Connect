@@ -69,10 +69,13 @@ final class ProfileViewModel: ObservableObject {
     private var saveTask: Task<Void, Never>?
     private var profile: Profile?
     private var hasLoaded: Bool = false
+    private var avatarNeedsCloudUpload = false
+    private var lastAppliedRemotePhotoVersion: String?
     private var authHandle: AuthStateDidChangeListenerHandle?
     private var privacyChangeObserver: NSObjectProtocol?
     private var isSigningOut = false
     private var currentAppleSignInNonce: String?
+    private var pendingPhoneOtpTransport: PhoneOtpTransport?
     private lazy var auth: Auth = {
         FirebaseRuntime.ensureConfigured()
         return Auth.auth()
@@ -139,11 +142,15 @@ final class ProfileViewModel: ObservableObject {
         ProfileMetadataStore.saveFullName(fullName)
         ProfileMetadataStore.saveCountry(country)
         ProfileMetadataStore.saveAgency(agency)
-        if let avatarImage, let data = avatarImage.jpegData(compressionQuality: 0.9) {
-            current.avatarImageData = data
+        if let avatarImage, let normalizedData = avatarImage.profileUploadData() {
+            current.avatarImageData = normalizedData
             ProfileMetadataStore.saveAvatarThumbnailData(avatarImage.profileMetadataThumbnailData())
-            // Cloud copy: notifications + the web panel render the photo from users/{uid}.photoURL.
-            ProfilePhotoUploader.schedule(jpegData: data)
+            // Autosave also runs for name/email edits and on screen close. Upload only after a new
+            // image selection; otherwise the cached photo can overwrite a deletion from another app.
+            if avatarNeedsCloudUpload {
+                avatarNeedsCloudUpload = false
+                ProfilePhotoUploader.schedule(jpegData: normalizedData)
+            }
         } else if current.avatarImageData == nil {
             ProfileMetadataStore.saveAvatarThumbnailData(nil)
         }
@@ -171,6 +178,8 @@ final class ProfileViewModel: ObservableObject {
            let uiImage = UIImage(data: data) {
             await MainActor.run {
                 self.avatarImage = uiImage
+                self.avatarNeedsCloudUpload = true
+                self.lastAppliedRemotePhotoVersion = nil
             }
         }
     }
@@ -446,11 +455,8 @@ final class ProfileViewModel: ObservableObject {
         }
     }
 
-    // Phone verification rides the backend's Twilio OTP callables (requestPhoneOtp /
-    // verifyPhoneOtp) — FirebaseAuth's native phone flow needs APNs/attestation plumbing that is
-    // broken on current iOS + SDK combos (Auth's internal phone managers never initialize).
-    // Server semantics match Firebase phone sign-in: "linked" attaches the proven number to this
-    // account; "signin" returns a custom token for the account that already owns the number.
+    // Native Firebase Phone Auth is primary. Twilio is the guarded fallback when Firebase cannot
+    // send a verification code. The code is always verified by the provider that issued it.
 
     func startPhoneSignIn() {
         let number = phoneSignInNumber.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -460,25 +466,41 @@ final class ProfileViewModel: ObservableObject {
         }
         clearAuthError()
         isAuthLoading = true
+        isAwaitingPhoneCode = false
+        pendingPhoneOtpTransport = nil
         Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
-                // The backend localizes the Twilio SMS by this optional param; without it the SMS
-                // falls back to the number's country default — wrong whenever the device language
-                // differs from the number's country. Shape must be ll or ll-RR or the backend's
-                // validator silently drops it (iOS locales can carry scripts/3-letter codes).
-                var otpPayload: [String: Any] = ["phone": number]
-                if let lang = Locale.current.language.languageCode?.identifier(.alpha2) {
-                    let region = Locale.current.region?.identifier
-                    otpPayload["locale"] = (region?.count == 2) ? "\(lang)-\(region!)" : lang
-                }
-                _ = try await Functions.functions(region: "us-central1")
-                    .httpsCallable("requestPhoneOtp").call(otpPayload)
-                guard let self else { return }
+                let verificationID = try await FirebasePhoneAuthFallback.requestCode(
+                    phoneNumber: number
+                )
+                self.pendingPhoneOtpTransport = .firebase(verificationID: verificationID)
                 self.isAuthLoading = false
                 self.isAwaitingPhoneCode = true
-            } catch {
-                self?.isAuthLoading = false
-                self?.authErrorMessage = self?.phoneServiceErrorMessage(error)
+            } catch let firebaseError {
+                let nsError = firebaseError as NSError
+                NSLog(
+                    "Profile phone auth: Firebase send failed domain=%@ code=%ld: %@; trying Twilio fallback.",
+                    nsError.domain, nsError.code, nsError.localizedDescription
+                )
+                do {
+                    // The backend localizes the Twilio SMS by this optional param; without it the
+                    // SMS falls back to the number's country default. Shape must be ll or ll-RR.
+                    var otpPayload: [String: Any] = ["phone": number]
+                    if let lang = Locale.current.language.languageCode?.identifier(.alpha2) {
+                        let region = Locale.current.region?.identifier
+                        otpPayload["locale"] = (region?.count == 2) ? "\(lang)-\(region!)" : lang
+                    }
+                    _ = try await Functions.functions(region: "us-central1")
+                        .httpsCallable("requestPhoneOtp").call(otpPayload)
+                    self.pendingPhoneOtpTransport = .twilio
+                    self.isAuthLoading = false
+                    self.isAwaitingPhoneCode = true
+                    NSLog("Profile phone auth: Twilio fallback sent the code.")
+                } catch let twilioError {
+                    self.isAuthLoading = false
+                    self.authErrorMessage = self.phoneServiceErrorMessage(twilioError)
+                }
             }
         }
     }
@@ -495,33 +517,53 @@ final class ProfileViewModel: ObservableObject {
         isAwaitingPhoneCode = false
         phoneVerificationCode = ""
         Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
-                let result = try await Functions.functions(region: "us-central1")
-                    .httpsCallable("verifyPhoneOtp").call(["phone": number, "code": code])
-                let data = result.data as? [String: Any] ?? [:]
-                let outcome = data["outcome"] as? String ?? ""
-                let verifiedPhone = data["phone"] as? String ?? number
-                switch outcome {
-                case "linked":
-                    // Number attached to the current account server-side; uid unchanged.
-                    self?.handleAuthResult(result: nil, error: nil)
-                case "signin":
-                    guard let customToken = data["customToken"] as? String else {
-                        throw NSError(
-                            domain: "CrisisConnect.Firebase",
-                            code: -21,
-                            userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("PROFILE_PHONE_CODE_REQUIRED", comment: "")]
-                        )
-                    }
-                    let authResult = try await Auth.auth().signIn(withCustomToken: customToken)
-                    self?.handleAuthResult(result: authResult, error: nil)
-                default:
+                guard let pendingPhoneOtpTransport = self.pendingPhoneOtpTransport else {
                     throw NSError(
                         domain: "CrisisConnect.Firebase",
-                        code: -22,
+                        code: -23,
                         userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("PROFILE_PHONE_CODE_REQUIRED", comment: "")]
                     )
                 }
+                let verifiedPhone: String
+                switch pendingPhoneOtpTransport {
+                case .twilio:
+                    let result = try await Functions.functions(region: "us-central1")
+                        .httpsCallable("verifyPhoneOtp").call(["phone": number, "code": code])
+                    let data = result.data as? [String: Any] ?? [:]
+                    let outcome = data["outcome"] as? String ?? ""
+                    verifiedPhone = data["phone"] as? String ?? number
+                    switch outcome {
+                    case "linked":
+                        self.handleAuthResult(result: nil, error: nil)
+                    case "signin":
+                        guard let customToken = data["customToken"] as? String else {
+                            throw NSError(
+                                domain: "CrisisConnect.Firebase",
+                                code: -21,
+                                userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("PROFILE_PHONE_CODE_REQUIRED", comment: "")]
+                            )
+                        }
+                        let authResult = try await Auth.auth().signIn(withCustomToken: customToken)
+                        self.handleAuthResult(result: authResult, error: nil)
+                    default:
+                        throw NSError(
+                            domain: "CrisisConnect.Firebase",
+                            code: -22,
+                            userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("PROFILE_PHONE_CODE_REQUIRED", comment: "")]
+                        )
+                    }
+                case .firebase(let verificationID):
+                    let authResult = try await FirebasePhoneAuthFallback.verifyCode(
+                        verificationID: verificationID,
+                        code: code,
+                        expectedPhoneNumber: number
+                    )
+                    verifiedPhone = number
+                    self.handleAuthResult(result: authResult, error: nil)
+                }
+                self.pendingPhoneOtpTransport = nil
                 // Number ownership proven → discoverable-by-number default flips on (never
                 // overriding an explicit opt-out), and the number is remembered locally: on the
                 // "linked" outcome Auth doesn't expose it until the next token refresh, and the
@@ -530,8 +572,8 @@ final class ProfileViewModel: ObservableObject {
                 NearbyDiscoveryPreferences.enableByDefaultIfUnset()
                 // Show the number NOW: Auth only exposes it after the next token refresh on the
                 // "linked" outcome, and the profile row reads the local copy as its fallback.
-                self?.phone = verifiedPhone
-                self?.profile?.phone = verifiedPhone
+                self.phone = verifiedPhone
+                self.profile?.phone = verifiedPhone
                 // Republish the identity as phone-discoverable so peers' "add from contacts" can
                 // find this user (Android parity).
                 let displayName = ProfileMetadataStore.loadFullName()
@@ -546,8 +588,8 @@ final class ProfileViewModel: ObservableObject {
                     )
                 }
             } catch {
-                self?.isAuthLoading = false
-                self?.handleAuthError(error)
+                self.isAwaitingPhoneCode = true
+                self.handleAuthError(error)
             }
         }
     }
@@ -556,6 +598,7 @@ final class ProfileViewModel: ObservableObject {
         isAwaitingPhoneCode = false
         phoneVerificationCode = ""
         isAuthLoading = false
+        pendingPhoneOtpTransport = nil
     }
 
     func prepareAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
@@ -689,54 +732,189 @@ final class ProfileViewModel: ObservableObject {
         }
     }
 
-    func deleteAccount() {
-        guard let user = auth.currentUser, !user.isAnonymous else { return }
+    /// Erases the account and everything attached to it, through the `deleteAccountAndData` callable.
+    ///
+    /// This used to delete `users/{uid}` straight from the client and then call `user.delete()`. That
+    /// Firestore write is REFUSED by the security rules — `users/{userId}` carries
+    /// `allow delete: if false` — and `try?` swallowed the denial, so every deletion this app
+    /// reported as successful actually left the profile document (name, e-mail, phone, role, agency)
+    /// behind forever, owned by an account that no longer existed. The collections that make someone
+    /// identifiable are closed to clients as well (`messagingKeys`, the phone-hash discovery
+    /// directory, push tokens, prekey bundles are all `allow read, write: if false`), so a client
+    /// cannot do this job at all: the erase runs server-side, and every platform calls the same
+    /// callable. No re-authentication step is needed any more, because the server no longer relies on
+    /// `user.delete()`.
+    func deleteAccount(context: ModelContext) {
+        guard let user = auth.currentUser else { return }
         clearAuthError()
         isAuthLoading = true
         NSLog("Starting account deletion for uid=\(user.uid)")
-        let uid = user.uid
         saveTask?.cancel()
         saveTask = nil
 
         Task { [weak self] in
             guard let self else { return }
-            try? await self.firestore.collection("users").document(uid).delete()
 
-            await MainActor.run {
-                user.delete { [weak self] error in
-                    guard let self else { return }
-                    if let nsError = error as NSError?,
-                       nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
-                        NSLog("Account deletion requires recent login")
+            // Apple's own requirement, before anything is destroyed: an app offering Sign in with
+            // Apple must revoke the user's token on account deletion. Cancelling here aborts the
+            // whole erase, which is why it runs first — nothing has been deleted yet.
+            guard await self.revokeAppleTokenIfNeeded() else {
+                await MainActor.run { self.isAuthLoading = false }
+                return
+            }
+
+            do {
+                _ = try await self.functions.httpsCallable("deleteAccountAndData").call()
+            } catch {
+                // The server refuses to erase an account on a stale session — the same rule Firebase
+                // itself puts on user.delete(). Prove identity, then retry exactly once.
+                if self.requiresRecentLogin(error), await self.reauthenticateForDeletion() {
+                    do {
+                        _ = try await self.functions.httpsCallable("deleteAccountAndData").call()
+                    } catch {
+                        NSLog("Account deletion failed after reauth: \(error.localizedDescription)")
+                        await MainActor.run {
+                            self.authErrorMessage = NSLocalizedString(
+                                "PROFILE_DELETE_ACCOUNT_ERROR_GENERIC", comment: ""
+                            )
+                            self.isAuthLoading = false
+                        }
+                        return
+                    }
+                } else if self.requiresRecentLogin(error) {
+                    NSLog("Account deletion needs a fresh sign-in")
+                    await MainActor.run {
                         self.authErrorMessage = NSLocalizedString(
                             "PROFILE_DELETE_ACCOUNT_ERROR_RECENT_LOGIN", comment: ""
                         )
                         self.isAuthLoading = false
-                        return
                     }
-                    if let error {
-                        NSLog("Account deletion failed: \(error.localizedDescription)")
+                    return
+                } else {
+                    NSLog("Account deletion failed: \(error.localizedDescription)")
+                    await MainActor.run {
                         self.authErrorMessage = NSLocalizedString(
                             "PROFILE_DELETE_ACCOUNT_ERROR_GENERIC", comment: ""
                         )
                         self.isAuthLoading = false
-                        return
                     }
-                    NSLog("Account deletion completed successfully")
-                    GIDSignIn.sharedInstance.signOut()
-                    self.secureStore.clearUid()
-                    self.secureStore.clearRole()
-                    self.securityRepository.clearStoredCertificate()
-                    self.signInEmail = ""
-                    self.signInPassword = ""
-                    self.email = ""
-                    self.applyAuthState(nil)
-                    self.firebaseRole = "user"
-                    self.isVerified = false
-                    self.certificateReady = false
-                    self.isAuthLoading = false
+                    return
                 }
             }
+
+            // Server state is gone. The on-device half has to follow even if part of it fails —
+            // stopping here would leave this device holding a readable copy of the conversations of
+            // an account that no longer exists.
+            try? self.auth.signOut()
+            LocalDataEraser.eraseAll()
+
+            await MainActor.run {
+                NSLog("Account deletion completed successfully")
+                if let existing = self.profile {
+                    context.delete(existing)
+                    try? context.save()
+                    self.profile = nil
+                }
+                ProfileMetadataStore.saveFullName("")
+                ProfileMetadataStore.saveCountry("")
+                ProfileMetadataStore.saveAgency("")
+                ProfileMetadataStore.saveAvatarThumbnailData(nil)
+                GIDSignIn.sharedInstance.signOut()
+                self.secureStore.clearUid()
+                self.secureStore.clearRole()
+                self.securityRepository.clearStoredCertificate()
+                self.signInEmail = ""
+                self.signInPassword = ""
+                self.email = ""
+                self.fullName = ""
+                self.phone = ""
+                self.bio = ""
+                self.avatarImage = nil
+                self.applyAuthState(nil)
+                self.firebaseRole = "user"
+                self.isVerified = false
+                self.certificateReady = false
+                self.isAuthLoading = false
+            }
+        }
+    }
+
+    /// Providers whose sign-in can be replayed in place. Phone accounts are absent on purpose: their
+    /// credential is attached server-side by the OTP flow, so there is nothing to replay here.
+    private static let reauthProviderIds: Set<String> = ["google.com", "apple.com", "microsoft.com"]
+
+    /// True when the callable rejected the erase because the caller's sign-in is too old.
+    private func requiresRecentLogin(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == FunctionsErrorDomain,
+              nsError.code == FunctionsErrorCode.failedPrecondition.rawValue
+        else {
+            return false
+        }
+        return nsError.localizedDescription.contains("requires-recent-login")
+    }
+
+    /// Refreshes the sign-in so the erase can proceed, without sending the user hunting for the
+    /// button again.
+    ///
+    /// Only browser-based providers can be refreshed in place — Firebase gives them a single
+    /// reauthenticate call. A phone account has no client-side credential to replay, so those users
+    /// are told to sign in again instead; that mints a fresh session through the same OTP path and
+    /// satisfies the server on the next attempt. Apple permits exactly this kind of verification
+    /// step, and forbids only making deletion hard to reach.
+    private func reauthenticateForDeletion() async -> Bool {
+        guard let user = auth.currentUser else { return false }
+        guard let providerId = user.providerData
+            .map(\.providerID)
+            .first(where: { Self.reauthProviderIds.contains($0) })
+        else {
+            return false
+        }
+
+        do {
+            _ = try await user.reauthenticate(
+                with: OAuthProvider(providerID: providerId, auth: auth),
+                uiDelegate: nil
+            )
+            NSLog("Reauthenticated with \(providerId) before account deletion")
+            return true
+        } catch {
+            NSLog("Reauthentication before deletion failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Revokes the Sign in with Apple token when the account being deleted has an Apple provider.
+    ///
+    /// Apple requires this of any app offering Sign in with Apple: deleting the account must also
+    /// revoke the token, otherwise the Apple ID keeps listing an app the user has left. Firebase's
+    /// `revokeToken` needs an authorization code, and Apple's codes stay valid for only a few
+    /// minutes — so a code captured at sign-in months ago is useless here. The only correct source is
+    /// a fresh authorization, which is why Apple users get one extra confirmation step.
+    ///
+    /// - Returns: `false` only when the user backed out of the Apple sheet, meaning the erase should
+    ///   be abandoned with nothing destroyed. A revocation *failure* returns `true`: the most likely
+    ///   cause is the Apple provider missing its OAuth code-flow key in the Firebase console, and
+    ///   refusing to delete the account over that would trap the user in an account they asked to
+    ///   leave. Deleting the Firebase user ends the app's access either way.
+    private func revokeAppleTokenIfNeeded() async -> Bool {
+        let providerIds = auth.currentUser?.providerData.map(\.providerID) ?? []
+        guard providerIds.contains("apple.com") else { return true }
+
+        let authorization = AppleAuthorizationCodeRequest()
+        do {
+            let code = try await authorization.perform()
+            try await auth.revokeToken(withAuthorizationCode: code)
+            NSLog("Sign in with Apple token revoked before account deletion")
+            return true
+        } catch {
+            if let authorizationError = error as? ASAuthorizationError,
+               authorizationError.code == .canceled {
+                NSLog("Account deletion cancelled at the Apple confirmation step")
+                return false
+            }
+            NSLog("Sign in with Apple token revocation failed: \(error.localizedDescription)")
+            return true
         }
     }
 
@@ -885,11 +1063,28 @@ final class ProfileViewModel: ObservableObject {
             let user = auth.currentUser?.isAnonymous == false ? auth.currentUser : nil
             var resolvedCountry = ProfileMetadataStore.loadCountry()
             var resolvedAgency = ProfileMetadataStore.loadAgency()
+            var resolvedName: String?
+            var remotePhotoURL: String?
+            var remotePhotoVersion: String?
+            var remotePhotoIsAuthoritative = false
 
             if let user {
                 secureStore.saveUid(user.uid)
                 let doc = firestore.collection("users").document(user.uid)
                 if let snapshot = try? await doc.getDocumentAsync(), snapshot.exists {
+                    let data = snapshot.data() ?? [:]
+                    resolvedName = ["username", "name", "displayName"]
+                        .compactMap { data[$0] as? String }
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .first(where: { !$0.isEmpty })
+                    remotePhotoIsAuthoritative = data.keys.contains("photoURL") || data.keys.contains("photoDeletedAt")
+                    remotePhotoURL = (data["photoURL"] as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let timestamp = data["photoUpdatedAt"] as? Timestamp {
+                        remotePhotoVersion = String(Int64(timestamp.dateValue().timeIntervalSince1970 * 1_000))
+                    } else {
+                        remotePhotoVersion = remotePhotoURL
+                    }
                     if let remoteRole = snapshot.get("role") as? String {
                         let normalizedRole = remoteRole.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                         if !normalizedRole.isEmpty {
@@ -919,6 +1114,10 @@ final class ProfileViewModel: ObservableObject {
                 }
             }
 
+            if remotePhotoIsAuthoritative {
+                await self.applyRemoteProfilePhoto(urlString: remotePhotoURL, version: remotePhotoVersion)
+            }
+
             let rescueAccess = await FirebaseBootstrapper.shared.refreshRescueAccess()
             let storedRole = secureStore.loadRole()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if let storedRole, RescueRoleAccess.isAuthorized(storedRole) {
@@ -932,6 +1131,9 @@ final class ProfileViewModel: ObservableObject {
             let certificateReady = rescueAccess.certificateReady || hasStoredCertificate
             ProfileMetadataStore.saveCountry(resolvedCountry)
             ProfileMetadataStore.saveAgency(resolvedAgency)
+            if let resolvedName {
+                ProfileMetadataStore.saveFullName(resolvedName)
+            }
 
             await MainActor.run {
                 self.applyAuthState(user)
@@ -941,6 +1143,10 @@ final class ProfileViewModel: ObservableObject {
                 self.certificateReady = certificateReady
                 self.country = resolvedCountry
                 self.agency = resolvedAgency
+                if let resolvedName {
+                    self.fullName = resolvedName
+                    self.profile?.fullName = resolvedName
+                }
                 self.isProfileRefreshing = false
             }
             // Same trigger Android uses (enqueueMobileProfileSync after a remote refresh): without
@@ -948,7 +1154,7 @@ final class ProfileViewModel: ObservableObject {
             if let user, !user.isAnonymous {
                 await MobileSyncClient.syncProfile(
                     user: user,
-                    username: self.fullName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    username: (resolvedName ?? self.fullName).trimmingCharacters(in: .whitespacesAndNewlines),
                     email: self.email.trimmingCharacters(in: .whitespacesAndNewlines),
                     phoneNumber: self.displayPhoneNumber,
                     country: resolvedCountry,
@@ -958,6 +1164,47 @@ final class ProfileViewModel: ObservableObject {
                 )
             }
             NSLog("Finished refreshing Firebase profile state")
+        }
+    }
+
+    private func applyRemoteProfilePhoto(urlString: String?, version: String?) async {
+        let cleanURL = (urlString ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleanURL.isEmpty {
+            await MainActor.run {
+                guard !self.avatarNeedsCloudUpload else { return }
+                self.avatarImage = nil
+                self.profile?.avatarImageData = nil
+                self.lastAppliedRemotePhotoVersion = version ?? "deleted"
+                ProfileMetadataStore.saveAvatarThumbnailData(nil)
+            }
+            return
+        }
+
+        let shouldDownload = await MainActor.run {
+            !self.avatarNeedsCloudUpload && self.lastAppliedRemotePhotoVersion != (version ?? cleanURL)
+        }
+        guard shouldDownload, var components = URLComponents(string: cleanURL) else { return }
+        if let version, !version.isEmpty {
+            var items = components.queryItems ?? []
+            items.removeAll(where: { $0.name == "ccv" })
+            items.append(URLQueryItem(name: "ccv", value: version))
+            components.queryItems = items
+        }
+        guard let url = components.url else { return }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            if let http = response as? HTTPURLResponse, !(200 ... 299).contains(http.statusCode) { return }
+            guard data.count <= 2_500_000, let image = UIImage(data: data) else { return }
+            await MainActor.run {
+                guard !self.avatarNeedsCloudUpload else { return }
+                self.avatarImage = image
+                self.profile?.avatarImageData = data
+                self.lastAppliedRemotePhotoVersion = version ?? cleanURL
+                ProfileMetadataStore.saveAvatarThumbnailData(image.profileMetadataThumbnailData())
+            }
+        } catch {
+            NSLog("ProfileViewModel: remote avatar refresh failed: %@", String(describing: error))
         }
     }
 
@@ -1038,10 +1285,8 @@ final class ProfileViewModel: ObservableObject {
         }
     }
 
-    /// Classifies a phone-OTP callable failure. Android splits infra-vs-policy and falls back to
-    /// native phone auth on infra errors; that fallback is not portable (the FirebaseAuth phone
-    /// flow is broken on iOS — see startPhoneSignIn), but the CLASSIFICATION still matters: an
-    /// infra outage must not read like "your number was rejected".
+    /// Classifies a failure from the Twilio fallback callable. Infrastructure failures should read
+    /// as service unavailable, while policy failures keep the backend's concrete reason.
     private func phoneServiceErrorMessage(_ error: Error) -> String {
         let nsError = error as NSError
         if nsError.domain == FunctionsErrorDomain,
@@ -1136,7 +1381,15 @@ final class ProfileViewModel: ObservableObject {
         Task { @MainActor [weak self] in
             do {
                 try await self?.firestore.collection("users").document(uid)
-                    .setDataAsync(["username": trimmed, "updatedAt": FieldValue.serverTimestamp()], merge: true)
+                    .setDataAsync([
+                        "username": trimmed,
+                        "name": trimmed,
+                        "displayName": trimmed,
+                        "updatedAt": FieldValue.serverTimestamp()
+                    ], merge: true)
+                let profileChange = user.createProfileChangeRequest()
+                profileChange.displayName = trimmed
+                try? await profileChange.commitChanges()
                 self?.transientMessage = NSLocalizedString("PROFILE_USERNAME_UPDATE_SUCCESS", comment: "")
                 if let self, let user = self.auth.currentUser, !user.isAnonymous {
                     await MobileSyncClient.syncProfile(
@@ -1152,6 +1405,26 @@ final class ProfileViewModel: ObservableObject {
                 }
             } catch {
                 self?.transientMessage = NSLocalizedString("PROFILE_USERNAME_UPDATE_ERROR", comment: "")
+            }
+        }
+    }
+
+    func removeProfilePhoto(context: ModelContext) {
+        saveTask?.cancel()
+        avatarNeedsCloudUpload = false
+        lastAppliedRemotePhotoVersion = "deleted"
+        pickerItem = nil
+        avatarImage = nil
+        profile?.avatarImageData = nil
+        ProfileMetadataStore.saveAvatarThumbnailData(nil)
+        try? context.save()
+
+        Task { @MainActor [weak self] in
+            do {
+                try await ProfilePhotoUploader.removeCurrentPhoto()
+                self?.transientMessage = NSLocalizedString("PROFILE_PHOTO_REMOVED", comment: "")
+            } catch {
+                self?.transientMessage = NSLocalizedString("PROFILE_PHOTO_REMOVE_ERROR", comment: "")
             }
         }
     }
@@ -1215,6 +1488,24 @@ final class ProfileViewModel: ObservableObject {
 }
 
 private extension UIImage {
+    func profileUploadData(side: CGFloat = 512) -> Data? {
+        guard size.width > 0, size.height > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let targetSize = CGSize(width: side, height: side)
+        let scaleFactor = max(side / size.width, side / size.height)
+        let drawSize = CGSize(width: size.width * scaleFactor, height: size.height * scaleFactor)
+        let drawOrigin = CGPoint(x: (side - drawSize.width) / 2, y: (side - drawSize.height) / 2)
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        let normalized = renderer.image { context in
+            context.cgContext.setFillColor(UIColor.systemBackground.cgColor)
+            context.cgContext.fill(CGRect(origin: .zero, size: targetSize))
+            draw(in: CGRect(origin: drawOrigin, size: drawSize))
+        }
+        return normalized.jpegData(compressionQuality: 0.82)
+    }
+
     func profileMetadataThumbnailData(side: CGFloat = 72) -> Data? {
         let minSide = min(size.width, size.height)
         guard minSide > 0 else { return nil }
@@ -1232,6 +1523,83 @@ private extension UIImage {
             cropped.draw(in: CGRect(origin: .zero, size: targetSize))
         }
         return thumbnail.jpegData(compressionQuality: 0.78)
+    }
+}
+
+/// One-shot Sign in with Apple authorization used only to obtain a fresh authorization code.
+///
+/// The sign-in path uses SwiftUI's `SignInWithAppleButton`, which cannot be triggered from code.
+/// Account deletion has to raise the Apple sheet itself, so it drives `ASAuthorizationController`
+/// directly and bridges the delegate callbacks to an `async` call. No scopes are requested: this is
+/// not a sign-in, and the only field that matters is the authorization code.
+private final class AppleAuthorizationCodeRequest: NSObject,
+    ASAuthorizationControllerDelegate,
+    ASAuthorizationControllerPresentationContextProviding {
+
+    enum Failure: LocalizedError {
+        case missingAuthorizationCode
+
+        var errorDescription: String? {
+            "Apple did not return an authorization code."
+        }
+    }
+
+    private var continuation: CheckedContinuation<String, Error>?
+    /// Held for the duration of the request: the controller does not reliably keep itself alive
+    /// while the Apple sheet is up, and a deallocated one never calls back — the continuation would
+    /// hang and the deletion flow would sit on its spinner forever.
+    private var controller: ASAuthorizationController?
+
+    @MainActor
+    func perform() async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            let request = ASAuthorizationAppleIDProvider().createRequest()
+            request.requestedScopes = []
+            let controller = ASAuthorizationController(authorizationRequests: [request])
+            controller.delegate = self
+            controller.presentationContextProvider = self
+            self.controller = controller
+            controller.performRequests()
+        }
+    }
+
+    func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithAuthorization authorization: ASAuthorization
+    ) {
+        guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+              let codeData = credential.authorizationCode,
+              let code = String(data: codeData, encoding: .utf8),
+              !code.isEmpty
+        else {
+            finish(with: .failure(Failure.missingAuthorizationCode))
+            return
+        }
+        finish(with: .success(code))
+    }
+
+    func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithError error: Error
+    ) {
+        finish(with: .failure(error))
+    }
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow } ?? ASPresentationAnchor()
+    }
+
+    /// Guards against a second delegate callback resuming an already-consumed continuation, which
+    /// would trap at runtime rather than fail gracefully.
+    private func finish(with result: Result<String, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        self.controller = nil
+        continuation.resume(with: result)
     }
 }
 

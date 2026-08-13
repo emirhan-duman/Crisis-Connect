@@ -23,7 +23,30 @@ import Combine
 import FirebaseAuth
 import FirebaseFirestore
 import Foundation
+import UIKit
 import WebRTC
+
+enum ScreenShareQualityPreset: String, CaseIterable, Identifiable {
+    case auto, smooth, high, ultra
+
+    var id: String { rawValue }
+    var maxWidth: Int {
+        switch self { case .auto, .smooth: 1_920; case .high: 2_560; case .ultra: 3_840 }
+    }
+    var maxHeight: Int {
+        switch self { case .auto, .smooth: 1_080; case .high: 1_440; case .ultra: 2_160 }
+    }
+    var maxFps: Int { self == .smooth ? 60 : 30 }
+    var maxBitrate: Int {
+        switch self {
+        case .auto: 6_000_000
+        case .smooth: 10_000_000
+        case .high: 12_000_000
+        case .ultra: 20_000_000
+        }
+    }
+    var displayName: String { rawValue.capitalized }
+}
 
 @MainActor
 final class SfuCallManager: NSObject, ObservableObject {
@@ -39,6 +62,8 @@ final class SfuCallManager: NSObject, ObservableObject {
     @Published private(set) var state: MediaState = .idle
     @Published private(set) var muted = false
     @Published private(set) var cameraOn = false
+    @Published private(set) var sharingScreen = false
+    @Published private(set) var screenShareQuality: ScreenShareQualityPreset
     /// Pre-warm privacy hold (Android's setMicHold): the caller joins + publishes during the
     /// outgoing ring, but the mic stays silent until the callee actually accepts.
     private var micHold = false
@@ -48,6 +73,7 @@ final class SfuCallManager: NSObject, ObservableObject {
     /// own tile instead of colliding on one uid key, for the grid renderer.
     @Published private(set) var remoteVideoTracks: [String: RTCVideoTrack] = [:]
     @Published private(set) var localVideoTrack: RTCVideoTrack?
+    @Published private(set) var localScreenTrack: RTCVideoTrack?
 
     private static let factory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
@@ -57,7 +83,7 @@ final class SfuCallManager: NSObject, ObservableObject {
         )
     }()
 
-    private let api = SfuApiClient()
+    private let api: SfuApiClient
     private let room: SfuRoomClient
     private let roomId: String
     private let myUid: String
@@ -74,6 +100,12 @@ final class SfuCallManager: NSObject, ObservableObject {
     private var cameraCapturer: RTCCameraVideoCapturer?
     private var cameraSender: RTCRtpSender?
     private var usingFrontCamera = true
+    private var screenSource: RTCVideoSource?
+    private var screenCaptureShim: RTCVideoCapturer?
+    private var screenTrack: RTCVideoTrack?
+    private var screenSender: RTCRtpSender?
+    private var broadcastServer: BroadcastFrameServer?
+    private var publishingScreen = false
 
     private var mlsSession: MlsSession?
     private var rosterRegistration: ListenerRegistration?
@@ -87,16 +119,30 @@ final class SfuCallManager: NSObject, ObservableObject {
     private var pullRetries: [String: Int] = [:]
     private static let maxPullRetries = 5
     private static let pullRetryDelayNanos: UInt64 = 2_000_000_000
+    private static let screenQualityDefaultsKey = "authority_screen_share_quality"
     // Inbound transceiver mid → (uid, source) so remote video tracks attribute to a participant.
     private var midToUid: [String: String] = [:]
     private var midSource: [String: String] = [:]
 
-    init(roomId: String, displayName: String, photoUrl: String? = nil) {
+    init(
+        roomId: String,
+        binding: SfuRoomBinding,
+        protocolVersion: SfuProtocolVersion,
+        displayName: String,
+        photoUrl: String? = nil
+    ) {
+        let uid = Auth.auth().currentUser?.uid ?? ""
         self.roomId = roomId
-        self.myUid = Auth.auth().currentUser?.uid ?? ""
+        self.myUid = uid
         self.displayName = displayName
         self.photoUrl = photoUrl
-        self.room = SfuRoomClient(roomId: roomId, selfUid: Auth.auth().currentUser?.uid ?? "")
+        self.api = SfuApiClient(roomId: roomId, callId: binding.callId)
+        self.room = SfuRoomClient(
+            roomId: roomId, selfUid: uid, binding: binding, protocolVersion: protocolVersion
+        )
+        self.screenShareQuality = ScreenShareQualityPreset(
+            rawValue: UserDefaults.standard.string(forKey: Self.screenQualityDefaultsKey) ?? ""
+        ) ?? .auto
         super.init()
     }
 
@@ -104,8 +150,19 @@ final class SfuCallManager: NSObject, ObservableObject {
 
     func join(video: Bool = false) async {
         guard state == .idle, !myUid.isEmpty else { return }
+        // An SFU terminates ordinary WebRTC encryption and can read the media. Calls must therefore
+        // stop here unless both the MLS core and the native frame-transform hooks are present.
+        guard e2ee else {
+            NSLog("SfuCallManager: refusing SFU join because mandatory MLS E2EE is unavailable")
+            state = .failed
+            return
+        }
         state = .joining
         do {
+            // Establish the authorized coordination room before any roster/relay write or SFU media
+            // publication. A legacy/unbound/replayed room is a hard failure, never a joiner fallback.
+            let isCreator = try await room.claimMlsCreator()
+            try startMlsHandshake(isCreator: isCreator)
             await TurnCredentialsProvider.shared.refresh()
             let connection = try makePeerConnection()
             pc = connection
@@ -118,36 +175,35 @@ final class SfuCallManager: NSObject, ObservableObject {
             let audioInit = RTCRtpTransceiverInit()
             audioInit.direction = .sendOnly
             let audioTransceiver = connection.addTransceiver(with: audioTrack, init: audioInit)
-            attachFrameCrypto(sender: audioTransceiver?.sender, source: "mic")
+            try attachFrameCrypto(sender: audioTransceiver?.sender, source: "mic")
 
             if video {
-                enableCameraTrack(on: connection)
+                try enableCameraTrack(on: connection)
             }
 
-            // 1) Create the SFU session with our first (fully gathered) offer.
-            let offer1 = try await connection.offerAsync(constraints: mediaConstraints)
-            try await connection.setLocalAsync(offer1)
-            let gathered1 = try await connection.gatheredLocalSdp()
-            let session = try await api.createSession(offerSdp: gathered1)
+            // 1) Allocate an empty Cloudflare session. Per the Connection API lifecycle, the initial
+            // SDP offer belongs to tracks/new; sending an earlier offer creates a double negotiation.
+            let session = try await api.createSession()
             guard let sid = (session["sessionId"] as? String), !sid.isEmpty else {
                 throw SfuApiError.requestFailed("session not created")
             }
             sessionId = sid
-            try await connection.setRemoteAsync(sdp: answerSdp(from: session))
 
-            // 2) Publish: name each local track by its id, tied to its transceiver mid, renegotiate.
+            // 2) Publish using the single initial offer, matching web and Android byte-for-byte at the
+            // API boundary, then apply Cloudflare's answer.
+            let offer = try await connection.offerAsync(constraints: mediaConstraints)
+            try await connection.setLocalAsync(offer)
+            let gathered = try await connection.gatheredLocalSdp()
             let localTracks: [[String: Any]] = connection.transceivers.compactMap { transceiver in
                 guard let track = transceiver.sender.track, let mid = transceiver.mid.nilIfEmpty else { return nil }
                 return ["location": "local", "mid": mid, "trackName": track.trackId]
             }
-            let offer2 = try await connection.offerAsync(constraints: mediaConstraints)
-            try await connection.setLocalAsync(offer2)
-            let gathered2 = try await connection.gatheredLocalSdp()
-            let publish = try await api.publishTracks(sessionId: sid, offerSdp: gathered2, tracks: localTracks)
-            if let description = publish["sessionDescription"] as? [String: Any],
-               let sdp = description["sdp"] as? String {
-                try await connection.setRemoteAsync(sdp: sdp, type: .answer)
+            let publish = try await api.publishTracks(sessionId: sid, offerSdp: gathered, tracks: localTracks)
+            guard let description = publish["sessionDescription"] as? [String: Any],
+                  let sdp = description["sdp"] as? String else {
+                throw SfuApiError.requestFailed("track publish returned no answer sdp")
             }
+            try await connection.setRemoteAsync(sdp: sdp, type: .answer)
 
             let published: [SfuPublishedTrack] = connection.transceivers.compactMap { transceiver in
                 guard let track = transceiver.sender.track else { return nil }
@@ -160,11 +216,12 @@ final class SfuCallManager: NSObject, ObservableObject {
             }
             room.publishSelf(
                 name: displayName, photoUrl: photoUrl, cameraOn: cameraOn, muted: muted,
-                sessionId: sid, tracks: published
+                sessionId: sid, tracks: published,
+                onError: { [weak self] error in self?.failCoordination(error) }
             )
             startRoomSync()
-            startMlsHandshake()
             state = .live
+            startScreenBroadcastServer()
         } catch {
             NSLog("SfuCallManager: join failed: %@", String(describing: error))
             state = .failed
@@ -175,13 +232,18 @@ final class SfuCallManager: NSObject, ObservableObject {
     // MARK: - Roster → pull remote tracks
 
     private func startRoomSync() {
-        rosterRegistration = room.listenRoster { [weak self] remotes in
-            Task { @MainActor [weak self] in await self?.setRoster(remotes) }
-        }
+        rosterRegistration = room.listenRoster(
+            onRoster: { [weak self] remotes in
+                Task { @MainActor [weak self] in await self?.setRoster(remotes) }
+            },
+            onError: { [weak self] error in self?.failCoordination(error) }
+        )
         heartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
-                await MainActor.run { self?.room.heartbeat() }
+                await MainActor.run {
+                    self?.room.heartbeat(onError: { [weak self] error in self?.failCoordination(error) })
+                }
             }
         }
     }
@@ -227,6 +289,10 @@ final class SfuCallManager: NSObject, ObservableObject {
                 if let description = result["sessionDescription"] as? [String: Any],
                    let sdp = description["sdp"] as? String {
                     try await connection.setRemoteAsync(sdp: sdp, type: .offer)
+                    // The receive callback may run while setRemoteDescription is still committing
+                    // the signalled SSRC. Re-attach after completion so encrypted video can never
+                    // bypass the MLS decryptor and reach the hardware decoder as plaintext.
+                    try attachPulledDecryptors(on: connection, uid: remote.uid)
                     let answer = try await connection.answerAsync(constraints: mediaConstraints)
                     try await connection.setLocalAsync(answer)
                     let gathered = try await connection.gatheredLocalSdp()
@@ -276,17 +342,20 @@ final class SfuCallManager: NSObject, ObservableObject {
 
     // MARK: - MLS group handshake (establishes the E2EE key + safety number)
 
-    private func startMlsHandshake() {
-        guard MlsWorker.available else { return } // Rust core present but frame transform still blocked.
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let isCreator = (try? await self.room.claimMlsCreator()) ?? false
-            let session = MlsSession(myUid: self.myUid, room: self.room) { [weak self] number in
-                Task { @MainActor [weak self] in self?.safetyNumber = number }
-            }
-            self.mlsSession = session
-            session.start(isCreator: isCreator)
+    private func startMlsHandshake(isCreator: Bool) throws {
+        guard MlsWorker.available else {
+            throw SfuApiError.requestFailed("mandatory MLS core unavailable")
         }
+        let session = MlsSession(
+            myUid: myUid,
+            room: room,
+            onSafetyNumber: { [weak self] number in
+                Task { @MainActor [weak self] in self?.safetyNumber = number }
+            },
+            onFailure: { [weak self] error in self?.failCoordination(error) }
+        )
+        mlsSession = session
+        session.start(isCreator: isCreator)
     }
 
     // MARK: - Controls
@@ -311,7 +380,14 @@ final class SfuCallManager: NSObject, ObservableObject {
             localVideoTrack = nil
             cameraOn = false
         } else {
-            enableCameraTrack(on: connection)
+            do {
+                try enableCameraTrack(on: connection)
+            } catch {
+                NSLog("SfuCallManager: mandatory camera E2EE setup failed: %@", String(describing: error))
+                state = .failed
+                leave()
+                return
+            }
         }
         republishSelf()
     }
@@ -322,25 +398,45 @@ final class SfuCallManager: NSObject, ObservableObject {
         startCameraCapture()
     }
 
+    func setScreenShareQuality(_ preset: ScreenShareQualityPreset) {
+        screenShareQuality = preset
+        UserDefaults.standard.set(preset.rawValue, forKey: Self.screenQualityDefaultsKey)
+        broadcastServer?.setTargetFps(preset.maxFps)
+        if let screenSender { applyScreenSenderParams(screenSender) }
+    }
+
     func leave() {
         heartbeatTask?.cancel(); heartbeatTask = nil
         rosterRegistration?.remove(); rosterRegistration = nil
         mlsSession?.stop(); mlsSession = nil
         room.leave()
         cameraCapturer?.stopCapture(); cameraCapturer = nil
+        stopScreenBroadcastServer(announce: false)
         pc?.close(); pc = nil
         localAudioTrack = nil
         localVideoTrack = nil
+        localScreenTrack = nil
         cameraSender = nil
+        screenSender = nil
+        sharingScreen = false
         remoteVideoTracks = [:]
         midToUid = [:]; midSource = [:]; pulled = []; pullRetries = [:]
         sessionId = nil
-        state = .left
+        if state != .failed { state = .left }
+    }
+
+    private nonisolated func failCoordination(_ error: Error) {
+        Task { @MainActor [weak self] in
+            guard let self, self.state != .failed, self.state != .left else { return }
+            NSLog("SfuCallManager: authorized MLS coordination failed: %@", String(describing: error))
+            self.state = .failed
+            self.leave()
+        }
     }
 
     // MARK: - Camera
 
-    private func enableCameraTrack(on connection: RTCPeerConnection) {
+    private func enableCameraTrack(on connection: RTCPeerConnection) throws {
         let source = Self.factory.videoSource()
         let capturer = RTCCameraVideoCapturer(delegate: source)
         let track = Self.factory.videoTrack(with: source, trackId: "sfu_cam")
@@ -350,13 +446,15 @@ final class SfuCallManager: NSObject, ObservableObject {
         cameraOn = true
         if let existing = cameraSender {
             existing.track = track
+            applyCameraSenderParams(existing)
         } else {
             let videoInit = RTCRtpTransceiverInit()
             videoInit.direction = .sendOnly
             let transceiver = connection.addTransceiver(with: track, init: videoInit)
             cameraSender = transceiver?.sender
-            pinVp9(on: transceiver)
-            attachFrameCrypto(sender: transceiver?.sender, source: "camera")
+            try pinVp9(on: transceiver)
+            try attachFrameCrypto(sender: transceiver?.sender, source: "camera")
+            if let sender = transceiver?.sender { applyCameraSenderParams(sender) }
         }
         startCameraCapture()
     }
@@ -378,41 +476,201 @@ final class SfuCallManager: NSObject, ObservableObject {
         capturer.startCapture(with: device, format: format, fps: fps)
     }
 
+    // MARK: - ReplayKit screen share
+
+    /// Listen for the Broadcast Upload Extension for the lifetime of a live call. The screen is a
+    /// separate SFU track, so camera and screen can remain active together on every platform.
+    private func startScreenBroadcastServer() {
+        guard pc != nil, broadcastServer == nil else { return }
+        let source = Self.factory.videoSource(forScreenCast: true)
+        let shim = RTCVideoCapturer(delegate: source)
+        let track = Self.factory.videoTrack(with: source, trackId: "sfu_screen")
+        track.isEnabled = true
+        screenSource = source
+        screenCaptureShim = shim
+        screenTrack = track
+
+        let server = BroadcastFrameServer()
+        server.setTargetFps(screenShareQuality.maxFps)
+        var attached = false // accessed only on BroadcastFrameServer's serial delivery queue
+        server.onFrame = { [weak self] pixelBuffer, rotationDegrees, timestampNs in
+            let rotation: RTCVideoRotation
+            switch rotationDegrees {
+            case 90: rotation = ._90
+            case 180: rotation = ._180
+            case 270: rotation = ._270
+            default: rotation = ._0
+            }
+            source.capturer(
+                shim,
+                didCapture: RTCVideoFrame(
+                    buffer: RTCCVPixelBuffer(pixelBuffer: pixelBuffer),
+                    rotation: rotation,
+                    timeStampNs: timestampNs
+                )
+            )
+            if !attached {
+                attached = true
+                Task { @MainActor [weak self] in await self?.attachScreenTrackToSfu() }
+            }
+        }
+        server.onClientDisconnected = { [weak self] in
+            attached = false
+            Task { @MainActor [weak self] in self?.detachScreenTrackFromSfu() }
+        }
+        server.start()
+        broadcastServer = server
+    }
+
+    private func attachScreenTrackToSfu() async {
+        guard state == .live, !sharingScreen, !publishingScreen,
+              let connection = pc, let sid = sessionId, let track = screenTrack else { return }
+        publishingScreen = true
+        defer { publishingScreen = false }
+        do {
+            let sender: RTCRtpSender
+            var newTransceiver: RTCRtpTransceiver?
+            if let existing = screenSender {
+                existing.track = track
+                sender = existing
+            } else {
+                let initConfig = RTCRtpTransceiverInit()
+                initConfig.direction = .sendOnly
+                guard let transceiver = connection.addTransceiver(with: track, init: initConfig) else {
+                    throw SfuApiError.requestFailed("screen transceiver unavailable")
+                }
+                newTransceiver = transceiver
+                screenSender = transceiver.sender
+                sender = transceiver.sender
+                try pinVp9(on: transceiver)
+                try attachFrameCrypto(sender: sender, source: "screen")
+            }
+            applyScreenSenderParams(sender)
+
+            if let transceiver = newTransceiver {
+                let offer = try await connection.offerAsync(constraints: mediaConstraints)
+                try await connection.setLocalAsync(offer)
+                let gathered = try await connection.gatheredLocalSdp()
+                guard let mid = transceiver.mid.nilIfEmpty else {
+                    throw SfuApiError.requestFailed("screen transceiver mid unavailable")
+                }
+                let publish = try await api.publishTracks(
+                    sessionId: sid,
+                    offerSdp: gathered,
+                    tracks: [["location": "local", "mid": mid, "trackName": track.trackId]]
+                )
+                if let description = publish["sessionDescription"] as? [String: Any],
+                   let sdp = description["sdp"] as? String {
+                    try await connection.setRemoteAsync(sdp: sdp, type: .answer)
+                }
+            }
+            sharingScreen = true
+            localScreenTrack = track
+            if let cameraSender { applyCameraSenderParams(cameraSender) }
+            republishSelf()
+        } catch {
+            NSLog("SfuCallManager: secure screen publish failed: %@", String(describing: error))
+            state = .failed
+            leave()
+        }
+    }
+
+    private func detachScreenTrackFromSfu(announce: Bool = true) {
+        screenSender?.track = nil
+        sharingScreen = false
+        localScreenTrack = nil
+        if let cameraSender { applyCameraSenderParams(cameraSender) }
+        if announce, state == .live { republishSelf() }
+    }
+
+    private func stopScreenBroadcastServer(announce: Bool = true) {
+        detachScreenTrackFromSfu(announce: announce)
+        broadcastServer?.stop()
+        broadcastServer = nil
+        screenTrack = nil
+        screenSource = nil
+        screenCaptureShim = nil
+    }
+
+    private func applyScreenSenderParams(_ sender: RTCRtpSender) {
+        let profile = screenShareQuality
+        let native = UIScreen.main.nativeBounds.size
+        let portrait = native.height > native.width
+        let widthLimit = CGFloat(portrait ? profile.maxHeight : profile.maxWidth)
+        let heightLimit = CGFloat(portrait ? profile.maxWidth : profile.maxHeight)
+        let scale = max(1, max(native.width / widthLimit, native.height / heightLimit))
+        let params = sender.parameters
+        params.encodings.first?.maxBitrateBps = NSNumber(value: profile.maxBitrate)
+        params.encodings.first?.maxFramerate = NSNumber(value: profile.maxFps)
+        params.encodings.first?.scaleResolutionDownBy = NSNumber(value: Double(scale))
+        sender.parameters = params
+    }
+
+    private func applyCameraSenderParams(_ sender: RTCRtpSender) {
+        let params = sender.parameters
+        params.encodings.first?.maxBitrateBps = NSNumber(value: sharingScreen ? 900_000 : 2_500_000)
+        params.encodings.first?.maxFramerate = NSNumber(value: sharingScreen ? 15 : 30)
+        sender.parameters = params
+    }
+
     private func republishSelf() {
         guard let sid = sessionId, let connection = pc else { return }
-        let tracks: [SfuPublishedTrack] = connection.transceivers.compactMap {
-            guard let track = $0.sender.track else { return nil }
-            return SfuPublishedTrack(
-                trackName: track.trackId, kind: track.kind,
-                source: track.kind == "audio" ? "mic" : "camera"
-            )
+        let tracks: [SfuPublishedTrack] = connection.transceivers.compactMap { transceiver in
+            guard let track = transceiver.sender.track else { return nil }
+            let isScreen = screenSender.map { transceiver.sender === $0 } ?? false
+            let source = track.kind == "audio" ? "mic" : (isScreen ? "screen" : "camera")
+            return SfuPublishedTrack(trackName: track.trackId, kind: track.kind, source: source)
         }
         room.publishSelf(
             name: displayName, photoUrl: photoUrl, cameraOn: cameraOn, muted: muted,
-            sessionId: sid, tracks: tracks
+            sessionId: sid, tracks: tracks,
+            onError: { [weak self] error in self?.failCoordination(error) }
         )
     }
 
     /// Attach the MLS FrameEncryptor to a local sender before publishing, so outgoing frames are
     /// E2E-encrypted (empty/silence until the group handshake lands — see MlsFrameCrypto).
-    private func attachFrameCrypto(sender: RTCRtpSender?, source: String) {
-        guard e2ee, let sender else { return }
-        if MlsFrameCrypto.attachEncryptorToSender(sender) {
-            NSLog("SfuCallManager: attached MLS FrameEncryptor to %@ sender", source)
+    private func attachFrameCrypto(sender: RTCRtpSender?, source: String) throws {
+        guard e2ee, let sender, MlsFrameCrypto.attachEncryptorToSender(sender) else {
+            throw SfuApiError.requestFailed("mandatory MLS encrypt transform unavailable for \(source)")
+        }
+        NSLog("SfuCallManager: attached MLS FrameEncryptor to %@ sender", source)
+    }
+
+    /// Re-attach inbound transforms after the remote offer has fully committed its SSRCs. Native
+    /// WebRTC can dispatch didStartReceivingOn during setRemoteDescription, before the video
+    /// receiver is ready to retain a FrameDecryptor. Keep video disabled until this succeeds.
+    private func attachPulledDecryptors(on connection: RTCPeerConnection, uid: String) throws {
+        let expectedMids = Set(midToUid.compactMap { $0.value == uid ? $0.key : nil })
+        let receivers = connection.transceivers.filter { transceiver in
+            expectedMids.contains(transceiver.mid) && transceiver.receiver.track != nil
+        }
+        guard !receivers.isEmpty else {
+            throw SfuApiError.requestFailed("no inbound receivers for mandatory MLS decrypt transform")
+        }
+        for transceiver in receivers {
+            guard MlsFrameCrypto.attachDecryptor(toReceiver: transceiver.receiver) else {
+                throw SfuApiError.requestFailed("mandatory MLS decrypt transform unavailable")
+            }
+            (transceiver.receiver.track as? RTCVideoTrack)?.isEnabled = true
         }
     }
 
     /// Pin VP9 (+rtx) on a video transceiver. The MLS per-frame crypto targets VP9 (whole-frame
     /// encryption, no plaintext header — see split_vp9_header in the shared Rust) and Android and
     /// the web pin the same, so all sides negotiate identical codecs.
-    private func pinVp9(on transceiver: RTCRtpTransceiver?) {
-        guard let transceiver else { return }
+    private func pinVp9(on transceiver: RTCRtpTransceiver?) throws {
+        guard let transceiver else {
+            throw SfuApiError.requestFailed("video transceiver unavailable")
+        }
         let capabilities = Self.factory.rtpSenderCapabilities(forKind: kRTCMediaStreamTrackKindVideo)
         let vp9 = capabilities.codecs.filter {
             let name = $0.name.lowercased()
             return name == "vp9" || name == "rtx"
         }
-        guard !vp9.isEmpty else { return }
+        guard vp9.contains(where: { $0.name.lowercased() == "vp9" }) else {
+            throw SfuApiError.requestFailed("VP9 required for MLS whole-frame encryption")
+        }
         MlsFrameCrypto.applyCodecPreferences(vp9, toTransceiver: transceiver)
     }
 
@@ -436,18 +694,19 @@ final class SfuCallManager: NSObject, ObservableObject {
         }
         config.sdpSemantics = .unifiedPlan
         config.continualGatheringPolicy = .gatherOnce
+        // Native WebRTC only creates its inbound video frame-decrypt path when encryption is
+        // required as the PeerConnection is created. This mirrors Android and also fails closed:
+        // no sender or receiver may pass media without its MLS frame transform attached.
+        config.cryptoOptions = RTCCryptoOptions(
+            srtpEnableGcmCryptoSuites: false,
+            srtpEnableAes128Sha1_32CryptoCipher: false,
+            srtpEnableEncryptedRtpHeaderExtensions: false,
+            sframeRequireFrameEncryption: true
+        )
         guard let connection = Self.factory.peerConnection(with: config, constraints: emptyConstraints, delegate: self) else {
             throw SfuApiError.requestFailed("PeerConnection not created")
         }
         return connection
-    }
-
-    private func answerSdp(from response: [String: Any]) throws -> String {
-        guard let description = response["sessionDescription"] as? [String: Any],
-              let sdp = description["sdp"] as? String else {
-            throw SfuApiError.requestFailed("no answer sdp")
-        }
-        return sdp
     }
 }
 
@@ -457,11 +716,21 @@ extension SfuCallManager: RTCPeerConnectionDelegate {
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didStartReceivingOn transceiver: RTCRtpTransceiver) {
         // Attach the MLS FrameDecryptor to every inbound receiver (audio AND video) so peers'
         // E2E-encrypted frames decode — Android does the same in onTrack.
-        if e2ee, MlsFrameCrypto.attachDecryptor(toReceiver: transceiver.receiver) {
-            NSLog("SfuCallManager: attached MLS FrameDecryptor to receiver mid=%@", transceiver.mid)
+        guard e2ee, MlsFrameCrypto.attachDecryptor(toReceiver: transceiver.receiver) else {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                NSLog("SfuCallManager: mandatory MLS decrypt transform unavailable; closing call")
+                self.state = .failed
+                self.leave()
+            }
+            return
         }
+        NSLog("SfuCallManager: attached MLS FrameDecryptor to receiver mid=%@", transceiver.mid)
         guard transceiver.mediaType == .video,
               let track = transceiver.receiver.track as? RTCVideoTrack else { return }
+        // setRemoteDescription has not necessarily committed this receiver's SSRC yet. The
+        // post-description pass above re-attaches the decryptor and enables the track.
+        track.isEnabled = false
         let mid = transceiver.mid
         Task { @MainActor [weak self] in
             guard let self, let uid = self.midToUid[mid] else { return }

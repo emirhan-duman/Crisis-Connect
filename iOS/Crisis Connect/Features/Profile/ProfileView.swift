@@ -74,7 +74,7 @@ struct ProfileView: View {
         .alert("PROFILE_DELETE_ACCOUNT_CONFIRM_TITLE", isPresented: $isDeleteAccountConfirmPresented) {
             Button("COMMON_CANCEL", role: .cancel) {}
             Button("PROFILE_DELETE_ACCOUNT_CONFIRM_ACTION", role: .destructive) {
-                viewModel.deleteAccount()
+                viewModel.deleteAccount(context: context)
             }
         } message: {
             Text("PROFILE_DELETE_ACCOUNT_CONFIRM_MESSAGE")
@@ -159,6 +159,17 @@ struct ProfileView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(AppSecondaryButtonStyle())
+
+            if viewModel.avatarImage != nil {
+                Button(role: .destructive) {
+                    viewModel.removeProfilePhoto(context: context)
+                } label: {
+                    Label("PROFILE_REMOVE_PHOTO", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(AppSecondaryButtonStyle())
+                .tint(.red)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)

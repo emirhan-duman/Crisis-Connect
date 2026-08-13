@@ -35,6 +35,7 @@ fun SfuCallOverlayHost(activity: Activity) {
     // Unconditional subscription to a manager-stable flow: the overlay can never miss a remote track
     // because a per-call media engine appeared after the first composition.
     val streams by SfuAuthorityCallManager.videoStreamsFlow.collectAsStateWithLifecycle()
+    val screenShareQuality by SfuAuthorityCallManager.screenShareQuality.collectAsStateWithLifecycle()
 
     val micLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -100,6 +101,8 @@ fun SfuCallOverlayHost(activity: Activity) {
             remoteScreen = streams.remoteScreen,
         ),
         eglContext = SfuCallManager.sharedEglContext(),
+        screenShareQuality = screenShareQuality,
+        onScreenShareQualityChanged = SfuAuthorityCallManager::setScreenShareQuality,
         onAccept = {
             if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
                 == PackageManager.PERMISSION_GRANTED

@@ -324,12 +324,22 @@ class CrisisConnectApp : Application() {
     }
 
     private fun installFirebaseAppCheck() {
-        val firebaseApp = FirebaseApp.initializeApp(this) ?: FirebaseApp.getInstance()
+        val firebaseApp = FirebaseApp.initializeApp(this) ?: run {
+            Log.e(TAG, "Firebase initialization returned no default app; App Check is disabled.")
+            return
+        }
         val useDebugAppCheck = BuildConfig.DEBUG && BuildConfig.BUILD_TYPE != INTERNAL_BUILD_TYPE
         if (useDebugAppCheck) {
             seedConfiguredDebugAppCheckToken(firebaseApp)
         }
-        val firebaseAppCheck = FirebaseAppCheck.getInstance(firebaseApp)
+        // Firebase's Java API is annotated non-null, but component discovery can still
+        // return null when an installed base/split pair contains incompatible registrars.
+        // App Check should fail closed at the network boundary, not crash Application.onCreate.
+        val firebaseAppCheck: FirebaseAppCheck? = FirebaseAppCheck.getInstance(firebaseApp)
+        if (firebaseAppCheck == null) {
+            Log.e(TAG, "Firebase App Check component is unavailable; continuing without a provider.")
+            return
+        }
         val providerFactory = when {
             useDebugAppCheck -> {
                 createDebugAppCheckProviderFactory() ?: run {

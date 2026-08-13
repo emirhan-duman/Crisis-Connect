@@ -27,6 +27,8 @@ import com.auralis.crisisconnect.data.getContactByPeerUid
 import com.auralis.crisisconnect.data.saveContact
 import com.auralis.crisisconnect.data.saveRemoteMessage
 import com.auralis.crisisconnect.service.NotificationAvatarFormatter
+import com.auralis.crisisconnect.messaging.call.AuthorityCallSignaling
+import com.auralis.crisisconnect.messaging.call.sfu.SfuAuthorityCallManager
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -40,6 +42,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -74,8 +77,26 @@ class CrisisConnectMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
+        if (data["type"] == "resource_alert_wake") {
+            handleResourceAlertWake(data)
+            return
+        }
+        if (data["type"] == "authority_mls_prepare_v2") {
+            handleAuthorityMlsPrepareWake(data)
+            return
+        }
+        if (data["type"] == "authority_mls_v2") {
+            handleAuthorityMlsWake(data)
+            return
+        }
+        if (data["type"] == "authority_call_v2") {
+            handleAuthorityCallWake(data)
+            return
+        }
         if (data["type"] == "channel_chat") {
-            handleChannelMessage(data)
+            // Legacy shared-key channel pushes are retired. Processing them could surface old
+            // plaintext previews on the lock screen and preserve a downgrade signal after MLS v2.
+            Log.w(TAG, "Dropped retired channel_chat push; AuthorityChat accepts MLS v2 wakes only")
             return
         }
         if (data["type"] != "chat") return
@@ -151,6 +172,239 @@ class CrisisConnectMessagingService : FirebaseMessagingService() {
             // navigation, and MainActivity resolves it to the right chat screen.
             sessionCode = received.sessionCode,
             senderUid = senderUid
+        )
+    }
+
+    private fun handleResourceAlertWake(data: Map<String, String>) {
+        val acknowledged = runCatching {
+            runBlocking {
+                withTimeoutOrNull(10_000L) {
+                    ResourceAlertWakeClient.acknowledge(applicationContext, data)
+                } == true
+            }
+        }.getOrDefault(false)
+        if (!acknowledged) {
+            // The nonce is deliberately absent from logs; the next provider attempt remains the
+            // recovery path when the OS wake budget, auth refresh, or network is unavailable.
+            ResourceAlertWakeAckWorker.enqueue(applicationContext)
+        }
+    }
+
+    /**
+     * High-priority, content-free wake for an AuthorityChat SFU offer. Push fields are treated only
+     * as an index: the immutable Firestore signal is fetched and fully revalidated before ringing.
+     */
+    private fun handleAuthorityCallWake(data: Map<String, String>) {
+        val scopeType = when (data["scopeType"]) {
+            AuthorityMlsScopeType.AGENCY.wireName -> AuthorityMlsScopeType.AGENCY
+            AuthorityMlsScopeType.HIERARCHY.wireName -> AuthorityMlsScopeType.HIERARCHY
+            else -> return
+        }
+        val channelId = data["channelId"].orEmpty()
+        val signalId = data["signalId"].orEmpty()
+        val pushCallId = data["callId"].orEmpty()
+        val pushSenderUid = data["senderUid"].orEmpty()
+        if (channelId.isBlank() || channelId.length > 256 || !SAFE_MLS_ID.matches(signalId) ||
+            !CALL_UUID.matches(pushCallId) || pushSenderUid.isBlank() || pushSenderUid.length > 128
+        ) return
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val kind = if (scopeType == AuthorityMlsScopeType.AGENCY) {
+            AuthorityCallSignaling.ChannelKind.AGENCY
+        } else {
+            AuthorityCallSignaling.ChannelKind.HIERARCHY
+        }
+        val collection = if (kind == AuthorityCallSignaling.ChannelKind.AGENCY) "agencyPanels" else "hierarchyChannels"
+        val firestore = FirebaseFirestore.getInstance()
+        val signal = runCatching {
+            Tasks.await(
+                firestore.document("$collection/$channelId/callSignals/$signalId").get(),
+                5, TimeUnit.SECONDS,
+            )
+        }.getOrNull() ?: return
+        if (!signal.exists()) return
+        val createdAt = signal.getTimestamp("createdAt") ?: return
+        val expireAt = signal.getTimestamp("expireAt") ?: return
+        val ageMs = System.currentTimeMillis() - createdAt.toDate().time
+        val retentionMs = expireAt.toDate().time - createdAt.toDate().time
+        val expectedKeys = setOf(
+            "signalVersion", "scopeType", "channelId", "from", "to", "callId", "type",
+            "createdAt", "expireAt", "roomId", "video", "sfuVersion",
+        )
+        val fromUid = signal.getString("from").orEmpty()
+        val callId = signal.getString("callId").orEmpty()
+        val roomId = signal.getString("roomId").orEmpty()
+        if (signal.data?.keys != expectedKeys || signal.getLong("signalVersion") != 2L ||
+            signal.getString("scopeType") != scopeType.wireName || signal.getString("channelId") != channelId ||
+            signal.getString("type") != "offer" || signal.getLong("sfuVersion") != 2L ||
+            signal.getBoolean("video") == null || signal.getString("to") != myUid ||
+            fromUid != pushSenderUid || fromUid == myUid || callId != pushCallId ||
+            !CALL_UUID.matches(callId) || !CALL_UUID.matches(roomId) || ageMs !in -5_000L..45_000L ||
+            retentionMs !in 1L..(25L * 60 * 60 * 1000) || expireAt.toDate().time <= System.currentTimeMillis()
+        ) return
+
+        val verified = runBlocking {
+            withTimeoutOrNull(15_000L) {
+                AuthorityMlsCallGate.isVerified(
+                    context = applicationContext,
+                    selfUid = myUid,
+                    peerUid = fromUid,
+                    scopeType = scopeType,
+                    channelId = channelId,
+                )
+            }
+        } == true
+        val signaling = AuthorityCallSignaling(channelId, myUid, kind)
+        if (!verified) {
+            runBlocking {
+                signaling.sendSfuSignal(
+                    fromUid,
+                    org.json.JSONObject().put("type", "reject").put("callId", callId),
+                )
+            }
+            return
+        }
+
+        val peerDoc = runCatching {
+            Tasks.await(firestore.document("users/$fromUid").get(), 3, TimeUnit.SECONDS)
+        }.getOrNull()
+        val peerName = sequenceOf("displayName", "name", "fullName")
+            .mapNotNull { peerDoc?.getString(it)?.trim()?.takeIf(String::isNotBlank) }
+            .firstOrNull()
+            ?: getString(R.string.internet_call_unknown_peer)
+        val parsed = org.json.JSONObject()
+            .put("type", "offer")
+            .put("callId", callId)
+            .put("roomId", roomId)
+            .put("video", signal.getBoolean("video") == true)
+            .put("sfuVersion", 2)
+        SfuAuthorityCallManager.init(applicationContext)
+        runBlocking {
+            withContext(Dispatchers.Main.immediate) {
+                SfuAuthorityCallManager.onSfuSignal(
+                    channelId = channelId,
+                    kind = kind,
+                    myUid = myUid,
+                    fromUid = fromUid,
+                    signal = parsed,
+                    peerName = peerName,
+                )
+            }
+        }
+    }
+
+    /**
+     * Content-free MLS bootstrap wake. Every routing field is loaded from and checked against the
+     * immutable parent document; the push's conversation id alone is never trusted as authority.
+     */
+    private fun handleAuthorityMlsPrepareWake(data: Map<String, String>) {
+        val conversationId = data["conversationId"].orEmpty()
+        if (!AUTHORITY_MLS_CONVERSATION.matches(conversationId)) return
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val parent = runCatching {
+            Tasks.await(
+                FirebaseFirestore.getInstance().document("authorityMlsV2/$conversationId").get(),
+                5,
+                TimeUnit.SECONDS,
+            )
+        }.getOrNull() ?: return
+        if (parent.getLong("version") != 2L) return
+        val participants = (parent.get("participants") as? List<*>)?.mapNotNull { it as? String } ?: return
+        if (participants.size != 2 || myUid !in participants || participants.distinct().size != 2) return
+        val peerUid = participants.singleOrNull { it != myUid } ?: return
+        val scopeType = when (parent.getString("scopeType")) {
+            AuthorityMlsScopeType.AGENCY.wireName -> AuthorityMlsScopeType.AGENCY
+            AuthorityMlsScopeType.HIERARCHY.wireName -> AuthorityMlsScopeType.HIERARCHY
+            else -> return
+        }
+        val channelId = parent.getString("channelId")?.takeIf { it.isNotBlank() } ?: return
+        val canonical = runCatching {
+            AuthorityMlsIdentifiers.canonicalBinding(
+                AuthorityMlsBinding(scopeType, channelId, participants),
+            )
+        }.getOrNull() ?: return
+        if (canonical.participants != participants ||
+            AuthorityMlsIdentifiers.conversationId(canonical) != conversationId
+        ) return
+
+        runBlocking {
+            withTimeoutOrNull(25_000L) {
+                AuthorityMlsPrewarmer.prewarm(
+                    applicationContext,
+                    myUid,
+                    listOf(AuthorityMlsPrewarmTarget(peerUid, scopeType, channelId)),
+                )
+            }
+        }
+    }
+
+    /**
+     * Content-free Authority MLS wake-up. Resolve only the immutable v2 binding and ciphertext
+     * metadata, then show a generic notification. Plaintext stays in the verified chat session;
+     * creating a second background MLS session here would race its durable ratchet state.
+     */
+    private fun handleAuthorityMlsWake(data: Map<String, String>) {
+        val conversationId = data["conversationId"].orEmpty()
+        val messageId = data["messageId"].orEmpty()
+        if (!AUTHORITY_MLS_CONVERSATION.matches(conversationId) || !SAFE_MLS_ID.matches(messageId)) return
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val firestore = FirebaseFirestore.getInstance()
+        val parent = runCatching {
+            Tasks.await(firestore.document("authorityMlsV2/$conversationId").get(), 5, TimeUnit.SECONDS)
+        }.getOrNull() ?: return
+        if (parent.getLong("version") != 2L) return
+        val participants = (parent.get("participants") as? List<*>)?.mapNotNull { it as? String } ?: return
+        if (participants.size != 2 || myUid !in participants) return
+        val peerUid = participants.singleOrNull { it != myUid } ?: return
+        val scopeType = when (parent.getString("scopeType")) {
+            AuthorityMlsScopeType.AGENCY.wireName -> AuthorityMlsScopeType.AGENCY
+            AuthorityMlsScopeType.HIERARCHY.wireName -> AuthorityMlsScopeType.HIERARCHY
+            else -> return
+        }
+        val channelId = parent.getString("channelId")?.takeIf { it.isNotBlank() } ?: return
+        val canonical = runCatching {
+            AuthorityMlsIdentifiers.canonicalBinding(
+                AuthorityMlsBinding(scopeType, channelId, participants),
+            )
+        }.getOrNull() ?: return
+        if (canonical.participants != participants ||
+            AuthorityMlsIdentifiers.conversationId(canonical) != conversationId
+        ) return
+
+        val ciphertext = runCatching {
+            Tasks.await(
+                firestore.document("authorityMlsV2/$conversationId/messages/$messageId").get(),
+                5,
+                TimeUnit.SECONDS,
+            )
+        }.getOrNull() ?: return
+        val senderDeviceId = ciphertext.getString("senderDeviceId") ?: return
+        val senderCredential = ciphertext.getString("senderCredential") ?: return
+        val parsedCredential = AuthorityMlsCredential.decode(senderCredential) ?: return
+        if (ciphertext.getLong("contentVersion") != 2L ||
+            ciphertext.getString("messageId") != messageId ||
+            ciphertext.getString("senderUid") != peerUid ||
+            !SAFE_MLS_ID.matches(senderDeviceId) ||
+            parsedCredential.accountUid != peerUid ||
+            parsedCredential.deviceId != senderDeviceId ||
+            ciphertext.getLong("sequence")?.let { it >= 0 && it < 9_007_199_254_740_991L } != true ||
+            ciphertext.getString("ciphertext")?.let {
+                it.isNotEmpty() && it.length <= 900_000 && MLS_BASE64URL.matches(it)
+            } != true ||
+            ciphertext.getTimestamp("createdAt") == null
+        ) return
+
+        val route = if (scopeType == AuthorityMlsScopeType.HIERARCHY) {
+            "authority_channel/${Uri.encode(channelId)}/${Uri.encode(peerUid)}"
+        } else {
+            "authority_channels"
+        }
+        postNotification(
+            conversationId = conversationId,
+            title = getString(R.string.authority_channels_title),
+            body = getString(R.string.authority_message_notification_body),
+            route = route,
+            senderUid = peerUid,
+            authority = true,
         )
     }
 
@@ -267,6 +521,12 @@ class CrisisConnectMessagingService : FirebaseMessagingService() {
     )
 
     companion object {
+        private val AUTHORITY_MLS_CONVERSATION = Regex("^am2_[A-Za-z0-9_-]{43}$")
+        private val SAFE_MLS_ID = Regex("^[A-Za-z0-9_-]{1,128}$")
+        private val MLS_BASE64URL = Regex("^[A-Za-z0-9_-]+$")
+        private val CALL_UUID = Regex(
+            "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89AaBb][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$"
+        )
         private const val TAG = "CCMessagingService"
 
         private const val TOKEN_PREFS = "crisisconnect_fcm_token"

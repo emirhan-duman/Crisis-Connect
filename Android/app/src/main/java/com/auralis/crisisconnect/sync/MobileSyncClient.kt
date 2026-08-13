@@ -114,10 +114,12 @@ object MobileSyncClient {
             .put("deviceId", resolvedDeviceId)
             .put("events", events)
 
-        panelId.trim().takeIf { it.isNotBlank() }?.let { body.put("panelId", it) }
-        BuildConfig.MOBILE_SYNC_PANEL_ID.trim().takeIf { it.isNotBlank() }?.let {
-            body.put("panelId", it)
-        }
+        // The caller's panel wins; the BuildConfig panel is only a fallback for blank callers so
+        // events land on the rescuer's own panel instead of the build-wide default.
+        panelId.trim()
+            .ifBlank { BuildConfig.MOBILE_SYNC_PANEL_ID.trim() }
+            .takeIf { it.isNotBlank() }
+            ?.let { body.put("panelId", it) }
 
         postEvents(token = token, body = body)
     }

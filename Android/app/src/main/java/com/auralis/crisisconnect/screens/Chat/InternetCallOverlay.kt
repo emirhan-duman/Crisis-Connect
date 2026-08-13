@@ -48,9 +48,12 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.SignalCellularAlt
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -83,6 +86,7 @@ import androidx.compose.ui.unit.dp
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.local.ContactAvatarStorage
 import com.auralis.crisisconnect.messaging.call.InternetCallManager
+import com.auralis.crisisconnect.messaging.call.sfu.ScreenShareQualityPreset
 import com.auralis.crisisconnect.ui.components.ContactAvatar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -164,6 +168,8 @@ fun InternetCallOverlay(
     muted: Boolean,
     videoStreams: InternetCallManager.VideoStreams,
     eglContext: EglBase.Context?,
+    screenShareQuality: ScreenShareQualityPreset? = null,
+    onScreenShareQualityChanged: (ScreenShareQualityPreset) -> Unit = {},
     onAccept: () -> Unit,
     onReject: () -> Unit,
     onEnd: () -> Unit,
@@ -199,6 +205,7 @@ fun InternetCallOverlay(
 
     // FaceTime-style: during a video call a tap anywhere toggles the chrome, and it auto-hides.
     var controlsVisible by remember { mutableStateOf(true) }
+    var qualityMenuExpanded by remember { mutableStateOf(false) }
     LaunchedEffect(immersiveVideo, controlsVisible, call.state) {
         if (immersiveVideo && controlsVisible) {
             delay(5_000)
@@ -563,6 +570,41 @@ fun InternetCallOverlay(
                                         iconSize = 22.dp,
                                         onClick = onToggleScreenShare
                                     )
+                                    if (screenShareQuality != null) {
+                                        Box {
+                                            GlassCallButton(
+                                                icon = Icons.Filled.Settings,
+                                                active = false,
+                                                palette = palette,
+                                                contentDescription = "Screen share quality: ${screenShareQuality.displayName}",
+                                                size = 48.dp,
+                                                iconSize = 22.dp,
+                                                onClick = { qualityMenuExpanded = true },
+                                            )
+                                            DropdownMenu(
+                                                expanded = qualityMenuExpanded,
+                                                onDismissRequest = { qualityMenuExpanded = false },
+                                            ) {
+                                                ScreenShareQualityPreset.entries.forEach { preset ->
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                text = if (preset == screenShareQuality) {
+                                                                    "✓ ${preset.displayName}"
+                                                                } else {
+                                                                    preset.displayName
+                                                                },
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            qualityMenuExpanded = false
+                                                            onScreenShareQualityChanged(preset)
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 Spacer(Modifier.height(14.dp))
                             }
@@ -624,6 +666,14 @@ fun InternetCallOverlay(
         }
     }
 }
+
+private val ScreenShareQualityPreset.displayName: String
+    get() = when (this) {
+        ScreenShareQualityPreset.AUTO -> "Auto"
+        ScreenShareQualityPreset.SMOOTH -> "Smooth"
+        ScreenShareQualityPreset.HIGH -> "High"
+        ScreenShareQualityPreset.ULTRA -> "Ultra"
+    }
 
 /** One expanding ring of the "ringing" pulse; two of these are staggered for a sonar effect. */
 @Composable

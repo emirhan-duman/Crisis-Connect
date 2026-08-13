@@ -12,8 +12,16 @@ import { requireUid } from "../certificates/callerRole";
  *
  * Routing: the signal lands in agencyPanels/{panel}/signals where the panel is derived from the
  * caller-supplied ISO country hint (TR→afad, US→fema, IN→ndma, JP→jma, else international). The
- * first report pins the panel in sosSignalRouting/{signalId} so heartbeats and the final resolve
- * always hit the same document even if country detection flaps mid-incident.
+ * panel is pinned in sosSignalRouting/{signalId} so heartbeats and the final resolve keep hitting
+ * the same document even if country detection flaps mid-incident.
+ *
+ * The route is re-resolved on EVERY report and the decision is recorded with the method that
+ * produced it and whether it is an answer or a guess (`cause: "normal" | "default"`), mirroring the
+ * Route Cause that NG9-1-1 stamps on every call — a fallback that looks identical to a confident
+ * route stays invisible until it costs someone. A pin is overturned in exactly one case: a signal
+ * parked in the shared International panel because the first report had no country hint, once a
+ * real hint arrives. The document already written to the fallback panel is never deleted or
+ * resolved; it is marked `supersededByPanelId` so that panel keeps seeing the victim.
  *
  * Abuse controls: App Check enforced, per-uid write throttle, and the first internet reporter
  * becomes the signal owner (victimUid) — other uids cannot update or resolve it.
@@ -207,9 +215,33 @@ function sanitizeRoute(raw: unknown): AgencyRoute | null {
   return { agency, panelId };
 }
 
-function resolveRoute(config: RoutingConfig, countryIso: string | null): AgencyRoute {
-  if (!countryIso) return config.fallback;
-  return config.countries[countryIso] ?? COUNTRY_AGENCY_MAP[countryIso] ?? config.fallback;
+/**
+ * How a routing answer was reached, and whether it is an answer or a guess.
+ *
+ * Emergency systems label this universally — NG9-1-1 stamps a Route Cause on every call and LoST
+ * distinguishes a real mapping from `defaultMappingReturned` — because a fallback that looks
+ * identical to a confident route is invisible until someone dies in it. NENA treats the default
+ * routing RATE as a defect metric, which is only possible if the cause is recorded per signal.
+ */
+type RouteMethod = "routing-config" | "country-table" | "fallback";
+type RouteCause = "normal" | "default";
+
+interface ResolvedRoute extends AgencyRoute {
+  method: RouteMethod;
+  cause: RouteCause;
+}
+
+function resolveRoute(config: RoutingConfig, countryIso: string | null): ResolvedRoute {
+  if (countryIso) {
+    const override = config.countries[countryIso];
+    if (override) return { ...override, method: "routing-config", cause: "normal" };
+    const builtin = COUNTRY_AGENCY_MAP[countryIso];
+    if (builtin) return { ...builtin, method: "country-table", cause: "normal" };
+  }
+  // No usable country hint, or a country nobody has mapped yet. The shared International panel is
+  // where this lands, and that is a GUESS — say so, so the dashboard can badge it and so the rate
+  // is countable.
+  return { ...config.fallback, method: "fallback", cause: "default" };
 }
 
 interface GpsPayload {
@@ -224,6 +256,10 @@ interface ReportSosSignalResult {
   status: "active" | "resolved";
   panelId: string;
   agency: string;
+  /** "default" means no agency could be determined and this landed in the shared fallback panel.
+   *  Additive: existing clients ignore it, but it lets the victim UI stop implying a confident
+   *  hand-off to a national agency when there was none. */
+  cause: string;
 }
 
 export const reportSosSignal = onCall(
@@ -270,9 +306,47 @@ export const reportSosSignal = onCall(
         throw new HttpsError("permission-denied", "This SOS signal belongs to another account.");
       }
 
+      // Re-resolve on EVERY report instead of trusting the first answer forever. Pinning the first
+      // guess for the life of an incident has no analogue in emergency-routing practice: NG9-1-1
+      // gives every mapping an expiry, re-dereferences the caller's location, and re-queries at
+      // handoff. Here the first report is exactly the one most likely to be wrong — the country hint
+      // comes from telephony that may not be ready, or from reverse geocoding that needs a network.
       const route = resolveRoute(routingConfig, countryIso);
-      const agency = (routing?.agency as string | undefined) ?? route.agency;
-      const panelId = (routing?.panelId as string | undefined) ?? route.panelId;
+      const pinnedPanelId = routing?.panelId as string | undefined;
+      const pinnedAgency = routing?.agency as string | undefined;
+      const pinnedCause = (routing?.cause as RouteCause | undefined) ?? "normal";
+
+      // The ONE decision worth overturning: a signal parked in the shared fallback because the first
+      // report had no country hint, once a real hint arrives. A `normal` pin is never overturned —
+      // a flapping country code must not walk an live incident between panels mid-rescue.
+      const upgrading = Boolean(pinnedPanelId)
+        && pinnedCause === "default"
+        && route.cause === "normal"
+        && route.panelId !== pinnedPanelId;
+      const adopting = !pinnedPanelId || upgrading;
+
+      const agency = adopting ? route.agency : (pinnedAgency ?? route.agency);
+      const panelId = adopting ? route.panelId : (pinnedPanelId as string);
+      const method: RouteMethod | string = adopting
+        ? route.method
+        : ((routing?.method as string | undefined) ?? "country-table");
+      const cause: RouteCause | string = adopting ? route.cause : pinnedCause;
+
+      // When we keep a pin that today's inputs disagree with, say so rather than hiding it. This is
+      // the signal an operator (and the misroute rate) needs; acting on it is a later phase.
+      const suggestedPanelId = route.panelId !== panelId ? route.panelId : null;
+
+      const decision = {
+        panelId,
+        agency,
+        method,
+        cause,
+        countryIso: countryIso ?? null,
+        accuracyMeters: gps?.accuracyMeters ?? null,
+        positionAtMillis: gps?.capturedAtMillis ?? null,
+        suggestedPanelId,
+        decidedAtMillis: now,
+      };
 
       const panelRef = db.collection(AGENCY_PANELS_COLLECTION).doc(panelId);
       const signalRef = panelRef.collection("signals").doc(signalId);
@@ -284,10 +358,44 @@ export const reportSosSignal = onCall(
         tx.set(routingRef, {
           signalId,
           victimUid: uid,
-          agency,
-          panelId,
+          ...decision,
           createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         });
+      } else if (adopting || (routing?.suggestedPanelId ?? null) !== suggestedPanelId) {
+        tx.set(routingRef, { ...decision, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      }
+
+      // Append-only decision log, written only when the answer CHANGES — a 45 s heartbeat would
+      // otherwise bury the two entries that matter. Keyed by decision time so a retried transaction
+      // rewrites the same row instead of duplicating it.
+      if (!routingSnap.exists || adopting) {
+        tx.set(routingRef.collection("history").doc(String(now)), {
+          ...decision,
+          previousPanelId: pinnedPanelId ?? null,
+          reason: !routingSnap.exists ? "initial" : "upgraded-from-default",
+          at: FieldValue.serverTimestamp(),
+        });
+      }
+
+      // An upgrade must not orphan the document already sitting in the fallback panel. Nothing is
+      // deleted and nothing is marked resolved — the old panel keeps seeing the victim, which is the
+      // invariant that matters (over-notification costs an alert, under-notification costs a life).
+      // It just learns where the incident is now tracked.
+      if (upgrading && pinnedPanelId) {
+        tx.set(
+          db.collection(AGENCY_PANELS_COLLECTION)
+            .doc(pinnedPanelId)
+            .collection("signals")
+            .doc(signalId),
+          {
+            supersededByPanelId: panelId,
+            supersededAt: FieldValue.serverTimestamp(),
+            lastSeenMillis: now,
+            lastSeenAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
       }
 
       tx.set(
@@ -313,6 +421,17 @@ export const reportSosSignal = onCall(
         lastReporterUid: uid,
         victimUid: uid,
         reporterKind: "victim",
+        // How this signal came to be in THIS panel, carried on the signal itself so the operator
+        // queue can badge a guess without a second read.
+        routing: decision,
+        // The AUDIENCE: panels allowed to see this signal, on top of the one it lives in. Grown
+        // with arrayUnion and never shrunk — a panel that has seen a victim must not lose sight of
+        // them. Operators add the responding district through the transfer action; the callable
+        // seeds it with the intake panel, plus the fallback panel when a route was upgraded so the
+        // panel that was watching keeps watching.
+        panelPath: upgrading && pinnedPanelId
+          ? FieldValue.arrayUnion(panelId, pinnedPanelId)
+          : FieldValue.arrayUnion(panelId),
       };
       if (gps) {
         signalData.gps = gps;
@@ -330,7 +449,7 @@ export const reportSosSignal = onCall(
       }
       tx.set(signalRef, signalData, { merge: true });
 
-      return { status, panelId, agency } as ReportSosSignalResult;
+      return { status, panelId, agency, cause } as ReportSosSignalResult;
     });
 
     return result;

@@ -1756,4 +1756,18 @@
     <string name="rescue_remote_signals_empty_title">Tout est calme</string>
     <string name="rescue_remote_hero_count">%1$d signaux actifs</string>
     <string name="rescue_remote_signals_subtitle">Flux en direct du panneau de votre agence</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">Supprimer le compte et les données</string>
+    <string name="profile_delete_account_progress">Suppression…</string>
+    <string name="profile_delete_account_dialog_title">Supprimer définitivement votre compte ?</string>
+    <string name="profile_delete_account_dialog_body">Cette action est irréversible. Votre compte, votre profil, vos correspondances d’annuaire, vos clés de chiffrement, vos enregistrements de notification et l’historique des discussions sur cet appareil seront supprimés. Les signaux d’urgence que vous avez envoyés sont conservés comme dossier de secours, séparés de votre identité.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">Saisissez %1$s pour confirmer.</string>
+    <string name="profile_delete_account_confirm_word">SUPPRIMER</string>
+    <string name="profile_delete_account_dialog_confirm">Supprimer définitivement</string>
+    <string name="profile_delete_account_success">Votre compte et vos données ont été supprimés.</string>
+    <string name="profile_delete_account_error">La suppression n’a pas pu aboutir. Vérifiez votre connexion et réessayez.</string>
+    <string name="profile_delete_account_error_verification">La suppression n’a pas pu être vérifiée sur cet appareil. Vérifiez votre connexion et réessayez.</string>
+    <string name="profile_delete_account_error_signed_out">Vous devez être connecté pour supprimer votre compte.</string>
+    <string name="profile_delete_account_reauth_needed">Pour votre sécurité, nous devons confirmer votre identité avant la suppression. Déconnectez-vous, reconnectez-vous, puis réessayez.</string>
 </resources>

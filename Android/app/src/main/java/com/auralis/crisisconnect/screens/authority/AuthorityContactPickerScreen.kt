@@ -2,6 +2,7 @@ package com.auralis.crisisconnect.screens.authority
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,11 +40,10 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -62,17 +62,14 @@ import com.auralis.crisisconnect.messaging.AuthorityRosterClient
 import com.auralis.crisisconnect.messaging.AuthorityRosterMember
 import com.auralis.crisisconnect.messaging.HierarchyChannel
 import com.auralis.crisisconnect.messaging.HierarchyMessagingClient
-import com.auralis.crisisconnect.security.SecurityRepository
+import com.auralis.crisisconnect.messaging.AuthorityMlsScopeType
 import com.auralis.crisisconnect.ui.components.ContactAvatar
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 /** Picker grouping, top-down like the web dashboard (up → sibling → down → own management → field). */
@@ -85,7 +82,8 @@ data class AuthorityPickerEntry(
     val subtitle: String,
     val photoUrl: String?,
     val group: AuthorityPickerGroup,
-    val channelId: String?,
+    val channelId: String,
+    val scopeType: AuthorityMlsScopeType,
     val member: AuthorityRosterMember?,
 )
 
@@ -124,6 +122,7 @@ fun buildAuthorityPickerEntries(
                     photoUrl = peer.photoUrl,
                     group = group,
                     channelId = channel.channelId,
+                    scopeType = AuthorityMlsScopeType.HIERARCHY,
                     member = null,
                 )
             )
@@ -144,7 +143,8 @@ fun buildAuthorityPickerEntries(
                 subtitle = m.role,
                 photoUrl = m.photoUrl,
                 group = group,
-                channelId = null,
+                channelId = m.agencySlug,
+                scopeType = AuthorityMlsScopeType.AGENCY,
                 member = m,
             )
         )
@@ -153,7 +153,7 @@ fun buildAuthorityPickerEntries(
 }
 
 /**
- * Loads who the signed-in authority can start a conversation with — their own agency roster
+ * Loads who the signed-in authority can start an MLS conversation with — their own agency roster
  * ([AuthorityRosterClient.listRoster]) plus every cross-panel (hierarchy) peer
  * ([HierarchyMessagingClient.fetchChannels], the same `/api/messaging/hierarchy` the web uses). Unlike
  * the old inline picker, a cross-panel fetch failure is surfaced (not silently swallowed), which is why
@@ -165,6 +165,7 @@ class AuthorityContactPickerViewModel(app: Application) : AndroidViewModel(app) 
         data object Error : UiState
         data class Loaded(
             val entries: List<AuthorityPickerEntry>,
+            val rosterFailed: Boolean,
             val crossPanelFailed: Boolean,
         ) : UiState
     }
@@ -178,15 +179,19 @@ class AuthorityContactPickerViewModel(app: Application) : AndroidViewModel(app) 
     fun load() {
         _state.value = UiState.Loading
         viewModelScope.launch {
-            val slug = resolveAgencySlug()
-            if (slug == null) {
-                _state.value = UiState.Loaded(emptyList(), crossPanelFailed = false)
-                return@launch
-            }
             val (rosterResult, channelsResult) = withContext(Dispatchers.IO) {
-                val rosterDeferred = async { runCatching { rosterClient.listRoster(slug) } }
+                // The callable derives the canonical panel from the authenticated account. Passing an
+                // empty advisory slug also supports accounts linked through panelId/agencyName.
+                val rosterDeferred = async { runCatching { rosterClient.listRoster("") } }
                 val channelsDeferred = async { runCatching { HierarchyMessagingClient().fetchChannels() } }
                 rosterDeferred.await() to channelsDeferred.await()
+            }
+            channelsResult.exceptionOrNull()?.let { error ->
+                Log.w(
+                    "AuthorityContactPicker",
+                    "Cross-panel directory request failed (${error.javaClass.simpleName}): ${error.message}",
+                    error,
+                )
             }
             if (rosterResult.isFailure && channelsResult.isFailure) {
                 _state.value = UiState.Error
@@ -197,25 +202,12 @@ class AuthorityContactPickerViewModel(app: Application) : AndroidViewModel(app) 
                     rosterResult.getOrDefault(emptyList()),
                     channelsResult.getOrDefault(emptyList()),
                 ),
+                rosterFailed = rosterResult.isFailure,
                 crossPanelFailed = channelsResult.isFailure,
             )
         }
     }
 
-    /** Turns an own-agency roster member into a stored contact, returning its session code (or null). */
-    suspend fun addContact(member: AuthorityRosterMember): String? =
-        runCatching { rosterClient.addContact(getApplication(), member) }.getOrNull()
-
-    private suspend fun resolveAgencySlug(): String? = withContext(Dispatchers.IO) {
-        val user = FirebaseAuth.getInstance().currentUser?.takeUnless { it.isAnonymous } ?: return@withContext null
-        val fromDoc = runCatching {
-            FirebaseFirestore.getInstance().document("users/${user.uid}").get().await()
-                .getString("agencySlug")?.trim()?.takeIf { it.isNotBlank() }
-        }.getOrNull()
-        fromDoc ?: runCatching {
-            SecurityRepository(getApplication()).getUsableStoredCertificateAgency()
-        }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -225,9 +217,7 @@ fun AuthorityContactPickerScreen(
     viewModel: AuthorityContactPickerViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
-    var addingKey by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -314,8 +304,17 @@ fun AuthorityContactPickerScreen(
                             ),
                         )
 
+                        if (s.rosterFailed) {
+                            DirectoryWarningBanner(
+                                messageRes = R.string.authority_picker_error,
+                                onRetry = { viewModel.load() },
+                            )
+                        }
                         if (s.crossPanelFailed) {
-                            CrossPanelWarningBanner(onRetry = { viewModel.load() })
+                            DirectoryWarningBanner(
+                                messageRes = R.string.authority_picker_cross_panel_warning,
+                                onRetry = { viewModel.load() },
+                            )
                         }
 
                         if (filtered.isEmpty()) {
@@ -344,34 +343,17 @@ fun AuthorityContactPickerScreen(
                                             modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
                                         )
                                     }
-                                    items(entries, key = { "${it.channelId ?: "ag"}:${it.uid}" }) { entry ->
-                                        val entryKey = "${entry.channelId ?: "ag"}:${entry.uid}"
+                                    items(entries, key = { "${it.scopeType.wireName}:${it.channelId}:${it.uid}" }) { entry ->
                                         AuthorityPickerRow(
                                             entry = entry,
-                                            adding = addingKey == entryKey,
                                             onClick = {
-                                                if (addingKey != null) return@AuthorityPickerRow
-                                                val channelId = entry.channelId
-                                                val member = entry.member
-                                                if (channelId != null) {
-                                                    navController.navigate(
-                                                        "authority_channel/${Uri.encode(channelId)}/" +
-                                                            "${Uri.encode(entry.uid)}?title=${Uri.encode(entry.name)}" +
-                                                            "&agency=${Uri.encode(entry.subtitle)}"
-                                                    )
-                                                } else if (member != null) {
-                                                    addingKey = entryKey
-                                                    scope.launch {
-                                                        val sessionCode = viewModel.addContact(member)
-                                                        addingKey = null
-                                                        if (!sessionCode.isNullOrBlank()) {
-                                                            navController.navigate(
-                                                                "chat/${Uri.encode(sessionCode)}" +
-                                                                    "?displayName=${Uri.encode(entry.name)}"
-                                                            )
-                                                        }
-                                                    }
-                                                }
+                                                navController.navigate(
+                                                    "authority_channel/${Uri.encode(entry.channelId)}/" +
+                                                        "${Uri.encode(entry.uid)}?title=${Uri.encode(entry.name)}" +
+                                                        "&agency=${Uri.encode(entry.subtitle)}" +
+                                                        "&role=${Uri.encode(entry.member?.role.orEmpty())}" +
+                                                        "&scope=${entry.scopeType.wireName}"
+                                                )
                                             },
                                         )
                                     }
@@ -388,12 +370,11 @@ fun AuthorityContactPickerScreen(
 @Composable
 private fun AuthorityPickerRow(
     entry: AuthorityPickerEntry,
-    adding: Boolean,
     onClick: () -> Unit,
 ) {
     Surface(
         onClick = onClick,
-        enabled = !adding,
+        enabled = true,
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp),
         modifier = Modifier.fillMaxWidth(),
@@ -406,7 +387,7 @@ private fun AuthorityPickerRow(
         ) {
             ContactAvatar(
                 displayName = entry.name,
-                stableKey = "authpick:${entry.channelId ?: "ag"}:${entry.uid}",
+                stableKey = "authpick:${entry.scopeType.wireName}:${entry.channelId}:${entry.uid}",
                 photoUrl = entry.photoUrl,
                 modifier = Modifier.size(46.dp),
             )
@@ -430,21 +411,20 @@ private fun AuthorityPickerRow(
                 }
             }
             Spacer(modifier = Modifier.width(8.dp))
-            if (adding) {
-                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-            } else {
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
 
 @Composable
-private fun CrossPanelWarningBanner(onRetry: () -> Unit) {
+private fun DirectoryWarningBanner(
+    messageRes: Int,
+    onRetry: () -> Unit,
+) {
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
         contentColor = MaterialTheme.colorScheme.onErrorContainer,
@@ -464,7 +444,7 @@ private fun CrossPanelWarningBanner(onRetry: () -> Unit) {
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = stringResource(R.string.authority_picker_cross_panel_warning),
+                text = stringResource(messageRes),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f),
             )

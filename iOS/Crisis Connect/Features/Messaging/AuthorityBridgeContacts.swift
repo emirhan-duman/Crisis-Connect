@@ -1,6 +1,49 @@
 import Foundation
 import FirebaseAuth
 
+struct AuthorityNearbyCallRoute: Codable, Equatable {
+    let channel: HierarchyChannel
+    let peer: HierarchyPeer
+    let scopeType: AuthorityMlsScopeType
+}
+
+/// A hidden bridge contact is transport-only, so opening it directly would expose a fake citizen
+/// thread after answering a nearby call. Keep the last real Authority thread route for that bridge.
+enum AuthorityNearbyCallRouteRegistry {
+    private static let keyPrefix = "authority.nearby-call-route."
+
+    static func register(
+        sessionId: UUID,
+        channel: HierarchyChannel,
+        peer: HierarchyPeer,
+        scopeType: AuthorityMlsScopeType
+    ) {
+        guard !channel.channelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !peer.uid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let data = try? JSONEncoder().encode(
+                AuthorityNearbyCallRoute(
+                    channel: HierarchyChannel(
+                        channelId: channel.channelId,
+                        peerPanelId: channel.peerPanelId,
+                        peerPanelName: channel.peerPanelName,
+                        group: channel.group,
+                        peers: [peer]
+                    ),
+                    peer: peer,
+                    scopeType: scopeType
+                )
+              ) else { return }
+        UserDefaults.standard.set(data, forKey: keyPrefix + sessionId.uuidString.lowercased())
+    }
+
+    static func route(for sessionId: UUID) -> AuthorityNearbyCallRoute? {
+        guard let data = UserDefaults.standard.data(
+            forKey: keyPrefix + sessionId.uuidString.lowercased()
+        ) else { return nil }
+        return try? JSONDecoder().decode(AuthorityNearbyCallRoute.self, from: data)
+    }
+}
+
 /// Mirrors Android's `AuthorityBridgeContacts`: keeps a hidden 1:1 "bridge" contact for every
 /// cross-panel authority (kurum) channel peer whose E.164 number the backend released
 /// (`HierarchyPeer.phone`, entitled managers only).
@@ -41,11 +84,19 @@ enum AuthorityBridgeContacts {
                             peerPhone: phone
                         )
                     }
+                    if existing.isAuthorityBridge == true {
+                        AuthorityNearbyCallRouteRegistry.register(
+                            sessionId: existing.id,
+                            channel: channel,
+                            peer: peer,
+                            scopeType: .hierarchy
+                        )
+                    }
                     continue
                 }
                 guard let identity = try? await client.lookupIdentityKey(uid: peer.uid),
                       !identity.publicKeyBase64.isEmpty else { continue }
-                _ = ContactStore.shared.applyInternetIdentity(
+                let bridge = ContactStore.shared.applyInternetIdentity(
                     conversationSessionCode: InternetConversation.pairId(myUid, peer.uid),
                     peerUid: peer.uid,
                     peerPublicKey: identity.publicKeyBase64,
@@ -54,6 +105,14 @@ enum AuthorityBridgeContacts {
                     peerPhone: phone,
                     isAuthorityBridge: true
                 )
+                if let bridge {
+                    AuthorityNearbyCallRouteRegistry.register(
+                        sessionId: bridge.id,
+                        channel: channel,
+                        peer: peer,
+                        scopeType: .hierarchy
+                    )
+                }
                 created += 1
             }
         }

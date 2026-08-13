@@ -1771,4 +1771,18 @@
     <string name="rescue_remote_signals_empty_title">كل شيء هادئ</string>
     <string name="rescue_remote_hero_count">%1$d إشارة نشطة</string>
     <string name="rescue_remote_signals_subtitle">بث مباشر من لوحة وكالتك</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">حذف الحساب والبيانات</string>
+    <string name="profile_delete_account_progress">جارٍ الحذف…</string>
+    <string name="profile_delete_account_dialog_title">حذف حسابك نهائيًا؟</string>
+    <string name="profile_delete_account_dialog_body">لا يمكن التراجع عن هذا الإجراء. سيتم حذف حسابك وملفك الشخصي ومطابقات دليل جهات الاتصال ومفاتيح التشفير وسجلات الإشعارات وسجل المحادثات على هذا الجهاز. تُحفظ إشارات الاستغاثة التي أرسلتها كسجل إنقاذ منفصل عن هويتك.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">اكتب %1$s للتأكيد.</string>
+    <string name="profile_delete_account_confirm_word">حذف</string>
+    <string name="profile_delete_account_dialog_confirm">حذف نهائي</string>
+    <string name="profile_delete_account_success">تم حذف حسابك وبياناتك.</string>
+    <string name="profile_delete_account_error">لم يكتمل الحذف. تحقق من اتصالك وأعد المحاولة.</string>
+    <string name="profile_delete_account_error_verification">تعذر التحقق من الحذف على هذا الجهاز. تحقق من اتصالك وأعد المحاولة.</string>
+    <string name="profile_delete_account_error_signed_out">يجب تسجيل الدخول لحذف حسابك.</string>
+    <string name="profile_delete_account_reauth_needed">لأمانك، يجب التأكد من هويتك قبل الحذف. سجّل الخروج ثم الدخول مرة أخرى وأعد المحاولة.</string>
 </resources>

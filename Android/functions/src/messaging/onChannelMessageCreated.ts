@@ -1,6 +1,7 @@
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore } from "firebase-admin/firestore";
 import { getMessaging, MulticastMessage } from "firebase-admin/messaging";
+import { filterUidsByPushPreference } from "./pushPreference";
 
 // Silent pushes are invisible to a force-quit iPhone: iOS delivers content-available only to a
 // running/backgrounded process, so a kurum message to a quit app simply never surfaced — no banner,
@@ -20,8 +21,11 @@ import { getMessaging, MulticastMessage } from "firebase-admin/messaging";
 
 async function pushToUsers(recipientUids: string[], data: Record<string, string>): Promise<void> {
   const db = getFirestore();
+  // Settings > Bildirimler > Push, per recipient. Channel messages never carry a call ring,
+  // so unlike onMessageCreated there is nothing here the preference must not touch.
+  const optedIn = await filterUidsByPushPreference(recipientUids);
   await Promise.all(
-    recipientUids.map(async (uid) => {
+    optedIn.map(async (uid) => {
       const tokensSnap = await db.collection(`messagingTokens/${uid}/tokens`).get();
       const tokenDocs = tokensSnap.docs.filter((d) => typeof d.data().token === "string");
       const tokens = tokenDocs.map((d) => d.data().token as string);

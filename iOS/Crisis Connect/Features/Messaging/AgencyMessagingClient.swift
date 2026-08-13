@@ -2,10 +2,8 @@
 //  AgencyMessagingClient.swift
 //  Crisis Connect
 //
-//  Field-team (iOS) side of the dashboard's agency-internal messaging: fetches the agency key,
-//  listens to the encrypted channel in Firestore and decrypts it in realtime (server only holds
-//  ciphertext), and can post to the same channel. Mirrors the web `lib/messaging/agency.ts` and the
-//  Android `AgencyMessagingClient`. The AES-GCM (AgencyMessageCrypto) is golden-vector verified.
+//  Retired shared-key agency messaging client. Key fetches and writes fail locally; Firestore Rules
+//  also deny the old history. AuthorityChat MLS v2 owns active mobile messaging.
 //
 
 import Foundation
@@ -36,19 +34,9 @@ final class AgencyMessagingClient {
         self.auth = auth
     }
 
-    /// Fetches the agency's shared key (membership-gated server-side). Throws if not a member.
-    func fetchAgencyKey(agencySlug: String) async throws -> AgencyKey {
-        let result = try await functions.httpsCallable("issueAgencyMessagingKey").callAsync(["agencySlug": agencySlug])
-        guard let data = result.data as? [String: Any],
-              let keyBase64 = data["keyBase64"] as? String,
-              let agencyKey = AgencyKey.from(
-                  keyBase64: keyBase64,
-                  keyId: data["keyId"] as? String ?? "",
-                  agencySlug: agencySlug
-              ) else {
-            throw AgencyMessageError.malformed
-        }
-        return agencyKey
+    /// Retired: server-issued shared keys violate the AuthorityChat MLS-only invariant.
+    func fetchAgencyKey(agencySlug _: String) async throws -> AgencyKey {
+        throw AgencyMessageError.legacyWriteDisabled
     }
 
     private func channel(_ agencySlug: String) -> CollectionReference {
@@ -56,10 +44,17 @@ final class AgencyMessagingClient {
     }
 
     /// Realtime subscription: decrypts each stored message and delivers the ordered list.
+    ///
+    /// `limit(toLast:)`, NOT `limit(to:)`. With an ascending order, `limit(to:)` pins the window to
+    /// the OLDEST 200 documents, so once a panel had written that many messages every newer one fell
+    /// outside the query and was never delivered: the channel froze, silently, and stayed frozen
+    /// (secureMessages is an immutable log, so nothing ages out to make room). `limit(toLast:)` keeps
+    /// the window on the newest 200 and still hands them back oldest-first — the same form
+    /// HierarchyMessagingClient.listenConversation already uses.
     func listen(agencyKey: AgencyKey, onMessages: @escaping ([AgencyMessage]) -> Void) -> ListenerRegistration {
         channel(agencyKey.agencySlug)
             .order(by: "createdAt")
-            .limit(to: 200)
+            .limit(toLast: 200)
             .addSnapshotListener { snapshot, _ in
                 guard let documents = snapshot?.documents else { return }
                 let messages: [AgencyMessage] = documents.compactMap { document in
@@ -111,15 +106,7 @@ final class AgencyMessagingClient {
 
     /// Encrypts and posts a message to the agency channel.
     func send(agencyKey: AgencyKey, senderName: String, text: String) async throws {
-        guard let uid = auth.currentUser?.uid else { throw AgencyMessageError.malformed }
-        let (nonce, ciphertext) = try AgencyMessageCrypto.encrypt(agencyKey: agencyKey, text: text)
-        try await channel(agencyKey.agencySlug).addDocument(data: [
-            "senderUid": uid,
-            "senderName": senderName,
-            "keyId": agencyKey.keyId,
-            "nonce": nonce,
-            "ciphertext": ciphertext,
-            "createdAt": FieldValue.serverTimestamp(),
-        ])
+        _ = (agencyKey, senderName, text)
+        throw AgencyMessageError.legacyWriteDisabled
     }
 }

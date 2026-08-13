@@ -1767,4 +1767,18 @@
     <string name="rescue_remote_signals_empty_title">Her tişt aram e</string>
     <string name="rescue_remote_hero_count">%1$d sînyalên çalak</string>
     <string name="rescue_remote_signals_subtitle">Weşana zindî ji panela saziyê te</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">Hesab û daneyan jê bibe</string>
+    <string name="profile_delete_account_progress">Tê jêbirin…</string>
+    <string name="profile_delete_account_dialog_title">Hesabê te bi temamî were jêbirin?</string>
+    <string name="profile_delete_account_dialog_body">Ev kar nayê vegerandin. Hesab, profîl, lihevhatinên pêrista peywendiyan, mifteyên şîfrekirinê, tomarên agahdariyan û dîroka axaftinê ya vê cîhazê tên jêbirin. Sînyalên lezgîn ên te şandine wek tomara rizgarkirinê, ji nasnameya te veqetandî, tên parastin.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">Ji bo pesendkirinê %1$s binivîse.</string>
+    <string name="profile_delete_account_confirm_word">JÊBIBE</string>
+    <string name="profile_delete_account_dialog_confirm">Bi temamî jê bibe</string>
+    <string name="profile_delete_account_success">Hesab û daneyên te hatin jêbirin.</string>
+    <string name="profile_delete_account_error">Jêbirin neqediya. Girêdana xwe kontrol bike û dîsa biceribîne.</string>
+    <string name="profile_delete_account_error_verification">Jêbirin li vê cîhazê nehat pesendkirin. Girêdana xwe kontrol bike û dîsa biceribîne.</string>
+    <string name="profile_delete_account_error_signed_out">Ji bo jêbirina hesab divê tu têketî bî.</string>
+    <string name="profile_delete_account_reauth_needed">Ji bo ewlehiya te, berî jêbirinê divê em piştrast bikin ku ev tu yî. Derkeve, dîsa têkeve û paşê dîsa biceribîne.</string>
 </resources>

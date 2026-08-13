@@ -89,9 +89,36 @@ final class VoipPushRegistrar: NSObject, PKPushRegistryDelegate, @unchecked Send
     ) {
         guard type == .voIP else { completion(); return }
         let dict = payload.dictionaryPayload
+        let wakeType = (dict["type"] as? String) ?? "call"
         let senderUid = (dict["senderUid"] as? String) ?? ""
         let callerName = (dict["callerName"] as? String) ?? ""
         let hasVideo = (dict["hasVideo"] as? String) == "1"
+
+        if wakeType == "authority_call_v2" {
+            let callId = (dict["callId"] as? String) ?? ""
+            let scopeType = (dict["authorityScopeType"] as? String) ?? ""
+            let channelId = (dict["authorityChannelId"] as? String) ?? ""
+            let signalId = (dict["authoritySignalId"] as? String) ?? ""
+            DispatchQueue.main.async {
+                SfuAuthorityCallManager.shared.reportVoipWake(
+                    callId: callId,
+                    senderUid: senderUid,
+                    callerName: callerName,
+                    hasVideo: hasVideo,
+                    completion: completion
+                )
+                Task {
+                    await SfuAuthorityCallReceiver.handleVoipWake(
+                        scopeType: scopeType,
+                        channelId: channelId,
+                        signalId: signalId,
+                        expectedCallId: callId,
+                        expectedSenderUid: senderUid
+                    )
+                }
+            }
+            return
+        }
 
         // MUST report to CallKit before `completion` runs — do it on main, synchronously kicking
         // the report; InternetCallManager owns the CXProvider. The real offer arrives via the

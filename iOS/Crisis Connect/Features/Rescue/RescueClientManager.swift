@@ -36,6 +36,11 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
     private let queue = DispatchQueue(label: "sos.rescue.wifiaware")
     private let cleanupInterval: TimeInterval = 15
     private let staleInterval: TimeInterval = 20
+    /// How often a scan-only sighting of the same victim is relayed. Matches Android's active-signal
+    /// cadence: an advertisement arrives many times a second, and the dashboard needs a heartbeat,
+    /// not a firehose.
+    private let scanRelayInterval: TimeInterval = 45
+    private var lastScanRelayAtBySignalId: [String: Date] = [:]
     private let rescanDelay: TimeInterval = 0.35
     private let broadcastPublishInterval: TimeInterval = 0.25
     private let queueKey = DispatchSpecificKey<Void>()
@@ -684,6 +689,8 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
 
     private func cleanupStale() {
         guard scanningActive else { return }
+        let relayCutoff = Date().addingTimeInterval(-scanRelayInterval * 10)
+        lastScanRelayAtBySignalId = lastScanRelayAtBySignalId.filter { $0.value >= relayCutoff }
         let cutoff = Date().addingTimeInterval(-staleInterval)
         let staleIds = broadcastsBySessionId.filter {
             $0.value.lastSeen < cutoff && !shouldRetainStaleSession($0.key)
@@ -1361,7 +1368,31 @@ final class RescueClientManager: NSObject, ObservableObject, CBCentralManagerDel
         }
         broadcastsBySessionId[sessionId] = entry
         connectBLEIfNeeded(sessionId: sessionId, peripheral: peripheral, broadcastId: broadcastId)
+        relayScanOnlySightingIfNeeded(sessionId: sessionId, broadcastId: broadcastId)
         publishBroadcasts()
+    }
+
+    /// Relays a victim we can only HEAR.
+    ///
+    /// Every other relay path hangs off `connection.onSignalLocation`, so a sighting was reported only
+    /// after a successful connect + auth + peer_info handshake. Under rubble that handshake is exactly
+    /// what fails: the advertisement still arrives, the phone still knows the `cc-` signal id and the
+    /// RSSI, and Android relays on that basis alone — while iOS reported nothing at all, so the panel
+    /// never learned a live victim was there.
+    ///
+    /// The advertisement carries no fix, so this goes out with the RSSI-derived relative estimate the
+    /// no-GPS branch of `applySignalLocation` already produces, and no victim name: the scan-time name
+    /// is a placeholder, not an identity. Gated on the Crisis Link setting — narrower than the
+    /// connection-driven paths, deliberately, since this one fires without any operator intent.
+    private func relayScanOnlySightingIfNeeded(sessionId: UUID, broadcastId: String?) {
+        guard settingsStore.crisisLinkEnabled else { return }
+        guard let signalId = normalizedSignalId(from: broadcastId) else { return }
+        let now = Date()
+        if let last = lastScanRelayAtBySignalId[signalId], now.timeIntervalSince(last) < scanRelayInterval {
+            return
+        }
+        lastScanRelayAtBySignalId[signalId] = now
+        applySignalLocation(nil, sessionId: sessionId)
     }
 
     private func resolveBLESessionId(for peripheral: CBPeripheral, broadcastId: String?) -> UUID {

@@ -1773,4 +1773,18 @@
     <string name="rescue_remote_signals_empty_title">Все спокойно</string>
     <string name="rescue_remote_hero_count">Активных сигналов: %1$d</string>
     <string name="rescue_remote_signals_subtitle">Прямая трансляция из панели ведомства</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">Удалить аккаунт и данные</string>
+    <string name="profile_delete_account_progress">Удаление…</string>
+    <string name="profile_delete_account_dialog_title">Удалить аккаунт навсегда?</string>
+    <string name="profile_delete_account_dialog_body">Это действие нельзя отменить. Будут удалены ваш аккаунт, профиль, совпадения в каталоге контактов, ключи шифрования, записи уведомлений и история чатов на этом устройстве. Отправленные вами сигналы SOS сохраняются как спасательная запись — отдельно от вашей личности.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">Введите %1$s для подтверждения.</string>
+    <string name="profile_delete_account_confirm_word">УДАЛИТЬ</string>
+    <string name="profile_delete_account_dialog_confirm">Удалить навсегда</string>
+    <string name="profile_delete_account_success">Ваш аккаунт и данные удалены.</string>
+    <string name="profile_delete_account_error">Не удалось завершить удаление. Проверьте подключение и повторите попытку.</string>
+    <string name="profile_delete_account_error_verification">Не удалось подтвердить удаление на этом устройстве. Проверьте подключение и повторите попытку.</string>
+    <string name="profile_delete_account_error_signed_out">Чтобы удалить аккаунт, нужно войти в него.</string>
+    <string name="profile_delete_account_reauth_needed">В целях безопасности перед удалением нужно подтвердить, что это вы. Выйдите, войдите снова и повторите удаление.</string>
 </resources>

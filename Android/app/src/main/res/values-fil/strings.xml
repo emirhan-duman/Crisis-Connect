@@ -1776,4 +1776,18 @@ Petsa: %4$s</string>
     <string name="rescue_remote_signals_empty_title">Tahimik ang lahat</string>
     <string name="rescue_remote_hero_count">%1$d aktibong signal</string>
     <string name="rescue_remote_signals_subtitle">Live feed mula sa panel ng ahensya mo</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">Tanggalin ang account at data</string>
+    <string name="profile_delete_account_progress">Tinatanggal…</string>
+    <string name="profile_delete_account_dialog_title">Permanenteng tanggalin ang account mo?</string>
+    <string name="profile_delete_account_dialog_body">Hindi na ito maibabalik. Tatanggalin ang account, profile, mga tugma sa direktoryo ng contact, mga encryption key, mga rekord ng notipikasyon, at kasaysayan ng chat sa device na ito. Ang mga emergency signal na ipinadala mo ay itinatago bilang rekord ng pagsagip, hiwalay sa iyong pagkakakilanlan.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">I-type ang %1$s para kumpirmahin.</string>
+    <string name="profile_delete_account_confirm_word">TANGGALIN</string>
+    <string name="profile_delete_account_dialog_confirm">Tanggalin nang permanente</string>
+    <string name="profile_delete_account_success">Natanggal na ang account at data mo.</string>
+    <string name="profile_delete_account_error">Hindi natapos ang pagtanggal. Tingnan ang koneksyon mo at subukan muli.</string>
+    <string name="profile_delete_account_error_verification">Hindi ma-verify ang pagtanggal sa device na ito. Tingnan ang koneksyon mo at subukan muli.</string>
+    <string name="profile_delete_account_error_signed_out">Kailangan mong maka-sign in para tanggalin ang account mo.</string>
+    <string name="profile_delete_account_reauth_needed">Para sa seguridad mo, kailangan naming kumpirmahin na ikaw nga ito bago magtanggal. Mag-sign out, mag-sign in muli, tapos subukan ulit.</string>
 </resources>

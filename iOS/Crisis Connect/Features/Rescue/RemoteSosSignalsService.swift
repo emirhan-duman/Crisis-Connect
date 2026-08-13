@@ -110,6 +110,30 @@ final class RemoteSosSignalsService: ObservableObject {
                         }
                         let status = ((data["status"] as? String) ?? "active").lowercased()
                         guard status == "active" else { return nil }
+                        // Resolved wins, mirroring the web's readEffectiveResolveMillis precedence
+                        // (lib/dashboard/signal-resolution.ts). Resolve stamps come from TWO
+                        // writers: the victim's own stop (top-level resolvedAt/resolvedMillis via
+                        // reportSosSignal) and an operator resolve (ops.resolvedAt*). An operator
+                        // REOPEN stamps ops.reopenedAt* WITHOUT clearing either resolve, and the
+                        // victim resolve leaves lastSeenMillis == resolvedMillis — so a reopen must
+                        // cancel the resolve here too, or the reopened SOS stays hidden on every
+                        // phone until the beacon is next heard. Only a sighting NEWER than a
+                        // still-effective resolve reactivates.
+                        let ops = data["ops"] as? [String: Any]
+                        let resolveMillis = max(
+                            Self.epochMillis(data["resolvedMillis"]),
+                            Self.epochMillis(data["resolvedAt"]),
+                            Self.epochMillis(ops?["resolvedAtMillis"]),
+                            Self.epochMillis(ops?["resolvedAt"])
+                        )
+                        let reopenMillis = max(
+                            Self.epochMillis(ops?["reopenedAtMillis"]),
+                            Self.epochMillis(ops?["reopenedAt"])
+                        )
+                        if resolveMillis > 0, reopenMillis < resolveMillis,
+                           lastSeenMillis <= resolveMillis {
+                            return nil
+                        }
                         let gps = (data["gps"] as? [String: Any])
                             ?? (data["victimGps"] as? [String: Any])
                             ?? (data["estimatedVictimGps"] as? [String: Any])
@@ -135,6 +159,38 @@ final class RemoteSosSignalsService: ObservableObject {
             }
         listeners.append(registration)
     }
+
+    /// Epoch millis from the shapes these stamps travel in: epoch numbers (resolvedMillis and the
+    /// ops `*Millis` twins), Firestore Timestamps (reportSosSignal's resolvedAt) and the ISO
+    /// strings /api/dashboard/sos writes into `ops.resolvedAt`/`ops.reopenedAt`. Zero when
+    /// absent/invalid so callers can fold with max(), matching the web helper.
+    private static func epochMillis(_ value: Any?) -> Int64 {
+        let millis: Int64
+        switch value {
+        case let number as NSNumber:
+            millis = number.int64Value
+        case let timestamp as Timestamp:
+            millis = Int64(timestamp.dateValue().timeIntervalSince1970 * 1000)
+        case let string as String:
+            guard let date = isoMillisFormatter.date(from: string)
+                ?? isoFormatter.date(from: string) else {
+                return 0
+            }
+            millis = Int64(date.timeIntervalSince1970 * 1000)
+        default:
+            return 0
+        }
+        return millis > 0 ? millis : 0
+    }
+
+    // `new Date().toISOString()` carries fractional seconds, which the plain ISO8601 formatter
+    // rejects — try the fractional variant first.
+    private static let isoMillisFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    private static let isoFormatter = ISO8601DateFormatter()
 
     /// Own panel first, then its ancestors (parent/national), distinct, order-preserving.
     private static func resolvePanelIds() async -> [String] {

@@ -20,10 +20,8 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 /**
- * Same-agency authority directory: lists fellow authorities (via `listAuthorityRoster`) and turns a
- * tapped member into a 1:1 contact ([AuthorityRosterClient.addContact]) so its chat works over the
- * internet now and can fall back to an offline number-keyed Bluetooth link (NearbyAutoLink) when the
- * two are nearby without connectivity. This is the offline half of the authority comms feature.
+ * Same-agency authority directory. A selected member is routed into the agency-scoped MLS-v2
+ * authority thread; legacy citizen-contact creation is intentionally not used here.
  */
 class AuthorityRosterViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -39,12 +37,8 @@ class AuthorityRosterViewModel(application: Application) : AndroidViewModel(appl
     private val _state = MutableStateFlow<State>(State.Loading)
     val state: StateFlow<State> = _state.asStateFlow()
 
-    /** The uid currently being added (its row shows progress + is disabled), or null. */
-    private val _addingUid = MutableStateFlow<String?>(null)
-    val addingUid: StateFlow<String?> = _addingUid.asStateFlow()
-
-    private val _openConversation = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val openConversation: SharedFlow<String> = _openConversation
+    private val _openConversation = MutableSharedFlow<AuthorityRosterMember>(extraBufferCapacity = 1)
+    val openConversation: SharedFlow<AuthorityRosterMember> = _openConversation
 
     private val _error = MutableSharedFlow<Int>(extraBufferCapacity = 1)
     val error: SharedFlow<Int> = _error
@@ -70,18 +64,12 @@ class AuthorityRosterViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
-    fun addAndOpen(member: AuthorityRosterMember) {
-        if (_addingUid.value != null) return
-        _addingUid.value = member.uid
-        viewModelScope.launch {
-            val sessionCode = runCatching { client.addContact(appContext, member) }.getOrNull()
-            _addingUid.value = null
-            if (sessionCode.isNullOrBlank()) {
-                _error.tryEmit(R.string.authority_roster_add_failed)
-            } else {
-                _openConversation.tryEmit(sessionCode)
-            }
+    fun open(member: AuthorityRosterMember) {
+        if (member.uid.isBlank() || member.agencySlug.isBlank()) {
+            _error.tryEmit(R.string.authority_roster_add_failed)
+            return
         }
+        _openConversation.tryEmit(member)
     }
 
     private suspend fun resolveAgencySlug(): String? = withContext(Dispatchers.IO) {

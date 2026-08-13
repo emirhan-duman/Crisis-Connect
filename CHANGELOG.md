@@ -4,6 +4,37 @@ All notable changes to Crisis Connect are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.9] - 2026-08-13
+
+Android `versionCode` 64, iOS `MARKETING_VERSION` 1.1.9 (`CURRENT_PROJECT_VERSION` 36).
+
+### Added
+
+- Secure Trust Dossiers on Android and iOS for institutional-role documents, PDF/image import, handwritten annotations, policy validation and immutable manifest freezing
+- Breadcrumb Trail, CPR Assist and programmable Flashlight tools on both platforms, with English and Turkish resources
+- Durable MLS authority-session state, trust stores, encrypted state vaults, wake prewarming and fail-closed call-readiness gates
+- Resource-alert wake queues with acknowledgement, retry and platform notification integration
+- Account-deletion data erasure for profile photos, messaging state and related backend records
+
+### Changed
+
+- Authority messaging and SFU orchestration hardened across Android and iOS, including MLS preparation and native persistence coverage
+- SOS and rescue synchronization made more resilient to offline transitions, background delivery and duplicate signals
+- Recent-message loading and notification routing updated to surface the newest conversation state reliably
+- Automated coverage increased to **611 tests** (409 Android unit + 27 instrumented, 175 iOS)
+- Public Android CI moved to the repository-root workflow and now builds against the documented example Firebase configuration
+
+### Fixed
+
+- Profile-photo cleanup and account deletion no longer leave orphaned local or cloud data
+- Agency and hierarchy call setup now blocks until required MLS state is ready instead of silently falling back
+- Resource alerts survive cold starts and reconnects without being acknowledged before local delivery
+
+### Security
+
+- Public-source synchronization is based only on tracked release commits and excludes local environment files, signing material, Firebase credentials, generated outputs, logs and Xcode user state
+- Private Codemagic integration metadata is not included in the public mirror
+
 ## [1.1.8] - 2026-07-25
 
 Consolidates the 1.1.2 through 1.1.8 store releases. Android `versionCode` 59, iOS `MARKETING_VERSION` 1.1.8.

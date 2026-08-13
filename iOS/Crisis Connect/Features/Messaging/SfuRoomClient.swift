@@ -13,26 +13,107 @@
 import FirebaseFirestore
 import Foundation
 
+enum SfuRoomScopeType: String {
+    case agency, hierarchy
+}
+
+enum SfuRoomAuthorizationError: Error {
+    case invalidBinding
+    case roomBindingMismatch
+}
+
+/// Immutable authorization record for one accepted call. The room UUID is only a routing key;
+/// Firestore rules and every client bind it to this exact scope, call id, and participant pair.
+struct SfuRoomBinding: Equatable {
+    let scopeType: SfuRoomScopeType
+    let channelId: String
+    let callId: String
+    let participants: [String]
+
+    init(
+        scopeType: SfuRoomScopeType,
+        channelId: String,
+        callId: String,
+        selfUid: String,
+        peerUid: String
+    ) throws {
+        let channel = channelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let call = callId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let me = selfUid.trimmingCharacters(in: .whitespacesAndNewlines)
+        let peer = peerUid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !channel.isEmpty, channel.count <= 256,
+              UUID(uuidString: call) != nil,
+              !me.isEmpty, me.count <= 128,
+              !peer.isEmpty, peer.count <= 128,
+              me != peer else {
+            throw SfuRoomAuthorizationError.invalidBinding
+        }
+        self.scopeType = scopeType
+        self.channelId = channel
+        self.callId = call
+        self.participants = [me, peer].sorted()
+    }
+
+    var documentFields: [String: Any] {
+        [
+            "version": 2,
+            "scopeType": scopeType.rawValue,
+            "channelId": channelId,
+            "callId": callId,
+            "participants": participants
+        ]
+    }
+
+    func matches(_ snapshot: DocumentSnapshot) -> Bool {
+        guard (snapshot.get("version") as? NSNumber)?.intValue == 2,
+              snapshot.get("scopeType") as? String == scopeType.rawValue,
+              snapshot.get("channelId") as? String == channelId,
+              snapshot.get("callId") as? String == callId,
+              snapshot.get("participants") as? [String] == participants,
+              let creator = snapshot.get("mlsCreator") as? String,
+              participants.contains(creator) else {
+            return false
+        }
+        return true
+    }
+}
+
 final class SfuRoomClient: @unchecked Sendable {
     private let roomId: String
     private let selfUid: String
+    private let binding: SfuRoomBinding
+    private let protocolVersion: SfuProtocolVersion
     private let db: Firestore
+
+    var enforcesBoundIdentity: Bool { true }
 
     // 12h: comfortably longer than any real authority call, refreshed by heartbeat while live.
     private static let roomTtl: TimeInterval = 12 * 60 * 60
 
-    init(roomId: String, selfUid: String, firestore: Firestore = .firestore()) {
+    init(
+        roomId: String,
+        selfUid: String,
+        binding: SfuRoomBinding,
+        protocolVersion: SfuProtocolVersion = .secure,
+        firestore: Firestore = .firestore()
+    ) {
         self.roomId = roomId
         self.selfUid = selfUid
+        self.binding = binding
+        self.protocolVersion = protocolVersion
         self.db = firestore
     }
 
     private var participants: CollectionReference {
-        db.collection("sfuRooms").document(roomId).collection("participants")
+        db.collection(roomCollection).document(roomId).collection("participants")
     }
 
     private var mls: CollectionReference {
-        db.collection("sfuRooms").document(roomId).collection("mlsMessages")
+        db.collection(roomCollection).document(roomId).collection("mlsMessages")
+    }
+
+    private var roomCollection: String {
+        "sfuRoomsV2"
     }
 
     private func expireAt() -> Timestamp {
@@ -46,7 +127,8 @@ final class SfuRoomClient: @unchecked Sendable {
         cameraOn: Bool,
         muted: Bool,
         sessionId: String,
-        tracks: [SfuPublishedTrack]
+        tracks: [SfuPublishedTrack],
+        onError: @escaping (Error) -> Void = { _ in }
     ) {
         participants.document(selfUid).setData([
             "uid": selfUid,
@@ -60,7 +142,9 @@ final class SfuRoomClient: @unchecked Sendable {
             },
             "updatedAt": FieldValue.serverTimestamp(),
             "expireAt": expireAt()
-        ])
+        ], completion: { error in
+            if let error { onError(error) }
+        })
     }
 
     /// Remove myself from the room roster on hang-up (best-effort).
@@ -70,37 +154,61 @@ final class SfuRoomClient: @unchecked Sendable {
 
     /// Liveness heartbeat: refresh my roster entry so peers can tell a live member from a
     /// crashed one (an ungraceful exit never deletes the doc — only staleness reveals it).
-    func heartbeat() {
+    func heartbeat(onError: @escaping (Error) -> Void = { _ in }) {
         participants.document(selfUid).updateData([
             "updatedAt": FieldValue.serverTimestamp(),
             "expireAt": expireAt()
-        ])
+        ], completion: { error in
+            if let error { onError(error) }
+        })
     }
 
     /// Atomically claim the MLS group-creator role on the room doc. Exactly one member gets
     /// `true` (race-free); everyone else joins the group the creator makes.
     func claimMlsCreator() async throws -> Bool {
-        let reference = db.collection("sfuRooms").document(roomId)
+        let reference = db.collection(roomCollection).document(roomId)
         let selfUid = selfUid
+        let binding = binding
+        let protocolVersion = protocolVersion
         let expire = expireAt()
-        let result = try await db.runTransaction { transaction, _ -> Any? in
-            let snapshot = try? transaction.getDocument(reference)
-            if let creator = snapshot?.get("mlsCreator") as? String {
-                return creator == selfUid
+        guard protocolVersion == .secure, binding.participants.contains(selfUid) else {
+            throw SfuRoomAuthorizationError.invalidBinding
+        }
+        let result = try await db.runTransaction { transaction, errorPointer -> Any? in
+            do {
+                let snapshot = try transaction.getDocument(reference)
+                if snapshot.exists {
+                    if !binding.matches(snapshot) {
+                        errorPointer?.pointee = SfuRoomAuthorizationError.roomBindingMismatch as NSError
+                        return nil
+                    }
+                    if let creator = snapshot.get("mlsCreator") as? String, !creator.isEmpty {
+                        return creator == selfUid
+                    }
+                    errorPointer?.pointee = SfuRoomAuthorizationError.roomBindingMismatch as NSError
+                    return nil
+                }
+                var fields = binding.documentFields
+                fields["mlsCreator"] = selfUid
+                fields["createdAt"] = FieldValue.serverTimestamp()
+                fields["expireAt"] = expire
+                transaction.setData(fields, forDocument: reference)
+                return true
+            } catch {
+                errorPointer?.pointee = error as NSError
+                return nil
             }
-            transaction.setData([
-                "mlsCreator": selfUid,
-                "createdAt": FieldValue.serverTimestamp(),
-                "expireAt": expire
-            ], forDocument: reference, merge: true)
-            return true
         }
         return result as? Bool ?? false
     }
 
     /// Subscribe to the room roster; delivers everyone except me.
-    func listenRoster(onRoster: @escaping ([SfuRemoteParticipant]) -> Void) -> ListenerRegistration {
-        participants.addSnapshotListener { [selfUid] snapshot, _ in
+    func listenRoster(
+        onRoster: @escaping ([SfuRemoteParticipant]) -> Void,
+        onError: @escaping (Error) -> Void = { _ in }
+    ) -> ListenerRegistration {
+        participants.addSnapshotListener { [selfUid] snapshot, error in
+            if let error { onError(error); return }
             guard let snapshot else { return }
             let remotes: [SfuRemoteParticipant] = snapshot.documents.compactMap { document in
                 guard document.documentID != selfUid,
@@ -130,22 +238,32 @@ final class SfuRoomClient: @unchecked Sendable {
     // MARK: - MLS handshake relay (opaque blobs; Firestore never sees keys/plaintext)
 
     /// Broadcast one opaque MLS handshake message (codec JSON) to the room.
-    func publishMlsMessage(_ payload: String) {
+    func publishMlsMessage(_ payload: String, onError: @escaping (Error) -> Void = { _ in }) {
+        guard !payload.isEmpty, payload.utf8.count <= 65_536 else {
+            onError(SfuRoomAuthorizationError.invalidBinding)
+            return
+        }
         mls.addDocument(data: [
             "from": selfUid,
             "payload": payload,
             "createdAt": FieldValue.serverTimestamp(),
             "expireAt": expireAt()
-        ])
+        ], completion: { error in
+            if let error { onError(error) }
+        })
     }
 
     /// Subscribe to peers' MLS messages, INCLUDING the backlog present at attach — the peer can
     /// publish its KeyPackage before our listener attaches (the creator-claim transaction takes a
     /// round-trip first) and dropping it would deadlock the handshake. Batches are delivered in
     /// createdAt order (handshake messages are order-sensitive).
-    func listenMlsMessages(onMessage: @escaping (String) -> Void) -> ListenerRegistration {
+    func listenMlsMessages(
+        onMessage: @escaping (_ payload: String, _ fromUid: String) -> Void,
+        onError: @escaping (Error) -> Void = { _ in }
+    ) -> ListenerRegistration {
         var seen = Set<String>()
-        return mls.addSnapshotListener { [selfUid] snapshot, _ in
+        return mls.addSnapshotListener { [selfUid] snapshot, error in
+            if let error { onError(error); return }
             guard let snapshot else { return }
             snapshot.documentChanges
                 .filter { $0.type == .added && seen.insert($0.document.documentID).inserted }
@@ -157,8 +275,9 @@ final class SfuRoomClient: @unchecked Sendable {
                     return lhs < rhs
                 }
                 .forEach { document in
-                    if let payload = document.get("payload") as? String {
-                        onMessage(payload)
+                    if let payload = document.get("payload") as? String,
+                       let fromUid = document.get("from") as? String {
+                        onMessage(payload, fromUid)
                     }
                 }
         }

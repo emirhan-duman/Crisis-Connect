@@ -17,6 +17,7 @@ import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
 import org.webrtc.Camera2Enumerator
 import org.webrtc.CameraVideoCapturer
+import org.webrtc.CryptoOptions
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
@@ -43,6 +44,26 @@ import kotlin.coroutines.resumeWithException
 
 enum class SfuMediaState { IDLE, JOINING, LIVE, FAILED, LEFT }
 
+/** User-selectable screen-share limits, kept in sync with the web call settings. */
+enum class ScreenShareQualityPreset(
+    val wireValue: String,
+    val maxWidth: Int,
+    val maxHeight: Int,
+    val maxFps: Int,
+    val maxBitrateBps: Int,
+    val maintainResolution: Boolean,
+) {
+    AUTO("auto", 1920, 1080, 30, 6_000_000, false),
+    SMOOTH("smooth", 1920, 1080, 60, 10_000_000, false),
+    HIGH("high", 2560, 1440, 30, 12_000_000, true),
+    ULTRA("ultra", 3840, 2160, 30, 20_000_000, true);
+
+    companion object {
+        fun fromWireValue(value: String?): ScreenShareQualityPreset =
+            entries.firstOrNull { it.wireValue == value } ?: AUTO
+    }
+}
+
 /** One of a participant's published tracks (name + kind + logical source). */
 data class SfuPublishedTrack(val trackName: String, val kind: String, val source: String)
 
@@ -65,22 +86,23 @@ data class SfuRemoteParticipant(
 
 /**
  * Android mirror of the web [SfuCallManager] (lib/messaging/sfu-call.ts): ONE [PeerConnection] to the
- * nearest Cloudflare Realtime edge that PUSHES our mic and PULLS every other room participant's audio.
+ * nearest Cloudflare Realtime edge that PUSHES our mic/camera/screen and PULLS other participants.
  * Media never flows peer-to-peer — each client talks only to the SFU. Room coordination (who is in the
  * room + their SFU session id + track names) is injected via [setRoster] (the controller relays it over
  * Firestore), so this class stays transport-agnostic like the web.
  *
- * Faz B scope: **audio-only** (mic push + pull peers' audio). Video/screen layer on later, MLS-E2EE in
- * Faz C. E2EE-free first so the media path can be brought up and quality-checked before crypto.
+ * MLS frame encryption is mandatory for every published sender and received track. [join] fails closed
+ * before media capture/publish if the caller did not establish the encrypted authority-call path.
  */
 class SfuCallManager(
     private val context: Context,
     private val scope: CoroutineScope,
-    private val api: SfuApiClient = SfuApiClient(),
-    // When true, MLS-E2EE each frame: the local sender gets a native FrameEncryptor and every inbound
-    // receiver a FrameDecryptor ([MlsFrameCrypto]). Required for web interop (the dashboard enforces
-    // MLS). Safe to leave on before the handshake finishes — the native path emits silence until ready.
-    private val e2ee: Boolean = false,
+    roomId: String,
+    callId: String,
+    private val api: SfuApiClient = SfuApiClient(roomId, callId),
+    // Must be true for every construction. Kept explicit at the controller boundary so a future caller
+    // cannot accidentally assume that SFU transport encryption alone is end-to-end encryption.
+    private val e2ee: Boolean,
     private val onState: (SfuMediaState) -> Unit = {},
     private val onPublished: (sessionId: String, tracks: List<SfuPublishedTrack>) -> Unit = { _, _ -> },
 ) {
@@ -107,6 +129,8 @@ class SfuCallManager(
     var cameraOn = false
         private set
     var sharingScreen = false
+        private set
+    var screenShareQuality: ScreenShareQualityPreset = ScreenShareQualityPreset.AUTO
         private set
 
     /** Live local/remote video tracks for the overlay. */
@@ -135,6 +159,10 @@ class SfuCallManager(
      */
     suspend fun join(video: Boolean = false) {
         if (state != SfuMediaState.IDLE) return
+        if (!e2ee) {
+            set(SfuMediaState.FAILED)
+            return
+        }
         Log.i(TAG, "join() start video=$video")
         set(SfuMediaState.JOINING)
         try {
@@ -172,26 +200,27 @@ class SfuCallManager(
                 }
             }
 
-            // 1) Create the SFU session with our first (gathered) offer; Cloudflare answers with a sessionId.
-            val offer1 = connection.createOfferAwait()
-            connection.setLocalAwait(offer1)
-            val session = api.createSession(connection.gatheredLocalSdp())
+            // 1) Allocate an empty Cloudflare session. Per the Connection API lifecycle, the initial
+            // SDP offer is sent exactly once by tracks/new below (not once here and then a second time).
+            val session = api.createSession()
             val sid = session.optString("sessionId").takeIf { it.isNotBlank() }
                 ?: throw IOException("session not created")
             sessionId = sid
             Log.i(TAG, "session created id=$sid")
-            connection.setRemoteAwait(session.answerSdp())
 
-            // 2) Publish: name each local track by its id, tied to its transceiver mid, and renegotiate.
+            // 2) Publish: create the single initial offer, name each local track by its transceiver mid,
+            // and apply Cloudflare's answer. This is identical to the browser's negotiation sequence.
+            val offer = connection.createOfferAwait()
+            connection.setLocalAwait(offer)
             val localTracks = connection.transceivers.mapNotNull { tr ->
                 val sender = tr.sender.track() ?: return@mapNotNull null
                 val mid = tr.mid ?: return@mapNotNull null
                 JSONObject().put("location", "local").put("mid", mid).put("trackName", sender.id())
             }
-            val offer2 = connection.createOfferAwait()
-            connection.setLocalAwait(offer2)
             val pub = api.publishTracks(sid, connection.gatheredLocalSdp(), localTracks)
-            pub.optJSONObject("sessionDescription")?.let { connection.setRemoteAwait(it.getString("sdp"), it.getString("type")) }
+            val answer = pub.optJSONObject("sessionDescription")
+                ?: throw IOException("track publish returned no answer sdp")
+            connection.setRemoteAwait(answer.getString("sdp"), answer.getString("type"))
 
             published = connection.transceivers.mapNotNull { tr ->
                 val sender = tr.sender.track() ?: return@mapNotNull null
@@ -277,7 +306,16 @@ class SfuCallManager(
             pullingUid = uid
             pullingTracks = tracks
             try {
-                connection.setRemoteAwait(sdp.getString("sdp"), "offer")
+                val remoteOffer = sdp.getString("sdp")
+                connection.setRemoteAwait(remoteOffer, "offer")
+                // libwebrtc dispatches onTrack while setRemoteDescription is still applying the
+                // offer. For video, RtpReceiver.setFrameDecryptor() is a no-op until the receiver's
+                // signalled SSRC has been committed. Re-attach after onSetSuccess, before the SFU
+                // receives our answer, so encrypted VP9 frames can never reach MediaCodec as if they
+                // were plaintext. Keeping the video track disabled until this point also fails closed.
+                if (!attachPulledDecryptors(connection, uid)) {
+                    throw IOException("mandatory inbound MLS decryptor attachment failed")
+                }
                 val answer = connection.createAnswerAwait()
                 connection.setLocalAwait(answer)
                 api.renegotiate(sid, connection.gatheredLocalSdp())
@@ -287,6 +325,34 @@ class SfuCallManager(
             }
         }
         return allOk
+    }
+
+    private fun attachPulledDecryptors(connection: PeerConnection, uid: String): Boolean {
+        val expectedMids = midToUid.filterValues { it == uid }.keys
+        val receivers = connection.transceivers.filter { transceiver ->
+            transceiver.mid?.let(expectedMids::contains) == true && transceiver.receiver.track() != null
+        }
+        if (receivers.isEmpty()) {
+            Log.e(TAG, "no inbound receivers available for mandatory MLS decryptor attachment")
+            return false
+        }
+
+        for (transceiver in receivers) {
+            if (!attachReceiverDecryptor(transceiver, "post-remote-description")) return false
+            (transceiver.receiver.track() as? VideoTrack)?.setEnabled(true)
+        }
+        return true
+    }
+
+    private fun attachReceiverDecryptor(transceiver: RtpTransceiver, phase: String): Boolean {
+        val decryptor = MlsFrameCrypto.newDecryptor()
+        if (decryptor == null) {
+            Log.e(TAG, "mandatory MLS FrameDecryptor unavailable phase=$phase")
+            return false
+        }
+        transceiver.receiver.setFrameDecryptor(decryptor)
+        Log.i(TAG, "attached MLS FrameDecryptor to receiver mid=${transceiver.mid} phase=$phase")
+        return true
     }
 
     private fun dropRemote(uid: String) {
@@ -360,14 +426,15 @@ class SfuCallManager(
         val helper = SurfaceTextureHelper.create("SfuScreenCapture", egl.eglBaseContext)
         val source = factory.createVideoSource(true) // isScreencast → text-friendly encoding
         capturer.initialize(helper, context, source.capturerObserver)
-        val metrics = context.resources.displayMetrics
-        runCatching { capturer.startCapture(metrics.widthPixels, metrics.heightPixels, 15) }
+        val (captureWidth, captureHeight) = screenCaptureSize(screenShareQuality)
+        runCatching { capturer.startCapture(captureWidth, captureHeight, screenShareQuality.maxFps) }
         val track = factory.createVideoTrack("sfu_screen", source).apply { setEnabled(true) }
         screenCapturer = capturer
         screenHelper = helper
         screenSource = source
         screenTrack = track
         sharingScreen = true
+        cameraTransceiver?.let { applyVideoParams(it, camera = true) }
         val existing = screenTransceiver
         if (existing != null) {
             runCatching { existing.sender.setTrack(track, false) }
@@ -386,9 +453,24 @@ class SfuCallManager(
         sharingScreen = false
         runCatching { screenTransceiver?.sender?.setTrack(null, false) }
         stopScreenCapture()
+        cameraTransceiver?.let { applyVideoParams(it, camera = true) }
         videoStreams.value = videoStreams.value.copy(localScreen = null)
         published = published.filterNot { it.source == "screen" }
         sessionId?.let { onPublished(it, published) }
+    }
+
+    /**
+     * Apply a new quality profile without touching the active MediaProjection session. Android 14+
+     * makes a projection token single-use: ScreenCapturerAndroid.changeCaptureFormat recreates its
+     * VirtualDisplay and throws SecurityException (ending the share/call on Android 16). Bitrate,
+     * frame-rate and degradation policy are safe sender parameters and take effect immediately; the
+     * requested capture resolution is remembered by [screenShareQuality] for the next share.
+     */
+    fun setScreenShareQuality(preset: ScreenShareQualityPreset) {
+        screenShareQuality = preset
+        if (sharingScreen) {
+            screenTransceiver?.let { applyVideoParams(it, camera = false) }
+        }
     }
 
     /** Publish a NEW local video track mid-call: new sendonly m-line + one publish renegotiation. */
@@ -486,13 +568,12 @@ class SfuCallManager(
         screenTrack = null
     }
 
-    /** Attach the MLS FrameEncryptor to [tr]'s sender when E2EE is on. */
+    /** Attach the mandatory MLS FrameEncryptor to [tr]'s sender before publication. */
     private fun attachEncryptor(tr: RtpTransceiver, label: String) {
-        if (!e2ee) return
-        MlsFrameCrypto.newEncryptor()?.let {
-            tr.sender.setFrameEncryptor(it)
-            Log.i(TAG, "attached MLS FrameEncryptor to $label sender")
-        }
+        val encryptor = MlsFrameCrypto.newEncryptor()
+            ?: throw IOException("mandatory MLS FrameEncryptor unavailable for $label")
+        tr.sender.setFrameEncryptor(encryptor)
+        Log.i(TAG, "attached MLS FrameEncryptor to $label sender")
     }
 
     /**
@@ -513,19 +594,46 @@ class SfuCallManager(
         }.onFailure { Log.w(TAG, "VP9 pin failed (using negotiated default)", it) }
     }
 
-    // Camera favours a smooth frame rate; screen favours crisp text. Bitrate caps mirror the web.
+    /** Preserve the device aspect ratio and never upscale beyond the physical display. */
+    private fun screenCaptureSize(preset: ScreenShareQualityPreset): Pair<Int, Int> {
+        val metrics = context.resources.displayMetrics
+        val physicalWidth = metrics.widthPixels.coerceAtLeast(2)
+        val physicalHeight = metrics.heightPixels.coerceAtLeast(2)
+        val portrait = physicalHeight > physicalWidth
+        val widthLimit = if (portrait) preset.maxHeight else preset.maxWidth
+        val heightLimit = if (portrait) preset.maxWidth else preset.maxHeight
+        val scale = minOf(
+            1f,
+            widthLimit.toFloat() / physicalWidth,
+            heightLimit.toFloat() / physicalHeight,
+        )
+        val width = (physicalWidth * scale).toInt().coerceAtLeast(2) and -2
+        val height = (physicalHeight * scale).toInt().coerceAtLeast(2) and -2
+        return width to height
+    }
+
+    // Camera favours a smooth frame rate; screen follows the selected web-compatible profile.
     private fun applyVideoParams(tr: RtpTransceiver, camera: Boolean) {
         runCatching {
             val sender = tr.sender
             val params = sender.parameters ?: return
-            params.degradationPreference = if (camera) {
-                RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
-            } else {
+            val profile = screenShareQuality
+            params.degradationPreference = if (!camera && profile.maintainResolution) {
                 RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+            } else {
+                RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
             }
             params.encodings.firstOrNull()?.let { enc ->
-                enc.maxBitrateBps = if (camera) CAMERA_MAX_BITRATE else SCREEN_MAX_BITRATE
-                enc.maxFramerate = if (camera) 30 else 15
+                enc.maxBitrateBps = when {
+                    !camera -> profile.maxBitrateBps
+                    sharingScreen -> CAMERA_WHILE_SHARING_MAX_BITRATE
+                    else -> CAMERA_MAX_BITRATE
+                }
+                enc.maxFramerate = when {
+                    !camera -> profile.maxFps
+                    sharingScreen -> CAMERA_WHILE_SHARING_MAX_FPS
+                    else -> 30
+                }
             }
             sender.parameters = params
         }
@@ -563,6 +671,14 @@ class SfuCallManager(
         return PeerConnection.RTCConfiguration(ice).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+            // libwebrtc only constructs BufferedFrameDecryptor for inbound video when frame
+            // encryption is required at PeerConnection creation time. Without this flag audio still
+            // uses its decryptor, but encrypted VP9 payloads can bypass the video decryptor and reach
+            // MediaCodec as malformed plaintext. Requiring it also makes every sender/receiver fail
+            // closed if its MLS frame cryptor is unavailable.
+            cryptoOptions = CryptoOptions.builder()
+                .setRequireFrameEncryption(true)
+                .createCryptoOptions()
         }
     }
 
@@ -589,9 +705,10 @@ class SfuCallManager(
             mid?.let { m -> pullingUid?.let { uid -> midToUid.putIfAbsent(m, uid) } }
             // Attach the MLS FrameDecryptor to this inbound receiver so peers' E2E-encrypted frames
             // decrypt (silence until the shared group handshake completes — see [MlsFrameCrypto]).
-            if (e2ee) MlsFrameCrypto.newDecryptor()?.let {
-                transceiver.receiver.setFrameDecryptor(it)
-                Log.i(TAG, "attached MLS FrameDecryptor to receiver mid=$mid")
+            if (!attachReceiverDecryptor(transceiver, "on-track")) {
+                Log.e(TAG, "mandatory MLS FrameDecryptor unavailable; closing call")
+                scope.launch { set(SfuMediaState.FAILED) }
+                return
             }
             val track = transceiver.receiver.track()
             if (track is VideoTrack && mid != null) {
@@ -600,7 +717,10 @@ class SfuCallManager(
                 val source = midSource[mid]
                     ?: pullingTracks.firstOrNull { it.kind == "video" }?.source
                     ?: "camera"
-                track.setEnabled(true)
+                // setRemoteDescription has not finished committing the signalled SSRC yet. Keep
+                // ciphertext out of MediaCodec until attachPulledDecryptors re-attaches the native
+                // decryptor and explicitly enables this track.
+                track.setEnabled(false)
                 videoStreams.value = if (source == "screen") {
                     videoStreams.value.copy(remoteScreen = track)
                 } else {
@@ -686,8 +806,9 @@ class SfuCallManager(
         private const val ICE_GATHER_TIMEOUT_MS = 4_000L
         private const val MAX_PULL_RETRIES = 5
         private const val PULL_RETRY_DELAY_MS = 2_000L
-        private const val CAMERA_MAX_BITRATE = 1_800_000
-        private const val SCREEN_MAX_BITRATE = 2_000_000
+        private const val CAMERA_MAX_BITRATE = 2_500_000
+        private const val CAMERA_WHILE_SHARING_MAX_BITRATE = 900_000
+        private const val CAMERA_WHILE_SHARING_MAX_FPS = 15
 
         /** EGL context for the overlay's SurfaceViewRenderers (same one the capture pipeline uses). */
         fun sharedEglContext(): EglBase.Context? = sharedEgl?.eglBaseContext

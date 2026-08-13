@@ -11,10 +11,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.data.AppDatabase
 import com.auralis.crisisconnect.data.database.AgencyRouter
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.data.local.ProfileImageStorage
 import com.auralis.crisisconnect.data.profile.ProfilePhotoUploadWorker
+import com.auralis.crisisconnect.data.profile.ProfilePhotoDeleteWorker
 import com.auralis.crisisconnect.getSavedUserName
 import com.auralis.crisisconnect.messaging.ContactDirectoryCache
 import com.auralis.crisisconnect.security.CertificateProvisioningNotifier
@@ -27,6 +29,7 @@ import com.google.android.gms.tasks.Task
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.FirebaseException
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
@@ -39,6 +42,7 @@ import com.google.firebase.auth.OAuthProvider
 import com.google.firebase.auth.PhoneAuthCredential
 import com.google.firebase.auth.PhoneAuthOptions
 import com.google.firebase.auth.PhoneAuthProvider
+import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -82,7 +86,8 @@ data class ProfileUiState(
     val photoUrl: String? = null,
     val isLoading: Boolean = true,
     val isSignedIn: Boolean = false,
-    val emailSignInError: String? = null
+    val emailSignInError: String? = null,
+    val isDeletingAccount: Boolean = false
 )
 
 sealed class ProfileEvent {
@@ -161,9 +166,9 @@ class ProfileViewModel(
             savedState[KEY_PHONE_VERIFICATION_NUMBER] = value
         }
 
-    // Non-null while the pending code came from the server-side (Twilio) OTP flow — the
-    // PRIMARY verification path — rather than Firebase Phone Auth. confirmPhoneSignInCode
-    // must then check the code through the backend instead of a Firebase session.
+    // Non-null while the pending code came from the server-side (Twilio) fallback rather
+    // than the primary Firebase Phone Auth path. confirmPhoneSignInCode must then check
+    // the code through the backend instead of a Firebase verification session.
     private var pendingServerOtpPhone: String?
         get() = savedState[KEY_OTP_FALLBACK_PHONE]
         set(value) {
@@ -297,10 +302,23 @@ class ProfileViewModel(
                 val remoteAgency = documentSnapshot.getString("agency")
                 val remoteAgencySlug = documentSnapshot.getString("agencySlug")
                 val remoteAgencyKey = documentSnapshot.getString("agencyKey")
-                val remoteUsername = documentSnapshot.getString("username")
+                val remoteUsername = firstNonBlank(
+                    documentSnapshot.getString("username"),
+                    documentSnapshot.getString("name"),
+                    documentSnapshot.getString("displayName")
+                )
                 val remoteEmail = documentSnapshot.getString("email")
                 val remotePhoneNumber = documentSnapshot.getString("phoneNumber")
+                val hasRemotePhotoField = documentSnapshot.data?.containsKey("photoURL") == true ||
+                    documentSnapshot.data?.containsKey("photoDeletedAt") == true
                 val remotePhotoUrl = documentSnapshot.getString("photoURL")?.trim()?.takeIf { it.isNotEmpty() }
+                val remotePhotoVersion = (documentSnapshot.get("photoUpdatedAt") as? Timestamp)?.let {
+                    "${it.seconds}-${it.nanoseconds}"
+                } ?: remotePhotoUrl?.hashCode()?.toString()
+                val localUploadPending = ProfileImageStorage.isUploadPending(appContext)
+                val remotePhotoChanged = remotePhotoVersion != null &&
+                    remotePhotoVersion != ProfileImageStorage.getRemoteVersion(appContext)
+                val displayPhotoUrl = remotePhotoUrl?.let { appendPhotoVersion(it, remotePhotoVersion) }
                 _uiState.update { state ->
                     val resolvedRole = resolveRole(localRole, remoteRole, state.role)
                     val resolvedEmail = firstNonBlank(
@@ -333,10 +351,27 @@ class ProfileViewModel(
                         agency = resolvedAgency,
                         role = resolvedRole,
                         verified = documentSnapshot.getBoolean("verified") ?: false,
-                        photoUrl = remotePhotoUrl ?: state.photoUrl,
+                        profileBitmap = when {
+                            hasRemotePhotoField && remotePhotoUrl == null -> null
+                            remotePhotoChanged && !localUploadPending -> null
+                            else -> state.profileBitmap
+                        },
+                        photoUrl = if (hasRemotePhotoField) displayPhotoUrl else state.photoUrl,
                         isLoading = false,
                         isSignedIn = hasAuthenticatedUser
                     )
+                }
+
+                when {
+                    hasRemotePhotoField && remotePhotoUrl == null && !localUploadPending -> {
+                        ProfileImageStorage.clearProfileImage(appContext)
+                    }
+                    remotePhotoUrl != null && !localUploadPending && remotePhotoChanged -> {
+                        // ContactAvatar/Coil performs the single network fetch. Clearing only the old
+                        // app-specific bitmap prevents it from masking the newly versioned URL.
+                        ProfileImageStorage.clearProfileImage(appContext)
+                        ProfileImageStorage.setRemoteVersion(appContext, remotePhotoVersion ?: remotePhotoUrl)
+                    }
                 }
 
                 val resolvedState = _uiState.value
@@ -356,7 +391,7 @@ class ProfileViewModel(
                 // If a local photo was previously cached but never made it to
                 // the bucket (offline at pick time, or role granted later),
                 // drain the queue now that we know the gate may have opened.
-                val hasLocalPending = ProfileImageStorage.getProfileImageBase64(appContext) != null
+                val hasLocalPending = ProfileImageStorage.isUploadPending(appContext)
                 val remoteEmpty = remotePhotoUrl.isNullOrEmpty()
                 if (hasLocalPending && remoteEmpty
                     && canSyncPhotoUpload(resolvedState.role, resolvedState.agency)) {
@@ -404,6 +439,19 @@ class ProfileViewModel(
 
     fun onProfileImageSelectionFailed() {
         notifyMessage(appContext.getString(R.string.profile_photo_error))
+    }
+
+    fun removeProfilePhoto() {
+        ProfileImageStorage.clearProfileImage(appContext)
+        _uiState.update { it.copy(profileBitmap = null, photoUrl = null) }
+        ProfilePhotoDeleteWorker.enqueue(appContext)
+        notifyMessage(appContext.getString(R.string.profile_photo_removed))
+    }
+
+    private fun appendPhotoVersion(url: String, version: String?): String {
+        if (version.isNullOrBlank()) return url
+        val separator = if (url.contains('?')) '&' else '?'
+        return "$url${separator}ccv=$version"
     }
 
     fun onGoogleSignInSuccess(idToken: String, displayName: String, email: String) {
@@ -455,8 +503,19 @@ class ProfileViewModel(
         _uiState.update { it.copy(isLoading = true) }
 
         firestore.collection("users").document(uid)
-            .set(mapOf("username" to trimmedName), SetOptions.merge())
+            .set(
+                mapOf(
+                    "username" to trimmedName,
+                    "name" to trimmedName,
+                    "displayName" to trimmedName,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                ),
+                SetOptions.merge()
+            )
             .addOnSuccessListener {
+                auth.currentUser?.updateProfile(
+                    UserProfileChangeRequest.Builder().setDisplayName(trimmedName).build()
+                )
                 _uiState.update { state ->
                     state.copy(username = trimmedName, isLoading = false)
                 }
@@ -553,6 +612,11 @@ class ProfileViewModel(
         LocalKeyStorage.clearRole(appContext)
         // Cached directory matches belong to the account that scanned for them.
         ContactDirectoryCache.clear(appContext)
+        clearSignedOutProfileState()
+        notifyMessage(appContext.getString(R.string.profile_logout_success))
+    }
+
+    private fun clearSignedOutProfileState() {
         _uiState.update {
             it.copy(
                 username = "",
@@ -567,7 +631,140 @@ class ProfileViewModel(
                 emailSignInError = null
             )
         }
-        notifyMessage(appContext.getString(R.string.profile_logout_success))
+    }
+
+    /**
+     * Erases the account and everything attached to it — the in-app deletion path Google Play
+     * requires of any app that lets users create an account.
+     *
+     * The cloud half deliberately runs in the deleteAccountAndData callable rather than here: the
+     * collections that make a person identifiable (messagingKeys, the phone-hash discovery
+     * directory, push tokens, prekey bundles) are `allow read, write: if false` in Firestore rules,
+     * and users/{uid} is `allow delete: if false`. A client cannot touch any of them however
+     * privileged its session — deleting only what a client CAN reach looks like it worked while
+     * leaving the discoverable phone hash behind.
+     *
+     * The local wipe deliberately spares two things: the SQLCipher/AES keys in [LocalKeyStorage]
+     * (clearing those leaves an unopenable database, not a clean one) and downloaded offline maps,
+     * which contain nothing personal and are the one asset that cannot be re-fetched mid-disaster.
+     */
+    fun deleteAccountAndData(activity: Activity? = null) {
+        if (_uiState.value.isDeletingAccount) {
+            return
+        }
+        if (auth.currentUser == null) {
+            notifyMessage(appContext.getString(R.string.profile_delete_account_error_signed_out))
+            return
+        }
+        _uiState.update { it.copy(isDeletingAccount = true) }
+
+        viewModelScope.launch(exceptionHandler) {
+            var serverWipe = runCatching {
+                functions.getHttpsCallable(CALLABLE_DELETE_ACCOUNT).call().awaitResult()
+            }
+
+            // The server refuses to erase an account on a stale session — the same rule Firebase
+            // itself puts on user.delete(). Prove identity, then retry exactly once.
+            if (serverWipe.exceptionOrNull()?.let(::requiresRecentLogin) == true) {
+                if (reauthenticateForDeletion(activity)) {
+                    serverWipe = runCatching {
+                        functions.getHttpsCallable(CALLABLE_DELETE_ACCOUNT).call().awaitResult()
+                    }
+                } else {
+                    _uiState.update { it.copy(isDeletingAccount = false) }
+                    notifyMessage(appContext.getString(R.string.profile_delete_account_reauth_needed))
+                    return@launch
+                }
+            }
+
+            val error = serverWipe.exceptionOrNull()
+            if (error != null) {
+                Log.e(TAG, "Account deletion failed", error)
+                runCatching { FirebaseCrashlytics.getInstance().recordException(error) }
+                _uiState.update { it.copy(isDeletingAccount = false) }
+                notifyMessage(
+                    if (FirebaseAppCheckFailures.isLikelyAppCheckFailure(error)) {
+                        appContext.getString(R.string.profile_delete_account_error_verification)
+                    } else {
+                        appContext.getString(R.string.profile_delete_account_error)
+                    }
+                )
+                return@launch
+            }
+
+            // Server state is gone. The on-device half must follow even if a step of it fails —
+            // stopping here would leave local history for an account that no longer exists.
+            wipeLocalUserData()
+            auth.signOut()
+            clearSignedOutProfileState()
+            _uiState.update { it.copy(isDeletingAccount = false, profileBitmap = null, photoUrl = null) }
+            notifyMessage(appContext.getString(R.string.profile_delete_account_success))
+        }
+    }
+
+    /** True when the callable rejected the erase because the caller's sign-in is too old. */
+    private fun requiresRecentLogin(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any { candidate ->
+            candidate is FirebaseFunctionsException &&
+                candidate.code == FirebaseFunctionsException.Code.FAILED_PRECONDITION &&
+                candidate.message?.contains(REAUTH_REQUIRED_MARKER) == true
+        }
+
+    /**
+     * Refreshes the sign-in so the erase can proceed, without making the user hunt for the button
+     * again.
+     *
+     * Only the browser-based providers can be refreshed in place: Firebase gives them a single
+     * reauthenticate call. Phone accounts have no client-side credential to replay — the number is
+     * attached server-side by the OTP flow — so they get told to sign in again, which mints a fresh
+     * session through the same OTP path and satisfies the server on the next attempt. Apple permits
+     * exactly this kind of verification step; what it forbids is making deletion hard to reach, and
+     * this costs one sign-in on an account the user is about to destroy.
+     */
+    private suspend fun reauthenticateForDeletion(activity: Activity?): Boolean {
+        val user = auth.currentUser ?: return false
+        val providerId = user.providerData
+            .map { it.providerId }
+            .firstOrNull { it in REAUTH_PROVIDER_IDS }
+            ?: return false
+        if (activity == null) return false
+
+        // Same custom auth domain the sign-in path pins, so the browser hop stays on our domain.
+        auth.app.options.projectId?.let { projectId ->
+            runCatching { auth.setCustomAuthDomain("$projectId.firebaseapp.com") }
+        }
+
+        return runCatching {
+            user.startActivityForReauthenticateWithProvider(
+                activity,
+                buildOAuthProvider(providerId, emptyList(), emptyMap())
+            ).awaitResult()
+            true
+        }.getOrElse { error ->
+            Log.w(TAG, "Reauthentication before deletion failed", error)
+            false
+        }
+    }
+
+    /** On-device erase: chat history, contacts, Signal sessions, cached profile and role state. */
+    private suspend fun wipeLocalUserData() = withContext(Dispatchers.IO) {
+        // Contacts, messages, call log, authority threads and the Signal session/prekey store all
+        // live in this one database.
+        runCatching { AppDatabase.getInstance(appContext).clearAllTables() }
+            .onFailure { Log.w(TAG, "Local database wipe failed", it) }
+        runCatching { securityRepository.clearStoredCertificate() }
+            .onFailure { Log.w(TAG, "Certificate wipe failed", it) }
+        runCatching { ProfileImageStorage.clearProfileImage(appContext) }
+            .onFailure { Log.w(TAG, "Profile image wipe failed", it) }
+        runCatching { ContactDirectoryCache.clear(appContext) }
+            .onFailure { Log.w(TAG, "Directory cache wipe failed", it) }
+        runCatching {
+            LocalKeyStorage.clearUid(appContext)
+            LocalKeyStorage.clearRole(appContext)
+            // A fresh rescue id, because that id is also the SOS signal id: keeping it would let a
+            // future report re-attach this device to the incidents just anonymised server-side.
+            LocalKeyStorage.rotateRescueDeviceId(appContext)
+        }.onFailure { Log.w(TAG, "Local key state wipe failed", it) }
     }
 
     fun onGoogleSignInFailed(error: Throwable? = null) {
@@ -705,6 +902,10 @@ class ProfileViewModel(
         activity: Activity,
         phoneNumber: String,
         onCodeSent: () -> Unit,
+        // SMS User Consent must only be started for the server/Twilio path. Firebase
+        // Phone Auth listens to the same SMS_RETRIEVED_ACTION but expects a different
+        // payload; feeding it a User Consent broadcast crashes firebase-auth.
+        onServerCodeSent: () -> Unit = {},
         onResult: (Boolean) -> Unit = {},
         // Callers that render their own error UI (e.g. the welcome step, which doesn't
         // collect this ViewModel's snackbar channel) receive the failure text here too.
@@ -725,38 +926,39 @@ class ProfileViewModel(
         pendingServerOtpPhone = null
 
 
-        // PRIMARY: server-side Twilio OTP. Deterministic on every device and install
-        // source — no Play Integrity verdicts, no reCAPTCHA, no browser round-trip (the
-        // 2026-07 "Error code:39" incident: Google's attestation stack rejected sends
-        // opaquely and differently per device). Firebase Phone Auth remains below as the
-        // free fallback so a backend/Twilio outage cannot take phone sign-in down.
-        requestServerOtp(
-            phoneE164 = normalizedPhoneNumber,
+        // PRIMARY: native Firebase Phone Auth (Play Integrity -> reCAPTCHA). If Firebase
+        // cannot send the code, fall back to the guarded server-side Twilio OTP callable.
+        startFirebasePhoneVerification(
+            activity = activity,
+            normalizedPhoneNumber = normalizedPhoneNumber,
             onCodeSent = onCodeSent,
-            onError = onError,
             onResult = onResult,
-            onFallbackToFirebase = {
-                startFirebasePhoneVerification(
-                    activity = activity,
-                    normalizedPhoneNumber = normalizedPhoneNumber,
-                    onCodeSent = onCodeSent,
-                    onResult = onResult,
-                    onError = onError
+            onError = onError,
+            onFallbackToServer = {
+                requestServerOtp(
+                    phoneE164 = normalizedPhoneNumber,
+                    onCodeSent = {
+                        onServerCodeSent()
+                        onCodeSent()
+                    },
+                    onError = onError,
+                    onResult = onResult
                 )
             }
         )
     }
 
     /**
-     * FALLBACK phone verification through Firebase Phone Auth (Play Integrity →
-     * reCAPTCHA). Only used when the server-side OTP backend is unreachable.
+     * PRIMARY phone verification through Firebase Phone Auth (Play Integrity ->
+     * reCAPTCHA). If both Firebase attempts fail, the caller starts the Twilio fallback.
      */
     private fun startFirebasePhoneVerification(
         activity: Activity,
         normalizedPhoneNumber: String,
         onCodeSent: () -> Unit,
         onResult: (Boolean) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        onFallbackToServer: () -> Unit
     ) {
 
         // If the silent Play Integrity check fails and the reCAPTCHA fallback opens a
@@ -802,14 +1004,9 @@ class ProfileViewModel(
                     if (forcedRecaptcha) {
                         runCatching { auth.firebaseAuthSettings.forceRecaptchaFlowForTesting(false) }
                     }
-                    _uiState.update { it.copy(isLoading = false) }
-                    val message = appContext.getString(
-                        R.string.profile_phone_sign_in_error_with_reason,
-                        error.localizedMessage ?: appContext.getString(R.string.unknown_error)
-                    )
-                    notifyMessage(message)
-                    onError(message)
-                    onResult(false)
+                    pendingPhoneVerificationId = null
+                    Log.w(TAG, "Firebase Phone Auth send failed; trying Twilio fallback", error)
+                    onFallbackToServer()
                 }
 
                 override fun onCodeSent(
@@ -840,20 +1037,14 @@ class ProfileViewModel(
     }
 
     /**
-     * PRIMARY phone verification: send the OTP via the Twilio-backed callable — no
-     * captcha, no attestation, identical behavior on every device and install source.
-     *
-     * Failure routing: infrastructure-type errors (backend unreachable, not configured,
-     * internal) fall back to Firebase Phone Auth so an outage never blocks sign-in.
-     * Policy errors do NOT fall back: rate limiting must not be bypassable by hopping
-     * providers, and a number Twilio rejects as invalid won't fare better on Firebase.
+     * FALLBACK phone verification: send the OTP via the guarded Twilio-backed callable.
+     * This is reached only after Firebase Phone Auth cannot send a code.
      */
     private fun requestServerOtp(
         phoneE164: String,
         onCodeSent: () -> Unit,
         onError: (String) -> Unit,
-        onResult: (Boolean) -> Unit,
-        onFallbackToFirebase: () -> Unit
+        onResult: (Boolean) -> Unit
     ) {
         functions.getHttpsCallable("requestPhoneOtp")
             .call(
@@ -871,16 +1062,7 @@ class ProfileViewModel(
                 onCodeSent()
             }
             .addOnFailureListener { error ->
-                val code = (error as? FirebaseFunctionsException)?.code
-                val isPolicyRejection =
-                    code == FirebaseFunctionsException.Code.RESOURCE_EXHAUSTED ||
-                        code == FirebaseFunctionsException.Code.INVALID_ARGUMENT ||
-                        code == FirebaseFunctionsException.Code.PERMISSION_DENIED
-                if (isPolicyRejection) {
-                    reportServerOtpError(error, onError, onResult)
-                } else {
-                    onFallbackToFirebase()
-                }
+                reportServerOtpError(error, onError, onResult)
             }
     }
 
@@ -991,8 +1173,8 @@ class ProfileViewModel(
         onError: (String) -> Unit = {},
         onResult: (Boolean) -> Unit = {}
     ) {
-        // Server-side (Twilio) OTP session — the PRIMARY path: the code lives in the
-        // backend, not in a Firebase verification session; check it through the callable.
+        // Server-side (Twilio) fallback session: the code lives in the backend, not in a
+        // Firebase verification session, so check it through the callable.
         val serverOtpPhone = pendingServerOtpPhone
         if (!serverOtpPhone.isNullOrBlank()) {
             val normalizedOtp = code.trim()
@@ -1969,6 +2151,16 @@ class ProfileViewModel(
     companion object {
         private const val TAG = "ProfileViewModel"
         private const val FUNCTIONS_REGION = "us-central1"
+        private const val CALLABLE_DELETE_ACCOUNT = "deleteAccountAndData"
+
+        // Marker the deleteAccountAndData callable puts in its rejection message when the caller's
+        // session predates the freshness window.
+        private const val REAUTH_REQUIRED_MARKER = "requires-recent-login"
+
+        // Providers whose sign-in can be replayed in place through Firebase's reauthenticate flow.
+        // Phone accounts are absent on purpose: their credential lives server-side (see
+        // reauthenticateForDeletion).
+        private val REAUTH_PROVIDER_IDS = setOf("google.com", "apple.com", "microsoft.com")
         private const val MICROSOFT_PROVIDER_ID = "microsoft.com"
         private const val APPLE_PROVIDER_ID = "apple.com"
         private const val KEY_PHONE_VERIFICATION_ID = "pending_phone_verification_id"

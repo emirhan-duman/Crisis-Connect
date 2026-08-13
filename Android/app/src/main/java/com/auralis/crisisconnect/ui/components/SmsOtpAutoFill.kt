@@ -42,9 +42,10 @@ private fun extractOtp(message: String): String? =
  * where Android blocks launching the consent prompt. In that case the consent intent is held
  * and launched as soon as the app returns to the foreground, so the one-tap prompt still shows.
  *
- * Purely additive and safe by design — it needs no SMS permission and no manifest changes. If
- * Play Services is missing, the SMS never arrives, or the user declines, nothing happens and
- * both manual entry and Firebase's own auto-retrieval keep working.
+ * This effect must not run concurrently with Firebase Phone Auth: both receive
+ * SMS_RETRIEVED_ACTION, but their broadcasts have different extras. Callers therefore enable
+ * it only after the server/Twilio OTP path confirms that it sent the code. It needs no SMS
+ * permission; if Play Services is missing or the user declines, manual entry still works.
  */
 @Composable
 fun SmsOtpAutoFillEffect(

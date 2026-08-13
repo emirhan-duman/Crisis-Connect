@@ -115,7 +115,6 @@ object SosCloudReporter {
                     batteryPercent = battery
                 )
                 if (reported) {
-                    prefs(appContext).edit().putBoolean(KEY_HAS_REPORTED_ACTIVE, true).apply()
                     _state.value = State.Reported(
                         placeName = resolvePlaceName(appContext, location),
                         lastReportedAtMillis = System.currentTimeMillis()
@@ -223,6 +222,18 @@ object SosCloudReporter {
             }
             batteryPercent?.let { put("batteryPercent", it) }
             resolveCountryIso(context, location)?.let { put("countryIso", it) }
+        }
+        // Record the obligation to resolve at DISPATCH time, not on confirmation. The backend
+        // commits its write unconditionally inside the callable's transaction, so from the moment
+        // this request leaves the device an "active" signal may exist on the dashboard even though
+        // we never see the response — a 20 s CALL_TIMEOUT_MS on a congested disaster network is the
+        // expected case, not an edge case. Keying the flag on success meant onSosStopped() returned
+        // early and no resolve was ever sent or queued, stranding the marker "active" forever with
+        // no client path that could clear it. A resolve we did not strictly need is harmless; a
+        // phantom victim that rescuers keep chasing is not. A session that never reached this point
+        // (fully offline, no fix, no identity) still writes nothing, which is the original intent.
+        if (status == STATUS_ACTIVE) {
+            prefs(context).edit().putBoolean(KEY_HAS_REPORTED_ACTIVE, true).apply()
         }
         return withTimeoutOrNull(CALL_TIMEOUT_MS) {
             runCatching {

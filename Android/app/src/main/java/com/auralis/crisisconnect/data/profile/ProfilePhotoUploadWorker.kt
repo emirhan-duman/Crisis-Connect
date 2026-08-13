@@ -10,6 +10,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import androidx.work.BackoffPolicy
 import com.auralis.crisisconnect.data.local.ProfileImageStorage
 import com.google.firebase.auth.FirebaseAuth
@@ -40,6 +41,11 @@ class ProfilePhotoUploadWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
+        val generation = inputData.getString(KEY_GENERATION) ?: return Result.success()
+        if (!ProfileImageStorage.isUploadPending(applicationContext)
+            || ProfileImageStorage.getUploadGeneration(applicationContext) != generation) {
+            return Result.success()
+        }
         val auth = FirebaseAuth.getInstance()
         val user = auth.currentUser?.takeUnless { it.isAnonymous }
             ?: return Result.failure()
@@ -84,13 +90,19 @@ class ProfilePhotoUploadWorker(
         }
 
         return try {
+            if (!ProfileImageStorage.isUploadPending(applicationContext)
+                || ProfileImageStorage.getUploadGeneration(applicationContext) != generation) {
+                return Result.success()
+            }
             docRef.set(
                 mapOf(
                     "photoURL" to downloadUrl,
-                    "photoUpdatedAt" to FieldValue.serverTimestamp()
+                    "photoUpdatedAt" to FieldValue.serverTimestamp(),
+                    "photoDeletedAt" to FieldValue.delete()
                 ),
                 SetOptions.merge()
             ).await()
+            ProfileImageStorage.clearUploadPending(applicationContext)
             Result.success()
         } catch (t: Throwable) {
             Log.w(TAG, "Could not write photo URL to user doc; will retry", t)
@@ -112,13 +124,18 @@ class ProfilePhotoUploadWorker(
     companion object {
         const val TAG = "ProfilePhotoUpload"
         const val UNIQUE_WORK_NAME = "ProfilePhotoUpload"
+        private const val KEY_GENERATION = "generation"
 
         fun enqueue(context: Context) {
+            val generation = ProfileImageStorage.getUploadGeneration(context) ?: return
+            WorkManager.getInstance(context.applicationContext)
+                .cancelUniqueWork(ProfilePhotoDeleteWorker.UNIQUE_WORK_NAME)
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
 
             val request = OneTimeWorkRequestBuilder<ProfilePhotoUploadWorker>()
+                .setInputData(workDataOf(KEY_GENERATION to generation))
                 .setConstraints(constraints)
                 .setBackoffCriteria(
                     BackoffPolicy.EXPONENTIAL,

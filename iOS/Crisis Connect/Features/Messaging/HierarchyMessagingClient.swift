@@ -66,6 +66,7 @@ enum HierarchyMessagingError: Error {
     case baseUrlMissing
     case requestFailed
     case keyMissing
+    case legacyWriteDisabled
 }
 
 final class HierarchyMessagingClient: @unchecked Sendable {
@@ -110,22 +111,9 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         }
     }
 
-    /// Fetches (create-on-first-use) the shared key for `channelId`. Throws if not entitled.
-    func fetchChannelKey(channelId: String) async throws -> HierarchyChannelKey {
-        guard let body = try await execute(method: "POST", json: ["channelId": channelId]) else {
-            throw HierarchyMessagingError.keyMissing
-        }
-        guard let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-              let keyBase64 = (obj["keyBase64"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !keyBase64.isEmpty,
-              let keyData = Data(base64Encoded: keyBase64) else {
-            throw HierarchyMessagingError.keyMissing
-        }
-        return HierarchyChannelKey(
-            keyId: obj["keyId"] as? String ?? "",
-            key: SymmetricKey(data: keyData),
-            channelId: channelId
-        )
+    /// Retired: server-issued shared keys violate the AuthorityChat MLS-only invariant.
+    func fetchChannelKey(channelId _: String) async throws -> HierarchyChannelKey {
+        throw HierarchyMessagingError.legacyWriteDisabled
     }
 
     // MARK: - Messages (Firestore ciphertext)
@@ -143,6 +131,7 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         onMessages: @escaping ([HierarchyMessage]) -> Void
     ) -> ListenerRegistration {
         channel(channelKey.channelId)
+            .whereField("participants", arrayContains: myUid)
             .order(by: "createdAt")
             .limit(toLast: 200)
             .addSnapshotListener { snapshot, _ in
@@ -192,6 +181,7 @@ final class HierarchyMessagingClient: @unchecked Sendable {
     ) async -> (text: String, at: Date, senderUid: String, peerName: String?, attachmentKind: String)? {
         guard let myUid = Auth.auth().currentUser?.uid else { return nil }
         let snapshot = try? await channel(channelId)
+            .whereField("participants", arrayContains: myUid)
             .order(by: "createdAt", descending: true)
             .limit(to: Self.previewScanLimit)
             .getDocuments()
@@ -250,53 +240,45 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         attachments: [PendingChannelAttachment] = [],
         clientUuid: String? = nil
     ) async throws {
-        guard let uid = Auth.auth().currentUser?.uid else { throw HierarchyMessagingError.notSignedIn }
-        let nonceData = Self.randomBytes(12)
-        let sealed = try AES.GCM.seal(
-            Data(text.utf8),
-            using: channelKey.key,
-            nonce: AES.GCM.Nonce(data: nonceData),
-            authenticating: Data(channelKey.channelId.utf8)
-        )
-        var doc: [String: Any] = [
-            "senderUid": uid,
-            "senderName": senderName,
-            "recipientUid": recipientUid,
-            "recipientName": recipientName,
-            "keyId": channelKey.keyId,
-            "nonce": nonceData.base64EncodedString(),
-            "ciphertext": (sealed.ciphertext + sealed.tag).base64EncodedString(),
-            "createdAt": FieldValue.serverTimestamp()
-        ]
-        if let clientUuid, !clientUuid.isEmpty {
-            doc["clientUuid"] = clientUuid
-        }
-        if let attachmentFields = try await ChannelAttachments.buildAttachmentFields(
-            key: channelKey.key,
-            aad: channelKey.channelId,
-            pendings: attachments
-        ) {
-            doc.merge(attachmentFields) { current, _ in current }
-        }
-        _ = try await channel(channelKey.channelId).addDocument(data: doc)
+        _ = (channelKey, senderName, recipientUid, recipientName, text, attachments, clientUuid)
+        throw HierarchyMessagingError.legacyWriteDisabled
     }
 
     // MARK: - Read receipts (✓/✓✓) + typing — byte-compatible with web (lib/messaging/receipts.ts,
     // typing.ts) and Android. Metadata only (uids + timestamps), so no encryption; a member only
     // writes its own doc.
 
-    private func readReceipts(_ channelId: String) -> CollectionReference {
-        db.collection("hierarchyChannels").document(channelId).collection("readReceipts")
+    private func metadataRoot(_ channelId: String, scopeType: AuthorityMlsScopeType) -> DocumentReference {
+        if scopeType == .agency {
+            return db.collection("agencyPanels").document(channelId)
+        }
+        return db.collection("hierarchyChannels").document(channelId)
     }
 
-    private func typingCol(_ channelId: String) -> CollectionReference {
-        db.collection("hierarchyChannels").document(channelId).collection("typing")
+    private func readReceipts(
+        _ channelId: String,
+        scopeType: AuthorityMlsScopeType = .hierarchy
+    ) -> CollectionReference {
+        metadataRoot(channelId, scopeType: scopeType).collection("readReceipts")
+    }
+
+    private func typingCol(
+        _ channelId: String,
+        scopeType: AuthorityMlsScopeType = .hierarchy
+    ) -> CollectionReference {
+        metadataRoot(channelId, scopeType: scopeType).collection("typing")
     }
 
     /// One-shot read of MY cursor toward `peerUid` — drives the home-row unread badge (a last
     /// incoming message newer than this cursor means unread).
-    func myReadCursorAt(channelId: String, myUid: String, peerUid: String) async -> Date? {
-        let doc = try? await readReceipts(channelId).document("\(myUid)__\(peerUid)").getDocument()
+    func myReadCursorAt(
+        channelId: String,
+        myUid: String,
+        peerUid: String,
+        scopeType: AuthorityMlsScopeType = .hierarchy
+    ) async -> Date? {
+        let doc = try? await readReceipts(channelId, scopeType: scopeType)
+            .document("\(myUid)__\(peerUid)").getDocument()
         if let millis = (doc?.get("at") as? NSNumber)?.doubleValue, millis > 0 {
             return Date(timeIntervalSince1970: millis / 1000)
         }
@@ -307,12 +289,36 @@ final class HierarchyMessagingClient: @unchecked Sendable {
     }
 
     /// Records that I've read `peerUid`'s messages up to `at`. Doc id `me__peer`. Best-effort.
-    func writeReadCursor(channelId: String, myUid: String, peerUid: String, at: Date) {
+    func writeReadCursor(
+        channelId: String,
+        myUid: String,
+        peerUid: String,
+        at: Date,
+        scopeType: AuthorityMlsScopeType = .hierarchy
+    ) {
         guard !myUid.isEmpty, !peerUid.isEmpty else { return }
-        readReceipts(channelId).document("\(myUid)__\(peerUid)").setData([
+        readReceipts(channelId, scopeType: scopeType).document("\(myUid)__\(peerUid)").setData([
             "viewerUid": myUid,
             "partnerUid": peerUid,
+            "deliveredAt": Int(at.timeIntervalSince1970 * 1000),
             "at": Int(at.timeIntervalSince1970 * 1000),
+            "updatedAt": FieldValue.serverTimestamp()
+        ], merge: true)
+    }
+
+    /// Records that this client decrypted the peer's messages without claiming they were read.
+    func writeDeliveredCursor(
+        channelId: String,
+        myUid: String,
+        peerUid: String,
+        at: Date,
+        scopeType: AuthorityMlsScopeType = .hierarchy
+    ) {
+        guard !myUid.isEmpty, !peerUid.isEmpty else { return }
+        readReceipts(channelId, scopeType: scopeType).document("\(myUid)__\(peerUid)").setData([
+            "viewerUid": myUid,
+            "partnerUid": peerUid,
+            "deliveredAt": Int(at.timeIntervalSince1970 * 1000),
             "updatedAt": FieldValue.serverTimestamp()
         ], merge: true)
     }
@@ -322,9 +328,11 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         channelId: String,
         myUid: String,
         peerUid: String,
+        scopeType: AuthorityMlsScopeType = .hierarchy,
         onAt: @escaping (Date?) -> Void
     ) -> ListenerRegistration {
-        readReceipts(channelId).document("\(peerUid)__\(myUid)").addSnapshotListener { snapshot, _ in
+        readReceipts(channelId, scopeType: scopeType)
+            .document("\(peerUid)__\(myUid)").addSnapshotListener { snapshot, _ in
             if let millis = (snapshot?.get("at") as? NSNumber)?.doubleValue, millis > 0 {
                 onAt(Date(timeIntervalSince1970: millis / 1000))
             } else if let timestamp = snapshot?.get("at") as? Timestamp {
@@ -335,10 +343,36 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         }
     }
 
+    /// Subscribes to how far the peer client has decrypted MY messages.
+    func listenDeliveredCursor(
+        channelId: String,
+        myUid: String,
+        peerUid: String,
+        scopeType: AuthorityMlsScopeType = .hierarchy,
+        onAt: @escaping (Date?) -> Void
+    ) -> ListenerRegistration {
+        readReceipts(channelId, scopeType: scopeType)
+            .document("\(peerUid)__\(myUid)").addSnapshotListener { snapshot, _ in
+            if let millis = (snapshot?.get("deliveredAt") as? NSNumber)?.doubleValue, millis > 0 {
+                onAt(Date(timeIntervalSince1970: millis / 1000))
+            } else if let timestamp = snapshot?.get("deliveredAt") as? Timestamp {
+                onAt(timestamp.dateValue())
+            } else {
+                onAt(nil)
+            }
+        }
+    }
+
     /// Writes my typing state toward `peerUid`. Doc id = my uid. Best-effort.
-    func setTyping(channelId: String, myUid: String, peerUid: String, typing: Bool) {
+    func setTyping(
+        channelId: String,
+        myUid: String,
+        peerUid: String,
+        typing: Bool,
+        scopeType: AuthorityMlsScopeType = .hierarchy
+    ) {
         guard !myUid.isEmpty, !peerUid.isEmpty else { return }
-        typingCol(channelId).document(myUid).setData([
+        typingCol(channelId, scopeType: scopeType).document(myUid).setData([
             "uid": myUid,
             "to": peerUid,
             "typing": typing,
@@ -351,9 +385,10 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         channelId: String,
         myUid: String,
         peerUid: String,
+        scopeType: AuthorityMlsScopeType = .hierarchy,
         onTyping: @escaping (Bool) -> Void
     ) -> ListenerRegistration {
-        typingCol(channelId).document(peerUid).addSnapshotListener { snapshot, _ in
+        typingCol(channelId, scopeType: scopeType).document(peerUid).addSnapshotListener { snapshot, _ in
             let typing = snapshot?.get("typing") as? Bool == true
                 && (snapshot?.get("to") as? String ?? "") == myUid
             onTyping(typing)

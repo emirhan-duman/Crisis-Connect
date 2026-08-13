@@ -30,16 +30,19 @@ struct SfuCallOverlayHost: View {
 /// UIViewRepresentable around WebRTC's Metal renderer for a video track.
 private struct SfuVideoTrackView: UIViewRepresentable {
     let track: RTCVideoTrack
+    var contentMode: UIView.ContentMode = .scaleAspectFill
 
     func makeUIView(context: Context) -> RTCMTLVideoView {
         let view = RTCMTLVideoView()
-        view.videoContentMode = .scaleAspectFill
+        view.videoContentMode = contentMode
         view.clipsToBounds = true
         track.add(view)
         return view
     }
 
-    func updateUIView(_ uiView: RTCMTLVideoView, context: Context) {}
+    func updateUIView(_ uiView: RTCMTLVideoView, context: Context) {
+        uiView.videoContentMode = contentMode
+    }
 }
 
 private struct SfuCallCard: View {
@@ -86,9 +89,9 @@ private struct SfuCallCard: View {
 
     @ViewBuilder
     private var controls: some View {
-        HStack(spacing: 14) {
-            switch call.state {
-            case .incoming:
+        switch call.state {
+        case .incoming:
+            HStack(spacing: 14) {
                 callButton(
                     systemName: "phone.down.fill",
                     tint: .red,
@@ -99,7 +102,43 @@ private struct SfuCallCard: View {
                     tint: .green,
                     labelKey: "VOICE_CALL_ANSWER_ACTION"
                 ) { manager.accept() }
-            case .outgoing, .connecting, .connected:
+            }
+        case .outgoing, .connecting, .connected:
+            VStack(spacing: 12) {
+                if call.state == .connected, let media {
+                    HStack(spacing: 14) {
+                        BroadcastPickerButton(active: media.sharingScreen)
+                            .accessibilityLabel(Text("SCREEN_SHARE"))
+                        Menu {
+                            ForEach(ScreenShareQualityPreset.allCases) { preset in
+                                Button {
+                                    media.setScreenShareQuality(preset)
+                                } label: {
+                                    if preset == media.screenShareQuality {
+                                        Label(preset.displayName, systemImage: "checkmark")
+                                    } else {
+                                        Text(preset.displayName)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "gearshape.fill")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(Circle().fill(Color.gray))
+                        }
+                        .accessibilityLabel(Text("Screen share quality: \(media.screenShareQuality.displayName)"))
+                        if media.cameraOn {
+                            callButton(
+                                systemName: "arrow.triangle.2.circlepath.camera",
+                                tint: .gray,
+                                labelKey: "VIDEO_CALL_SWITCH_CAMERA"
+                            ) { manager.switchCamera() }
+                        }
+                    }
+                }
+                HStack(spacing: 14) {
                 if let media {
                     callButton(
                         systemName: media.muted ? "mic.slash.fill" : "mic.fill",
@@ -111,13 +150,6 @@ private struct SfuCallCard: View {
                         tint: media.cameraOn ? Color.appPrimary : .gray,
                         labelKey: media.cameraOn ? "VIDEO_CALL_DISABLE_CAMERA" : "VIDEO_CALL_ENABLE_CAMERA"
                     ) { manager.toggleCamera() }
-                    if media.cameraOn {
-                        callButton(
-                            systemName: "arrow.triangle.2.circlepath.camera",
-                            tint: .gray,
-                            labelKey: "VIDEO_CALL_SWITCH_CAMERA"
-                        ) { manager.switchCamera() }
-                    }
                     callButton(
                         systemName: manager.speakerOn ? "speaker.wave.3.fill" : "speaker.fill",
                         tint: manager.speakerOn ? Color.appPrimary : .gray,
@@ -129,13 +161,14 @@ private struct SfuCallCard: View {
                     tint: .red,
                     labelKey: "VOICE_CALL_END_ACTION"
                 ) { manager.end() }
-            case .ended:
-                Text("VOICE_CALL_ENDED")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Color.appTextSecondary)
-            case .idle:
-                EmptyView()
+                }
             }
+        case .ended:
+            Text("VOICE_CALL_ENDED")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Color.appTextSecondary)
+        case .idle:
+            EmptyView()
         }
     }
 
@@ -174,7 +207,7 @@ private struct SfuVideoCanvas: View {
 
     var body: some View {
         let remote = media.remoteVideoTracks.sorted { $0.key < $1.key }
-        if connected && (!remote.isEmpty || media.cameraOn) {
+        if connected && (!remote.isEmpty || media.cameraOn || media.sharingScreen) {
             ZStack(alignment: .bottomTrailing) {
                 if remote.isEmpty {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -186,14 +219,20 @@ private struct SfuVideoCanvas: View {
                                 .foregroundStyle(.white.opacity(0.5))
                         )
                 } else if remote.count == 1, let only = remote.first {
-                    SfuVideoTrackView(track: only.value)
+                    SfuVideoTrackView(
+                        track: only.value,
+                        contentMode: only.key.hasSuffix("|screen") ? .scaleAspectFit : .scaleAspectFill
+                    )
                         .frame(height: 260)
                         .frame(maxWidth: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 } else {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                         ForEach(remote, id: \.key) { entry in
-                            SfuVideoTrackView(track: entry.value)
+                            SfuVideoTrackView(
+                                track: entry.value,
+                                contentMode: entry.key.hasSuffix("|screen") ? .scaleAspectFit : .scaleAspectFill
+                            )
                                 .frame(height: 128)
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
@@ -201,6 +240,15 @@ private struct SfuVideoCanvas: View {
                 }
                 if media.cameraOn, let local = media.localVideoTrack {
                     SfuVideoTrackView(track: local)
+                        .frame(width: 84, height: 116)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(.white.opacity(0.6), lineWidth: 1)
+                        )
+                        .padding(8)
+                } else if media.sharingScreen, let local = media.localScreenTrack {
+                    SfuVideoTrackView(track: local, contentMode: .scaleAspectFit)
                         .frame(width: 84, height: 116)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .overlay(

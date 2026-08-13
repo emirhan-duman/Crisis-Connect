@@ -10,6 +10,7 @@ import java.util.UUID
 
 /** Call lifecycle state, mirroring the web CallState union (webrtc-call.ts). */
 enum class SfuCallState { IDLE, OUTGOING, INCOMING, CONNECTING, CONNECTED, ENDED }
+enum class SfuProtocolVersion(val wireValue: Int) { LEGACY(1), SECURE(2) }
 
 /** Writes one web-compatible call signal (type/callId/roomId) addressed to [toUid] over callSignals. */
 fun interface SfuSignalSender {
@@ -30,7 +31,7 @@ class SfuRingManager(
     private val sender: SfuSignalSender,
     private val onState: (SfuCallState) -> Unit,
     /** Fires once the call is accepted on both sides with the shared room to join ([isCaller] role). */
-    private val onRoom: (roomId: String, isCaller: Boolean) -> Unit,
+    private val onRoom: (roomId: String, isCaller: Boolean, version: SfuProtocolVersion) -> Unit,
 ) {
     var callId: String? = null
         private set
@@ -43,6 +44,9 @@ class SfuRingManager(
     var video = false
         private set
     var roomId: String? = null
+        private set
+    /** Authority calls are secure-v2 only; legacy/missing versions are rejected before state changes. */
+    var protocolVersion: SfuProtocolVersion = SfuProtocolVersion.SECURE
         private set
     var state: SfuCallState = SfuCallState.IDLE
         private set
@@ -86,7 +90,10 @@ class SfuRingManager(
         roomId = UUID.randomUUID().toString()
         set(SfuCallState.OUTGOING)
         startRing()
-        sender.send(peerUid, signal("offer").put("roomId", roomId).put("video", video))
+        sender.send(peerUid, signal("offer")
+            .put("roomId", roomId)
+            .put("video", video)
+            .put("sfuVersion", SfuProtocolVersion.SECURE.wireValue))
     }
 
     /** Accept the ringing call and join the invited room. */
@@ -96,8 +103,9 @@ class SfuRingManager(
         val room = roomId ?: return
         if (callId == null) return
         set(SfuCallState.CONNECTING)
-        sender.send(peer, signal("answer"))
-        onRoom(room, false)
+        val answer = signal("answer").put("sfuVersion", SfuProtocolVersion.SECURE.wireValue)
+        sender.send(peer, answer)
+        onRoom(room, false, protocolVersion)
         set(SfuCallState.CONNECTED)
     }
 
@@ -115,9 +123,14 @@ class SfuRingManager(
 
     /** Routes an inbound call signal (from the callSignals listener) through the ring state machine. */
     fun handleSignal(fromUid: String, signal: JSONObject) {
+        if (signal.optString("type") != "offer" && (peerUid == null || fromUid != peerUid)) return
         when (signal.optString("type")) {
             "offer" -> {
                 val sigCallId = signal.optString("callId").takeIf { it.isNotBlank() } ?: return
+                if (signal.optInt("sfuVersion", 0) != SfuProtocolVersion.SECURE.wireValue) {
+                    sender.send(fromUid, JSONObject().put("type", "reject").put("callId", sigCallId))
+                    return
+                }
                 // Busy if already on a different call.
                 if (state != SfuCallState.IDLE && callId != sigCallId) {
                     sender.send(fromUid, JSONObject().put("type", "busy").put("callId", sigCallId))
@@ -131,6 +144,7 @@ class SfuRingManager(
                 callId = sigCallId
                 roomId = room
                 video = signal.optBoolean("video", false)
+                protocolVersion = SfuProtocolVersion.SECURE
                 set(SfuCallState.INCOMING)
                 startRing()
             }
@@ -138,9 +152,14 @@ class SfuRingManager(
                 if (signal.optString("callId") != callId) return
                 // Only the caller, and only ONCE: a replayed answer must not fire onRoom (join) again.
                 if (state != SfuCallState.OUTGOING) return
+                if (signal.optInt("sfuVersion", 0) != SfuProtocolVersion.SECURE.wireValue) {
+                    end()
+                    return
+                }
                 val room = roomId ?: return
+                protocolVersion = SfuProtocolVersion.SECURE
                 set(SfuCallState.CONNECTING)
-                onRoom(room, true)
+                onRoom(room, true, protocolVersion)
                 set(SfuCallState.CONNECTED)
                 // Answered elsewhere: the callee may have other ringing sessions (web tabs) — tell them
                 // the call is taken so they stop ringing. The answering session ignores this ("cancel"
@@ -183,6 +202,7 @@ class SfuRingManager(
             peerName = null
             roomId = null
             video = false
+            protocolVersion = SfuProtocolVersion.SECURE
             if (state == SfuCallState.ENDED) set(SfuCallState.IDLE)
         }
     }

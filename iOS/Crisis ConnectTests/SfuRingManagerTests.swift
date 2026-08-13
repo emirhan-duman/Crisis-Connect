@@ -18,14 +18,16 @@ final class SfuRingManagerTests: XCTestCase {
     @MainActor
     private final class Harness {
         var sent: [(toUid: String, signal: [String: Any])] = []
-        var rooms: [(roomId: String, isCaller: Bool)] = []
+        var rooms: [(roomId: String, isCaller: Bool, version: SfuProtocolVersion)] = []
         var states: [SfuCallState] = []
 
         func makeRing() -> SfuRingManager {
             SfuRingManager(
                 sender: { [weak self] toUid, signal in self?.sent.append((toUid, signal)) },
                 onState: { [weak self] state in self?.states.append(state) },
-                onRoom: { [weak self] roomId, isCaller in self?.rooms.append((roomId, isCaller)) }
+                onRoom: { [weak self] roomId, isCaller, version in
+                    self?.rooms.append((roomId, isCaller, version))
+                }
             )
         }
     }
@@ -47,6 +49,7 @@ final class SfuRingManagerTests: XCTestCase {
         XCTAssertEqual(offer?.signal["roomId"] as? String, ring.roomId)
         XCTAssertEqual(offer?.signal["video"] as? Bool, true)
         XCTAssertEqual(offer?.signal["callId"] as? String, ring.callId)
+        XCTAssertEqual(offer?.signal["sfuVersion"] as? Int, SfuProtocolVersion.secure.rawValue)
     }
 
     func testCallerAnswerJoinsRoomAsCallerExactlyOnce() {
@@ -56,33 +59,56 @@ final class SfuRingManagerTests: XCTestCase {
         let callId = try? XCTUnwrap(ring.callId)
         let roomId = try? XCTUnwrap(ring.roomId)
 
-        ring.handleSignal(fromUid: "peer-1", signal: ["type": "answer", "callId": callId as Any])
+        ring.handleSignal(fromUid: "peer-1", signal: [
+            "type": "answer", "callId": callId as Any,
+            "sfuVersion": SfuProtocolVersion.secure.rawValue
+        ])
 
         XCTAssertEqual(ring.state, .connected)
         XCTAssertEqual(harness.rooms.count, 1)
         XCTAssertEqual(harness.rooms.first?.roomId, roomId)
         XCTAssertEqual(harness.rooms.first?.isCaller, true)
+        XCTAssertEqual(harness.rooms.first?.version, .secure)
         // A replayed answer must not join twice (Firestore can redeliver on a listener re-attach).
-        ring.handleSignal(fromUid: "peer-1", signal: ["type": "answer", "callId": callId as Any])
+        ring.handleSignal(fromUid: "peer-1", signal: [
+            "type": "answer", "callId": callId as Any,
+            "sfuVersion": SfuProtocolVersion.secure.rawValue
+        ])
         XCTAssertEqual(harness.rooms.count, 1)
     }
 
-    func testIncomingOfferThenAcceptJoinsAsCalleeAndSendsAnswer() {
+    func testOfferWithoutSecureV2IsRejectedBeforeStateMutation() {
         let harness = Harness()
         let ring = harness.makeRing()
 
         ring.handleSignal(fromUid: "peer-2", signal: [
             "type": "offer", "callId": "call-xyz", "roomId": "room-xyz", "video": false
         ])
-        XCTAssertEqual(ring.state, .incoming)
-        XCTAssertEqual(ring.roomId, "room-xyz")
-        XCTAssertEqual(ring.peerUid, "peer-2")
+        XCTAssertEqual(ring.state, .idle)
+        XCTAssertNil(ring.roomId)
+        XCTAssertNil(ring.peerUid)
+        XCTAssertTrue(harness.rooms.isEmpty)
+        let reject = harness.sent.first { $0.signal["type"] as? String == "reject" }
+        XCTAssertEqual(reject?.toUid, "peer-2")
+    }
+
+    func testExplicitSecureOfferSelectsV2AndEchoesItInAnswer() {
+        let harness = Harness()
+        let ring = harness.makeRing()
+
+        ring.handleSignal(fromUid: "peer-2", signal: [
+            "type": "offer",
+            "callId": "00000000-0000-4000-8000-000000000001",
+            "roomId": "00000000-0000-4000-8000-000000000002",
+            "sfuVersion": SfuProtocolVersion.secure.rawValue
+        ])
+        XCTAssertEqual(ring.protocolVersion, .secure)
 
         ring.accept()
-        XCTAssertEqual(ring.state, .connected)
-        XCTAssertEqual(harness.rooms.first?.roomId, "room-xyz")
-        XCTAssertEqual(harness.rooms.first?.isCaller, false)
-        XCTAssertTrue(harness.sent.contains { $0.signal["type"] as? String == "answer" })
+
+        XCTAssertEqual(harness.rooms.first?.version, .secure)
+        let answer = harness.sent.first { $0.signal["type"] as? String == "answer" }
+        XCTAssertEqual(answer?.signal["sfuVersion"] as? Int, SfuProtocolVersion.secure.rawValue)
     }
 
     func testOfferWhileBusyOnDifferentCallSendsBusy() {
@@ -105,7 +131,10 @@ final class SfuRingManagerTests: XCTestCase {
         let harness = Harness()
         let ring = harness.makeRing()
 
-        ring.handleSignal(fromUid: "peer-2", signal: ["type": "offer", "callId": "call-noroom"])
+        ring.handleSignal(fromUid: "peer-2", signal: [
+            "type": "offer", "callId": "call-noroom",
+            "sfuVersion": SfuProtocolVersion.secure.rawValue
+        ])
 
         XCTAssertEqual(ring.state, .idle)
         XCTAssertTrue(harness.sent.isEmpty)
@@ -128,12 +157,27 @@ final class SfuRingManagerTests: XCTestCase {
         let ring = harness.makeRing()
         ring.startCall(peerUid: "peer-1", peerName: "Peer One")
         let callId = try? XCTUnwrap(ring.callId)
-        ring.handleSignal(fromUid: "peer-1", signal: ["type": "answer", "callId": callId as Any])
+        ring.handleSignal(fromUid: "peer-1", signal: [
+            "type": "answer", "callId": callId as Any,
+            "sfuVersion": SfuProtocolVersion.secure.rawValue
+        ])
         XCTAssertEqual(ring.state, .connected)
 
         // A never-answered sibling session (web multi-tab) ring-times-out and sends reject ~35s
         // in; it must NOT tear down the call the answering session already connected.
         ring.handleSignal(fromUid: "peer-1", signal: ["type": "reject", "callId": callId as Any])
         XCTAssertEqual(ring.state, .connected)
+    }
+
+    func testCallerRejectsAnswerWithoutSecureV2() {
+        let harness = Harness()
+        let ring = harness.makeRing()
+        ring.startCall(peerUid: "peer-1", peerName: "Peer One")
+        let callId = try? XCTUnwrap(ring.callId)
+
+        ring.handleSignal(fromUid: "peer-1", signal: ["type": "answer", "callId": callId as Any])
+
+        XCTAssertEqual(ring.state, .ended)
+        XCTAssertTrue(harness.rooms.isEmpty)
     }
 }

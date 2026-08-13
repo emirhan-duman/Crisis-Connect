@@ -9,6 +9,7 @@ import com.auralis.crisisconnect.screens.authority.AuthorityChannelThreadScreen
 import com.auralis.crisisconnect.screens.authority.AuthorityContactPickerScreen
 import com.auralis.crisisconnect.screens.Guide.GuideMainScreen
 import com.auralis.crisisconnect.screens.ToolsMainScreen
+import com.auralis.crisisconnect.screens.TrustDossierScreen
 import com.auralis.crisisconnect.screens.SettingsScreen
 import com.auralis.crisisconnect.screens.AdvancedSettingsScreen
 import com.auralis.crisisconnect.screens.settings.ChildProfileScreen
@@ -18,6 +19,9 @@ import com.auralis.crisisconnect.screens.Tools.CrisisSentinelSwipeBackCoordinato
 import com.auralis.crisisconnect.screens.Tools.MetalDetectorScreen
 import com.auralis.crisisconnect.screens.Tools.SignalFinderScreen
 import com.auralis.crisisconnect.screens.Tools.CompassScreen
+import com.auralis.crisisconnect.screens.Tools.FlashlightScreen
+import com.auralis.crisisconnect.screens.Tools.BreadcrumbTrailScreen
+import com.auralis.crisisconnect.screens.Tools.CprAssistScreen
 import com.auralis.crisisconnect.screens.Tools.CrisisSentinelChatScreen
 import com.auralis.crisisconnect.screens.Tools.CrisisSentinelHomeScreen
 import com.auralis.crisisconnect.screens.Tools.CrisisSentinelScreen
@@ -557,7 +561,7 @@ class MainActivity : ComponentActivity() {
                                     AuthorityContactPickerScreen(navController)
                                 }
                                 composable(
-                                    route = "authority_channel/{channelId}/{peerUid}?title={title}&agency={agency}&role={role}",
+                                    route = "authority_channel/{channelId}/{peerUid}?title={title}&agency={agency}&role={role}&scope={scope}",
                                     arguments = listOf(
                                         navArgument("channelId") { type = NavType.StringType },
                                         navArgument("peerUid") { type = NavType.StringType },
@@ -576,6 +580,10 @@ class MainActivity : ComponentActivity() {
                                             nullable = true
                                             defaultValue = null
                                         },
+                                        navArgument("scope") {
+                                            type = NavType.StringType
+                                            defaultValue = "hierarchy"
+                                        },
                                     ),
                                 ) { backStackEntry ->
                                     AuthorityChannelThreadScreen(
@@ -590,6 +598,13 @@ class MainActivity : ComponentActivity() {
                                             ?.let(Uri::decode) ?: "",
                                         role = backStackEntry.arguments?.getString("role")
                                             ?.let(Uri::decode) ?: "",
+                                        scopeType = if (
+                                            backStackEntry.arguments?.getString("scope") == "agency"
+                                        ) {
+                                            com.auralis.crisisconnect.messaging.AuthorityMlsScopeType.AGENCY
+                                        } else {
+                                            com.auralis.crisisconnect.messaging.AuthorityMlsScopeType.HIERARCHY
+                                        },
                                     )
                                 }
                                 composable("qr_scan") { QrScannerScreen(navController) }
@@ -721,6 +736,7 @@ class MainActivity : ComponentActivity() {
                                     GuideMainScreen(navController = navController)
                                 }
                                 composable("tools_main") { ToolsMainScreen(navController) }
+                                composable("secure_dossiers") { TrustDossierScreen(navController) }
                                 composable("crisis_sentinel") { CrisisSentinelScreen(navController) }
                                 composable(
                                     route = "crisis_sentinel_home",
@@ -775,25 +791,31 @@ class MainActivity : ComponentActivity() {
                                 composable("metal_detector") { MetalDetectorScreen(navController) }
                                 composable("signal_finder") { SignalFinderScreen(navController) }
                                 composable("whistle") { WhistleScreen(navController) }
+                                composable("flashlight") { FlashlightScreen(navController) }
+                                composable("cpr_assist") { CprAssistScreen(navController) }
+                                composable("breadcrumb_trail") { BreadcrumbTrailScreen(navController) }
                                  composable(
-                                     route = "offline_map?lat={lat}&lng={lng}&label={label}&points={points}",
+                                     route = "offline_map?lat={lat}&lng={lng}&label={label}&points={points}&trail={trail}",
                                      arguments = listOf(
                                          navArgument("lat") { type = NavType.StringType; nullable = true; defaultValue = null },
                                          navArgument("lng") { type = NavType.StringType; nullable = true; defaultValue = null },
                                          navArgument("label") { type = NavType.StringType; nullable = true; defaultValue = null },
-                                         navArgument("points") { type = NavType.StringType; nullable = true; defaultValue = null }
+                                         navArgument("points") { type = NavType.StringType; nullable = true; defaultValue = null },
+                                         navArgument("trail") { type = NavType.StringType; nullable = true; defaultValue = null }
                                      )
                                  ) { backStackEntry ->
                                      val lat = backStackEntry.arguments?.getString("lat")?.toDoubleOrNull()
                                      val lng = backStackEntry.arguments?.getString("lng")?.toDoubleOrNull()
                                      val label = backStackEntry.arguments?.getString("label")
                                      val pointsJson = backStackEntry.arguments?.getString("points")
+                                     val trailJson = backStackEntry.arguments?.getString("trail")
                                      OfflineMapScreen(
                                          navController,
                                          initialLat = lat,
                                          initialLng = lng,
                                          initialLabel = label,
-                                         pointsJson = pointsJson
+                                         pointsJson = pointsJson,
+                                         trailJson = trailJson
                                      )
                                  }
                                 composable("compass") { CompassScreen(navController) }

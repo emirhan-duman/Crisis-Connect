@@ -44,6 +44,8 @@ fun buildConfigString(value: String): String {
 
 val googleWebClientId = secretConfigValue("GOOGLE_WEB_CLIENT_ID", "GOOGLE_WEB_CLIENT_ID")
 val mobileSyncBaseUrl = secretConfigValue("MOBILE_SYNC_BASE_URL", "MOBILE_SYNC_BASE_URL")
+val trustDossierBaseUrl = secretConfigValue("TRUST_DOSSIER_BASE_URL", "TRUST_DOSSIER_BASE_URL")
+    .ifBlank { "https://crisisconnect.network" }
 val mobileSyncPanelId = secretConfigValue("MOBILE_SYNC_PANEL_ID", "MOBILE_SYNC_PANEL_ID")
 // The dashboard's Cloud Run origin, not the hosting domain: Firebase Hosting buffers SSE, so the
 // chat stream must hit Cloud Run directly (same reason the web client hard-codes this origin).
@@ -112,10 +114,14 @@ android {
         applicationId = "com.auralis.crisisconnect"
         minSdk = 24
         targetSdk = 36
-        versionCode = 59
-        versionName = "1.1.8"
+        versionCode = 64
+        versionName = "1.1.9"
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+            // SQLCipher ships x86_64, but keeping only ARM here produced an installable
+            // test/universal APK whose database crashed immediately on the x86_64 virtual
+            // devices seen in Crashlytics because libsqlcipher.so had been stripped.
+            // Play's AAB delivery still gives each physical device only its matching split.
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
         }
         manifestPlaceholders["googleWebClientId"] = googleWebClientId
         buildConfigField(
@@ -137,6 +143,11 @@ android {
             "String",
             "MOBILE_SYNC_PANEL_ID",
             buildConfigString(mobileSyncPanelId)
+        )
+        buildConfigField(
+            "String",
+            "TRUST_DOSSIER_BASE_URL",
+            buildConfigString(trustDossierBaseUrl)
         )
         buildConfigField(
             "String",
@@ -348,6 +359,11 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+    // Connected tests run on `internal` (see testBuildType above), and build-type dependency
+    // configurations are not inherited — initWith() copies settings, not dependencies. Without this
+    // the host activity Compose tests launch into is missing and every one of them fails at setUp
+    // with "Unable to resolve activity". Test-only manifest entry; `release` never sees it.
+    add("internalImplementation", libs.androidx.ui.test.manifest)
 
     // Data Store
     implementation("androidx.datastore:datastore-preferences:1.0.0")
@@ -401,10 +417,12 @@ dependencies {
     implementation("net.zetetic:sqlcipher-android:4.13.0")
 
     // Auth System + Firebase
-    implementation(platform("com.google.firebase:firebase-bom:34.5.0"))
+    implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
     implementation("com.google.firebase:firebase-analytics")
     implementation("com.google.android.gms:play-services-auth:21.1.0")
-    implementation("com.google.firebase:firebase-auth-ktx:23.1.0")
+    // Firebase KTX artifacts are no longer published; the main module contains the
+    // Kotlin-friendly API and its version is managed by the BoM above.
+    implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-functions")
     implementation("com.google.firebase:firebase-storage")

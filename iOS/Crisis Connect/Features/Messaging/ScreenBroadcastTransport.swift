@@ -68,6 +68,9 @@ final class BroadcastFrameServer {
     private var listenFd: Int32 = -1
     private let acceptQueue = DispatchQueue(label: "cc.broadcast.server")
     private var running = false
+    private let clientLock = NSLock()
+    private var clientFd: Int32 = -1
+    private var targetFps: UInt8 = 15
     /// (frame, rotationDegrees, timestampNs)
     var onFrame: ((CVPixelBuffer, Int, Int64) -> Void)?
     var onClientDisconnected: (() -> Void)?
@@ -85,6 +88,21 @@ final class BroadcastFrameServer {
     func stop() {
         running = false
         if listenFd >= 0 { Darwin.close(listenFd); listenFd = -1 }
+    }
+
+    /// Update the extension-side capture throttle over the already-authenticated loopback socket.
+    /// This keeps Auto at 30 fps while allowing Smooth to reach 60 without shipping 60 raw frames
+    /// for every profile and wasting ReplayKit's tight CPU/memory budget.
+    func setTargetFps(_ fps: Int) {
+        let bounded = UInt8(max(1, min(60, fps)))
+        clientLock.lock()
+        targetFps = bounded
+        let fd = clientFd
+        if fd >= 0 {
+            var value = bounded
+            _ = withUnsafePointer(to: &value) { Darwin.send(fd, $0, 1, 0) }
+        }
+        clientLock.unlock()
     }
 
     private func run() {
@@ -109,7 +127,15 @@ final class BroadcastFrameServer {
             if client < 0 { if running { continue } else { break } }
             var one: Int32 = 1
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+            clientLock.lock()
+            clientFd = client
+            var fps = targetFps
+            _ = withUnsafePointer(to: &fps) { Darwin.send(client, $0, 1, 0) }
+            clientLock.unlock()
             serveClient(client)
+            clientLock.lock()
+            if clientFd == client { clientFd = -1 }
+            clientLock.unlock()
             onClientDisconnected?()
         }
     }

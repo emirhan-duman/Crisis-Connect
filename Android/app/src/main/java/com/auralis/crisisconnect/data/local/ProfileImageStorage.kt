@@ -15,6 +15,7 @@ import androidx.annotation.RequiresApi
 import androidx.exifinterface.media.ExifInterface
 import com.auralis.crisisconnect.security.KeystoreBackedPreferences
 import java.io.ByteArrayOutputStream
+import java.util.UUID
 
 object ProfileImageStorage {
     private const val TAG = "ProfileImageStorage"
@@ -24,6 +25,9 @@ object ProfileImageStorage {
     private const val MASTER_KEY_ALIAS = "cc_profile_image_prefs_master_v2"
     private const val MIGRATION_MARKER_KEY = "__migration_complete_v2"
     private const val KEY_IMAGE = "profile_image_base64"
+    private const val KEY_UPLOAD_PENDING = "profile_image_upload_pending"
+    private const val KEY_UPLOAD_GENERATION = "profile_image_upload_generation"
+    private const val KEY_REMOTE_VERSION = "profile_image_remote_version"
     private const val MAX_PROFILE_IMAGE_DIMENSION_PX = 512
     private const val PROFILE_IMAGE_JPEG_QUALITY = 82
 
@@ -96,7 +100,7 @@ object ProfileImageStorage {
         }.getOrNull()
     }
 
-    fun saveProfileImage(context: Context, bitmap: Bitmap) {
+    fun saveProfileImage(context: Context, bitmap: Bitmap, markUploadPending: Boolean = true) {
         val normalizedBitmap = normalizeBitmapForStorage(bitmap)
         val outputStream = ByteArrayOutputStream()
         normalizedBitmap.compress(
@@ -106,7 +110,13 @@ object ProfileImageStorage {
         )
         val bytes = outputStream.toByteArray()
         val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
-        prefs(context).putString(KEY_IMAGE, encoded)
+        prefs(context).apply {
+            putString(KEY_IMAGE, encoded)
+            if (markUploadPending) {
+                putString(KEY_UPLOAD_PENDING, "1")
+                putString(KEY_UPLOAD_GENERATION, UUID.randomUUID().toString())
+            }
+        }
     }
 
     fun loadProfileImage(context: Context): Bitmap? {
@@ -143,7 +153,33 @@ object ProfileImageStorage {
     }
 
     fun clearProfileImage(context: Context) {
-        prefs(context).remove(KEY_IMAGE)
+        prefs(context).apply {
+            remove(KEY_IMAGE)
+            remove(KEY_UPLOAD_PENDING)
+            remove(KEY_UPLOAD_GENERATION)
+            remove(KEY_REMOTE_VERSION)
+        }
+    }
+
+    fun isUploadPending(context: Context): Boolean =
+        prefs(context).getString(KEY_UPLOAD_PENDING, null) == "1"
+
+    fun clearUploadPending(context: Context) {
+        prefs(context).apply {
+            remove(KEY_UPLOAD_PENDING)
+            remove(KEY_UPLOAD_GENERATION)
+        }
+    }
+
+    fun getUploadGeneration(context: Context): String? =
+        prefs(context).getString(KEY_UPLOAD_GENERATION, null)
+
+    fun getRemoteVersion(context: Context): String? =
+        prefs(context).getString(KEY_REMOTE_VERSION, null)
+
+    fun setRemoteVersion(context: Context, version: String?) {
+        if (version.isNullOrBlank()) prefs(context).remove(KEY_REMOTE_VERSION)
+        else prefs(context).putString(KEY_REMOTE_VERSION, version)
     }
 
     internal fun decodeBitmapForStorage(bytes: ByteArray): Bitmap? {

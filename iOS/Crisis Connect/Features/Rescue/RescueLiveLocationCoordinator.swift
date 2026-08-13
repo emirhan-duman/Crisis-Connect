@@ -23,6 +23,9 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
 
     private var cancellables: Set<AnyCancellable> = []
     private var syncTimer: Timer?
+    private var presenceTimer: Timer?
+    private var lastPresenceSyncAt: Date?
+    private var hasPublishedPresence = false
     private var syncRetryWorkItem: DispatchWorkItem?
     private var pendingSyncDrainTask: Task<Void, Never>?
     private var hasBootstrapped = false
@@ -170,11 +173,27 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
             stopTimer()
             stopLocationWarmupIfNeeded()
             stopMonitoringSignificantLocationChangesIfNeeded()
-            enqueueResponderInactiveSync()
+            if presenceHeartbeatEnabled {
+                // Crisis Link on, live location off: Android still sends location-less roster
+                // heartbeats, so keep the responder on the dashboard instead of marking it
+                // inactive. Foreground-driven, like the live-location timer.
+                pendingSyncOperations.removeAll { $0.kind == .responderInactive }
+                persistPendingSyncOperations()
+                if applicationIsActive {
+                    ensurePresenceTimer()
+                    performPresenceSyncIfDue()
+                } else {
+                    stopPresenceTimer()
+                }
+            } else {
+                stopPresenceTimer()
+                enqueueResponderInactiveSync()
+            }
             schedulePendingSyncDrain(immediate: true)
             return
         }
 
+        stopPresenceTimer()
         pendingSyncOperations.removeAll { $0.kind == .responderInactive }
         persistPendingSyncOperations()
 
@@ -212,6 +231,13 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
             PrivacyPreferences.isShareLocationInSOSEnabled()
     }
 
+    /// Crisis Link on but live location off (toggle or the SOS location privacy pref). No GPS
+    /// leaves the device in this mode — only a location-less roster heartbeat — so the privacy
+    /// pref intentionally does not gate it.
+    private var presenceHeartbeatEnabled: Bool {
+        settingsStore.crisisLinkEnabled && !liveLocationEnabled
+    }
+
     private var shouldRequestAlwaysAuthorization: Bool {
         Bundle.main.object(forInfoDictionaryKey: "NSLocationAlwaysAndWhenInUseUsageDescription") != nil ||
             Bundle.main.object(forInfoDictionaryKey: "NSLocationAlwaysUsageDescription") != nil
@@ -220,6 +246,9 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
     private var syncInterval: TimeInterval {
         TimeInterval(max(30, settingsStore.crisisLinkLiveLocationIntervalSeconds))
     }
+
+    // 300 s matches Android's BALANCED idle heartbeat cadence.
+    private static let presenceSyncInterval: TimeInterval = 300
 
     var shouldScheduleBackgroundRefresh: Bool {
         !pendingSyncOperations.isEmpty
@@ -256,6 +285,43 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
         syncTimer?.invalidate()
         syncTimer = nil
         currentTimerInterval = nil
+    }
+
+    private func ensurePresenceTimer() {
+        guard presenceTimer == nil else { return }
+        let timer = Timer(timeInterval: Self.presenceSyncInterval, repeats: true) { [weak self] _ in
+            guard let coordinator = self else { return }
+            Task { @MainActor in
+                coordinator.performPresenceSync()
+            }
+        }
+        presenceTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func stopPresenceTimer() {
+        presenceTimer?.invalidate()
+        presenceTimer = nil
+    }
+
+    /// First beat on entering presence mode, without re-firing on every refreshScheduling call
+    /// (settings publishers and lifecycle notifications call it liberally).
+    private func performPresenceSyncIfDue() {
+        if let last = lastPresenceSyncAt, Date().timeIntervalSince(last) < Self.presenceSyncInterval {
+            return
+        }
+        performPresenceSync()
+    }
+
+    private func performPresenceSync() {
+        // Throttles attempts, not successes — an offline rescuer must not turn the heartbeat
+        // into a retry storm; the next timer tick is soon enough.
+        lastPresenceSyncAt = Date()
+        Task { [dashboardSyncService, weak self] in
+            if await dashboardSyncService.syncResponderPresence() {
+                self?.hasPublishedPresence = true
+            }
+        }
     }
 
     private func requestLocationIfPossible() {
@@ -444,7 +510,9 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
     }
 
     private func enqueueResponderInactiveSync() {
-        guard hasPublishedDashboardLocation else { return }
+        // Presence heartbeats create the roster row too, so a presence-only rescuer also needs
+        // the inactive mark on the way out.
+        guard hasPublishedDashboardLocation || hasPublishedPresence else { return }
         pendingSyncOperations.removeAll { $0.kind == .liveLocation }
         pendingSyncOperations.removeAll { $0.kind == .responderInactive }
         pendingSyncOperations.append(

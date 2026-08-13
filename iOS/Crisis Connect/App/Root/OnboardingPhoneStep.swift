@@ -96,6 +96,7 @@ final class OnboardingPhoneVerification: ObservableObject {
     @Published var isBusy = false
     @Published var errorText: String?
     @Published var verifiedPhone: String?
+    private var pendingOtpTransport: PhoneOtpTransport?
 
     /// The number in E.164. A leading "+" in the field overrides the country selection, matching
     /// what users paste from their own contact card. National trunk '0' is dropped.
@@ -113,40 +114,56 @@ final class OnboardingPhoneVerification: ObservableObject {
         !nationalNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    // Verification rides the backend's Twilio Verify callables (requestPhoneOtp/verifyPhoneOtp)
-    // instead of FirebaseAuth's native phone flow: the native path needs APNs/attestation plumbing
-    // that is broken on current iOS + SDK combinations (Auth's internal phone managers never
-    // initialize — verifyPhoneNumber errors or crashes). The server checks the OTP with Twilio and
-    // binds the proven number to the caller's account with the Admin SDK — no client plumbing.
+    // Native Firebase Phone Auth is primary. Twilio is the guarded fallback when Firebase cannot
+    // send a verification code. The code is always verified by the provider that issued it.
 
     func sendCode() {
         let number = e164Number
         guard number.count > 4 else { return }
         errorText = nil
         isBusy = true
+        codeSent = false
+        pendingOtpTransport = nil
         Task { @MainActor in
             do {
-                _ = try await Functions.functions(region: InternetMessagingClient.region)
-                    .httpsCallable("requestPhoneOtp").call({
-                        // Localizes the Twilio SMS; shape must be ll or ll-RR or the backend's
-                        // validator silently drops it.
-                        var payload: [String: Any] = ["phone": number]
-                        if let lang = Locale.current.language.languageCode?.identifier(.alpha2) {
-                            let region = Locale.current.region?.identifier
-                            payload["locale"] = (region?.count == 2) ? "\(lang)-\(region!)" : lang
-                        }
-                        return payload
-                    }())
+                let verificationID = try await FirebasePhoneAuthFallback.requestCode(
+                    phoneNumber: number
+                )
+                self.pendingOtpTransport = .firebase(verificationID: verificationID)
                 self.isBusy = false
                 self.codeSent = true
-            } catch {
-                self.isBusy = false
-                let nsError = error as NSError
+            } catch let firebaseError {
+                let nsError = firebaseError as NSError
                 NSLog(
-                    "OnboardingPhone: requestPhoneOtp failed domain=%@ code=%ld: %@",
+                    "OnboardingPhone: Firebase send failed domain=%@ code=%ld: %@; trying Twilio fallback.",
                     nsError.domain, nsError.code, nsError.localizedDescription
                 )
-                self.errorText = "\(NSLocalizedString("ONBOARDING_PHONE_UNAVAILABLE", comment: "")) (\(nsError.localizedDescription))"
+                do {
+                    _ = try await Functions.functions(region: InternetMessagingClient.region)
+                        .httpsCallable("requestPhoneOtp").call({
+                            // Localizes the Twilio SMS; shape must be ll or ll-RR.
+                            var payload: [String: Any] = ["phone": number]
+                            if let lang = Locale.current.language.languageCode?.identifier(.alpha2) {
+                                let region = Locale.current.region?.identifier
+                                payload["locale"] = (region?.count == 2) ? "\(lang)-\(region!)" : lang
+                            }
+                            return payload
+                        }())
+                    self.pendingOtpTransport = .twilio
+                    self.isBusy = false
+                    self.codeSent = true
+                    NSLog("OnboardingPhone: Twilio fallback sent the code.")
+                } catch let twilioError {
+                    self.isBusy = false
+                    let fallbackError = twilioError as NSError
+                    NSLog(
+                        "OnboardingPhone: Twilio fallback failed domain=%@ code=%ld: %@",
+                        fallbackError.domain,
+                        fallbackError.code,
+                        fallbackError.localizedDescription
+                    )
+                    self.errorText = "\(NSLocalizedString("ONBOARDING_PHONE_UNAVAILABLE", comment: "")) (\(fallbackError.localizedDescription))"
+                }
             }
         }
     }
@@ -159,29 +176,42 @@ final class OnboardingPhoneVerification: ObservableObject {
         let number = e164Number
         Task { @MainActor in
             do {
-                // Nobody may be signed in yet this early in onboarding — the callable requires
-                // auth, and the anonymous account is also what the number gets bound to.
-                if Auth.auth().currentUser == nil {
-                    _ = try await Auth.auth().signInAnonymously()
-                }
-                let result = try await Functions.functions(region: InternetMessagingClient.region)
-                    .httpsCallable("verifyPhoneOtp").call(["phone": number, "code": trimmedCode])
-                let data = result.data as? [String: Any] ?? [:]
-                let outcome = data["outcome"] as? String ?? ""
-                let verifiedNumber = data["phone"] as? String ?? number
-                switch outcome {
-                case "linked":
-                    break // Number attached to this account server-side; uid (and identity) kept.
-                case "signin":
-                    // The number already belongs to another account — proving possession signs
-                    // the user into it (same semantics as Firebase phone sign-in).
-                    guard let customToken = data["customToken"] as? String else {
-                        throw InternetMessagingClientError.malformedResponse
-                    }
-                    _ = try await Auth.auth().signIn(withCustomToken: customToken)
-                default:
+                guard let pendingOtpTransport else {
                     throw InternetMessagingClientError.malformedResponse
                 }
+                let verifiedNumber: String
+                switch pendingOtpTransport {
+                case .twilio:
+                    // The callable requires auth, and the anonymous account is also what the
+                    // server binds the number to when it is not already owned elsewhere.
+                    if Auth.auth().currentUser == nil {
+                        _ = try await Auth.auth().signInAnonymously()
+                    }
+                    let result = try await Functions.functions(region: InternetMessagingClient.region)
+                        .httpsCallable("verifyPhoneOtp").call(["phone": number, "code": trimmedCode])
+                    let data = result.data as? [String: Any] ?? [:]
+                    let outcome = data["outcome"] as? String ?? ""
+                    verifiedNumber = data["phone"] as? String ?? number
+                    switch outcome {
+                    case "linked":
+                        break
+                    case "signin":
+                        guard let customToken = data["customToken"] as? String else {
+                            throw InternetMessagingClientError.malformedResponse
+                        }
+                        _ = try await Auth.auth().signIn(withCustomToken: customToken)
+                    default:
+                        throw InternetMessagingClientError.malformedResponse
+                    }
+                case .firebase(let verificationID):
+                    _ = try await FirebasePhoneAuthFallback.verifyCode(
+                        verificationID: verificationID,
+                        code: trimmedCode,
+                        expectedPhoneNumber: number
+                    )
+                    verifiedNumber = number
+                }
+                self.pendingOtpTransport = nil
                 self.isBusy = false
                 self.verifiedPhone = verifiedNumber
                 // The number is proven: make this device discoverable to contacts who have it

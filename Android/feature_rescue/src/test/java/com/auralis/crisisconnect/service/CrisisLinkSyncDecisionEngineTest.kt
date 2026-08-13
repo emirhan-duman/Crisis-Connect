@@ -565,6 +565,62 @@ class CrisisLinkSyncDecisionEngineTest {
         )
     }
 
+    @Test
+    fun `shouldDeliver returns true for a newly sighted victim even below the minimum interval`() {
+        // The throttle exists to stop telemetry churn, not to hold a casualty. Before this, a beacon
+        // first heard inside the minimum-delivery window was suppressed for the rest of it -- long
+        // enough on ECO for the rescuer to walk out of range and lose the sighting entirely.
+        val previous = previous(
+            syncedAtMillis = 100_000L,
+            activeSignalIds = setOf("a"),
+            totalUniqueSignalCount = 1,
+            totalScanEventCount = 5
+        )
+        val now = previous.syncedAtMillis + 1
+
+        for (profile in CrisisLinkSyncDecisionEngine.SyncProfile.values()) {
+            val result = engine.shouldDeliverPayload(
+                previousState = previous,
+                payload = payload(
+                    activeSignalIds = setOf("a", "b"),
+                    totalUniqueSignalCount = 2,
+                    totalScanEventCount = 5
+                ),
+                now = now,
+                syncProfile = profile,
+                liveLocationSettings = liveLocation(enabled = false, intervalMillis = 60_000L)
+            )
+            assertTrue("a new victim must not wait on the $profile throttle", result)
+        }
+    }
+
+    @Test
+    fun `shouldDeliver still throttles when a victim only drops out of range`() {
+        // Asymmetric on purpose: a beacon flapping at the edge of range must not be able to defeat
+        // the rate limiter, so only an ADDED id bypasses it.
+        val previous = previous(
+            syncedAtMillis = 100_000L,
+            activeSignalIds = setOf("a", "b"),
+            totalUniqueSignalCount = 2,
+            totalScanEventCount = 5
+        )
+        val now = previous.syncedAtMillis + 1
+
+        val result = engine.shouldDeliverPayload(
+            previousState = previous,
+            payload = payload(
+                activeSignalIds = setOf("a"),
+                totalUniqueSignalCount = 2,
+                totalScanEventCount = 5
+            ),
+            now = now,
+            syncProfile = CrisisLinkSyncDecisionEngine.SyncProfile.BALANCED,
+            liveLocationSettings = liveLocation(enabled = false, intervalMillis = 60_000L)
+        )
+
+        assertFalse(result)
+    }
+
     private fun previous(
         syncedAtMillis: Long,
         activeSignalIds: Set<String>,

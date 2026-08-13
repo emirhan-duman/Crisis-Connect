@@ -1,0 +1,59 @@
+"FLASHLIGHT_TITLE" = "Fener";
+"FLASHLIGHT_TOOL_DESCRIPTION" = "Fener, SOS, güvenli strobe, ekran ışığı ve kurtarma işareti";
+"FLASHLIGHT_INFO" = "Fener bilgileri";
+"FLASHLIGHT_DONE" = "Bitti";
+"FLASHLIGHT_CANCEL" = "İptal";
+
+"FLASHLIGHT_MODE_HEADING" = "Işık modu";
+"FLASHLIGHT_MODE_NORMAL" = "Normal";
+"FLASHLIGHT_MODE_NORMAL_DESCRIPTION" = "Ayarlanabilir şiddetle kesintisiz arka fener.";
+"FLASHLIGHT_MODE_SOS" = "SOS";
+"FLASHLIGHT_MODE_SOS_DESCRIPTION" = "Uluslararası Mors yardım desenini tekrarlar: üç kısa, üç uzun, üç kısa.";
+"FLASHLIGHT_MODE_STROBE" = "Strobe";
+"FLASHLIGHT_MODE_STROBE_DESCRIPTION" = "Güvenlik için saniyede en fazla üç kez yanan dikkat ışığı.";
+"FLASHLIGHT_MODE_LOW_POWER" = "Düşük Güç";
+"FLASHLIGHT_MODE_LOW_POWER_DESCRIPTION" = "Pili korumak için düşük fener seviyesi kullanır.";
+"FLASHLIGHT_MODE_SCREEN" = "Ekran Işığı";
+"FLASHLIGHT_MODE_SCREEN_DESCRIPTION" = "Kamera flaşı olmadan çalışan tam ekran beyaz, sıcak veya gece dostu kırmızı ışık.";
+"FLASHLIGHT_MODE_BEACON" = "Acil Durum İşareti";
+"FLASHLIGHT_MODE_BEACON_DESCRIPTION" = "Dağ yardım döngüsü: bir dakikada altı ışık işareti, ardından bir dakika bekleme.";
+
+"FLASHLIGHT_STATUS_READY" = "Hazır";
+"FLASHLIGHT_STATUS_ACTIVE" = "Işık açık";
+"FLASHLIGHT_START" = "Işığı başlat";
+"FLASHLIGHT_STOP" = "Durdur";
+"FLASHLIGHT_BRIGHTNESS_HEADING" = "Fener şiddeti";
+"FLASHLIGHT_LOW" = "Düşük";
+"FLASHLIGHT_HIGH" = "Yüksek";
+"FLASHLIGHT_LOW_POWER_NOTE" = "Düşük Güç, feneri %10 şiddette kullanır. Cihaz ısındığında sistem ışığı daha da kısabilir.";
+
+"FLASHLIGHT_STROBE_RATE_HEADING" = "Strobe hızı";
+"FLASHLIGHT_STROBE_RATE_NOTE" = "En fazla 3 Hz. Yanıp sönme rahatsızlık verirse hemen durdurun.";
+"FLASHLIGHT_STROBE_WARNING_TITLE" = "Yanıp sönen ışık uyarısı";
+"FLASHLIGHT_STROBE_WARNING_BODY" = "Hızlı yanıp sönme nöbeti, migreni, baş dönmesini veya bulantıyı tetikleyebilir. Işığı yüzlere, sürücülere ya da hava araçlarına yöneltmeyin.";
+"FLASHLIGHT_STROBE_WARNING_CONFIRM" = "Anladım";
+
+"FLASHLIGHT_SCREEN_SETTINGS_HEADING" = "Ekran ışığı";
+"FLASHLIGHT_SCREEN_COLOR_WHITE" = "Beyaz";
+"FLASHLIGHT_SCREEN_COLOR_WARM" = "Sıcak";
+"FLASHLIGHT_SCREEN_COLOR_RED" = "Kırmızı";
+"FLASHLIGHT_SCREEN_BRIGHTNESS" = "Ekran parlaklığı";
+"FLASHLIGHT_SCREEN_ACTIVE" = "Ekran ışığı açık";
+
+"FLASHLIGHT_AUTO_OFF_HEADING" = "Otomatik kapanma";
+"FLASHLIGHT_AUTO_OFF_NEVER" = "Kapalı";
+"FLASHLIGHT_AUTO_OFF_5" = "5 dk.";
+"FLASHLIGHT_AUTO_OFF_15" = "15 dk.";
+"FLASHLIGHT_AUTO_OFF_30" = "30 dk.";
+
+"FLASHLIGHT_SAFETY_NOTE" = "Fener ısınabilir ve otomatik olarak kısılabilir. Flaşı kapatmayın veya doğrudan bakmayın. Bu görsel araç acil servislerle iletişim kurmaz.";
+"FLASHLIGHT_ERROR_UNAVAILABLE" = "Kullanılabilir kamera feneri bulunamadı. Ekran Işığı modunu kullanabilirsiniz.";
+"FLASHLIGHT_ERROR_CAMERA_PERMISSION" = "Arka fener için kamera izni gerekir. Ekran Işığı izinsiz kullanılabilir.";
+"FLASHLIGHT_ERROR_CAMERA_IN_USE" = "Başka bir kamera özelliği kullandığı için fener şu anda açılamıyor. Kamerayı kapatıp yeniden deneyin.";
+
+"FLASHLIGHT_INFO_MODES_TITLE" = "İnternetsiz çalışır";
+"FLASHLIGHT_INFO_MODES_BODY" = "Tüm ışık modları cihazda çalışır ve internet istemez. Normal ile Düşük Güç sabittir; SOS ve Strobe durdurulana ya da otomatik kapanana kadar tekrarlar.";
+"FLASHLIGHT_INFO_BEACON_TITLE" = "Acil Durum İşareti zamanlaması";
+"FLASHLIGHT_INFO_BEACON_BODY" = "İşaret dağ kurtarma görsel sinyalini izler: bir dakikaya yayılmış altı adet bir saniyelik ışık, ardından bir dakika karanlık ve tekrar.";
+"FLASHLIGHT_INFO_SAFETY_TITLE" = "Sorumlu kullanın";
+"FLASHLIGHT_INFO_SAFETY_BODY" = "Mümkün olduğunda yerel acil servisleri arayın. Telefon ışığı yalnızca görünürlük desteğidir; sertifikalı radyo veya uydu acil durum vericisi değildir.";

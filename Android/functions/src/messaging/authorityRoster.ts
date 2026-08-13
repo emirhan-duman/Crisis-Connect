@@ -5,11 +5,9 @@ import { requireUid, resolveCallerRoleKey } from "../certificates/callerRole";
 /**
  * Same-agency authority roster, gated to fellow authorities.
  *
- * Returns the other members of the caller's agency together with their E.164 phone number, so a field
- * device can add a fellow authority as a contact and — when the two are later offline but nearby —
- * establish a direct Bluetooth link via the number-keyed SPAKE2 handshake (NearbyAutoLink), like the
- * citizen "add by number" flow. Only released to a verified member of the SAME agency (or a platform
- * admin).
+ * Returns the minimal directory fields needed to open an MLS AuthorityChat with another active member
+ * of the caller's agency. Phone numbers and cryptographic material are deliberately not returned.
+ * Access is limited to an active member of the SAME agency (or a platform admin).
  *
  * Membership matching MIRRORS the web dashboard (app/api/admin/users listPanelUserDocs): a user's panel
  * is `resolvePanelId(userDoc)` (panelId, else the first agency-ish field, slugified via toPanelId), and
@@ -31,6 +29,11 @@ function readStr(value: unknown): string | null {
 function readFlag(value: unknown): boolean {
   return value === true || value === 1
     || (typeof value === "string" && ["true", "1", "yes", "on", "enabled"].includes(value.trim().toLowerCase()));
+}
+
+function hasDashboardAccess(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  return readFlag(value);
 }
 
 function normalizeRoleKey(value: unknown): string {
@@ -62,20 +65,14 @@ function resolvePanelId(data: Record<string, unknown>): string | null {
   return null;
 }
 
-/** Returns the value only if it is a plausible E.164 number (+ then 6–14 more digits); else null. */
-function toE164OrNull(value: unknown): string | null {
-  const trimmed = readStr(value);
-  if (!trimmed) return null;
-  return /^\+[1-9]\d{6,14}$/.test(trimmed) ? trimmed : null;
-}
-
 interface RosterMember {
   uid: string;
   name: string;
   role: string;
-  phone: string | null;
+  phone: null;
   photoUrl: string | null;
   agencySlug: string;
+  agencyName: string | null;
 }
 
 export const listAuthorityRoster = onCall(
@@ -90,6 +87,9 @@ export const listAuthorityRoster = onCall(
 
       const db = getFirestore();
       const callerDoc = (await db.doc(`users/${uid}`).get()).data() ?? {};
+      if (callerDoc.disabled === true || !hasDashboardAccess(callerDoc.dashboardAccess)) {
+        throw new HttpsError("permission-denied", "Inactive agency members cannot list the roster.");
+      }
       const callerPanelId = resolvePanelId(callerDoc);
       const isPlatformAdmin = readFlag(callerDoc.platformAdmin)
         || readFlag(callerDoc.globalDashboardAccess)
@@ -111,17 +111,22 @@ export const listAuthorityRoster = onCall(
         if (doc.id === uid) continue;
         const d = doc.data() as Record<string, unknown>;
         if (resolvePanelId(d) !== targetPanelId) continue;
+        if (d.disabled === true || !hasDashboardAccess(d.dashboardAccess)) continue;
+        const memberRole = normalizeRoleKey(d.role);
+        if (!ELIGIBLE_ROLES.has(memberRole)) continue;
         members.push({
           uid: doc.id,
-          name: readStr(d.username) ?? readStr(d.email) ?? doc.id,
-          role: normalizeRoleKey(d.role),
-          phone: toE164OrNull(d.phoneNumber),
+          name: readStr(d.username) ?? readStr(d.name) ?? readStr(d.displayName) ?? readStr(d.email) ?? doc.id,
+          role: memberRole,
+          phone: null,
           photoUrl: readStr(d.photoURL) ?? readStr(d.photoUrl),
           agencySlug: targetPanelId,
+          agencyName: readStr(d.agencyName) ?? readStr(d.agency) ?? readStr(d.institution),
         });
       }
 
-      return { members };
+      members.sort((a, b) => a.name.localeCompare(b.name));
+      return { members: members.slice(0, 2000) };
     } catch (err) {
       if (err instanceof HttpsError) throw err;
       const e = err as { name?: string; message?: string };

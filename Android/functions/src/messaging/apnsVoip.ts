@@ -70,6 +70,11 @@ export interface VoipPushPayload {
   senderUid: string;
   callerName: string;
   hasVideo: boolean;
+  /** Defaults to the citizen-call wake contract. */
+  type?: "call" | "authority_call_v2";
+  authorityScopeType?: "agency" | "hierarchy";
+  authorityChannelId?: string;
+  authoritySignalId?: string;
 }
 
 /**
@@ -84,12 +89,17 @@ export async function sendVoipPush(
 ): Promise<{ status: number; shouldPrune: boolean }> {
   const body = JSON.stringify({
     aps: {},
-    type: "call",
+    type: payload.type ?? "call",
     callId: payload.callId,
     conversationId: payload.conversationId,
     senderUid: payload.senderUid,
     callerName: payload.callerName,
     hasVideo: payload.hasVideo ? "1" : "0",
+    ...(payload.type === "authority_call_v2" ? {
+      authorityScopeType: payload.authorityScopeType,
+      authorityChannelId: payload.authorityChannelId,
+      authoritySignalId: payload.authoritySignalId,
+    } : {}),
   });
   const jwt = providerToken();
 

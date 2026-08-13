@@ -6,8 +6,8 @@
 //  New Chat → "Add from agency" and from notifications). One list: the agency's own encrypted
 //  broadcast channel on top, cross-panel (hierarchy) peers in Android's direction sections
 //  (HQ / peer / sub-units, names+photos enriched from the agency roster), then the own-agency
-//  roster split management / field teams — tapping those adds a normal 1:1 internet contact and
-//  opens the citizen chat, exactly like Android's picker.
+//  roster split management / field teams — tapping those opens the same agency-scoped MLS-v2
+//  AuthorityChat used by Android and web (never the legacy citizen transport).
 //
 
 import Combine
@@ -28,7 +28,7 @@ struct AuthorityThreadDeepLinkView: View {
     let channelId: String
     let peerUid: String
 
-    @State private var resolved: (channel: HierarchyChannel, peer: HierarchyPeer, key: HierarchyChannelKey?)?
+    @State private var resolved: (channel: HierarchyChannel, peer: HierarchyPeer)?
     @State private var failed = false
 
     var body: some View {
@@ -36,8 +36,7 @@ struct AuthorityThreadDeepLinkView: View {
             if let resolved {
                 HierarchyThreadView(
                     channel: resolved.channel,
-                    peer: resolved.peer,
-                    preloadedKey: resolved.key
+                    peer: resolved.peer
                 )
             } else if failed {
                 AuthorityChannelsListView()
@@ -101,9 +100,10 @@ struct AuthorityAvatarView: View {
 @MainActor
 final class AuthorityChannelsListStore: ObservableObject {
     struct PeerRow: Identifiable {
-        var id: String { channel.channelId + ":" + peer.uid }
+        var id: String { scopeType.rawValue + ":" + channel.channelId + ":" + peer.uid }
         let channel: HierarchyChannel
         let peer: HierarchyPeer
+        let scopeType: AuthorityMlsScopeType
         let preview: String?
         let previewAt: Date?
         /// Last incoming message is newer than my read cursor → home-row badge (Android parity).
@@ -126,6 +126,9 @@ final class AuthorityChannelsListStore: ObservableObject {
         let role: String
         let phone: String
         let photoUrl: String?
+        /// Canonical panel id resolved by the membership-gated backend.
+        let agencySlug: String
+        let agencyName: String?
         /// Android picker split: admin/authority → management, everyone else → field teams.
         var isManagement: Bool {
             let key = role.lowercased()
@@ -136,16 +139,26 @@ final class AuthorityChannelsListStore: ObservableObject {
     }
 
     @Published private(set) var groups: [PanelGroup] = []
+    /// Same-agency MLS conversations with local history, for the unified Messages home list.
+    @Published private(set) var agencyConversationRows: [PeerRow] = []
     @Published private(set) var managementMembers: [RosterMember] = []
     @Published private(set) var fieldMembers: [RosterMember] = []
     @Published private(set) var isLoading = true
     /// The cross-panel (hierarchy) channels fetch failed while the own-agency roster loaded — drives
     /// the retry banner (Android's crossPanelFailed), so the roster still shows on its own.
     @Published private(set) var crossPanelFailed = false
+    /// The own-agency callable failed while hierarchy rows may still have loaded. Keeping this
+    /// separate prevents a partial directory from masquerading as "this agency has no members".
+    @Published private(set) var rosterFailed = false
 
     private let client = HierarchyMessagingClient()
-    private var cachedKeys: [String: HierarchyChannelKey] = [:]
     private var hasStarted = false
+
+    private struct MlsPrewarmTarget: Sendable {
+        let peerUid: String
+        let scopeType: AuthorityMlsScopeType
+        let channelId: String
+    }
 
     func start() {
         guard !hasStarted else { return }
@@ -155,10 +168,6 @@ final class AuthorityChannelsListStore: ObservableObject {
 
     func refresh() async {
         await load()
-    }
-
-    func channelKey(for channelId: String) -> HierarchyChannelKey? {
-        cachedKeys[channelId]
     }
 
     /// Same liveness check the thread's blue band uses (host or central side of the hidden
@@ -186,10 +195,26 @@ final class AuthorityChannelsListStore: ObservableObject {
         // Roster and channels load independently (Android parity): the own-agency roster must still
         // populate the management / field sections even when the cross-panel hierarchy fetch fails,
         // and a failed hierarchy fetch surfaces a retry banner instead of dropping the roster.
-        async let rosterFetch = Self.fetchRoster()
+        async let rosterFetch = Self.fetchRosterCatching()
         async let channelsFetch = fetchChannelsCatching()
-        let roster = await rosterFetch
+        let rosterResult = await rosterFetch
+        let roster = rosterResult.members
+        rosterFailed = rosterResult.failed
         let channels = await channelsFetch
+
+        // Register and converge this iPhone's MLS device for the full reachable roster in the
+        // background. Neither person has to manually open the same thread before the first send.
+        if !myUid.isEmpty {
+            var targets = roster
+                .filter { $0.uid != myUid }
+                .map { MlsPrewarmTarget(peerUid: $0.uid, scopeType: .agency, channelId: $0.agencySlug) }
+            targets += (channels ?? []).flatMap { channel in
+                channel.peers
+                    .filter { $0.uid != myUid }
+                    .map { MlsPrewarmTarget(peerUid: $0.uid, scopeType: .hierarchy, channelId: channel.channelId) }
+            }
+            Task { await Self.prewarmMls(selfUid: myUid, targets: targets) }
+        }
 
         // Own-agency people come straight from the roster — applied regardless of the channel fetch.
         managementMembers = roster
@@ -198,6 +223,66 @@ final class AuthorityChannelsListStore: ObservableObject {
         fieldMembers = roster
             .filter { $0.uid != myUid && !$0.isManagement }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        // Reconstruct same-agency conversation rows from the protected MLS cache without touching
+        // Firestore or registering devices. Untouched roster entries stay only in New Chat.
+        var ownRows: [PeerRow] = []
+        if !myUid.isEmpty {
+            for member in roster where member.uid != myUid {
+                let cached = try? await AuthorityMlsChatChannel.loadCachedMessages(
+                    selfUid: myUid,
+                    peerUid: member.uid,
+                    scopeType: .agency,
+                    channelId: member.agencySlug
+                )
+                guard let latest = cached?.max(by: {
+                    $0.payload.sentAtMillis < $1.payload.sentAtMillis
+                }) else { continue }
+                let peer = HierarchyPeer(
+                    uid: member.uid,
+                    name: member.name.isEmpty ? member.uid : member.name,
+                    role: member.role.isEmpty ? nil : member.role,
+                    photoUrl: member.photoUrl,
+                    agency: member.agencyName,
+                    phone: nil
+                )
+                let channel = HierarchyChannel(
+                    channelId: member.agencySlug,
+                    peerPanelId: member.agencySlug,
+                    peerPanelName: member.agencyName ?? member.agencySlug,
+                    group: "agency",
+                    peers: [peer]
+                )
+                let at = Date(timeIntervalSince1970: Double(latest.payload.sentAtMillis) / 1000)
+                let cursor = await client.myReadCursorAt(
+                    channelId: member.agencySlug,
+                    myUid: myUid,
+                    peerUid: member.uid,
+                    scopeType: .agency
+                )
+                let firstAttachment = latest.payload.attachments.first
+                let attachmentKind = firstAttachment.map {
+                    if $0.mime.hasPrefix("audio/") { return "audio" }
+                    if $0.mime.hasPrefix("image/") { return "image" }
+                    return "file"
+                } ?? ""
+                ownRows.append(PeerRow(
+                    channel: channel,
+                    peer: peer,
+                    scopeType: .agency,
+                    preview: Self.previewText(
+                        text: latest.payload.text,
+                        attachmentKind: attachmentKind
+                    ),
+                    previewAt: at,
+                    unread: latest.senderUid == member.uid && (cursor.map { at > $0 } ?? true),
+                    bluetoothLinked: false
+                ))
+            }
+        }
+        agencyConversationRows = ownRows.sorted {
+            ($0.previewAt ?? .distantPast) > ($1.previewAt ?? .distantPast)
+        }
 
         if let channels {
             crossPanelFailed = false
@@ -209,23 +294,13 @@ final class AuthorityChannelsListStore: ObservableObject {
             // Android picker sections: channels grouped by hierarchy DIRECTION, not by panel.
             var rowsByDirection: [String: [PeerRow]] = [:]
             for channel in channels {
-                // One key per channel covers every preview decrypt; missing entitlement (or a
-                // channel nobody has messaged in) simply renders rows without previews.
-                var key = cachedKeys[channel.channelId]
-                if key == nil {
-                    key = try? await client.fetchChannelKey(channelId: channel.channelId)
-                }
-                if let key { cachedKeys[channel.channelId] = key }
-
                 for peer in channel.peers {
                     // The hierarchy payload often carries the web account's name (an email);
                     // the agency roster knows the person's real name + photo — prefer those.
                     let enriched = Self.enrich(peer, from: rosterByUid[peer.uid])
-                    let latest = await client.latestMessageWith(
-                        channelId: channel.channelId,
-                        peerUid: peer.uid,
-                        channelKey: key
-                    )
+                    // Never request or decrypt retired shared-key history. Selected conversations
+                    // populate from their verified MLS-v2 cache/session instead.
+                    let latest: (text: String, at: Date, senderUid: String, peerName: String?, attachmentKind: String)? = nil
                     // Final display name: a real name from the roster/hierarchy wins; if that's only
                     // a login email, the name the peer's own app published on their messages wins;
                     // only then a prettified email (local-part) so a raw address never shows.
@@ -250,10 +325,11 @@ final class AuthorityChannelsListStore: ObservableObject {
                         PeerRow(
                             channel: channel,
                             peer: named,
+                            scopeType: .hierarchy,
                             preview: latest.map { Self.previewText(text: $0.text, attachmentKind: $0.attachmentKind) },
                             previewAt: latest?.at,
                             unread: unread,
-                            bluetoothLinked: Self.isBridgeLinked(myUid: myUid, peerUid: peer.uid)
+                            bluetoothLinked: false
                         )
                     )
                 }
@@ -288,6 +364,55 @@ final class AuthorityChannelsListStore: ObservableObject {
         isLoading = false
     }
 
+    private static func prewarmMls(selfUid: String, targets: [MlsPrewarmTarget]) async {
+        var seen = Set<String>()
+        let canonical = targets.filter { target in
+            guard !target.peerUid.isEmpty, !target.channelId.isEmpty else { return false }
+            return seen.insert("\(target.scopeType.rawValue)\u{0}\(target.channelId)\u{0}\(target.peerUid)").inserted
+        }
+        // Four sessions at a time keeps startup responsive while still making registration quick.
+        let deviceLabel = String("iPhone \(UIDevice.current.model)".prefix(64))
+        for start in stride(from: 0, to: canonical.count, by: 4) {
+            let batch = Array(canonical[start..<min(start + 4, canonical.count)])
+            await withTaskGroup(of: Void.self) { group in
+                for target in batch {
+                    group.addTask {
+                        do {
+                            let channel = try await AuthorityMlsChatChannel.prepare(
+                                selfUid: selfUid,
+                                peerUid: target.peerUid,
+                                scopeType: target.scopeType,
+                                channelId: target.channelId,
+                                deviceLabel: deviceLabel
+                            )
+                            do {
+                                for attempt in 0..<20 {
+                                    let preparation = try await channel.refreshPreparation()
+                                    if preparation.ready {
+                                        try await channel.activate(
+                                            onMessage: { _ in throw AuthorityMlsDeferredApplicationError.openInChat },
+                                            onSecurityError: { _ in }
+                                        )
+                                        if try await channel.isReadyToSend() { break }
+                                    }
+                                    let nanoseconds: UInt64 = attempt < 10 ? 400_000_000 : 1_500_000_000
+                                    try await Task.sleep(nanoseconds: nanoseconds)
+                                }
+                            } catch {
+                                await channel.close()
+                                throw error
+                            }
+                            await channel.close()
+                        } catch {
+                            NSLog("AuthorityMlsPrewarm: automatic convergence will retry later: %@", String(describing: error))
+                        }
+                    }
+                }
+                await group.waitForAll()
+            }
+        }
+    }
+
     /// Cross-panel channels, or nil when the hierarchy fetch fails — so the roster can still load
     /// independently and only the cross-panel banner surfaces the failure (Android parity).
     private func fetchChannelsCatching() async -> [HierarchyChannel]? {
@@ -309,6 +434,7 @@ final class AuthorityChannelsListStore: ObservableObject {
     private struct CachedRow: Codable {
         let channel: HierarchyChannel
         let peer: HierarchyPeer
+        let scopeType: AuthorityMlsScopeType
         let preview: String?
         let previewAt: Date?
         let unread: Bool
@@ -330,6 +456,7 @@ final class AuthorityChannelsListStore: ObservableObject {
                 PeerRow(
                     channel: row.channel,
                     peer: row.peer,
+                    scopeType: row.scopeType,
                     preview: row.preview,
                     previewAt: row.previewAt,
                     unread: row.unread,
@@ -346,6 +473,7 @@ final class AuthorityChannelsListStore: ObservableObject {
                 CachedRow(
                     channel: row.channel,
                     peer: row.peer,
+                    scopeType: row.scopeType,
                     preview: row.preview,
                     previewAt: row.previewAt,
                     unread: row.unread
@@ -356,22 +484,19 @@ final class AuthorityChannelsListStore: ObservableObject {
         try? data.write(to: url, options: [.atomic, .completeFileProtection])
     }
 
-    /// Resolves a single channel + peer for a notification deep-link: finds the channel/peer, fetches
-    /// its key, and applies the same name resolution (roster → message senderName → email prettify)
-    /// the list uses, so the thread opens with a real title. nil if the peer is no longer reachable.
+    /// Resolves a channel + peer for a notification deep-link without requesting a retired shared
+    /// message key. nil if the peer is no longer reachable.
     static func resolveThreadTarget(
         channelId: String, peerUid: String
-    ) async -> (channel: HierarchyChannel, peer: HierarchyPeer, key: HierarchyChannelKey?)? {
+    ) async -> (channel: HierarchyChannel, peer: HierarchyPeer)? {
         let client = HierarchyMessagingClient()
         guard let channels = try? await client.fetchChannels(),
               let channel = channels.first(where: { $0.channelId == channelId }),
               let peer = channel.peers.first(where: { $0.uid == peerUid }) else { return nil }
-        let key = try? await client.fetchChannelKey(channelId: channelId)
-        let roster = await fetchRoster()
+        let roster = (try? await fetchRoster()) ?? []
         let enriched = enrich(peer, from: roster.first(where: { $0.uid == peerUid }))
-        let latest = await client.latestMessageWith(channelId: channelId, peerUid: peerUid, channelKey: key)
-        let named = withDisplayName(enriched, messageSenderName: latest?.peerName)
-        return (channel, named, key)
+        let named = withDisplayName(enriched, messageSenderName: nil)
+        return (channel, named)
     }
 
     /// Home/directory preview label (Android's buildChannelPreviewUi): a call log becomes
@@ -458,35 +583,46 @@ final class AuthorityChannelsListStore: ObservableObject {
         return words.isEmpty ? local : words.joined(separator: " ")
     }
 
-    /// Own-agency roster via the same `listAuthorityRoster` callable Android + web use.
-    private static func fetchRoster() async -> [RosterMember] {
-        guard let user = Auth.auth().currentUser, !user.isAnonymous else { return [] }
-        let doc = try? await Firestore.firestore().document("users/\(user.uid)").getDocument()
-        let slug = ((doc?.get("agencySlug") as? String) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !slug.isEmpty else { return [] }
+    /// Own-agency roster via the same `listAuthorityRoster` callable Android + web use. The callable
+    /// derives the canonical panel from the verified account, so panelId/agencyName-linked users do
+    /// not disappear merely because their local user document lacks an `agencySlug` field.
+    private static func fetchRosterCatching() async -> (members: [RosterMember], failed: Bool) {
         do {
-            let result = try await Functions.functions(region: InternetMessagingClient.region)
-                .httpsCallable("listAuthorityRoster")
-                .callAsync(["agencySlug": slug])
-            guard let data = result.data as? [String: Any],
-                  let members = data["members"] as? [[String: Any]] else { return [] }
-            return members.compactMap { m in
-                guard let uid = (m["uid"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !uid.isEmpty else { return nil }
-                let rawName = (m["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return RosterMember(
-                    uid: uid,
-                    // A login email would show as a raw address — prettify to a readable name.
-                    name: looksLikeEmail(rawName) ? prettifyEmail(rawName) : rawName,
-                    role: m["role"] as? String ?? "",
-                    phone: m["phone"] as? String ?? "",
-                    photoUrl: (m["photoUrl"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-                )
-            }
+            return (try await fetchRoster(), false)
         } catch {
             NSLog("AuthorityChannelsList: roster fetch failed: %@", String(describing: error))
-            return []
+            return ([], true)
+        }
+    }
+
+    private static func fetchRoster() async throws -> [RosterMember] {
+        guard let user = Auth.auth().currentUser, !user.isAnonymous else {
+            throw URLError(.userAuthenticationRequired)
+        }
+        let result = try await Functions.functions(region: InternetMessagingClient.region)
+            .httpsCallable("listAuthorityRoster")
+            .callAsync(["agencySlug": ""])
+        guard let data = result.data as? [String: Any],
+              let members = data["members"] as? [[String: Any]] else {
+            throw URLError(.cannotParseResponse)
+        }
+        return members.compactMap { m in
+            guard let uid = (m["uid"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !uid.isEmpty,
+                  let agencySlug = (m["agencySlug"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !agencySlug.isEmpty else { return nil }
+            let rawName = (m["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return RosterMember(
+                uid: uid,
+                // A login email would show as a raw address — prettify to a readable name.
+                name: looksLikeEmail(rawName) ? prettifyEmail(rawName) : rawName,
+                role: m["role"] as? String ?? "",
+                phone: m["phone"] as? String ?? "",
+                photoUrl: (m["photoUrl"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                agencySlug: agencySlug,
+                agencyName: (m["agencyName"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            )
         }
     }
 }
@@ -494,10 +630,17 @@ final class AuthorityChannelsListStore: ObservableObject {
 struct AuthorityChannelsListView: View {
     @StateObject private var store = AuthorityChannelsListStore()
     @State private var searchText = ""
-    @State private var addingUid: String?
-    @State private var openedSession: OpenedRosterSession?
+    @State private var openedAuthorityTarget: OpenedAuthorityTarget?
 
-    private struct OpenedRosterSession: Identifiable, Hashable { let id: UUID }
+    private struct OpenedAuthorityTarget: Identifiable, Hashable {
+        var id: String { agencySlug + ":" + uid }
+        let agencySlug: String
+        let agencyName: String?
+        let uid: String
+        let name: String
+        let role: String
+        let photoUrl: String?
+    }
 
     private var trimmedQuery: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -533,9 +676,16 @@ struct AuthorityChannelsListView: View {
         List {
             // Cross-panel channels failed to load but the own-agency roster did — warn + retry
             // (Android's CrossPanelWarningBanner), without hiding the roster that did load.
+            if store.rosterFailed && !store.isLoading {
+                Section {
+                    directoryWarningBanner(messageKey: "AUTHORITY_CHANNEL_ERROR")
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
             if store.crossPanelFailed && !store.isLoading {
                 Section {
-                    crossPanelWarningBanner
+                    directoryWarningBanner(messageKey: "AUTHORITY_PICKER_CROSS_PANEL_WARNING")
                 }
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
@@ -564,7 +714,7 @@ struct AuthorityChannelsListView: View {
                                 HierarchyThreadView(
                                     channel: row.channel,
                                     peer: row.peer,
-                                    preloadedKey: store.channelKey(for: row.channel.channelId)
+                                    scopeType: row.scopeType
                                 )
                             }) {
                                 peerRow(row)
@@ -572,8 +722,8 @@ struct AuthorityChannelsListView: View {
                         }
                     }
                 }
-                // Own-agency people (Android picker's management/field sections): tapping adds
-                // them as a normal 1:1 internet contact and opens the citizen chat, like Android.
+                // Own-agency people (Android picker's management/field sections): tapping opens the
+                // same MLS-v2 AuthorityChat surface with an agency-scoped conversation binding.
                 let management = filteredMembers(store.managementMembers)
                 if !management.isEmpty {
                     Section(header: Text("AUTHORITY_PICKER_MANAGEMENT")) {
@@ -595,8 +745,23 @@ struct AuthorityChannelsListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .searchable(text: $searchText)
-        .navigationDestination(item: $openedSession) { session in
-            SOSChatDetailScreen(sessionId: session.id)
+        .navigationDestination(item: $openedAuthorityTarget) { target in
+            let peer = HierarchyPeer(
+                uid: target.uid,
+                name: target.name,
+                role: target.role.isEmpty ? nil : target.role,
+                photoUrl: target.photoUrl,
+                agency: target.agencyName,
+                phone: nil
+            )
+            let channel = HierarchyChannel(
+                channelId: target.agencySlug,
+                peerPanelId: target.agencySlug,
+                peerPanelName: target.agencyName ?? target.agencySlug,
+                group: "agency",
+                peers: [peer]
+            )
+            HierarchyThreadView(channel: channel, peer: peer, scopeType: .agency)
         }
         .onAppear {
             store.start()
@@ -607,12 +772,12 @@ struct AuthorityChannelsListView: View {
 
     /// Android's CrossPanelWarningBanner: a danger-tinted strip with a Retry that reloads the
     /// hierarchy channels, shown when only the cross-panel fetch failed.
-    private var crossPanelWarningBanner: some View {
+    private func directoryWarningBanner(messageKey: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(Color.appDanger)
-            Text("AUTHORITY_PICKER_CROSS_PANEL_WARNING")
+            Text(LocalizedStringKey(messageKey))
                 .font(.caption)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -699,42 +864,26 @@ struct AuthorityChannelsListView: View {
                     }
                 }
                 Spacer()
-                if addingUid == member.uid {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.appTextSecondary)
-                }
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.appTextSecondary)
             }
             .padding(.vertical, 2)
         }
-        .disabled(addingUid != nil)
     }
 
-    /// Android's rosterClient.addContact: resolve the member's identity key, create/reuse the 1:1
-    /// internet contact (keeping the phone for the offline Bluetooth bootstrap), open the chat.
+    /// Same-agency contacts use the exact AuthorityChat MLS-v2 thread as hierarchy contacts. They
+    /// must never be downgraded into the legacy citizen/contact transport.
     private func openRosterChat(_ member: AuthorityChannelsListStore.RosterMember) {
-        guard addingUid == nil else { return }
-        addingUid = member.uid
-        Task { @MainActor in
-            defer { addingUid = nil }
-            guard let myUid = Auth.auth().currentUser?.uid else { return }
-            guard let identity = try? await InternetMessagingClient().lookupIdentityKey(uid: member.uid),
-                  !identity.publicKeyBase64.isEmpty else { return }
-            guard let contact = ContactStore.shared.applyInternetIdentity(
-                conversationSessionCode: InternetConversation.pairId(myUid, member.uid),
-                peerUid: member.uid,
-                peerPublicKey: identity.publicKeyBase64,
-                displayName: member.name.isEmpty ? nil : member.name,
-                peerPhotoUrl: member.photoUrl ?? (identity.photoUrl.isEmpty ? nil : identity.photoUrl),
-                peerPhone: member.phone.isEmpty ? nil : member.phone,
-                analyticsSource: "authority_roster"
-            ) else { return }
-            SOSChatStore.shared.ensureSession(id: contact.id, displayName: contact.name)
-            openedSession = OpenedRosterSession(id: contact.id)
-        }
+        guard !member.agencySlug.isEmpty else { return }
+        openedAuthorityTarget = OpenedAuthorityTarget(
+            agencySlug: member.agencySlug,
+            agencyName: member.agencyName,
+            uid: member.uid,
+            name: member.name,
+            role: member.role,
+            photoUrl: member.photoUrl
+        )
     }
 }
 
@@ -747,56 +896,67 @@ final class HierarchyThreadStore: ObservableObject {
     @Published private(set) var state: State = .loading
     @Published private(set) var messages: [HierarchyMessage] = []
     @Published private(set) var peerReadAt: Date?
+    @Published private(set) var peerDeliveredAt: Date?
     @Published private(set) var peerTyping = false
+    @Published private(set) var mlsPreparation: AuthorityMlsPreparation?
+    @Published private(set) var mlsSendReady = false
+    @Published private(set) var mlsSecurityError: String?
+    @Published private(set) var mlsApprovalUid: String?
+    @Published private(set) var mlsApprovalError = false
     /// A live Bluetooth link to this peer's hidden bridge contact (drives the badge + send routing).
     @Published private(set) var bluetoothLinked = false
     /// Bluetooth-carried voice notes/images by merged-row id ("bt:<uuid>") — rendered from local files.
     @Published private(set) var bridgeMedia: [String: SOSChatMessage] = [:]
 
-    private var cloudMessages: [HierarchyMessage] = []
+    private var mlsCloudMessages: [HierarchyMessage] = []
     // Exposed so the thread's call button can route an offline audio call over the live
     // Bluetooth bridge (Android's placeCall does the same with its bridge contact).
     private(set) var bridgeContact: ContactRecord?
     private var bridgeMonitorTask: Task<Void, Never>?
+    private var bridgeAutoLinkAttempted = false
+    private var processedBridgeRows = Set<UUID>()
+    private var pendingBluetoothEnvelopes: [String: String] = [:]
+    private var pendingBluetoothAttachments: [String: [ChannelAttachment]] = [:]
+    private var cloudRetryTask: Task<Void, Never>?
 
     private let client = HierarchyMessagingClient()
     private let channel: HierarchyChannel
     private let peer: HierarchyPeer
-    private var channelKey: HierarchyChannelKey?
-    private var registration: ListenerRegistration?
+    private let scopeType: AuthorityMlsScopeType
     private var cursorRegistration: ListenerRegistration?
+    private var deliveryCursorRegistration: ListenerRegistration?
     private var typingRegistration: ListenerRegistration?
     private var typingResetTask: Task<Void, Never>?
+    private var mlsTask: Task<Void, Never>?
+    private var mlsChannel: AuthorityMlsChatChannel?
+    private var preparationWakeConversationId: String?
     private var lastTypingSentAt = Date.distantPast
     private var hasStarted = false
 
     var myUid: String? { Auth.auth().currentUser?.uid }
 
-    /// Key + AAD for attachment decrypt in bubbles (available once the channel key loaded).
-    var mediaKey: SymmetricKey? { channelKey?.key }
-    var mediaAad: String? { channelKey?.channelId }
+    /// MLS-v2 attachment descriptors carry an independent per-file key; legacy channel-key blobs
+    /// intentionally fail closed.
+    var mediaKey: SymmetricKey? { nil }
+    var mediaAad: String? { nil }
 
-    init(channel: HierarchyChannel, peer: HierarchyPeer, preloadedKey: HierarchyChannelKey?) {
+    init(
+        channel: HierarchyChannel,
+        peer: HierarchyPeer,
+        scopeType: AuthorityMlsScopeType = .hierarchy
+    ) {
         self.channel = channel
         self.peer = peer
-        self.channelKey = preloadedKey
+        self.scopeType = scopeType
     }
 
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
         Task { await bootstrap() }
-        // Offline Bluetooth bridge: while the thread is open, silently try to gain a BT link for
-        // this peer's hidden bridge contact (number-keyed SPAKE2; the peer confirms once).
-        if let myUid {
-            let bridgeSession = InternetConversation.pairId(myUid, peer.uid)
-            let bridge = ContactStore.shared.contacts.first {
-                $0.sessionCode.caseInsensitiveCompare(bridgeSession) == .orderedSame
-            }
-            if let bridge, NearbyAutoLink.isEligible(bridge) {
-                NearbyAutoLink.shared.tryEstablish(contact: bridge)
-            }
-        }
+        mlsTask = Task { await bootstrapMls() }
+        // Nearby is transport-only: it carries the exact MLS ciphertext, never AuthorityChat
+        // plaintext or attachment keys outside the MLS application message.
         startBridgeMonitoring()
     }
 
@@ -819,89 +979,179 @@ final class HierarchyThreadStore: ObservableObject {
             $0.sessionCode.caseInsensitiveCompare(session) == .orderedSame
         }
         bridgeContact = contact
+        if let contact, contact.isAuthorityBridge == true {
+            AuthorityNearbyCallRouteRegistry.register(
+                sessionId: contact.id,
+                channel: channel,
+                peer: peer,
+                scopeType: scopeType
+            )
+        }
         guard let contact, !contact.aesKeyBase64.isEmpty else {
             if bluetoothLinked { bluetoothLinked = false }
+            if let contact, !bridgeAutoLinkAttempted, NearbyAutoLink.isEligible(contact) {
+                bridgeAutoLinkAttempted = true
+                NearbyAutoLink.shared.tryEstablish(contact: contact)
+            }
             publishMerged()
             return
         }
         let hostConnected = ContactBroadcastManager.shared.isSessionConnected(contact.id)
-        let centralReady = P2pGattChatManager.shared(sessionId: contact.id).isReady()
+        let central = P2pGattChatManager.shared(sessionId: contact.id)
+        central.start()
+        let centralReady = central.isReady()
         let linked = hostConnected || centralReady
         if linked != bluetoothLinked { bluetoothLinked = linked }
+        consumeNearbyMlsRows(contact)
+        if linked { drainBluetoothEnvelopes(contact) }
         publishMerged()
+    }
+
+    private func consumeNearbyMlsRows(_ contact: ContactRecord) {
+        guard let mlsChannel else { return }
+        var acceptedMachineRow = false
+        for row in SOSChatStore.shared.messages(for: contact.id)
+        where !row.isLocal && row.text.hasPrefix(AuthorityMlsOfflineEnvelopeCodec.prefix) &&
+            !processedBridgeRows.contains(row.id) {
+            guard let envelope = AuthorityMlsOfflineEnvelopeCodec.decode(row.text) else {
+                processedBridgeRows.insert(row.id)
+                continue
+            }
+            processedBridgeRows.insert(row.id)
+            acceptedMachineRow = true
+            Task { @MainActor [weak self] in
+                do {
+                    let expected = await mlsChannel.conversationId
+                    guard envelope.conversationId == expected else { return }
+                    try await mlsChannel.acceptOfflineEnvelope(row.text)
+                    SOSChatStore.shared.removeInboundAuthorityMlsTransportMessage(
+                        sessionId: contact.id,
+                        messageId: row.id
+                    )
+                } catch {
+                    self?.processedBridgeRows.remove(row.id)
+                    NSLog("HierarchyThreadStore: nearby MLS delivery rejected: %@", String(describing: error))
+                }
+            }
+        }
+        if acceptedMachineRow {
+            // The hidden transport row is not a citizen-chat message and must not leave an
+            // unread badge behind. AuthorityChat emits its own decrypted-message notification.
+            SOSChatStore.shared.markRemoteRead(sessionId: contact.id)
+        }
+    }
+
+    private func drainBluetoothEnvelopes(_ contact: ContactRecord) {
+        for (messageId, encoded) in pendingBluetoothEnvelopes {
+            let attachments = pendingBluetoothAttachments[messageId] ?? []
+            let cachedAttachments: [(ChannelAttachment, Data)] = attachments.compactMap { attachment in
+                guard let cipher = ChannelAttachments.cachedAuthorityMlsCiphertext(path: attachment.path),
+                      cipher.count <= ChannelAttachments.authorityMlsBluetoothMaxBytes else { return nil }
+                return (attachment, cipher)
+            }
+            // Never advertise the MLS descriptor until every referenced ciphertext blob is
+            // available to the peer. Oversized/missing files remain queued for the cloud retry.
+            guard cachedAttachments.count == attachments.count else { continue }
+            let transportId = "amls_\(messageId)"
+            guard let envelopeData = encoded.data(using: .utf8),
+                  envelopeData.count <= ChannelAttachments.authorityMlsBluetoothMaxBytes else { continue }
+            let sent: Bool
+            if ContactBroadcastManager.shared.isSessionConnected(contact.id) {
+                let blobsSent = cachedAttachments.enumerated().allSatisfy { index, item in
+                    ContactBroadcastManager.shared.sendFileMessage(
+                        data: item.1,
+                        displayName: item.0.path,
+                        mimeType: ChannelAttachments.authorityMlsBlobMime,
+                        originalSizeBytes: item.1.count,
+                        messageId: "amlsa_\(messageId.suffix(80))_\(index)",
+                        sessionId: contact.id
+                    )
+                }
+                sent = blobsSent && ContactBroadcastManager.shared.sendFileMessage(
+                    data: envelopeData,
+                    displayName: "authority-mls-envelope",
+                    mimeType: ChannelAttachments.authorityMlsEnvelopeMime,
+                    originalSizeBytes: envelopeData.count,
+                    messageId: transportId,
+                    sessionId: contact.id
+                )
+            } else {
+                let central = P2pGattChatManager.shared(sessionId: contact.id)
+                central.start()
+                // GATT owns an ordered in-memory queue while it scans/connects. Queue every opaque
+                // blob before the MLS envelope so the receiver can resolve attachment descriptors.
+                for (index, item) in cachedAttachments.enumerated() {
+                    _ = central.sendFileMessage(
+                        data: item.1,
+                        displayName: item.0.path,
+                        mimeType: ChannelAttachments.authorityMlsBlobMime,
+                        originalSizeBytes: item.1.count,
+                        messageId: "amlsa_\(messageId.suffix(80))_\(index)"
+                    )
+                }
+                _ = central.sendFileMessage(
+                    data: envelopeData,
+                    displayName: "authority-mls-envelope",
+                    mimeType: ChannelAttachments.authorityMlsEnvelopeMime,
+                    originalSizeBytes: envelopeData.count,
+                    messageId: transportId
+                )
+                sent = true
+            }
+            if sent {
+                pendingBluetoothEnvelopes.removeValue(forKey: messageId)
+                pendingBluetoothAttachments.removeValue(forKey: messageId)
+            }
+        }
     }
 
     /// One time-sorted timeline: cloud channel messages + Bluetooth-carried plain-text rows of
     /// the bridge contact. A backfilled doc carries the Bluetooth copy's uuid as clientUuid, so
     /// that bt: row is dropped and the message renders once (the copy the web also sees).
     @MainActor private func publishMerged() {
-        guard let myUid else { return }
-        let cloud = cloudMessages
-        var backfilled = Set<String>()
-        for message in cloud where !message.clientUuid.isEmpty {
-            backfilled.insert(message.clientUuid)
-        }
-        var bridgeRows: [HierarchyMessage] = []
-        var mediaById: [String: SOSChatMessage] = [:]
-        if let contact = bridgeContact, !contact.aesKeyBase64.isEmpty {
-            for row in SOSChatStore.shared.messages(for: contact.id) {
-                let uuid = row.transportMessageId ?? row.id.uuidString
-                guard !backfilled.contains(uuid) else { continue }
-                let rowText: String
-                switch row.kind {
-                case .text:
-                    let text = row.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty else { continue }
-                    // Machine payloads stay out of the timeline — except shared locations (CC_LOC)
-                    // and document previews (CC_FILE), which render as their own bubbles on both
-                    // transports (Android parity). Dropping CC_FILE here was why a document sent
-                    // over the bridge never appeared in the thread at all.
-                    if text.hasPrefix("CC_"),
-                       HierarchyThreadView.parseSharedLocation(text) == nil,
-                       P2pSharedTransferSupport.parseFilePreviewMessage(text) == nil { continue }
-                    rowText = text
-                case .audio where row.audioRelativePath != nil,
-                     .image where row.imageRelativePath != nil:
-                    mediaById["bt:" + uuid] = row
-                    rowText = ""
-                default:
-                    continue
-                }
-                bridgeRows.append(HierarchyMessage(
-                    id: "bt:" + uuid,
-                    senderUid: row.isLocal ? myUid : peer.uid,
-                    senderName: "",
-                    recipientUid: row.isLocal ? peer.uid : myUid,
-                    recipientName: "",
-                    text: rowText,
-                    at: row.timestamp,
-                    attachments: []
-                ))
-            }
-        }
-        if mediaById != bridgeMedia { bridgeMedia = mediaById }
-        let merged = (cloud + bridgeRows).sorted { $0.at < $1.at }
+        let cloud = Dictionary(grouping: mlsCloudMessages, by: \.id)
+            .compactMap { $0.value.last }
+        if !bridgeMedia.isEmpty { bridgeMedia = [:] }
+        let merged = cloud.sorted { $0.at < $1.at }
         if merged != messages { messages = merged }
     }
 
     func stop() {
         setTyping(false)
-        registration?.remove()
-        registration = nil
         cursorRegistration?.remove()
         cursorRegistration = nil
+        deliveryCursorRegistration?.remove()
+        deliveryCursorRegistration = nil
         typingRegistration?.remove()
         typingRegistration = nil
         bridgeMonitorTask?.cancel()
         bridgeMonitorTask = nil
+        if let bridgeContact {
+            P2pGattChatManager.sharedIfExists(sessionId: bridgeContact.id)?.stop()
+        }
+        cloudRetryTask?.cancel()
+        cloudRetryTask = nil
+        mlsTask?.cancel()
+        mlsTask = nil
+        mlsSendReady = false
+        if let mlsChannel { Task { await mlsChannel.close() } }
+        mlsChannel = nil
         hasStarted = false
     }
 
     /// The thread is on screen and messages are visible — advance my read cursor.
     func markRead() {
-        guard let myUid = Auth.auth().currentUser?.uid else { return }
+        guard let myUid = Auth.auth().currentUser?.uid,
+              let newestInbound = messages
+                .filter({ $0.senderUid == peer.uid })
+                .map(\.at)
+                .max() else { return }
         client.writeReadCursor(
-            channelId: channel.channelId, myUid: myUid, peerUid: peer.uid, at: Date()
+            channelId: channel.channelId,
+            myUid: myUid,
+            peerUid: peer.uid,
+            at: newestInbound,
+            scopeType: scopeType
         )
     }
 
@@ -912,7 +1162,13 @@ final class HierarchyThreadStore: ObservableObject {
         let now = Date()
         if now.timeIntervalSince(lastTypingSentAt) >= 3 {
             lastTypingSentAt = now
-            client.setTyping(channelId: channel.channelId, myUid: myUid, peerUid: peer.uid, typing: true)
+            client.setTyping(
+                channelId: channel.channelId,
+                myUid: myUid,
+                peerUid: peer.uid,
+                typing: true,
+                scopeType: scopeType
+            )
         }
         typingResetTask?.cancel()
         typingResetTask = Task { @MainActor [weak self] in
@@ -925,7 +1181,13 @@ final class HierarchyThreadStore: ObservableObject {
     func setTyping(_ typing: Bool) {
         guard let myUid = Auth.auth().currentUser?.uid else { return }
         if !typing { typingResetTask?.cancel() }
-        client.setTyping(channelId: channel.channelId, myUid: myUid, peerUid: peer.uid, typing: typing)
+        client.setTyping(
+            channelId: channel.channelId,
+            myUid: myUid,
+            peerUid: peer.uid,
+            typing: typing,
+            scopeType: scopeType
+        )
     }
 
     private func bootstrap() async {
@@ -933,95 +1195,240 @@ final class HierarchyThreadStore: ObservableObject {
             state = .error
             return
         }
-        do {
-            let key: HierarchyChannelKey
-            if let channelKey {
-                key = channelKey
-            } else {
-                key = try await client.fetchChannelKey(channelId: channel.channelId)
-                channelKey = key
+        cursorRegistration = client.listenReadCursor(
+            channelId: channel.channelId,
+            myUid: myUid,
+            peerUid: peer.uid,
+            scopeType: scopeType
+        ) { [weak self] at in
+            Task { @MainActor [weak self] in self?.peerReadAt = at }
+        }
+        deliveryCursorRegistration = client.listenDeliveredCursor(
+            channelId: channel.channelId,
+            myUid: myUid,
+            peerUid: peer.uid,
+            scopeType: scopeType
+        ) { [weak self] at in
+            Task { @MainActor [weak self] in self?.peerDeliveredAt = at }
+        }
+        typingRegistration = client.listenTyping(
+            channelId: channel.channelId,
+            myUid: myUid,
+            peerUid: peer.uid,
+            scopeType: scopeType
+        ) { [weak self] typing in
+            Task { @MainActor [weak self] in self?.peerTyping = typing }
+        }
+        state = .ready
+    }
+
+    private func bootstrapMls() async {
+        guard let myUid else { return }
+        var attempt = 0
+        while !Task.isCancelled {
+            do {
+                let mls: AuthorityMlsChatChannel
+                if let existing = mlsChannel {
+                    mls = existing
+                } else {
+                    mls = try await AuthorityMlsChatChannel.prepare(
+                        selfUid: myUid,
+                        peerUid: peer.uid,
+                        scopeType: scopeType,
+                        channelId: channel.channelId,
+                        deviceLabel: "iOS"
+                    )
+                    mlsChannel = mls
+                    let cached = try await mls.loadCachedMessages()
+                    mlsCloudMessages = cached.map(hierarchyMessage)
+                    publishMerged()
+                }
+                let preparation = try await mls.refreshPreparation()
+                mlsPreparation = preparation
+                let conversationId = await mls.conversationId
+                if !preparation.ready, preparationWakeConversationId != conversationId {
+                    preparationWakeConversationId = conversationId
+                    do {
+                        try await InternetMessagingClient()
+                            .requestAuthorityMlsPreparation(conversationId: conversationId)
+                    } catch {
+                        preparationWakeConversationId = nil
+                        NSLog("Authority MLS preparation wake failed: %@", String(describing: error))
+                    }
+                }
+                if preparation.ready {
+                    try await activateMls(mls)
+                    if try await mls.isReadyToSend() {
+                        mlsSendReady = true
+                        mlsSecurityError = nil
+                        return
+                    }
+                }
+                mlsSendReady = false
+                mlsSecurityError = "automatic-retry"
+            } catch {
+                mlsSendReady = false
+                mlsSecurityError = "automatic-retry"
+                NSLog("Authority MLS setup will retry automatically: %@", String(describing: error))
             }
-            cursorRegistration = client.listenReadCursor(
-                channelId: channel.channelId, myUid: myUid, peerUid: peer.uid
-            ) { [weak self] at in
-                Task { @MainActor [weak self] in self?.peerReadAt = at }
+            // Firestore directory convergence is normally sub-second. Avoid the former exponential
+            // backoff which could leave an otherwise healthy thread idle for up to 30 seconds.
+            let retryDelay: UInt64 = attempt < 10 ? 400_000_000 : 1_500_000_000
+            attempt += 1
+            try? await Task.sleep(nanoseconds: retryDelay)
+        }
+    }
+
+    func approveDeviceSet(uid: String, expectedFingerprint: String) {
+        guard let mlsChannel,
+              !uid.isEmpty,
+              !expectedFingerprint.isEmpty,
+              mlsApprovalUid == nil else { return }
+        mlsApprovalUid = uid
+        mlsApprovalError = false
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                mlsPreparation = try await mlsChannel.approveDeviceSet(
+                    uid: uid,
+                    expectedFingerprint: expectedFingerprint
+                )
+                mlsApprovalUid = nil
+            } catch {
+                NSLog("Authority MLS device-set approval failed closed: %@", String(describing: error))
+                mlsApprovalUid = nil
+                mlsApprovalError = true
             }
-            typingRegistration = client.listenTyping(
-                channelId: channel.channelId, myUid: myUid, peerUid: peer.uid
-            ) { [weak self] typing in
-                Task { @MainActor [weak self] in self?.peerTyping = typing }
-            }
-            registration = client.listenConversation(
-                channelKey: key,
-                myUid: myUid,
-                peerUid: peer.uid
-            ) { [weak self] messages in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.cloudMessages = messages
-                    self.publishMerged()
-                    if self.state != .ready { self.state = .ready }
+        }
+    }
+
+    private func activateMls(_ mls: AuthorityMlsChatChannel) async throws {
+        try await mls.activate(onMessage: { [weak self] message in
+            await MainActor.run {
+                guard let self else { return }
+                self.mlsCloudMessages.removeAll { $0.id == message.id }
+                self.mlsCloudMessages.append(self.hierarchyMessage(message))
+                self.publishMerged()
+                if message.senderUid == self.peer.uid {
+                    self.client.writeDeliveredCursor(
+                        channelId: self.channel.channelId,
+                        myUid: self.myUid ?? "",
+                        peerUid: self.peer.uid,
+                        at: Date(timeIntervalSince1970: TimeInterval(message.payload.sentAtMillis) / 1000),
+                        scopeType: self.scopeType
+                    )
                 }
             }
-            state = .ready
-            Task { [weak self] in await self?.backfillBluetoothMessages(key: key, myUid: myUid) }
-        } catch {
-            NSLog("HierarchyThreadStore: bootstrap failed: %@", String(describing: error))
-            state = .error
-        }
+        }, onSecurityError: { [weak self] error in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                NSLog("Authority MLS transport will reconnect automatically: %@", String(describing: error))
+                self.mlsSecurityError = "automatic-retry"
+                self.mlsPreparation = nil
+                self.mlsSendReady = false
+                self.mlsChannel = nil
+                self.mlsTask?.cancel()
+                self.mlsTask = Task { @MainActor [weak self] in
+                    await mls.close()
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await self?.bootstrapMls()
+                }
+            }
+        })
+    }
+
+    private func hierarchyMessage(_ message: AuthorityMlsChatMessage) -> HierarchyMessage {
+        HierarchyMessage(
+            id: message.id,
+            senderUid: message.senderUid,
+            senderName: message.payload.senderName,
+            recipientUid: message.payload.recipientUid,
+            recipientName: message.payload.recipientName,
+            text: message.payload.text,
+            at: Date(timeIntervalSince1970: TimeInterval(message.payload.sentAtMillis) / 1000),
+            attachments: message.payload.attachments
+        )
     }
 
     func send(_ text: String, attachments: [PendingChannelAttachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
-        // Offline Bluetooth path (Android parity): plain text and shared-location payloads ride the
-        // bridge as text, and a single voice/image/file attachment streams over the same citizen
-        // BLE stack. Cloud stays the transport of record whenever the internet can carry the
-        // message (web parity); Bluetooth takes over exactly when it can't and the bridge link is up.
-        if bluetoothLinked, !InternetChatTransport.shared.isAvailable(), let bridge = bridgeContact {
-            let isLocationPayload = HierarchyThreadView.parseSharedLocation(trimmed) != nil
-            if attachments.isEmpty, !trimmed.isEmpty, (!trimmed.hasPrefix("CC_") || isLocationPayload) {
-                AppAnalytics.messageSent(kind: "text", transport: "bluetooth", chat: "authority_channel")
-                sendViaBluetoothBridge(trimmed, bridge: bridge)
-                return
-            }
-            if trimmed.isEmpty, attachments.count == 1, let attachment = attachments.first {
-                if attachment.mime.hasPrefix("audio/") {
-                    AppAnalytics.messageSent(kind: "voice", transport: "bluetooth", chat: "authority_channel")
-                    sendVoiceViaBluetoothBridge(attachment, bridge: bridge)
-                } else if attachment.mime.hasPrefix("image/") {
-                    AppAnalytics.messageSent(kind: "image", transport: "bluetooth", chat: "authority_channel")
-                    sendImageViaBluetoothBridge(attachment, bridge: bridge)
-                } else {
-                    AppAnalytics.messageSent(kind: "file", transport: "bluetooth", chat: "authority_channel")
-                    sendFileViaBluetoothBridge(attachment, bridge: bridge)
-                }
-                return
-            }
+        guard let mlsChannel, mlsSendReady else {
+            mlsSecurityError = "Secure device setup is still completing."
+            return
         }
-        guard let channelKey else { return }
-        AppAnalytics.messageSent(
-            kind: attachments.isEmpty ? "text"
-                : attachments.contains(where: { $0.mime.hasPrefix("audio/") }) ? "voice"
-                : attachments.contains(where: { $0.mime.hasPrefix("image/") }) ? "image" : "file",
-            transport: "internet",
-            chat: "authority_channel"
-        )
         // Real name (profile → Firebase Auth displayName), so the peer sees us by name, not "iOS".
         let senderName = ProfileMetadataStore.preferredDisplayName() ?? "iOS"
         let peer = peer
         Task {
+            var preparedAttachments: [ChannelAttachment] = []
             do {
-                try await client.send(
-                    channelKey: channelKey,
-                    senderName: senderName,
+                let conversationId = await mlsChannel.conversationId
+                preparedAttachments = try await ChannelAttachments.prepareAuthorityMlsAttachments(
+                    conversationId: conversationId,
+                    pendings: attachments
+                )
+                let sent = try await mlsChannel.stage(AuthorityMlsMessagePayload(
                     recipientUid: peer.uid,
                     recipientName: peer.name,
+                    senderName: senderName,
                     text: trimmed,
-                    attachments: attachments
-                )
+                    sentAtMillis: Int64(Date().timeIntervalSince1970 * 1000),
+                    attachments: preparedAttachments,
+                    replyToId: nil
+                ))
+                mlsCloudMessages.removeAll { $0.id == sent.id }
+                mlsCloudMessages.append(hierarchyMessage(sent))
+                publishMerged()
+
+                let kind = attachments.isEmpty ? "text"
+                    : attachments.contains(where: { $0.mime.hasPrefix("audio/") }) ? "voice"
+                    : attachments.contains(where: { $0.mime.hasPrefix("image/") }) ? "image" : "file"
+                do {
+                    guard InternetChatTransport.shared.isAvailable() else {
+                        throw URLError(.notConnectedToInternet)
+                    }
+                    try await mlsChannel.publishPending()
+                    pendingBluetoothEnvelopes.removeValue(forKey: sent.id)
+                    pendingBluetoothAttachments.removeValue(forKey: sent.id)
+                    AppAnalytics.messageSent(kind: kind, transport: "internet", chat: "authority_channel")
+                } catch {
+                    let encoded = try await mlsChannel.offlineEnvelope(messageId: sent.id)
+                    pendingBluetoothEnvelopes[sent.id] = encoded
+                    if !preparedAttachments.isEmpty {
+                        pendingBluetoothAttachments[sent.id] = preparedAttachments
+                    }
+                    if let bridgeContact, bluetoothLinked {
+                        drainBluetoothEnvelopes(bridgeContact)
+                    }
+                    scheduleCloudRetry()
+                    AppAnalytics.messageSent(kind: kind, transport: "bluetooth_mls", chat: "authority_channel")
+                }
             } catch {
                 NSLog("HierarchyThreadStore: send failed: %@", String(describing: error))
+                mlsSecurityError = "automatic-retry"
+            }
+        }
+    }
+
+    private func scheduleCloudRetry() {
+        guard cloudRetryTask == nil else { return }
+        cloudRetryTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled {
+                guard self.mlsSendReady, InternetChatTransport.shared.isAvailable(),
+                      let mlsChannel = self.mlsChannel else {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    continue
+                }
+                do {
+                    try await mlsChannel.publishPending()
+                    self.pendingBluetoothEnvelopes.removeAll()
+                    self.pendingBluetoothAttachments.removeAll()
+                    self.cloudRetryTask = nil
+                    return
+                } catch {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                }
             }
         }
     }
@@ -1197,68 +1604,17 @@ final class HierarchyThreadStore: ObservableObject {
         publishMerged()
     }
 
-    /// Once online with the channel key, posts every Bluetooth-carried text of this thread that
-    /// never reached the channel (keyed by clientUuid) so the web dashboard catches up too.
-    private func backfillBluetoothMessages(key: HierarchyChannelKey, myUid: String) async {
-        // Give the conversation listener a moment to hydrate cloud rows, else we could re-post.
-        try? await Task.sleep(nanoseconds: 3_000_000_000)
-        guard InternetChatTransport.shared.isAvailable() else { return }
-        let session = InternetConversation.pairId(myUid, peer.uid)
-        guard let contact = ContactStore.shared.contacts.first(where: {
-            $0.sessionCode.caseInsensitiveCompare(session) == .orderedSame
-        }) else { return }
-        let cloudUuids = Set(cloudMessages.compactMap { $0.clientUuid.isEmpty ? nil : $0.clientUuid })
-        let senderName = ProfileMetadataStore.preferredDisplayName() ?? "iOS"
-        for row in SOSChatStore.shared.messages(for: contact.id) {
-            guard row.isLocal else { continue }
-            let uuid = row.transportMessageId ?? row.id.uuidString
-            guard !cloudUuids.contains(uuid) else { continue }
-            var text = ""
-            var attachments: [PendingChannelAttachment] = []
-            switch row.kind {
-            case .text:
-                text = row.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty, !text.hasPrefix("CC_") else { continue }
-            case .audio:
-                guard let name = row.audioRelativePath,
-                      let data = SOSChatStore.loadVoiceData(fileName: name) else { continue }
-                attachments = [PendingChannelAttachment(
-                    data: data,
-                    name: name,
-                    mime: name.lowercased().hasSuffix(".ogg") ? "audio/ogg" : "audio/mp4",
-                    durationSec: (row.audioDurationMillis).flatMap { $0 > 0 ? $0 / 1000 : nil }
-                )]
-            case .image:
-                guard let name = row.imageRelativePath,
-                      let data = SOSChatStore.loadImageData(fileName: name) else { continue }
-                attachments = [PendingChannelAttachment(
-                    data: data,
-                    name: name,
-                    mime: row.imageMimeType ?? "image/jpeg",
-                    width: row.imageWidth,
-                    height: row.imageHeight
-                )]
-            default:
-                continue
-            }
-            try? await client.send(
-                channelKey: key,
-                senderName: senderName,
-                recipientUid: peer.uid,
-                recipientName: peer.name,
-                text: text,
-                attachments: attachments,
-                clientUuid: uuid
-            )
-        }
-    }
 }
 
 struct HierarchyThreadView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     let channel: HierarchyChannel
     let peer: HierarchyPeer
+    let scopeType: AuthorityMlsScopeType
 
     @StateObject private var store: HierarchyThreadStore
+    @StateObject private var nearbyCallController: ChatPeerVoiceCallController
     @StateObject private var voiceRecorder = AuthorityVoiceRecorderModel()
     @StateObject private var locationCoordinator = ChatAttachmentLocationCoordinator()
     @State private var draft = ""
@@ -1269,12 +1625,25 @@ struct HierarchyThreadView: View {
     // screen, and how many arrived while the user was scrolled up (badge count).
     @State private var isAtTranscriptBottom = true
     @State private var seenMessageCount = 0
+    @State private var transcriptInitialized = false
+    @State private var screenVisible = false
+    @State private var suppressNearbyCallScreen = false
 
-    init(channel: HierarchyChannel, peer: HierarchyPeer, preloadedKey: HierarchyChannelKey?) {
+    init(
+        channel: HierarchyChannel,
+        peer: HierarchyPeer,
+        scopeType: AuthorityMlsScopeType = .hierarchy
+    ) {
         self.channel = channel
         self.peer = peer
+        self.scopeType = scopeType
         _store = StateObject(
-            wrappedValue: HierarchyThreadStore(channel: channel, peer: peer, preloadedKey: preloadedKey)
+            wrappedValue: HierarchyThreadStore(channel: channel, peer: peer, scopeType: scopeType)
+        )
+        let nearbySessionId = ContactStore.shared.contactForPeerUid(peer.uid)?.id
+            ?? BroadcastSessionId.fromRawIdentifier(peer.uid)
+        _nearbyCallController = StateObject(
+            wrappedValue: ChatPeerVoiceCallController(sessionId: nearbySessionId)
         )
     }
 
@@ -1317,15 +1686,11 @@ struct HierarchyThreadView: View {
                         .lineLimit(1)
                 }
             }
-            // SFU (Cloudflare Realtime) authority call — interoperable with the web dashboard and
-            // Android; hidden while its feature gate is off. The Bluetooth-bridge AUDIO call is
-            // SFU-independent though: sharing the gate meant iOS kurum users could place ZERO
-            // authority calls while the flag was off, even standing next to the peer with a live
-            // bridge link. Audio shows whenever either path can work; video is SFU-only.
-            if SfuCallConfig.enabled || bridgeAudioCallAvailable {
+            if mlsReady || store.bluetoothLinked {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 2) {
-                        if SfuCallConfig.enabled {
+                        // BLE/GATT carries audio only; video remains on the MLS-protected SFU.
+                        if SfuCallConfig.enabled, mlsReady {
                             Button {
                                 placeAuthorityCall(video: true)
                             } label: {
@@ -1342,15 +1707,47 @@ struct HierarchyThreadView: View {
             }
         }
         .onAppear {
+            screenVisible = true
             store.start()
-            store.markRead()
-            // Consume this thread's notifications on open — the fixed pre-route ids could never be
-            // swept, so banners for messages the user had already read stayed in the shade.
-            SOSNotificationCenter.clearMessageNotification(
-                route: .authorityThread(channelId: channel.channelId, peerUid: peer.uid)
+            nearbyCallController.updateContact(store.bridgeContact)
+            markReadIfVisible()
+        }
+        .onDisappear {
+            screenVisible = false
+            store.stop()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { markReadIfVisible() }
+        }
+        .onChange(of: store.bluetoothLinked) { _, _ in
+            nearbyCallController.updateContact(store.bridgeContact)
+        }
+        .onChange(of: nearbyCallController.phase) { _, phase in
+            switch phase {
+            case .idle, .ended, .failed:
+                suppressNearbyCallScreen = false
+            case .dialing, .ringing, .connecting, .active:
+                break
+            }
+        }
+        .fullScreenCover(isPresented: nearbyCallScreenBinding) {
+            ChatPeerVoiceOngoingCallScreen(
+                controller: nearbyCallController,
+                contactName: peer.name,
+                avatarImageRelativePath: nil,
+                avatarHue: AvatarGenerator.hue(for: nearbyCallController.sessionId),
+                initials: AvatarGenerator.initials(from: peer.name),
+                onReturnToChat: { suppressNearbyCallScreen = true }
             )
         }
-        .onDisappear { store.stop() }
+    }
+
+    private func markReadIfVisible() {
+        guard screenVisible, scenePhase == .active, transcriptInitialized, isAtTranscriptBottom else { return }
+        store.markRead()
+        SOSNotificationCenter.clearMessageNotification(
+            route: .authorityThread(channelId: channel.channelId, peerUid: peer.uid)
+        )
     }
 
     private var typingSubtitle: String {
@@ -1362,31 +1759,39 @@ struct HierarchyThreadView: View {
         return name.isEmpty ? NSLocalizedString("AUTHORITY_CHANNEL_ROW_LABEL", comment: "") : name
     }
 
-    /// Android's placeCall order: offline + live Bluetooth bridge → classic BT voice call to the
-    /// hidden bridge contact (the citizen GATT call stack, same call UI); anything else — video,
-    /// or an internet connection — goes over the SFU. Video needs the internet stacks.
-    private var bridgeAudioCallAvailable: Bool {
-        store.bluetoothLinked && store.bridgeContact?.aesKeyBase64.isEmpty == false
-    }
+    private var mlsReady: Bool { store.mlsSendReady }
 
     private func placeAuthorityCall(video: Bool) {
-        // Bridge audio wins when the internet is down — and it is the ONLY path while the SFU gate
-        // is off, so in that state it must not require the internet to be unreachable first.
         if !video,
-           bridgeAudioCallAvailable,
-           !SfuCallConfig.enabled || !InternetChatTransport.shared.isAvailable(),
-           let bridge = store.bridgeContact {
-            ChatPeerVoiceCallCoordinator.shared.placeCall(sessionId: bridge.id, contact: bridge, kind: .audio)
+           store.bluetoothLinked,
+           let contact = store.bridgeContact,
+           ChatPeerVoiceCallCoordinator.isCallEligibleContact(contact) {
+            nearbyCallController.updateContact(contact)
+            suppressNearbyCallScreen = false
+            nearbyCallController.toolbarPrimaryAction()
             return
         }
-        guard SfuCallConfig.enabled else { return }
+        guard SfuCallConfig.enabled, mlsReady else { return }
         placeSfuCall(video: video)
+    }
+
+    private var nearbyCallScreenBinding: Binding<Bool> {
+        Binding(
+            get: {
+                nearbyCallController.shouldPresentFullScreenExperience && !suppressNearbyCallScreen
+            },
+            set: { isPresented in
+                if !isPresented, nearbyCallController.shouldPresentFullScreenExperience {
+                    suppressNearbyCallScreen = true
+                }
+            }
+        )
     }
 
     private func placeSfuCall(video: Bool) {
         SfuAuthorityCallManager.shared.startOutgoing(
             channelId: channel.channelId,
-            kind: .hierarchy,
+            kind: scopeType == .agency ? .agency : .hierarchy,
             peerUid: peer.uid,
             peerName: peer.name,
             video: video
@@ -1395,6 +1800,50 @@ struct HierarchyThreadView: View {
 
     private var conversation: some View {
         VStack(spacing: 0) {
+            if !pendingDeviceSets.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("AUTHORITY_DEVICE_VERIFICATION_TITLE", systemImage: "exclamationmark.shield.fill")
+                        .font(.subheadline.weight(.semibold))
+                    Text("AUTHORITY_DEVICE_VERIFICATION_BODY")
+                        .font(.caption)
+                        .foregroundStyle(Color.appTextSecondary)
+                    ForEach(pendingDeviceSets, id: \.uid) { assessment in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(assessment.safetyNumber)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                            Button {
+                                store.approveDeviceSet(
+                                    uid: assessment.uid,
+                                    expectedFingerprint: assessment.fingerprint
+                                )
+                            } label: {
+                                if store.mlsApprovalUid == assessment.uid {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Text("AUTHORITY_DEVICE_VERIFICATION_APPROVE")
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(store.mlsApprovalUid != nil)
+                        }
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.appSurfaceElevated)
+                        )
+                    }
+                    if store.mlsApprovalError {
+                        Text("AUTHORITY_DEVICE_VERIFICATION_CHANGED")
+                            .font(.caption)
+                            .foregroundStyle(Color.appDanger)
+                    }
+                }
+                .padding(AppTheme.screenPadding)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.1))
+            }
             // Offline transport badge: the peer's hidden bridge contact has a live Bluetooth link.
             if store.bluetoothLinked {
                 HStack(spacing: 5) {
@@ -1411,14 +1860,6 @@ struct HierarchyThreadView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "lock.fill")
-                                .font(.caption2)
-                            Text("AUTHORITY_CHANNEL_E2EE_NOTICE")
-                                .font(.caption2)
-                        }
-                        .foregroundStyle(Color.appTextSecondary)
-                        .padding(.vertical, 4)
                         if store.messages.isEmpty {
                             Text("AUTHORITY_CHANNEL_EMPTY")
                                 .font(.subheadline)
@@ -1448,7 +1889,9 @@ struct HierarchyThreadView: View {
                             .id("authority-thread-bottom")
                             .onAppear {
                                 isAtTranscriptBottom = true
+                                transcriptInitialized = true
                                 seenMessageCount = store.messages.count
+                                markReadIfVisible()
                             }
                             .onDisappear { isAtTranscriptBottom = false }
                     }
@@ -1458,7 +1901,6 @@ struct HierarchyThreadView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: store.messages.last?.id) { _, lastId in
                     guard lastId != nil else { return }
-                    store.markRead()
                     // Android parity: only follow new messages while the user IS at the bottom;
                     // scrolled up, the floating button badges the arrivals instead.
                     guard isAtTranscriptBottom else { return }
@@ -1466,11 +1908,14 @@ struct HierarchyThreadView: View {
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo("authority-thread-bottom", anchor: .bottom)
                     }
+                    markReadIfVisible()
                 }
                 .onAppear {
                     if store.messages.last != nil {
                         proxy.scrollTo("authority-thread-bottom", anchor: .bottom)
                         seenMessageCount = store.messages.count
+                        transcriptInitialized = true
+                        markReadIfVisible()
                     }
                 }
                 .overlay(alignment: .bottom) {
@@ -1498,7 +1943,7 @@ struct HierarchyThreadView: View {
                         .foregroundStyle(Color.appPrimary)
                         .frame(width: 34, height: 38)
                 }
-                .disabled(voiceRecorder.isRecording)
+                .disabled(voiceRecorder.isRecording || !mlsReady)
 
                 Button {
                     showDocumentPicker = true
@@ -1508,7 +1953,7 @@ struct HierarchyThreadView: View {
                         .foregroundStyle(Color.appPrimary)
                         .frame(width: 30, height: 38)
                 }
-                .disabled(voiceRecorder.isRecording)
+                .disabled(voiceRecorder.isRecording || !mlsReady)
 
                 Button {
                     shareCurrentLocation()
@@ -1524,7 +1969,7 @@ struct HierarchyThreadView: View {
                             .frame(width: 30, height: 38)
                     }
                 }
-                .disabled(voiceRecorder.isRecording || isSharingLocation)
+                .disabled(voiceRecorder.isRecording || isSharingLocation || !mlsReady)
 
                 if voiceRecorder.isRecording {
                     HStack(spacing: 8) {
@@ -1580,6 +2025,7 @@ struct HierarchyThreadView: View {
                             .frame(width: 38, height: 38)
                             .background(Circle().fill(voiceRecorder.isRecording ? Color.appDanger : Color.appPrimary))
                     }
+                    .disabled(!mlsReady)
                 } else {
                     Button {
                         let text = draft
@@ -1593,13 +2039,14 @@ struct HierarchyThreadView: View {
                             .frame(width: 38, height: 38)
                             .background(Circle().fill(Color.appPrimary))
                     }
+                    .disabled(!mlsReady)
                 }
             }
             .padding(.horizontal, AppTheme.screenPadding)
             .padding(.vertical, 10)
         }
         .onChange(of: photoItem) { _, item in
-            guard let item else { return }
+            guard let item, mlsReady else { return }
             photoItem = nil
             Task {
                 guard let data = try? await item.loadTransferable(type: Data.self),
@@ -1610,7 +2057,7 @@ struct HierarchyThreadView: View {
             }
         }
         .fileImporter(isPresented: $showDocumentPicker, allowedContentTypes: [.item]) { result in
-            guard case .success(let url) = result else { return }
+            guard mlsReady, case .success(let url) = result else { return }
             // Security-scoped read off the main thread; same 25 MB cap as Android's channel wire.
             Task.detached(priority: .userInitiated) {
                 let scoped = url.startAccessingSecurityScopedResource()
@@ -1629,6 +2076,10 @@ struct HierarchyThreadView: View {
                 }
             }
         }
+    }
+
+    private var pendingDeviceSets: [AuthorityMlsTrustAssessment] {
+        store.mlsPreparation?.trust.filter { !$0.approved && !$0.fingerprint.isEmpty } ?? []
     }
 
     private func dateHeader(_ date: Date) -> some View {
@@ -1797,11 +2248,21 @@ struct HierarchyThreadView: View {
                         .font(.caption2)
                         .foregroundStyle(Color.appTextSecondary)
                     if isMine {
-                        // ✓ sent, ✓✓ read — driven by the peer's read cursor, like web/Android.
+                        // ✓ sent, gray ✓✓ decrypted by peer, blue ✓✓ read.
                         let read = store.peerReadAt.map { message.at <= $0 } ?? false
-                        Image(systemName: read ? "checkmark.circle.fill" : "checkmark")
+                        let delivered = store.peerDeliveredAt.map { message.at <= $0 } ?? false
+                        if read || delivered {
+                            HStack(spacing: -3) {
+                                Image(systemName: "checkmark")
+                                Image(systemName: "checkmark")
+                            }
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(read ? Color.appPrimary : Color.appTextSecondary)
+                        } else {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Color.appTextSecondary)
+                        }
                     }
                 }
             }

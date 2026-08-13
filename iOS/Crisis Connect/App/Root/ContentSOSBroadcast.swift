@@ -20,7 +20,22 @@ struct SOSBroadcastView: View {
     @State private var isArming = true
 
     var body: some View {
-        if isArming && !manager.isBroadcasting {
+        // Gate on `isEmergencyDeclared`, NOT `isBroadcasting`. `isBroadcasting` only tracks whether
+        // the BLE advert is currently on the air, and it goes false on a live SOS whenever the user
+        // turns Bluetooth off (SOSBroadcastManager:824), a GATT service fails to add (:831), an
+        // advert fails to start (:838), or the device cannot host a peripheral at all (:641 — which
+        // runs AFTER declareEmergency() at :631). Gating on it meant a victim who re-entered this
+        // screen during a live SOS was shown the COUNTDOWN again, and its cancel only dismisses the
+        // sheet — SOSBroadcastManager.stop() is reachable from the live screen alone. The cloud
+        // heartbeat, the contact location pushes and the Live Activity all kept running while the
+        // victim believed they had retracted the alarm.
+        //
+        // It also fixes the mirror-image bug: a chat session sets `isSessionActive` and can latch
+        // `isBroadcasting` true, which sent SOS straight to the live screen and fired the cloud
+        // report plus contact alerts with NO abort window. `isEmergencyDeclared` is set only by
+        // declareEmergency() (:650) and cleared only by stop() (:670) — it is the real "an SOS is
+        // live" flag.
+        if isArming && !manager.isEmergencyDeclared {
             SOSCountdownView(
                 onCancelled: onCancel,
                 onFired: { isArming = false }

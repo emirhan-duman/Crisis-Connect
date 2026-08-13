@@ -407,25 +407,21 @@ struct MessagesHomeView: View {
         .buttonStyle(.plain)
     }
 
-    /// Messaged kurum channel peers as normal-looking conversation rows (Android parity): peer
-    /// name, panel, decrypted last-message preview, timestamp; tap opens the thread directly.
-    /// Never-messaged peers stay in the full directory behind New Chat → Add from agency.
-    @ViewBuilder
-    /// Messaged kurum channel conversations, ready to interleave into the main sectioned list.
+    /// Messaged kurum channel conversations as normal-looking rows (Android parity): peer name,
+    /// panel, decrypted preview and timestamp. Never-messaged peers stay behind New Chat.
     private var messagedAuthorityRows: [AuthorityHomeRow] {
         guard showRescueTools else { return [] }
         let query = MessagesSessionListState.searchFold(
             searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         )
-        return authorityChannelRows.groups
-            .flatMap(\.rows)
+        return (authorityChannelRows.groups.flatMap(\.rows) + authorityChannelRows.agencyConversationRows)
             .filter { $0.previewAt != nil }
             .filter { row in
                 query.isEmpty
                     || MessagesSessionListState.searchFold(row.peer.name).contains(query)
                     || MessagesSessionListState.searchFold(row.preview ?? "").contains(query)
             }
-            .map { AuthorityHomeRow(row: $0, preloadedKey: authorityChannelRows.channelKey(for: $0.channel.channelId)) }
+            .map { AuthorityHomeRow(row: $0) }
     }
 
     private var messagesLoadingCard: some View {
@@ -761,11 +757,9 @@ private struct MessagesSessionListItem: Identifiable, Equatable {
     }
 }
 
-/// A messaged authority (kurum) channel conversation as a home-list row, carrying the preloaded
-/// channel key for a tap-through with no wait.
+/// A messaged authority (kurum) channel conversation as a home-list row.
 private struct AuthorityHomeRow: Identifiable {
     let row: AuthorityChannelsListStore.PeerRow
-    let preloadedKey: HierarchyChannelKey?
     var id: String { row.id }
 }
 
@@ -1099,7 +1093,7 @@ private struct MessagesSessionSectionCard: View {
                             HierarchyThreadView(
                                 channel: authority.row.channel,
                                 peer: authority.row.peer,
-                                preloadedKey: authority.preloadedKey
+                                scopeType: authority.row.scopeType
                             )
                         }) {
                             AuthorityHomeRowView(row: authority.row)

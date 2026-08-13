@@ -150,32 +150,17 @@ class HierarchyMessagingClient(
                         peerPanelId = obj.optString("peerPanelId"),
                         peerPanelName = obj.optString("peerPanelName"),
                         group = obj.optString("group"),
-                        peers = parsePeers(obj.optJSONArray("peers"))
+                        peers = parsePeers(obj.optJSONArray("peers"), base)
                     )
                 )
             }
         }.filter { it.channelId.isNotBlank() }
     }
 
-    /** Fetches (create-on-first-use) the shared key for [channelId]. Throws if not entitled. */
-    suspend fun fetchChannelKey(channelId: String): HierarchyChannelKey = withContext(Dispatchers.IO) {
-        val base = requireBaseUrl()
-        val token = idToken()
-        val url = base.newBuilder().addPathSegments(API_PATH).build()
-        val request = Request.Builder()
-            .url(url)
-            .header("Authorization", "Bearer $token")
-            .header("Content-Type", "application/json")
-            .post(JSONObject().put("channelId", channelId).toString().toRequestBody(jsonMediaType))
-            .build()
-        val bodyText = execute(request) ?: throw IOException("No hierarchy channel key returned.")
-        val obj = JSONObject(bodyText)
-        val keyBase64 = obj.optString("keyBase64").takeIf { it.isNotBlank() }
-            ?: throw IOException("No hierarchy channel key returned.")
-        HierarchyChannelKey(
-            keyId = obj.optString("keyId"),
-            key = Base64.decode(keyBase64, Base64.NO_WRAP),
-            channelId = channelId
+    /** Retired: server-issued shared keys violate the AuthorityChat MLS-only invariant. */
+    suspend fun fetchChannelKey(@Suppress("UNUSED_PARAMETER") channelId: String): HierarchyChannelKey {
+        throw SecurityException(
+            "Legacy shared-key hierarchy messaging is permanently disabled; use AuthorityChat MLS v2."
         )
     }
 
@@ -253,24 +238,60 @@ class HierarchyMessagingClient(
     private fun channel(channelId: String) =
         firestore.collection("hierarchyChannels").document(channelId).collection("secureMessages")
 
-    private fun readReceipts(channelId: String) =
-        firestore.collection("hierarchyChannels").document(channelId).collection("readReceipts")
+    private fun metadataRoot(channelId: String, scopeType: AuthorityMlsScopeType) =
+        if (scopeType == AuthorityMlsScopeType.AGENCY) {
+            firestore.collection("agencyPanels").document(channelId)
+        } else {
+            firestore.collection("hierarchyChannels").document(channelId)
+        }
 
-    private fun typingCol(channelId: String) =
-        firestore.collection("hierarchyChannels").document(channelId).collection("typing")
+    private fun readReceipts(channelId: String, scopeType: AuthorityMlsScopeType) =
+        metadataRoot(channelId, scopeType).collection("readReceipts")
+
+    private fun typingCol(channelId: String, scopeType: AuthorityMlsScopeType) =
+        metadataRoot(channelId, scopeType).collection("typing")
 
     // --- Read receipts (✓/✓✓) + typing, byte-compatible with the web (lib/messaging/receipts.ts,
     // typing.ts). Metadata only (uids + timestamps), so no encryption — a member only writes its own doc.
 
     /** Records that I've read [peerUid]'s messages up to [atMillis]. Doc id `me__peer`. Best-effort. */
-    fun writeReadCursor(channelId: String, myUid: String, peerUid: String, atMillis: Long) {
+    fun writeReadCursor(
+        channelId: String,
+        myUid: String,
+        peerUid: String,
+        atMillis: Long,
+        scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
+    ) {
         if (myUid.isBlank() || peerUid.isBlank() || atMillis <= 0L) return
         runCatching {
-            readReceipts(channelId).document("${myUid}__${peerUid}").set(
+            readReceipts(channelId, scopeType).document("${myUid}__${peerUid}").set(
                 hashMapOf(
                     "viewerUid" to myUid,
                     "partnerUid" to peerUid,
+                    "deliveredAt" to atMillis,
                     "at" to atMillis,
+                    "updatedAt" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+                ),
+                com.google.firebase.firestore.SetOptions.merge(),
+            )
+        }
+    }
+
+    /** Records that this client decrypted the peer's messages without claiming the thread was read. */
+    fun writeDeliveredCursor(
+        channelId: String,
+        myUid: String,
+        peerUid: String,
+        atMillis: Long,
+        scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
+    ) {
+        if (myUid.isBlank() || peerUid.isBlank() || atMillis <= 0L) return
+        runCatching {
+            readReceipts(channelId, scopeType).document("${myUid}__${peerUid}").set(
+                hashMapOf(
+                    "viewerUid" to myUid,
+                    "partnerUid" to peerUid,
+                    "deliveredAt" to atMillis,
                     "updatedAt" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
                 ),
                 com.google.firebase.firestore.SetOptions.merge(),
@@ -284,8 +305,9 @@ class HierarchyMessagingClient(
         myUid: String,
         peerUid: String,
         onAt: (Long) -> Unit,
+        scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
     ): ListenerRegistration =
-        readReceipts(channelId).document("${peerUid}__${myUid}").addSnapshotListener { snap, _ ->
+        readReceipts(channelId, scopeType).document("${peerUid}__${myUid}").addSnapshotListener { snap, _ ->
             onAt(
                 when (val at = snap?.get("at")) {
                     is Number -> at.toLong()
@@ -295,11 +317,35 @@ class HierarchyMessagingClient(
             )
         }
 
+    /** Subscribes to how far the peer client has decrypted MY messages. */
+    fun listenDeliveredCursor(
+        channelId: String,
+        myUid: String,
+        peerUid: String,
+        onAt: (Long) -> Unit,
+        scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
+    ): ListenerRegistration =
+        readReceipts(channelId, scopeType).document("${peerUid}__${myUid}").addSnapshotListener { snap, _ ->
+            onAt(
+                when (val at = snap?.get("deliveredAt")) {
+                    is Number -> at.toLong()
+                    is com.google.firebase.Timestamp -> at.toDate().time
+                    else -> 0L
+                },
+            )
+        }
+
     /** Writes my typing state toward [peerUid]. Doc id = my uid. Best-effort. */
-    fun setTyping(channelId: String, myUid: String, peerUid: String, typing: Boolean) {
+    fun setTyping(
+        channelId: String,
+        myUid: String,
+        peerUid: String,
+        typing: Boolean,
+        scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
+    ) {
         if (myUid.isBlank() || peerUid.isBlank()) return
         runCatching {
-            typingCol(channelId).document(myUid).set(
+            typingCol(channelId, scopeType).document(myUid).set(
                 hashMapOf(
                     "uid" to myUid,
                     "to" to peerUid,
@@ -317,15 +363,26 @@ class HierarchyMessagingClient(
         myUid: String,
         peerUid: String,
         onTyping: (Boolean) -> Unit,
+        scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
     ): ListenerRegistration =
-        typingCol(channelId).document(peerUid).addSnapshotListener { snap, _ ->
+        typingCol(channelId, scopeType).document(peerUid).addSnapshotListener { snap, _ ->
             onTyping(snap?.getBoolean("typing") == true && snap.getString("to").orEmpty() == myUid)
         }
 
-    /** Realtime subscription: decrypts each stored message with the channel key (AAD = channelId). */
-    fun listen(channelKey: HierarchyChannelKey, onMessages: (List<HierarchyMessage>) -> Unit): ListenerRegistration =
-        channel(channelKey.channelId)
-            .orderBy("createdAt", Query.Direction.ASCENDING)
+    /**
+     * Realtime subscription: decrypts each stored message with the channel key (AAD = channelId).
+     *
+     * DESCENDING + limit, reversed below — see the note on AgencyMessaging.listen. Ascending with a
+     * limit pins the window to the OLDEST MESSAGE_LIMIT documents, so a channel that outgrew the
+     * limit permanently stopped delivering anything new.
+     */
+    fun listen(channelKey: HierarchyChannelKey, onMessages: (List<HierarchyMessage>) -> Unit): ListenerRegistration {
+        val uid = auth.currentUser?.uid.orEmpty()
+        return channel(channelKey.channelId)
+            // Participant-scoped: this is the ACCESS control, not a display filter. Before it,
+            // every member of either panel could pull down and decrypt any other pair's thread.
+            .whereArrayContains("participants", uid)
+            .orderBy("createdAt", Query.Direction.DESCENDING)
             .limit(MESSAGE_LIMIT)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot == null) return@addSnapshotListener
@@ -357,8 +414,10 @@ class HierarchyMessagingClient(
                         clientUuid = doc.getString("clientUuid").orEmpty(),
                     )
                 }
-                onMessages(messages)
+                // Newest-first off the wire; callers render oldest-first.
+                onMessages(messages.reversed())
             }
+    }
 
     /** Encrypts and posts a message addressed to [recipientUid] within [channelKey]'s channel. */
     suspend fun send(
@@ -369,35 +428,10 @@ class HierarchyMessagingClient(
         text: String,
         attachments: List<PendingChannelAttachment> = emptyList(),
         clientUuid: String? = null,
-    ) = withContext(Dispatchers.IO) {
-        val uid = auth.currentUser?.uid ?: throw IllegalStateException("Not signed in.")
-        val nonce = Crypto.randomBytes(12)
-        val ciphertext = Crypto.aesGcmEncrypt(
-            key = channelKey.key,
-            nonce = nonce,
-            plaintext = text.toByteArray(StandardCharsets.UTF_8),
-            associatedData = channelKey.channelId.toByteArray(StandardCharsets.UTF_8)
-        )
-        // Encrypt + upload any blobs first; their descriptors ride in the doc (attMeta/attMetaNonce).
-        val attachmentFields = ChannelAttachments.buildAttachmentFields(
-            key = channelKey.key,
-            aadString = channelKey.channelId,
-            pendings = attachments,
-        )
-        val doc = hashMapOf<String, Any>(
-            "senderUid" to uid,
-            "senderName" to senderName,
-            "recipientUid" to recipientUid,
-            "recipientName" to recipientName,
-            "keyId" to channelKey.keyId,
-            "nonce" to Base64.encodeToString(nonce, Base64.NO_WRAP),
-            "ciphertext" to Base64.encodeToString(ciphertext, Base64.NO_WRAP),
-            "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
-        )
-        attachmentFields?.let { doc.putAll(it) }
-        clientUuid?.takeIf { it.isNotBlank() }?.let { doc["clientUuid"] = it }
-        channel(channelKey.channelId).add(doc).await()
-        Unit
+    ): Unit = withContext(Dispatchers.IO) {
+        @Suppress("UNUSED_VARIABLE")
+        val rejected = arrayOf(channelKey, senderName, recipientUid, recipientName, text, attachments, clientUuid)
+        throw SecurityException("Legacy shared-key hierarchy writes are disabled; use Authority MLS v2.")
     }
 
     private fun decrypt(channelKey: HierarchyChannelKey, nonceBase64: String, ciphertextBase64: String): String {
@@ -410,7 +444,7 @@ class HierarchyMessagingClient(
         return String(plaintext, StandardCharsets.UTF_8)
     }
 
-    private fun parsePeers(array: JSONArray?): List<HierarchyPeer> {
+    private fun parsePeers(array: JSONArray?, baseUrl: HttpUrl): List<HierarchyPeer> {
         if (array == null) return emptyList()
         return buildList {
             for (i in 0 until array.length()) {
@@ -421,13 +455,27 @@ class HierarchyMessagingClient(
                         uid = uid,
                         name = obj.optString("name").takeIf { it.isNotBlank() } ?: uid,
                         role = obj.optString("role").takeIf { it.isNotBlank() },
-                        photoUrl = obj.optString("photoUrl").takeIf { it.isNotBlank() },
+                        photoUrl = normalizeRemotePhotoUrl(obj.optString("photoUrl"), baseUrl),
                         agency = obj.optString("agency").takeIf { it.isNotBlank() },
                         phone = obj.optString("phone").takeIf { it.isNotBlank() }
                     )
                 )
             }
         }
+    }
+
+    /**
+     * Directory data may contain a canonical HTTPS download URL or a same-origin relative path.
+     * Resolve relative paths against the authenticated dashboard host and reject every other scheme
+     * so Coil never interprets server-provided avatar text as a local file/content URI.
+     */
+    private fun normalizeRemotePhotoUrl(rawValue: String, baseUrl: HttpUrl): String? {
+        val value = rawValue.trim().takeIf { it.isNotEmpty() } ?: return null
+        value.toHttpUrlOrNull()?.let { absolute ->
+            return absolute.takeIf { it.isHttps }?.toString()
+        }
+        if (!value.startsWith('/')) return null
+        return baseUrl.resolve(value)?.takeIf { it.isHttps }?.toString()
     }
 
     private suspend fun idToken(): String {

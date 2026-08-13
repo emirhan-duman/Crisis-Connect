@@ -20,6 +20,13 @@ import UIKit
 import UserNotifications
 
 enum FirebaseRuntime {
+    static func ensureConfiguredForTests() {
+        guard PlatformRuntime.isRunningTests, FirebaseApp.app() == nil else { return }
+        // Host-app unit tests still instantiate views/services with lazy Auth defaults. Configure
+        // only the core app here; App Check, analytics and crash reporting stay disabled in tests.
+        FirebaseApp.configure()
+    }
+
     static func ensureConfigured() {
         guard !PlatformRuntime.isRunningTests else { return }
         guard FirebaseApp.app() == nil else { return }
@@ -61,6 +68,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         CrisisLinkBackgroundRefreshManager.shared.register()
         CertificateRenewalBackgroundManager.shared.register()
         SosFollowUpBackgroundManager.shared.register()
+        ResourceAlertWakeBackgroundManager.shared.register()
         if PlatformRuntime.supportsRescueRuntime && shouldBootstrapBluetoothRuntimesEarly(launchOptions: launchOptions) {
             _ = RescueClientManager.shared
             _ = GattMeshManager.shared
@@ -75,6 +83,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         CrisisLinkBackgroundRefreshManager.shared.scheduleIfNeeded()
         CertificateRenewalBackgroundManager.shared.scheduleIfNeeded()
         SosFollowUpBackgroundManager.shared.scheduleIfNeeded()
+        ResourceAlertWakeBackgroundManager.shared.scheduleIfNeeded()
         return true
     }
 
@@ -86,16 +95,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         handleIncomingURL(url)
     }
 
-    // NOTE: FirebaseAuth's native phone-auth plumbing (setAPNSToken / canHandleNotification) is
-    // deliberately NOT wired here. Auth's internal phone managers never initialize on current
-    // iOS + SDK combinations, and those entry points force-unwrap that state (launch crashes).
-    // Phone verification rides the backend's Twilio OTP callables instead — no client plumbing.
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         guard !PlatformRuntime.isRunningTests else { return }
-        // FCM exchanges the APNs token for the FCM token it hands to the backend registry.
+        FirebaseRuntime.ensureConfigured()
+        // FCM exchanges the APNs token for the messaging token it hands to our backend. Firebase
+        // Auth receives the same token through its app-delegate proxy while swizzling is enabled.
+        // Do not also call Auth.setAPNSToken here: FirebaseAuth 12.7 can receive this callback
+        // before its phone-auth token manager exists and force-unwrap nil on iPadOS 27.
         Messaging.messaging().apnsToken = deviceToken
     }
 
@@ -118,7 +127,26 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             return
         }
         FirebaseRuntime.ensureConfigured()
+        // Firebase Auth's app-delegate proxy handles its silent verification notification while
+        // method swizzling is enabled. Calling canHandleNotification manually is only required
+        // when that proxy is disabled and hits the same uninitialized-manager crash as above.
         Task {
+            let resourceWake = await ResourceAlertWakeClient.shared.handleRemotePush(userInfo: userInfo)
+            switch resourceWake {
+            case .acknowledged:
+                completionHandler(.newData)
+                return
+            case .queued:
+                // The content-free receipt is durably stored and a network-gated BG task is armed.
+                // Report new local data so iOS does not penalize a healthy offline recovery path.
+                completionHandler(.newData)
+                return
+            case .failed:
+                completionHandler(.failed)
+                return
+            case .notResourceWake:
+                break
+            }
             let filedNewMessage = await InternetMessageReceiver.shared.handleRemotePush(userInfo: userInfo)
             completionHandler(filedNewMessage ? .newData : .noData)
         }
@@ -264,6 +292,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         Task { await ProfilePhotoUploader.attemptPendingUpload() }
         // Silent role-certificate renewal ahead of expiry (Android's CertificateRenewalWorker).
         Task { await SecurityRepository.shared.renewCertificateIfExpiringSoon() }
+        Task { await ResourceAlertWakeClient.shared.drainPending() }
         SfuAuthorityCallReceiver.start()
         RescueClientManager.shared.bootstrapRuntime()
         if !AppStoreScreenshotSupport.isAnySceneEnabled {
@@ -273,6 +302,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         OfflineMapBackgroundManager.shared.scheduleIfNeeded()
         CrisisLinkBackgroundRefreshManager.shared.scheduleIfNeeded()
         CertificateRenewalBackgroundManager.shared.scheduleIfNeeded()
+        ResourceAlertWakeBackgroundManager.shared.scheduleIfNeeded()
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
@@ -282,6 +312,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         CrisisLinkBackgroundRefreshManager.shared.scheduleIfNeeded()
         CertificateRenewalBackgroundManager.shared.scheduleIfNeeded()
         SosFollowUpBackgroundManager.shared.scheduleIfNeeded()
+        ResourceAlertWakeBackgroundManager.shared.scheduleIfNeeded()
     }
 }
 
@@ -293,6 +324,7 @@ struct Crisis_ConnectApp: App {
 
     init() {
         if PlatformRuntime.isRunningTests {
+            FirebaseRuntime.ensureConfiguredForTests()
             Self.applyUITestLaunchOverrides()
         }
         Self.configureSystemAppearance()

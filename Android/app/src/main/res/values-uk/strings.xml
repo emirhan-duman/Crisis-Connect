@@ -1778,4 +1778,18 @@ Android: %3$s</string>
     <string name="rescue_remote_signals_empty_title">Все спокійно</string>
     <string name="rescue_remote_hero_count">Активних сигналів: %1$d</string>
     <string name="rescue_remote_signals_subtitle">Прямий потік з панелі відомства</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">Видалити обліковий запис і дані</string>
+    <string name="profile_delete_account_progress">Видалення…</string>
+    <string name="profile_delete_account_dialog_title">Видалити обліковий запис назавжди?</string>
+    <string name="profile_delete_account_dialog_body">Цю дію неможливо скасувати. Буде видалено ваш обліковий запис, профіль, відповідності в каталозі контактів, ключі шифрування, записи про сповіщення та історію чатів на цьому пристрої. Надіслані вами сигнали SOS зберігаються як рятувальний запис, відокремлено від вашої особи.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">Введіть %1$s для підтвердження.</string>
+    <string name="profile_delete_account_confirm_word">ВИДАЛИТИ</string>
+    <string name="profile_delete_account_dialog_confirm">Видалити назавжди</string>
+    <string name="profile_delete_account_success">Ваш обліковий запис і дані видалено.</string>
+    <string name="profile_delete_account_error">Не вдалося завершити видалення. Перевірте з’єднання й спробуйте знову.</string>
+    <string name="profile_delete_account_error_verification">Не вдалося підтвердити видалення на цьому пристрої. Перевірте з’єднання й спробуйте знову.</string>
+    <string name="profile_delete_account_error_signed_out">Щоб видалити обліковий запис, увійдіть у нього.</string>
+    <string name="profile_delete_account_reauth_needed">З міркувань безпеки перед видаленням потрібно підтвердити вашу особу. Вийдіть, увійдіть знову та повторіть спробу.</string>
 </resources>

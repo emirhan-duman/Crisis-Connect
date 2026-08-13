@@ -46,6 +46,8 @@ import com.auralis.crisisconnect.data.voiceMessageFileName
 import com.auralis.crisisconnect.data.PREFERRED_TRANSPORT_BLE_GATT
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.getSavedUserName
+import com.auralis.crisisconnect.messaging.AuthorityMlsOfflineEnvelopeCodec
+import com.auralis.crisisconnect.messaging.ChannelAttachments
 import com.auralis.crisisconnect.security.AesCipherHelper
 import com.auralis.crisisconnect.security.BleChunkReceiver
 import com.auralis.crisisconnect.service.p2p.call.P2pCallController
@@ -475,6 +477,33 @@ class P2pGattChatManager(
             kind = P2pBleProtocol.CHAT_KIND_TEXT,
             messageId = message.messageUuid,
             text = messageText,
+            displayName = null,
+            mimeType = null,
+            durationMillis = null,
+            width = null,
+            height = null,
+            originalSizeBytes = null,
+            totalBytes = null,
+            totalChunks = null,
+            sha256 = null,
+            chunkIndex = null,
+            chunkBytes = null
+        ) ?: return false
+        return writePacket(packet)
+    }
+
+    /**
+     * Sends an application-owned machine envelope without inserting a citizen-chat row locally.
+     * The receiver still persists the opaque value, allowing AuthorityChat to consume it after a
+     * process restart. Size is bounded by the authenticated P2P packet limit in buildTransportPacket.
+     */
+    suspend fun sendOpaqueText(contact: Contact, messageId: String, text: String): Boolean {
+        if (!shouldUseBleGatt(contact) || messageId.isBlank() || text.isBlank()) return false
+        val packet = buildTransportPacket(
+            contact = contact,
+            kind = P2pBleProtocol.CHAT_KIND_TEXT,
+            messageId = messageId,
+            text = text,
             displayName = null,
             mimeType = null,
             durationMillis = null,
@@ -1691,6 +1720,32 @@ class P2pGattChatManager(
         senderName: String?
     ) {
         val fileBytes = transfer.composeBytes() ?: return
+        if (transfer.mimeType == ChannelAttachments.AUTHORITY_MLS_ENVELOPE_MIME) {
+            val encoded = fileBytes.toString(StandardCharsets.UTF_8)
+            if (!encoded.toByteArray(StandardCharsets.UTF_8).contentEquals(fileBytes) ||
+                AuthorityMlsOfflineEnvelopeCodec.decode(encoded) == null) return
+            saveRemoteMessage(
+                context = appContext,
+                sessionCode = contact.sessionCode,
+                uuid = transfer.messageId,
+                text = encoded,
+                senderDisplayName = senderName ?: authenticatedName,
+                senderAddress = activeDevice?.address,
+            )
+            incomingFileTransfers.remove(transfer.transferId)
+            persistRuntimeMetadata(senderName ?: authenticatedName ?: contact.name)
+            return
+        }
+        if (transfer.mimeType == ChannelAttachments.AUTHORITY_MLS_BLOB_MIME) {
+            if (!ChannelAttachments.cacheAuthorityMlsCiphertext(
+                    appContext,
+                    transfer.displayName,
+                    fileBytes,
+                )) return
+            incomingFileTransfers.remove(transfer.transferId)
+            persistRuntimeMetadata(senderName ?: authenticatedName ?: contact.name)
+            return
+        }
         persistSharedDocumentLocalCopy(
             context = appContext,
             uuid = transfer.messageId,

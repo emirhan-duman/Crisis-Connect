@@ -1758,4 +1758,18 @@
     <string name="rescue_remote_signals_empty_title">すべて平穏</string>
     <string name="rescue_remote_hero_count">アクティブなシグナル：%1$d件</string>
     <string name="rescue_remote_signals_subtitle">所属機関パネルのライブフィード</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">アカウントとデータを削除</string>
+    <string name="profile_delete_account_progress">削除中…</string>
+    <string name="profile_delete_account_dialog_title">アカウントを完全に削除しますか？</string>
+    <string name="profile_delete_account_dialog_body">この操作は取り消せません。アカウント、プロフィール、連絡先ディレクトリの一致情報、暗号鍵、通知記録、この端末のチャット履歴が削除されます。送信した緊急シグナルは、本人との関連付けを解除した上で救助記録として保存されます。</string>
+    <string name="profile_delete_account_dialog_confirm_hint">確認のため %1$s と入力してください。</string>
+    <string name="profile_delete_account_confirm_word">削除</string>
+    <string name="profile_delete_account_dialog_confirm">完全に削除</string>
+    <string name="profile_delete_account_success">アカウントとデータを削除しました。</string>
+    <string name="profile_delete_account_error">削除を完了できませんでした。接続を確認してもう一度お試しください。</string>
+    <string name="profile_delete_account_error_verification">この端末で削除を検証できませんでした。接続を確認してもう一度お試しください。</string>
+    <string name="profile_delete_account_error_signed_out">アカウントを削除するにはログインが必要です。</string>
+    <string name="profile_delete_account_reauth_needed">安全のため、削除の前にご本人であることを確認する必要があります。一度ログアウトして再度ログインし、もう一度お試しください。</string>
 </resources>

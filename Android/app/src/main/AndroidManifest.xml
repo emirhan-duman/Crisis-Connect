@@ -62,6 +62,7 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
@@ -94,6 +95,13 @@
         <meta-data
             android:name="com.google.android.gms.identity.client.client_id"
             android:value="${googleWebClientId}" />
+        <!-- Used when FCM renders a notification payload before app code gets control. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/dcs_logo_orange" />
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="ocr" />
@@ -121,6 +129,10 @@
             android:name=".service.OfflineDownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service
+            android:name=".service.BreadcrumbTrailService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
         <service
             android:name=".messaging.CrisisConnectMessagingService"
             android:exported="false">

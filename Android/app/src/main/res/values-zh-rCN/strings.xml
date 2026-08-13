@@ -1775,4 +1775,18 @@ Android：%3$s</string>
     <string name="rescue_remote_signals_empty_title">一切平静</string>
     <string name="rescue_remote_hero_count">%1$d个活跃信号</string>
     <string name="rescue_remote_signals_subtitle">来自您机构面板的实时信息</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">删除账号和数据</string>
+    <string name="profile_delete_account_progress">正在删除…</string>
+    <string name="profile_delete_account_dialog_title">永久删除你的账号？</string>
+    <string name="profile_delete_account_dialog_body">此操作无法撤销。你的账号、个人资料、通讯录目录匹配、加密密钥、通知记录以及本设备上的聊天记录将被删除。你发送的紧急信号作为救援记录保留，并与你的身份分离。</string>
+    <string name="profile_delete_account_dialog_confirm_hint">输入 %1$s 以确认。</string>
+    <string name="profile_delete_account_confirm_word">删除</string>
+    <string name="profile_delete_account_dialog_confirm">永久删除</string>
+    <string name="profile_delete_account_success">你的账号和数据已删除。</string>
+    <string name="profile_delete_account_error">删除未能完成。请检查网络连接后重试。</string>
+    <string name="profile_delete_account_error_verification">无法在此设备上验证删除。请检查网络连接后重试。</string>
+    <string name="profile_delete_account_error_signed_out">需要登录后才能删除账号。</string>
+    <string name="profile_delete_account_reauth_needed">为保障安全，删除前需要确认是你本人。请退出登录后重新登录，然后再试一次。</string>
 </resources>

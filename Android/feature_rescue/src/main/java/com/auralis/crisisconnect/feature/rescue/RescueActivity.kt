@@ -26,6 +26,7 @@ import com.auralis.crisisconnect.getSavedLanguageSync
 import com.auralis.crisisconnect.getSavedThemeOption
 import com.auralis.crisisconnect.getSavedThemeOptionSync
 import com.auralis.crisisconnect.navigation.MainActivityRouteLauncher
+import com.auralis.crisisconnect.messaging.AuthorityRosterMember
 import com.auralis.crisisconnect.screens.Chat.InternetCallOverlayHost
 import com.auralis.crisisconnect.screens.Chat.MeshChatScreen
 import com.auralis.crisisconnect.screens.authority.AuthorityMessagingScreen
@@ -200,7 +201,7 @@ class RescueActivity : ComponentActivity() {
                                 // online and falls back to an offline number-keyed Bluetooth link.
                                 AuthorityRosterScreen(
                                     onBack = { if (!navController.navigateUp()) finish() },
-                                    onOpenConversation = ::openConversation
+                                    onOpenConversation = ::openAuthorityConversation
                                 )
                             }
                             composable(ROUTE_REMOTE_SIGNALS) {
@@ -236,6 +237,18 @@ class RescueActivity : ComponentActivity() {
 
     private fun openConversation(sessionCode: String) {
         MainActivityRouteLauncher.launchConversation(this, sessionCode)
+        finish()
+    }
+
+    private fun openAuthorityConversation(member: AuthorityRosterMember) {
+        MainActivityRouteLauncher.launchAuthorityConversation(
+            context = this,
+            channelId = member.agencySlug,
+            peerUid = member.uid,
+            title = member.name,
+            agency = member.agencySlug,
+            role = member.role,
+        )
         finish()
     }
 

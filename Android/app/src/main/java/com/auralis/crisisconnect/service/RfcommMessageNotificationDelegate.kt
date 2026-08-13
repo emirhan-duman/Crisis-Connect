@@ -40,6 +40,7 @@ internal class RfcommMessageNotificationDelegate(
         messageType: MessageType,
         body: String?
     ) {
+        if (body?.trimStart()?.startsWith(AUTHORITY_MLS_PREFIX) == true) return
         if (ActiveChatTracker.isSessionActive(sessionCode)) {
             return
         }
@@ -318,5 +319,6 @@ internal class RfcommMessageNotificationDelegate(
         private const val MESSAGING_STYLE_HISTORY_LIMIT = 5
         private const val CHAT_LOCATION_PREFIX = "CC_LOC:"
         private const val CHAT_FILE_PREFIX = "CC_FILE:"
+        private const val AUTHORITY_MLS_PREFIX = "CC_AMLS2:"
     }
 }

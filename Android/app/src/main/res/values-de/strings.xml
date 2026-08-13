@@ -1776,4 +1776,18 @@ Datum: %4$s</string>
     <string name="rescue_remote_signals_empty_title">Alles ruhig</string>
     <string name="rescue_remote_hero_count">%1$d aktive Signale</string>
     <string name="rescue_remote_signals_subtitle">Live-Feed aus Ihrem Behördenpanel</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">Konto und Daten löschen</string>
+    <string name="profile_delete_account_progress">Wird gelöscht…</string>
+    <string name="profile_delete_account_dialog_title">Konto endgültig löschen?</string>
+    <string name="profile_delete_account_dialog_body">Dies kann nicht widerrufen werden. Ihr Konto, Profil, Ihre Verzeichnistreffer, Verschlüsselungsschlüssel, Benachrichtigungsdaten und der Chatverlauf auf diesem Gerät werden gelöscht. Von Ihnen gesendete Notsignale bleiben als Rettungsnachweis erhalten, getrennt von Ihrer Identität.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">Geben Sie %1$s ein, um zu bestätigen.</string>
+    <string name="profile_delete_account_confirm_word">LÖSCHEN</string>
+    <string name="profile_delete_account_dialog_confirm">Endgültig löschen</string>
+    <string name="profile_delete_account_success">Ihr Konto und Ihre Daten wurden gelöscht.</string>
+    <string name="profile_delete_account_error">Löschen konnte nicht abgeschlossen werden. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut.</string>
+    <string name="profile_delete_account_error_verification">Das Löschen konnte auf diesem Gerät nicht bestätigt werden. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut.</string>
+    <string name="profile_delete_account_error_signed_out">Sie müssen angemeldet sein, um Ihr Konto zu löschen.</string>
+    <string name="profile_delete_account_reauth_needed">Aus Sicherheitsgründen müssen wir vor dem Löschen bestätigen, dass Sie es sind. Melden Sie sich ab, erneut an und versuchen Sie es dann noch einmal.</string>
 </resources>

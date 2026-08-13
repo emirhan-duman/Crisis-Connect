@@ -66,6 +66,8 @@ import com.auralis.crisisconnect.data.voiceMessageFileName
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.data.local.ContactAvatarStorage
 import com.auralis.crisisconnect.getSavedUserName
+import com.auralis.crisisconnect.messaging.AuthorityMlsOfflineEnvelopeCodec
+import com.auralis.crisisconnect.messaging.ChannelAttachments
 import com.auralis.crisisconnect.security.AesCipherHelper
 import com.auralis.crisisconnect.security.BleChunkReceiver
 import com.auralis.crisisconnect.service.p2p.call.P2pCallController
@@ -1413,6 +1415,30 @@ class P2pGattServerService : Service() {
         displayName: String
     ) {
         val fileBytes = transfer.composeBytes() ?: return
+        if (transfer.mimeType == ChannelAttachments.AUTHORITY_MLS_ENVELOPE_MIME) {
+            val encoded = fileBytes.toString(StandardCharsets.UTF_8)
+            if (!encoded.toByteArray(StandardCharsets.UTF_8).contentEquals(fileBytes) ||
+                AuthorityMlsOfflineEnvelopeCodec.decode(encoded) == null) return
+            saveRemoteMessage(
+                context = applicationContext,
+                sessionCode = contact.sessionCode,
+                uuid = transfer.messageId,
+                text = encoded,
+                senderDisplayName = displayName,
+                senderAddress = contact.lastKnownBleAddress,
+            )
+            incomingFileTransfers.remove(transfer.transferId)
+            return
+        }
+        if (transfer.mimeType == ChannelAttachments.AUTHORITY_MLS_BLOB_MIME) {
+            if (!ChannelAttachments.cacheAuthorityMlsCiphertext(
+                    applicationContext,
+                    transfer.displayName,
+                    fileBytes,
+                )) return
+            incomingFileTransfers.remove(transfer.transferId)
+            return
+        }
         persistSharedDocumentLocalCopy(
             context = applicationContext,
             uuid = transfer.messageId,

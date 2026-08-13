@@ -1776,4 +1776,18 @@ Android: %3$s</string>
     <string name="rescue_remote_signals_empty_title">سب پرسکون</string>
     <string name="rescue_remote_hero_count">%1$d فعال سگنل</string>
     <string name="rescue_remote_signals_subtitle">آپ کے ادارے کے پینل سے براہ راست فیڈ</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">اکاؤنٹ اور ڈیٹا حذف کریں</string>
+    <string name="profile_delete_account_progress">حذف کیا جا رہا ہے…</string>
+    <string name="profile_delete_account_dialog_title">اپنا اکاؤنٹ مستقل طور پر حذف کریں؟</string>
+    <string name="profile_delete_account_dialog_body">یہ عمل واپس نہیں ہو سکتا۔ آپ کا اکاؤنٹ، پروفائل، رابطہ درج کے مطابقات، خفیہ کاری کلیدیں، اطلاعاتی ریکارڈ اور اس ڈیوائس پر گفتگو کی تاریخ حذف کر دی جائے گی۔ آپ کے بھیجے گئے ہنگامی سگنل ریسکیو ریکارڈ کے طور پر، آپ کی شناخت سے الگ کر کے محفوظ رکھے جاتے ہیں۔</string>
+    <string name="profile_delete_account_dialog_confirm_hint">تصدیق کے لیے %1$s لکھیں۔</string>
+    <string name="profile_delete_account_confirm_word">حذف</string>
+    <string name="profile_delete_account_dialog_confirm">مستقل طور پر حذف کریں</string>
+    <string name="profile_delete_account_success">آپ کا اکاؤنٹ اور ڈیٹا حذف کر دیا گیا ہے۔</string>
+    <string name="profile_delete_account_error">حذف مکمل نہیں ہو سکا۔ اپنا کنیکشن دیکھ کر دوبارہ کوشش کریں۔</string>
+    <string name="profile_delete_account_error_verification">اس ڈیوائس پر حذف کی تصدیق نہیں ہو سکی۔ اپنا کنیکشن دیکھ کر دوبارہ کوشش کریں۔</string>
+    <string name="profile_delete_account_error_signed_out">اکاؤنٹ حذف کرنے کے لیے سائن ان ہونا لازمی ہے۔</string>
+    <string name="profile_delete_account_reauth_needed">آپ کی حفاظت کے لیے حذف کرنے سے پہلے تصدیق ضروری ہے کہ یہ آپ ہی ہیں۔ سائن آؤٹ کر کے دوبارہ سائن ان کریں، پھر دوبارہ کوشش کریں۔</string>
 </resources>

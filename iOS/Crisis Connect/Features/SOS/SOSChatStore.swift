@@ -727,6 +727,21 @@ final class SOSChatStore: ObservableObject {
         return true
     }
 
+    /// Deletes only the opaque nearby carrier row after AuthorityChat has durably opened it.
+    /// The decrypted AuthorityChat message lives in its separate protected store.
+    func removeInboundAuthorityMlsTransportMessage(sessionId: UUID, messageId: UUID) {
+        var messages = messagesBySession[sessionId, default: []]
+        guard let index = messages.firstIndex(where: {
+            $0.id == messageId && !$0.isLocal && $0.kind == .text && $0.text.hasPrefix("CC_AMLS2:")
+        }) else { return }
+        messages.remove(at: index)
+        setMessages(messages, for: sessionId)
+        updateSession(sessionId: sessionId) { session in
+            session.unreadCount = max(0, session.unreadCount - 1)
+        }
+        schedulePersist()
+    }
+
     @discardableResult
     func appendLocalMessage(
         sessionId: UUID,

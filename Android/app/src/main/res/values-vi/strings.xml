@@ -1775,4 +1775,18 @@ Ngày: %4$s</string>
     <string name="rescue_remote_signals_empty_title">Mọi thứ yên ổn</string>
     <string name="rescue_remote_hero_count">%1$d tín hiệu đang hoạt động</string>
     <string name="rescue_remote_signals_subtitle">Nguồn cấp trực tiếp từ bảng cơ quan bạn</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">Xóa tài khoản và dữ liệu</string>
+    <string name="profile_delete_account_progress">Đang xóa…</string>
+    <string name="profile_delete_account_dialog_title">Xóa vĩnh viễn tài khoản của bạn?</string>
+    <string name="profile_delete_account_dialog_body">Hành động này không thể hoàn tác. Tài khoản, trang cá nhân, các kết quả khớp danh bạ, khóa mã hóa, bản ghi thông báo và lịch sử trò chuyện trên thiết bị này sẽ bị xóa. Các tín hiệu khẩn cấp bạn đã gửi được giữ lại làm hồ sơ cứu hộ, tách khỏi danh tính của bạn.</string>
+    <string name="profile_delete_account_dialog_confirm_hint">Nhập %1$s để xác nhận.</string>
+    <string name="profile_delete_account_confirm_word">XÓA</string>
+    <string name="profile_delete_account_dialog_confirm">Xóa vĩnh viễn</string>
+    <string name="profile_delete_account_success">Tài khoản và dữ liệu của bạn đã được xóa.</string>
+    <string name="profile_delete_account_error">Không thể hoàn tất việc xóa. Hãy kiểm tra kết nối và thử lại.</string>
+    <string name="profile_delete_account_error_verification">Không thể xác minh việc xóa trên thiết bị này. Hãy kiểm tra kết nối và thử lại.</string>
+    <string name="profile_delete_account_error_signed_out">Bạn cần đăng nhập để xóa tài khoản.</string>
+    <string name="profile_delete_account_reauth_needed">Vì lý do bảo mật, chúng tôi cần xác nhận đúng là bạn trước khi xóa. Hãy đăng xuất, đăng nhập lại rồi thử lại.</string>
 </resources>

@@ -216,6 +216,7 @@ internal fun WelcomeScreen(
     var internetNationalNumber by rememberSaveable { mutableStateOf("") }
     var internetCode by rememberSaveable { mutableStateOf("") }
     var internetCodeSent by rememberSaveable { mutableStateOf(false) }
+    var internetServerCodeSent by rememberSaveable { mutableStateOf(false) }
     var internetIsBusy by rememberSaveable { mutableStateOf(false) }
     var internetErrorText by rememberSaveable { mutableStateOf<String?>(null) }
     var internetVerifiedPhone by rememberSaveable { mutableStateOf<String?>(null) }
@@ -247,10 +248,12 @@ internal fun WelcomeScreen(
         }
         internetIsBusy = true
         internetErrorText = null
+        internetServerCodeSent = false
         val e164 = composeE164(internetCountry, internetNationalNumber)
         profileViewModel.startPhoneSignIn(
             activity = hostActivity,
             phoneNumber = e164,
+            onServerCodeSent = { internetServerCodeSent = true },
             onCodeSent = { internetIsBusy = false; internetCodeSent = true },
             onResult = { success -> internetIsBusy = false; if (success) internetMarkVerified(e164) },
             onError = { message -> internetErrorText = message }
@@ -377,6 +380,7 @@ internal fun WelcomeScreen(
                                     code = internetCode,
                                     onCodeChange = { internetCode = it; internetErrorText = null },
                                     codeSent = internetCodeSent,
+                                    serverCodeSent = internetServerCodeSent,
                                     isBusy = internetIsBusy,
                                     errorText = internetErrorText,
                                     verifiedPhone = internetVerifiedPhone,
@@ -620,19 +624,18 @@ private fun WelcomeInternetStep(
     code: String,
     onCodeChange: (String) -> Unit,
     codeSent: Boolean,
+    serverCodeSent: Boolean,
     isBusy: Boolean,
     errorText: String?,
     verifiedPhone: String?,
     onImeAction: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Once we're waiting on the SMS, listen for it via the User Consent API so a single
-    // "allow" tap drops the code straight into the field. Listening starts the moment the
-    // send is triggered (isBusy), not at onCodeSent — in the reCAPTCHA flow the SMS often
-    // arrives while the browser tab is still up, which would otherwise be missed. Firebase's
-    // own auto-retrieval still completes hands-free where it can; this covers the rest.
+    // User Consent is deliberately limited to the server/Twilio OTP path. Firebase Phone
+    // Auth owns the same SMS_RETRIEVED_ACTION with a different payload shape; running both
+    // listeners together can crash firebase-auth before the user can enter the code.
     SmsOtpAutoFillEffect(
-        isListening = (isBusy || codeSent) && verifiedPhone == null,
+        isListening = serverCodeSent && codeSent && verifiedPhone == null,
         onCodeReceived = onCodeChange
     )
 

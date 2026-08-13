@@ -1495,14 +1495,31 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
 
     private func completeIncomingFileTransferIfReady(messageId: String) {
         guard let transfer = incomingFileTransfers[messageId],
-              let fileData = transfer.composedData(),
-              P2pSharedTransferSupport.persistSharedDocumentData(
+              let fileData = transfer.composedData() else { return }
+        if transfer.mimeType == ChannelAttachments.authorityMlsEnvelopeMime {
+            guard let encoded = String(data: fileData, encoding: .utf8),
+                  AuthorityMlsOfflineEnvelopeCodec.decode(encoded) != nil else { return }
+            _ = SOSChatStore.shared.appendRemoteMessage(
+                sessionId: sessionId,
+                text: encoded,
+                transportMessageId: transfer.messageId
+            )
+            incomingFileTransfers.removeValue(forKey: messageId)
+            return
+        }
+        if transfer.mimeType == ChannelAttachments.authorityMlsBlobMime {
+            guard ChannelAttachments.cacheAuthorityMlsCiphertext(
+                path: transfer.displayName,
+                cipher: fileData
+            ) else { return }
+            incomingFileTransfers.removeValue(forKey: messageId)
+            return
+        }
+        guard P2pSharedTransferSupport.persistSharedDocumentData(
                 fileData,
                 messageId: transfer.messageId,
                 displayName: transfer.displayName
-              ) != nil else {
-            return
-        }
+              ) != nil else { return }
         incomingFileTransfers.removeValue(forKey: messageId)
     }
 

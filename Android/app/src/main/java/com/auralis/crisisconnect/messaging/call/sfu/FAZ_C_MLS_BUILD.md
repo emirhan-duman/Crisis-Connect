@@ -1,7 +1,7 @@
 # Faz C — MLS-E2EE for SFU authority calls (Android)
 
 Interop with the web needs the **same** MLS group (web enforces E2EE — all-or-nothing). The Rust core
-is shared with the web (`~/Desktop/crisis-connect-web/rust-mls-worker/src/mls_ops.rs`, OpenMLS 0.7.1,
+is shared with the web (`~/Developer/crisis-connect-web/rust-mls-worker/src/mls_ops.rs`, OpenMLS 0.7.1,
 ciphersuite `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`).
 
 ## What's already written
@@ -19,7 +19,7 @@ ciphersuite `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`).
 ```
 rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
 cargo install cargo-ndk
-cd ~/Desktop/crisis-connect-web/rust-mls-android
+cd ~/Developer/crisis-connect-web/rust-mls-android
 cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 \
   -o ~/AndroidStudioProjects/DisasterCommunicationSystem/app/src/main/jniLibs build --release
 ```

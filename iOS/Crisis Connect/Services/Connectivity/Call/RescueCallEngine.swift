@@ -91,6 +91,7 @@ final class RescueCallEngine: NSObject, ObservableObject {
         var txKey: SymmetricKey?
         var rxKey: SymmetricKey?
         var txSeq: UInt32 = 0
+        var rxExpectedSeq: UInt64 = 0
         var pendingFrames: [Data] = []
         var lastRxAt = Date()
         var offerTimer: DispatchSourceTimer?
@@ -490,7 +491,19 @@ final class RescueCallEngine: NSObject, ObservableObject {
         ), let frames = P2pCallProtocol.unpackFrameBundle(decoded.bundle) else {
             return
         }
+        let packetStart = UInt64(decoded.seq)
+        let packetEnd = packetStart + UInt64(frames.count)
+        lock.lock()
+        // AES-GCM authenticates a packet but accepts the same valid ciphertext more than once.
+        // Late voice is not useful, so a monotonic receive sequence safely rejects both replayed
+        // and out-of-order packets without changing the legacy wire format.
+        guard session === active, packetStart >= active.rxExpectedSeq else {
+            lock.unlock()
+            return
+        }
+        active.rxExpectedSeq = packetEnd
         active.lastRxAt = Date()
+        lock.unlock()
         for (index, frame) in frames.enumerated() {
             active.engine.submitFrame(seq: Int(decoded.seq) + index, opus: frame)
         }

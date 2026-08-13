@@ -12,7 +12,7 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.nio.charset.StandardCharsets
 
-/** The per-agency shared messaging key, fetched from issueAgencyMessagingKey. */
+/** Retired per-agency shared messaging key shape, kept only for source compatibility. */
 data class AgencyKey(
     val keyId: String,
     val key: ByteArray,
@@ -59,35 +59,36 @@ object AgencyMessageCrypto {
 }
 
 /**
- * Field-team (Android) side of the dashboard's agency-internal messaging: fetches the agency key,
- * listens to the encrypted channel in Firestore and decrypts it in realtime (the server only ever
- * holds ciphertext), and can post to the same channel. Mirrors the web `lib/messaging/agency.ts`.
+ * Retired shared-key agency messaging client. Key fetches and writes fail locally; Firestore Rules
+ * also deny the old history. AuthorityChat MLS v2 owns active mobile messaging.
  */
 class AgencyMessagingClient(
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance(REGION),
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
 ) {
-    suspend fun fetchAgencyKey(agencySlug: String): AgencyKey = withContext(Dispatchers.IO) {
-        val result = functions.getHttpsCallable("issueAgencyMessagingKey")
-            .call(hashMapOf("agencySlug" to agencySlug))
-            .await()
-        val data = result.data as? Map<*, *> ?: throw IllegalStateException("No agency key returned.")
-        val keyBase64 = data["keyBase64"] as? String ?: throw IllegalStateException("Missing keyBase64.")
-        AgencyKey(
-            keyId = data["keyId"] as? String ?: "",
-            key = Base64.decode(keyBase64, Base64.NO_WRAP),
-            agencySlug = agencySlug
+    /** Retired: server-issued shared keys violate the AuthorityChat MLS-only invariant. */
+    suspend fun fetchAgencyKey(@Suppress("UNUSED_PARAMETER") agencySlug: String): AgencyKey {
+        throw SecurityException(
+            "Legacy shared-key agency messaging is permanently disabled; use AuthorityChat MLS v2."
         )
     }
 
     private fun channel(agencySlug: String) =
         firestore.collection("agencyPanels").document(agencySlug).collection("secureMessages")
 
-    /** Realtime subscription: decrypts each stored message and delivers the ordered list. */
+    /**
+     * Realtime subscription: decrypts each stored message and delivers the ordered list.
+     *
+     * DESCENDING + limit, reversed below — NOT ascending. Ascending with a limit pins the window
+     * to the OLDEST MESSAGE_LIMIT documents, so once a panel had written that many messages every
+     * newer one fell outside the query and was never delivered: the channel froze, silently, and
+     * stayed frozen (secureMessages is an immutable log, so nothing ages out to make room).
+     * `latestMessage` below already ordered descending for the same reason.
+     */
     fun listen(agencyKey: AgencyKey, onMessages: (List<AgencyMessage>) -> Unit): ListenerRegistration =
         channel(agencyKey.agencySlug)
-            .orderBy("createdAt", Query.Direction.ASCENDING)
+            .orderBy("createdAt", Query.Direction.DESCENDING)
             .limit(MESSAGE_LIMIT)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot == null) return@addSnapshotListener
@@ -105,7 +106,8 @@ class AgencyMessagingClient(
                         atMillis = doc.getTimestamp("createdAt")?.toDate()?.time ?: 0L
                     )
                 }
-                onMessages(messages)
+                // Newest-first off the wire; callers render oldest-first.
+                onMessages(messages.reversed())
             }
 
     /**
@@ -134,22 +136,10 @@ class AgencyMessagingClient(
         )
     }
 
-    suspend fun send(agencyKey: AgencyKey, senderName: String, text: String) = withContext(Dispatchers.IO) {
-        val uid = auth.currentUser?.uid ?: throw IllegalStateException("Not signed in.")
-        val (nonce, ciphertext) = AgencyMessageCrypto.encrypt(agencyKey, text)
-        channel(agencyKey.agencySlug)
-            .add(
-                hashMapOf(
-                    "senderUid" to uid,
-                    "senderName" to senderName,
-                    "keyId" to agencyKey.keyId,
-                    "nonce" to nonce,
-                    "ciphertext" to ciphertext,
-                    "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
-                )
-            )
-            .await()
-        Unit
+    suspend fun send(agencyKey: AgencyKey, senderName: String, text: String): Unit = withContext(Dispatchers.IO) {
+        @Suppress("UNUSED_VARIABLE")
+        val rejected = arrayOf(agencyKey, senderName, text)
+        throw SecurityException("Legacy shared-key agency writes are disabled; use Authority MLS v2.")
     }
 
     companion object {

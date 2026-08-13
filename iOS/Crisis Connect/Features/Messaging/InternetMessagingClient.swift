@@ -253,6 +253,12 @@ final class InternetMessagingClient {
         _ = try await functions.httpsCallable("unregisterPushToken").callAsync(["token": token])
     }
 
+    /// Content-free wake; the callable authorizes the caller and derives the peer from the MLS parent.
+    func requestAuthorityMlsPreparation(conversationId: String) async throws {
+        _ = try await functions.httpsCallable("requestAuthorityMlsPreparation")
+            .callAsync(["conversationId": conversationId])
+    }
+
     // MARK: - Send / ack
 
     /// Crisis-mode compact uplink. Returns the accepted messageId.

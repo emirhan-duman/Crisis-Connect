@@ -1767,4 +1767,18 @@
     <string name="rescue_remote_signals_empty_title">সব শান্ত</string>
     <string name="rescue_remote_hero_count">%1$d সক্রিয় সিগন্যাল</string>
     <string name="rescue_remote_signals_subtitle">আপনার সংস্থার প্যানেল থেকে লাইভ ফিড</string>
+
+    <!-- Account and data deletion (Play data-safety requirement) -->
+    <string name="profile_delete_account_button">অ্যাকাউন্ট ও ডেটা মুছুন</string>
+    <string name="profile_delete_account_progress">মুছে ফেলা হচ্ছে…</string>
+    <string name="profile_delete_account_dialog_title">আপনার অ্যাকাউন্ট স্থায়ীভাবে মুছবেন?</string>
+    <string name="profile_delete_account_dialog_body">এটি ফিরিয়ে আনা যায় না। আপনার অ্যাকাউন্ট, প্রোফাইল, পরিচিতি তালিকার মিল, এনক্রিপশন কী, নোটিফিকেশন রেকর্ড এবং এই ডিভাইসের চ্যাট ইতিহাস মুছে ফেলা হবে। আপনার পাঠানো জরুরি সংকেতগুলি উদ্ধার নথি হিসেবে, আপনার পরিচয় থেকে আলাদা করে রাখা হয়।</string>
+    <string name="profile_delete_account_dialog_confirm_hint">নিশ্চিত করতে %1$s লিখুন।</string>
+    <string name="profile_delete_account_confirm_word">মুছুন</string>
+    <string name="profile_delete_account_dialog_confirm">স্থায়ীভাবে মুছুন</string>
+    <string name="profile_delete_account_success">আপনার অ্যাকাউন্ট ও ডেটা মুছে ফেলা হয়েছে।</string>
+    <string name="profile_delete_account_error">মুছে ফেলা সম্পন্ন হয়নি। আপনার সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।</string>
+    <string name="profile_delete_account_error_verification">এই ডিভাইসে মুছে ফেলা যাচাই করা যায়নি। আপনার সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।</string>
+    <string name="profile_delete_account_error_signed_out">অ্যাকাউন্ট মুছতে সাইন ইন করতে হবে।</string>
+    <string name="profile_delete_account_reauth_needed">আপনার নিরাপত্তার জন্য মুছে ফেলার আগে নিশ্চিত করতে হবে যে এটি আপনিই। সাইন আউট করে আবার সাইন ইন করুন, তারপর আবার চেষ্টা করুন।</string>
 </resources>

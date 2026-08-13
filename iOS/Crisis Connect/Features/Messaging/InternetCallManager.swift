@@ -491,6 +491,7 @@ final class InternetCallManager: NSObject, ObservableObject {
         screenTrack = track
 
         let server = BroadcastFrameServer()
+        server.setTargetFps(15)
         var attached = false // mutated only on the server's serial delivery queue
         server.onFrame = { [weak self] pixelBuffer, rotationDegrees, timestampNs in
             // Feed the source directly off-main (RTCVideoSource is thread-safe, like the camera path).
