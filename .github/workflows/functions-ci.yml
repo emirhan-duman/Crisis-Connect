@@ -1,0 +1,45 @@
+name: Functions CI
+
+on:
+  pull_request:
+    paths:
+      - "Android/functions/**"
+      - ".github/workflows/functions-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "Android/functions/**"
+      - ".github/workflows/functions-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: functions-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  functions-build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: Android/functions
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: Android/functions/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and run Functions tests
+        run: npm run test:authority-mls-preparation
