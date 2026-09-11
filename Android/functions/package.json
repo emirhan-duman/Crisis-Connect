@@ -10,43 +10,33 @@
     "deploy": "npm run build && firebase deploy --only functions",
     "verify:crisis-sentinel-storage": "node scripts/verify_crisis_sentinel_storage_release.mjs",
     "logs": "firebase functions:log",
-    "test:authority-mls-preparation": "npm run build && node scripts/test_authority_mls_preparation.mjs"
+    "test": "npm run build && node scripts/test_authority_mls_preparation.mjs && node scripts/test_authority_mls_preparation.property.js",
+    "test:authority-mls-preparation": "npm run build && node scripts/test_authority_mls_preparation.mjs",
+    "test:property": "npm run build && node scripts/test_authority_mls_preparation.property.js"
   },
   "engines": {
     "node": "22"
   },
   "main": "lib/index.js",
   "dependencies": {
+    "@google-cloud/firestore": "^9.1.0",
+    "@google-cloud/storage": "^8.1.0",
     "@peculiar/asn1-android": "^2.3.13",
     "@peculiar/asn1-schema": "^2.3.13",
     "@peculiar/x509": "^1.12.3",
     "cbor-x": "^1.6.0",
-    "firebase-admin": "^13.6.1",
-    "firebase-functions": "^7.0.6",
-    "google-auth-library": "^9.15.1"
+    "firebase-admin": "^14.4.0",
+    "firebase-functions": "^7.3.2",
+    "google-auth-library": "^11.0.2"
   },
   "devDependencies": {
-    "firebase-functions-test": "^3.4.1",
-    "firebase-tools": "^14.27.0",
+    "fast-check": "^4.3.0",
+    "firebase-tools": "^15.30.0",
     "rimraf": "^5.0.10",
     "typescript": "^5.9.3"
   },
+  "private": true,
   "overrides": {
-    "express": "^4.22.2",
-    "fast-xml-parser": "^5.8.0",
-    "node-forge": "^1.4.0",
-    "path-to-regexp": "^0.1.13",
-    "protobufjs": "^7.6.2",
-    "qs": "^6.15.2",
-    "google-auth-library": {
-      "jws": "^4.0.1"
-    },
-    "gtoken": {
-      "jws": "^4.0.1"
-    },
-    "jsonwebtoken": {
-      "jws": "^3.2.3"
-    }
-  },
-  "private": true
+    "qs": "^6.16.0"
+  }
 }
