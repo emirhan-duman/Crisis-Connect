@@ -29,6 +29,8 @@
 #include <cstring>
 #include <vector>
 
+#include "frame_copy.h"
+
 #define LOG_TAG "MlsFrameCrypto"
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -170,18 +172,12 @@ class MlsEncryptor final : public RefCounted<shim::FrameEncryptorInterface> {
     if (!resolveRust()) return 0;  // no crypto lib → emit empty (silence), never crash
     size_t out_len = 0;
     uint8_t* out = g_encrypt(frame.data(), frame.size(), &out_len);
-    if (out_len == 0) {  // group not ready yet (or empty input) — emit an empty frame like the web
-      if (out) g_free(out, out_len);
-      return 0;
-    }
-    if (out_len > encrypted_frame.size()) {  // must never overflow the caller's buffer
+    const auto copy_result = crisisconnect::copyFrame(
+        out, out_len, encrypted_frame.data(), encrypted_frame.size(), bytes_written);
+    if (copy_result == crisisconnect::FrameCopyResult::kInsufficientCapacity) {
       LOGW("cipher %zu > buf %zu — dropping frame", out_len, encrypted_frame.size());
-      g_free(out, out_len);
-      return 0;
     }
-    memcpy(encrypted_frame.data(), out, out_len);
-    g_free(out, out_len);
-    *bytes_written = out_len;
+    if (out) g_free(out, out_len);
     return 0;
   }
 
@@ -205,17 +201,13 @@ class MlsDecryptor final : public RefCounted<shim::FrameDecryptorInterface> {
     if (!resolveRust()) return Result(Status::kRecoverable, 0);
     size_t out_len = 0;
     uint8_t* out = g_decrypt(encrypted_frame.data(), encrypted_frame.size(), &out_len);
-    if (out_len == 0) {
-      if (out) g_free(out, out_len);
-      return Result(Status::kRecoverable, 0);
-    }
-    if (out_len > frame.size()) {
-      g_free(out, out_len);
-      return Result(Status::kRecoverable, 0);
-    }
-    memcpy(frame.data(), out, out_len);
-    g_free(out, out_len);
-    return Result(Status::kOk, out_len);
+    size_t bytes_written = 0;
+    const auto copy_result =
+        crisisconnect::copyFrame(out, out_len, frame.data(), frame.size(), &bytes_written);
+    if (out) g_free(out, out_len);
+    return copy_result == crisisconnect::FrameCopyResult::kCopied
+        ? Result(Status::kOk, bytes_written)
+        : Result(Status::kRecoverable, 0);
   }
 
   size_t GetMaxPlaintextByteSize(shim::MediaType, size_t encrypted_frame_size) override {
