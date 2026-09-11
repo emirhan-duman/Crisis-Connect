@@ -9,6 +9,15 @@ updates:
       - "dependencies"
       - "security"
 
+  - package-ecosystem: "npm"
+    directory: "/Android/functions"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "security"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
