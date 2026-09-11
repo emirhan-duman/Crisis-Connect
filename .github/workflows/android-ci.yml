@@ -40,5 +40,13 @@ jobs:
       - name: Prepare public Firebase configuration
         run: cp app/google-services.json.example app/google-services.json
 
+      - name: Build and smoke-test native frame fuzz target
+        run: |
+          clang++ -std=c++17 -O1 -g -fsanitize=address,fuzzer \
+            -I app/src/main/cpp \
+            app/src/test/cpp/frame_copy_fuzz.cpp \
+            -o "${{ runner.temp }}/frame_copy_fuzz"
+          "${{ runner.temp }}/frame_copy_fuzz" -runs=10000
+
       - name: Build and run unit tests
         run: ./gradlew :app:assembleDebug :app:testDebugUnitTest :feature_rescue:testDebugUnitTest --no-daemon

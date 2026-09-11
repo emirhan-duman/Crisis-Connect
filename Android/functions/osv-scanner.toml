@@ -1,0 +1,14 @@
+[[IgnoredVulns]]
+id = "GHSA-8988-4f7v-96qf"
+ignoreUntil = 2026-10-11
+reason = "Transitive dependency of the dev-only Firebase CLI. Cloud Functions production dependencies do not include this package; CI blocks any high-severity regression while upstream updates are monitored."
+
+[[IgnoredVulns]]
+id = "GHSA-8cw4-87c7-c6xx"
+ignoreUntil = 2026-10-11
+reason = "Transitive dependency of the dev-only Firebase CLI. The affected CSV parser is not used by deployed Functions code; CI blocks any high-severity regression while upstream updates are monitored."
+
+[[IgnoredVulns]]
+id = "GHSA-528h-pc64-c93x"
+ignoreUntil = 2026-10-11
+reason = "Transitive dependency of the dev-only Firebase CLI. The affected streaming JSON filters are not used by deployed Functions code; CI blocks any high-severity regression while upstream updates are monitored."

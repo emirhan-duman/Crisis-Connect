@@ -37,6 +37,9 @@
   },
   "private": true,
   "overrides": {
+    "gaxios": {
+      "uuid": "^11.1.1"
+    },
     "qs": "^6.16.0"
   }
 }
