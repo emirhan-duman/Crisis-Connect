@@ -23,7 +23,7 @@
     "cbor-x": "^1.6.0",
     "firebase-admin": "^13.6.1",
     "firebase-functions": "^7.0.6",
-    "google-auth-library": "^9.15.1"
+    "google-auth-library": "^11.0.2"
   },
   "devDependencies": {
     "firebase-functions-test": "^3.4.1",
