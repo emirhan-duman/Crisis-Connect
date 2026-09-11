@@ -33,7 +33,7 @@
     "fast-check": "^4.3.0",
     "firebase-tools": "^15.30.0",
     "rimraf": "^5.0.10",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "private": true,
   "overrides": {
