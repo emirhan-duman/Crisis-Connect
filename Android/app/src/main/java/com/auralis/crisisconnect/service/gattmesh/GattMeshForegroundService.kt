@@ -8714,7 +8714,7 @@ open class GattMeshForegroundService : Service() {
         )
     }
 
-    @SuppressLint("HardwareIds")
+    @SuppressLint("HardwareIds", "MissingPermission") // Permission is checked and races are caught.
     private fun getLocalAdapterAddressOrNull(): String? {
         if (!hasBluetoothConnectPermission()) {
             return null
@@ -9171,7 +9171,7 @@ open class GattMeshForegroundService : Service() {
                 ?.deprioritizePeerForP2pInternal(address, durationMs)
         }
 
-        @SuppressLint("HardwareIds")
+        @SuppressLint("HardwareIds", "MissingPermission") // A denied address read is caught below.
         internal fun meshManufacturerDataForAdvertising(
             context: Context,
             adapter: BluetoothAdapter?

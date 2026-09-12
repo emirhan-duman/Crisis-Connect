@@ -39,7 +39,7 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
-import androidx.glance.unit.ResourceColorProvider
+import androidx.glance.unit.ColorProvider
 import com.auralis.crisisconnect.MainActivity
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.screens.Tools.data.DisasterEvent
@@ -134,8 +134,8 @@ private data class WidgetSnapshot(
     val result: DisasterFetchResult?
 )
 
-private val CardTextPrimary = ResourceColorProvider(R.color.widget_text_primary)
-private val CardTextSecondary = ResourceColorProvider(R.color.widget_text_secondary)
+private val CardTextPrimary = ColorProvider(R.color.widget_text_primary)
+private val CardTextSecondary = ColorProvider(R.color.widget_text_secondary)
 
 @Composable
 private fun DisastersWidgetContent(snapshot: WidgetSnapshot, launchIntent: Intent) {
@@ -255,7 +255,7 @@ private fun EventRow(context: Context, event: DisasterEvent) {
                 text = badgeText(event),
                 maxLines = 1,
                 style = TextStyle(
-                    color = ResourceColorProvider(badge.foreground),
+                    color = ColorProvider(badge.foreground),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
                 )

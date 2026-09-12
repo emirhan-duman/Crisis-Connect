@@ -48,5 +48,8 @@ jobs:
             -o "${{ runner.temp }}/frame_copy_fuzz"
           "${{ runner.temp }}/frame_copy_fuzz" -runs=10000
 
+      - name: Run Android lint
+        run: ./gradlew :app:lintDebug --no-daemon
+
       - name: Build and run unit tests
         run: ./gradlew :app:assembleDebug :app:testDebugUnitTest :feature_rescue:testDebugUnitTest --no-daemon

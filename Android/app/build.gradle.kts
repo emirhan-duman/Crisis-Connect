@@ -282,6 +282,10 @@ android {
         // resources while localization is completed. Keep runtime/security lint fatal, but do not
         // block APK smoke builds on incomplete locale coverage.
         disable += "MissingTranslation"
+        // Record reviewed compatibility and migration debt while rejecting every new diagnostic.
+        // The baseline is refreshed only after each entry is triaged during an SDK migration.
+        baseline = file("lint-baseline.xml")
+        warningsAsErrors = true
     }
 
     // The test phone's Secure Folder (user 150) holds a stale, differently-signed package record

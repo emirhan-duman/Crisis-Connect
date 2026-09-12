@@ -1035,7 +1035,7 @@ class GattSOSServerService : Service() {
         return true
     }
 
-    @SuppressLint("HardwareIds")
+    @SuppressLint("HardwareIds", "MissingPermission") // Permission is checked and races are caught.
     private fun resolveMeshInitiatorRankForAdvertising(): Int {
         val macSalt = if (hasBluetoothConnectPermission()) {
             runCatching { bluetoothAdapter?.address }

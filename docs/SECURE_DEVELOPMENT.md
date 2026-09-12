@@ -63,8 +63,9 @@ does not store end-user password verifiers.
 - Major functionality includes automated tests for normal, malformed, unauthorized, replayed, and
   boundary inputs where applicable. Recent feature tests are visible beside the production code and
   summarized in [CHANGELOG.md](../CHANGELOG.md).
-- Android lint and compiler diagnostics must be reviewed. Warnings are fixed or documented as false
-  positives; new unexplained warnings are not accepted.
+- Android lint and compiler diagnostics must be reviewed. The version-controlled lint baseline
+  records accepted compatibility and migration debt; `warningsAsErrors` makes every new lint
+  diagnostic fail CI. Baseline changes require the same review as source changes.
 - CodeQL runs on pull requests and pushes to `main`. Dependency review is automated with Dependabot
   and npm audit. Native frame handling is fuzzed with AddressSanitizer and ClusterFuzzLite.
 - Release assets are delivered over HTTPS and accompanied by keyless Sigstore bundles. Hashes are

@@ -1,6 +1,7 @@
 package com.auralis.crisisconnect.messaging.call
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.ActivityOptions
 import android.app.Notification
 import android.app.NotificationChannel
@@ -198,6 +199,7 @@ class InternetCallForegroundService : Service() {
         return START_NOT_STICKY
     }
 
+    @SuppressLint("MissingPermission") // Every notify call is guarded by canPostNotifications().
     private fun onCallChanged(call: InternetCallManager.CallInfo?) {
         if (call == null ||
             call.state == InternetCallManager.State.ENDED ||
@@ -213,7 +215,7 @@ class InternetCallForegroundService : Service() {
                 } else {
                     stopRingtone()
                 }
-                if (foregroundActive) {
+                if (foregroundActive && canPostNotifications()) {
                     runCatching {
                         NotificationManagerCompat.from(this).notify(FOREGROUND_ID, buildNotification(null))
                     }
@@ -237,7 +239,7 @@ class InternetCallForegroundService : Service() {
         } else {
             stopRingtone()
         }
-        if (foregroundActive) {
+        if (foregroundActive && canPostNotifications()) {
             runCatching {
                 NotificationManagerCompat.from(this).notify(FOREGROUND_ID, buildNotification(call))
             }
@@ -451,6 +453,7 @@ class InternetCallForegroundService : Service() {
     }
 
     /** Posts the dedicated ring notification for whichever engine (P2P / SFU) is ringing. */
+    @SuppressLint("MissingPermission") // Guarded by canPostNotifications(); runCatching handles races.
     private fun postRingNotification() {
         ensureChannels()
         val call = InternetCallManager.call.value
@@ -462,12 +465,19 @@ class InternetCallForegroundService : Service() {
             val name = sfu.peerName.ifBlank { getString(R.string.internet_call_unknown_peer) }
             buildRingNotification(name, callPerson(name, resolveAvatar(sfu.peerUid, name)))
         }
-        runCatching { NotificationManagerCompat.from(this).notify(RING_NOTIFICATION_ID, notification) }
+        if (canPostNotifications()) {
+            runCatching { NotificationManagerCompat.from(this).notify(RING_NOTIFICATION_ID, notification) }
+        }
     }
 
     private fun cancelRingNotification() {
         runCatching { NotificationManagerCompat.from(this).cancel(RING_NOTIFICATION_ID) }
     }
+
+    private fun canPostNotifications(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
 
     private fun buildNotification(call: InternetCallManager.CallInfo?): Notification {
         ensureChannels()
