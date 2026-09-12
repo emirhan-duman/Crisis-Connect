@@ -9,6 +9,7 @@ import android.app.NotificationManager
 import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -296,7 +297,8 @@ class InternetCallForegroundService : Service() {
     }
 
     private fun openAppIntent(): PendingIntent {
-        val launch = Intent(this, MainActivity::class.java)
+        val launch = Intent()
+            .setComponent(ComponentName(this, MainActivity::class.java))
             .setAction(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_LAUNCHER)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
