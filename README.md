@@ -23,6 +23,7 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-8b0000.svg" alt="License" /></a>&nbsp;
+  <a href="https://www.bestpractices.dev/projects/14600"><img src="https://www.bestpractices.dev/projects/14600/badge" alt="OpenSSF Best Practices" /></a>&nbsp;
   <img src="https://img.shields.io/badge/platforms-Android%20%7C%20iOS-blue" alt="Platforms" />&nbsp;
   <img src="https://img.shields.io/badge/version-1.1.9-green" alt="Version" />&nbsp;
   <img src="https://img.shields.io/badge/kotlin-161k%20LOC-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />&nbsp;
