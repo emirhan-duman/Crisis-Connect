@@ -296,11 +296,10 @@ class InternetCallForegroundService : Service() {
     }
 
     private fun openAppIntent(): PendingIntent {
-        val launch = packageManager.getLaunchIntentForPackage(packageName)
-            ?.setPackage(packageName)
-            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            ?: Intent(this, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val launch = Intent(this, MainActivity::class.java)
+            .setAction(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return PendingIntent.getActivity(
             this,
             0,
