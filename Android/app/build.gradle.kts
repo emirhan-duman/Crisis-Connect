@@ -418,7 +418,7 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.4")
     kapt("androidx.room:room-compiler:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
-    implementation("net.zetetic:sqlcipher-android:4.13.0")
+    implementation("net.zetetic:sqlcipher-android:4.19.0")
 
     // Auth System + Firebase
     implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
