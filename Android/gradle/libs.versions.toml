@@ -1,5 +1,5 @@
 [versions]
-agp = "9.3.1"
+agp = "9.4.0"
 kotlin = "2.2.10"
 playFeatureDelivery = "2.1.0"
 # Matches what Compose 1.9-era transitives already resolve to — the pin just makes it explicit.
