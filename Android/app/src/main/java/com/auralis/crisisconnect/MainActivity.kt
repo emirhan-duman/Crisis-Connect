@@ -1363,13 +1363,15 @@ class MainActivity : ComponentActivity() {
             context: Context,
             configure: Intent.() -> Unit = {}
         ): Intent {
-            return Intent(context, MainActivity::class.java).apply {
-                putExtra(
-                    EXTRA_TRUSTED_LAUNCH_TOKEN,
-                    getOrCreateTrustedLaunchToken(context.applicationContext)
-                )
-                configure()
-            }
+            return Intent()
+                .setComponent(ComponentName(context, MainActivity::class.java))
+                .apply {
+                    putExtra(
+                        EXTRA_TRUSTED_LAUNCH_TOKEN,
+                        getOrCreateTrustedLaunchToken(context.applicationContext)
+                    )
+                    configure()
+                }
         }
 
         private fun getOrCreateTrustedLaunchToken(context: Context): String {

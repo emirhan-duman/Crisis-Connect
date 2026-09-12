@@ -1,6 +1,7 @@
 package com.auralis.crisisconnect.service.sos
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -52,6 +53,7 @@ object EmergencyNumberResolver {
     }
 
     /** Platform-aggregated emergency numbers; only usable when READ_PHONE_STATE happens to be granted. */
+    @SuppressLint("MissingPermission") // Guarded immediately below and caught for permission races.
     private fun fromPlatformList(context: Context): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         val granted = ContextCompat.checkSelfPermission(

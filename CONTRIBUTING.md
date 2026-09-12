@@ -153,6 +153,24 @@ xcodebuild test -scheme "Crisis Connect" -destination "platform=iOS Simulator,na
 | UI components | Medium |
 | Utility functions | Medium |
 
+Major new functionality must include automated tests for its expected behavior and relevant failure
+paths. Security-sensitive changes must also cover malformed, unauthorized, replayed, expired, and
+boundary inputs where they apply. A pull request may explain why a particular test is impractical,
+but the exception must be reviewed explicitly.
+
+### Warnings and Static Analysis
+
+- Run `./gradlew :app:lintDebug` for Android changes and review compiler diagnostics on every
+  affected platform.
+- Fix warnings introduced by the change. If a diagnostic is a false positive, suppress it at the
+  narrowest scope and document why the suppression is safe.
+- Treat confirmed medium-or-higher findings from lint, CodeQL, dependency scanning, or fuzzing as
+  release blockers until fixed or shown to be non-exploitable.
+- Do not weaken analysis settings or exclude code merely to make a check pass.
+
+Security design expectations and the vulnerability classes reviewers consider are documented in
+[Secure Development](./docs/SECURE_DEVELOPMENT.md).
+
 ## Submitting a Pull Request
 
 1. **Update your branch** with the latest `main` before submitting

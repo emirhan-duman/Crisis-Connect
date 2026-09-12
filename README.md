@@ -787,6 +787,10 @@ If you discover a security vulnerability in Crisis Connect, **please do not open
 
 We take security reports seriously and will respond as quickly as possible.
 
+The project's [external interface reference](docs/EXTERNAL_INTERFACES.md) and
+[secure development policy](docs/SECURE_DEVELOPMENT.md) document the boundaries, common
+vulnerability classes, cryptographic baseline, and verification process used for releases.
+
 ## Roadmap
 
 Crisis Connect is in production on both app stores and under active development. The roadmap reflects what has been shipped and what comes next.

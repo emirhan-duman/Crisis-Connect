@@ -1,6 +1,7 @@
 package com.auralis.crisisconnect.messaging.call
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.ActivityOptions
 import android.app.Notification
 import android.app.NotificationChannel
@@ -8,6 +9,7 @@ import android.app.NotificationManager
 import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -198,6 +200,7 @@ class InternetCallForegroundService : Service() {
         return START_NOT_STICKY
     }
 
+    @SuppressLint("MissingPermission") // Every notify call is guarded by canPostNotifications().
     private fun onCallChanged(call: InternetCallManager.CallInfo?) {
         if (call == null ||
             call.state == InternetCallManager.State.ENDED ||
@@ -213,7 +216,7 @@ class InternetCallForegroundService : Service() {
                 } else {
                     stopRingtone()
                 }
-                if (foregroundActive) {
+                if (foregroundActive && canPostNotifications()) {
                     runCatching {
                         NotificationManagerCompat.from(this).notify(FOREGROUND_ID, buildNotification(null))
                     }
@@ -237,7 +240,7 @@ class InternetCallForegroundService : Service() {
         } else {
             stopRingtone()
         }
-        if (foregroundActive) {
+        if (foregroundActive && canPostNotifications()) {
             runCatching {
                 NotificationManagerCompat.from(this).notify(FOREGROUND_ID, buildNotification(call))
             }
@@ -294,12 +297,15 @@ class InternetCallForegroundService : Service() {
     }
 
     private fun openAppIntent(): PendingIntent {
-        val launch = packageManager.getLaunchIntentForPackage(packageName)
-            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val launch = Intent()
+            .setComponent(ComponentName(this, MainActivity::class.java))
+            .setAction(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return PendingIntent.getActivity(
             this,
             0,
-            launch ?: Intent(),
+            launch,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
     }
@@ -451,6 +457,7 @@ class InternetCallForegroundService : Service() {
     }
 
     /** Posts the dedicated ring notification for whichever engine (P2P / SFU) is ringing. */
+    @SuppressLint("MissingPermission") // Guarded by canPostNotifications(); runCatching handles races.
     private fun postRingNotification() {
         ensureChannels()
         val call = InternetCallManager.call.value
@@ -462,12 +469,19 @@ class InternetCallForegroundService : Service() {
             val name = sfu.peerName.ifBlank { getString(R.string.internet_call_unknown_peer) }
             buildRingNotification(name, callPerson(name, resolveAvatar(sfu.peerUid, name)))
         }
-        runCatching { NotificationManagerCompat.from(this).notify(RING_NOTIFICATION_ID, notification) }
+        if (canPostNotifications()) {
+            runCatching { NotificationManagerCompat.from(this).notify(RING_NOTIFICATION_ID, notification) }
+        }
     }
 
     private fun cancelRingNotification() {
         runCatching { NotificationManagerCompat.from(this).cancel(RING_NOTIFICATION_ID) }
     }
+
+    private fun canPostNotifications(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
 
     private fun buildNotification(call: InternetCallManager.CallInfo?): Notification {
         ensureChannels()
