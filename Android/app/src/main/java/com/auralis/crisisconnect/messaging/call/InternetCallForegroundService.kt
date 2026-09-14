@@ -393,7 +393,9 @@ class InternetCallForegroundService : Service() {
         PendingIntent.getService(
             this,
             requestCode,
-            Intent(this, InternetCallForegroundService::class.java).setAction(action),
+            Intent(this, InternetCallForegroundService::class.java)
+                .setComponent(ComponentName(this, InternetCallForegroundService::class.java))
+                .setAction(action),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
