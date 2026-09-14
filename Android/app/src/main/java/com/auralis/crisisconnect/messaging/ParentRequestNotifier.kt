@@ -7,6 +7,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -143,6 +144,7 @@ object ParentRequestNotifier {
         notificationId: Int
     ): PendingIntent {
         val intent = Intent(context, ParentRequestResponseReceiver::class.java).apply {
+            component = ComponentName(context, ParentRequestResponseReceiver::class.java)
             this.action = action
             putExtra(ParentRequestResponseReceiver.EXTRA_SESSION_CODE, sessionCode)
             putExtra(ParentRequestResponseReceiver.EXTRA_NOTIFICATION_ID, notificationId)

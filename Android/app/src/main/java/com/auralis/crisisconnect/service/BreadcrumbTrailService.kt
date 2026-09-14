@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -119,13 +120,17 @@ class BreadcrumbTrailService : Service(), LocationListener {
         val stopIntent = PendingIntent.getService(
             this,
             9122,
-            Intent(this, BreadcrumbTrailService::class.java).setAction(ACTION_STOP),
+            Intent(this, BreadcrumbTrailService::class.java)
+                .setComponent(ComponentName(this, BreadcrumbTrailService::class.java))
+                .setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val contentIntent = PendingIntent.getActivity(
             this,
             9123,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            Intent(this, MainActivity::class.java)
+                .setComponent(ComponentName(this, MainActivity::class.java))
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)

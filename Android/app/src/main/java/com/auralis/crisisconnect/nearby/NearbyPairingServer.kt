@@ -12,6 +12,7 @@ import android.bluetooth.BluetoothGattServer
 import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -349,6 +350,7 @@ object NearbyPairingServer : GattSOSServerService.SharedGattDelegate {
 
     private fun actionIntent(ctx: Context, action: String, address: String): PendingIntent {
         val intent = Intent(ctx, NearbyPairingActionReceiver::class.java)
+            .setComponent(ComponentName(ctx, NearbyPairingActionReceiver::class.java))
             .setAction(action)
             .putExtra(NearbyPairingActionReceiver.EXTRA_ADDRESS, address)
         return PendingIntent.getBroadcast(
