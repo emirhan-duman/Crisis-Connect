@@ -1,0 +1,37 @@
+name: iOS CI
+
+on:
+  pull_request:
+    paths:
+      - "iOS/**"
+      - ".github/workflows/ios-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "iOS/**"
+      - ".github/workflows/ios-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-and-project-validation:
+    name: Validate iOS source and project
+    runs-on: macos-15
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Show Apple toolchain
+        run: xcodebuild -version
+
+      - name: Validate project metadata and Swift syntax
+        run: ./iOS/Scripts/ci-validate.sh

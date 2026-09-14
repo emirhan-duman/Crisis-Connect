@@ -89,11 +89,6 @@
       </BuildableProductRunnable>
       <EnvironmentVariables>
          <EnvironmentVariable
-            key = "FIRAAppCheckDebugToken"
-            value = "9224365D-287C-402A-9552-E558C85B371E"
-            isEnabled = "YES">
-         </EnvironmentVariable>
-         <EnvironmentVariable
             key = "CRISIS_SCREENSHOT_SCENE"
             value = "chat"
             isEnabled = "NO">

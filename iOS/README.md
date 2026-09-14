@@ -123,6 +123,22 @@ xcodebuild test \
 > Bluetooth features require a **physical device**. The Simulator has no BLE radio, so pairing,
 > mesh relay and offline calls cannot be exercised there.
 
+## Continuous integration
+
+The `iOS CI` workflow runs on every iOS pull request and validates the Xcode project, shared
+scheme, test plan, local Swift package manifests, and the syntax of every Swift source file. Run
+the same checks locally with:
+
+```bash
+./Scripts/ci-validate.sh
+```
+
+A clean public checkout cannot currently link or run the Xcode test plan because the static
+libraries inside `SignalFfi.xcframework` and `OrangeMlsWorker.xcframework` are intentionally not
+committed. Full build-and-test CI must be enabled together with a reproducible, integrity-checked
+artifact pipeline for those two frameworks; the project must not download unsigned binaries at
+build time.
+
 ## Licensing note
 
 `Packages/LibSignalClient` is vendored from signalapp/libsignal, licensed **AGPL-3.0-only** —
