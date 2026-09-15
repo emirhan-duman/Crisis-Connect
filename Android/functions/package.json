@@ -10,7 +10,8 @@
     "deploy": "npm run build && firebase deploy --only functions",
     "verify:crisis-sentinel-storage": "node scripts/verify_crisis_sentinel_storage_release.mjs",
     "logs": "firebase functions:log",
-    "test": "npm run build && node scripts/test_authority_mls_preparation.mjs && node scripts/test_authority_mls_preparation.property.js",
+    "test": "npm run build && node scripts/test_authority_mls_preparation.mjs && node scripts/test_authority_mls_preparation.property.js && npm run test:firestore-rules",
+    "test:firestore-rules": "firebase emulators:exec --config ../firebase.json --project demo-crisis-connect --only firestore \"node --test scripts/test_firestore_rules.mjs\"",
     "test:authority-mls-preparation": "npm run build && node scripts/test_authority_mls_preparation.mjs",
     "test:property": "npm run build && node scripts/test_authority_mls_preparation.property.js"
   },
@@ -30,7 +31,9 @@
     "google-auth-library": "^11.0.2"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "fast-check": "^4.3.0",
+    "firebase": "^12.19.0",
     "firebase-tools": "^15.30.0",
     "rimraf": "^5.0.10",
     "typescript": "^5.9.3"
