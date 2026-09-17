@@ -415,6 +415,9 @@ Android release assets are published with keyless Sigstore bundles, a CycloneDX 
 checksums, and a GitHub artifact attestation. See
 **[Release verification](docs/RELEASE_VERIFICATION.md)** before pilot distribution.
 
+Pilot operators should assign the private on-call roster and exercise the
+**[Security incident response plan](docs/INCIDENT_RESPONSE.md)** before handling live data.
+
 ### Tech Stack
 
 | Layer | Android | iOS |

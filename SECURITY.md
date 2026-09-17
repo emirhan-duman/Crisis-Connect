@@ -7,6 +7,8 @@ Crisis Connect takes security seriously. The application handles encrypted commu
 The repository's security boundaries, assets, attacker assumptions, abuse cases, and pilot readiness
 requirements are documented in the [Crisis Connect threat model](docs/THREAT_MODEL.md). Implementation
 and review requirements are documented in the [secure development guide](docs/SECURE_DEVELOPMENT.md).
+Operators handling a suspected production event must follow the
+[security incident response plan](docs/INCIDENT_RESPONSE.md).
 
 If you discover a security vulnerability, **please do not open a public issue.**
 
