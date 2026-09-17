@@ -893,13 +893,12 @@ service cloud.firestore {
         && request.resource.data.ciphertext is string
         && request.resource.data.ciphertext.size() <= 24000
         && (validV1Create() || validV2Create());
-      // Recipients may attach delivery/read receipts; ciphertext stays immutable.
-      allow update: if isSignedIn()
-        && resource.data.recipientUid == request.auth.uid
-        && request.resource.data.senderUid == resource.data.senderUid
-        && request.resource.data.recipientUid == resource.data.recipientUid
-        && request.resource.data.ciphertext == resource.data.ciphertext;
-      allow delete: if isMessageParticipant();
+      // Delivery/read receipts are separate E2E envelopes. Acknowledgement goes through the
+      // acknowledgeMessage callable, which verifies the recipient and deletes this queued copy.
+      // Clients never mutate a persisted envelope: allowing even a subset of metadata changes
+      // would let a recipient corrupt crypto/routing fields or extend server retention.
+      allow update: if false;
+      allow delete: if false;
     }
 
     match /{panelCollection}/{panelId} {

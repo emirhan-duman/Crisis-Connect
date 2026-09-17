@@ -3,12 +3,16 @@ name: Functions CI
 on:
   pull_request:
     paths:
+      - "Android/firebase.json"
+      - "Android/firestore.rules"
       - "Android/functions/**"
       - ".github/workflows/functions-ci.yml"
   push:
     branches:
       - main
     paths:
+      - "Android/firebase.json"
+      - "Android/firestore.rules"
       - "Android/functions/**"
       - ".github/workflows/functions-ci.yml"
 
@@ -37,6 +41,12 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: Android/functions/package-lock.json
+
+      - name: Set up JDK 21 for Firebase emulators
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
 
       - name: Install dependencies
         run: npm ci
