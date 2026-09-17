@@ -411,6 +411,10 @@ Crisis-Connect/
 
 > **Note on prebuilt binaries.** The `.xcframework` static libraries under `iOS/Packages/LibSignalClient` and `iOS/Frameworks` are **not** committed to this mirror -- together they are ~375 MB of build output. The Swift sources, headers and module maps are here, and `iOS/README.md` documents how to rebuild or fetch them.
 
+Android release assets are published with keyless Sigstore bundles, a CycloneDX SBOM, SHA-256
+checksums, and a GitHub artifact attestation. See
+**[Release verification](docs/RELEASE_VERIFICATION.md)** before pilot distribution.
+
 ### Tech Stack
 
 | Layer | Android | iOS |
