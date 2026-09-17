@@ -282,6 +282,12 @@ android {
         // resources while localization is completed. Keep runtime/security lint fatal, but do not
         // block APK smoke builds on incomplete locale coverage.
         disable += "MissingTranslation"
+        // Dependency freshness is enforced by Dependabot. Network-dependent version checks make
+        // an unchanged commit fail whenever a new upstream release appears, so keep them out of
+        // the deterministic correctness/security lint gate.
+        disable += "AndroidGradlePluginVersion"
+        disable += "GradleDependency"
+        disable += "NewerVersionAvailable"
         // Record reviewed compatibility and migration debt while rejecting every new diagnostic.
         // The baseline is refreshed only after each entry is triaged during an SDK migration.
         baseline = file("lint-baseline.xml")
