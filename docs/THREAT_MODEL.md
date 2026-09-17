@@ -268,9 +268,10 @@ including SOS records and operational metadata.
 
 1. **Compromised responder account becomes a field credential.** An attacker steals a privileged
    account/session, registers or reuses a device record, obtains a role certificate, and presents
-   valid-looking offline proofs. Attestation and one-time challenges raise the bar, but the repository
-   contains explicit tester and demo allowlists; the demo path bypasses the entire device-attestation
-   chain and must be empty in production ([issuance](../Android/functions/src/certificates/issuance.ts#L61-L81)).
+   valid-looking offline proofs. Attestation and one-time challenges raise the bar, but deployments
+   can explicitly configure tester and demo allowlists; the demo path bypasses the entire
+   device-attestation chain and must remain unset in production
+   ([issuance](../Android/functions/src/certificates/issuance.ts#L56-L70)).
    Detect certificate issuance from new devices, bypass outcomes, role/agency changes, and unusual
    offline-proof volume; rehearse account, certificate, and signing-key revocation.
 
@@ -356,7 +357,7 @@ visible controls but before the recommended pilot controls are verified.
 
 | ID | Threat and affected assets | Existing controls | Evidence-backed gap or uncertainty | Likelihood | Impact | Priority / residual | Recommended prevention and detection |
 |:--|:--|:--|:--|:--|:--|:--|:--|
-| TM-01 | Responder role impersonation through account/device provisioning | Auth, App Check, owned one-time nonce, Play Integrity/App Attest, hardware-bound key, signed certificate, audit log | Demo UID fallback bypasses the entire attestation chain; production environment value is not proven from source | Medium | Critical | **P0 / High** | Set `CC_DEMO_UIDS=""`; prohibit debug/development attestation in pilot; alarm on bypass verdicts/new devices; two-person role assignment; test stolen-account issuance and revocation |
+| TM-01 | Responder role impersonation through account/device provisioning | Auth, App Check, owned one-time nonce, Play Integrity/App Attest, hardware-bound key, signed certificate, audit log; tester/demo exception lists are empty by default | Explicitly configured `CC_DEMO_UIDS` entries bypass the entire attestation chain; deployed environment values remain outside repository evidence | Medium | Critical | **P0 / High** | Keep `CC_DEMO_UIDS` unset in production; prohibit debug/development attestation in pilot; alarm on bypass verdicts/new devices; two-person role assignment; test stolen-account issuance and revocation |
 | TM-02 | Offline use of a revoked/stolen responder credential | Signed device-bound certificate, online status/revocation, 72-hour expiry | Offline verifier cannot obtain fresh revocation state; displayed freshness behavior needs field validation | Medium | Critical | **P0 / High** | Evaluate shorter TTL for pilot roles; show certificate age and last revocation sync; distribute signed denylist snapshots; drill device-loss containment and signer rotation |
 | TM-03 | SOS forgery, false location, unauthorized resolution, or stale status | App Check, authenticated owner, signal-ID validation, GPS bounds, per-UID throttle, route history | App/device attestation does not verify that emergency/location is truthful; best-effort throttles do not stop distributed abuse | High | Critical | **P0 / High** | Multi-signal corroboration; operator provenance/freshness UI; anomaly/rate controls by UID/device/IP/project; immutable lifecycle audit; live pilot abuse playbook |
 | TM-04 | SOS suppression, mesh flooding, jamming, or device-resource exhaustion | Offline and online paths, bounded packets/queues/hops/age, dedup, per-source inbound rate, retry backoff | Coordinated peers and RF jamming can bypass per-source controls; emergency traffic fairness is not established by code review | High | Critical | **P0 / High** | Physical RF/load tests; reserved SOS capacity and fair queues; watchdogs and circuit breakers; degraded-mode UI; delivery/ack SLOs and alerts; alternative transport procedure |

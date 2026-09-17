@@ -17,6 +17,10 @@ import {
   verifyAppleAttestation,
 } from "../attestation/apple/verifyAttestation";
 import { requireUid, resolveCallerRoleKey } from "./callerRole";
+import {
+  loadAttestationExceptionPolicy,
+  resolveAttestationException,
+} from "./attestationExceptionPolicy";
 
 const masterPrivateKeySecret = defineSecret("MASTER_PRIVATE_KEY_PEM");
 
@@ -49,36 +53,19 @@ const ACCEPTED_SECURITY_LEVELS: SecurityLevel[] = [
 ];
 const INTEGRITY_MAX_AGE_MS = 5 * 60 * 1000;
 
-function parseUidAllowlist(value: string | undefined, fallback: string): ReadonlySet<string> {
-  return new Set(
-    (value ?? fallback)
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0)
-  );
-}
-
-// TESTER allowlist: these UIDs may provision from a debug/sideloaded build whose Play Integrity
+// TESTER allowlist: explicitly configured UIDs may provision from a debug/sideloaded build whose Play Integrity
 // `appRecognitionVerdict` is UNRECOGNIZED_VERSION. Only the Play-recognition check is relaxed —
 // device-integrity verdicts, the nonce, the package name, and the full hardware key-attestation
-// chain are STILL enforced, and the role still comes from Firestore users/{uid}.role. Lets the
-// developer iterate on a real device without a Play release each time. emirhanduman2009@gmail.com.
-const TESTER_UIDS = parseUidAllowlist(
-  process.env.CC_TESTER_UIDS,
-  "x23DVPQVj2UQlGQTlxDhi4GXR1h2"
-);
+// chain are STILL enforced, and the role still comes from Firestore users/{uid}.role.
 
-// DEMO allowlist: these UIDs bypass the ENTIRE device-attestation chain (Play Integrity + device
+// DEMO allowlist: explicitly configured UIDs bypass the ENTIRE device-attestation chain (Play Integrity + device
 // integrity + hardware key attestation / Apple App Attest), so the account can obtain a certificate
 // on ANY device — including emulators and unlocked/rooted test devices. The client-supplied public
 // key is trusted as-is; the role still comes from Firestore users/{uid}.role.
 // ⚠ SECURITY: anyone who can sign in as a demo account can obtain its rescue role on any device.
-// Keep its password strong, prefer a non-admin role, and DISABLE for production by setting
-// CC_DEMO_UIDS="". demo@crisisconnect.network.
-const DEMO_UIDS = parseUidAllowlist(
-  process.env.CC_DEMO_UIDS,
-  "8blrCEoszTWBVWb3lA1TnbSn7aJ3"
-);
+// Keep its password strong, prefer a non-admin role, and leave CC_DEMO_UIDS unset in production.
+// Both allowlists are empty by default and must be configured explicitly by deployment operators.
+const ATTESTATION_EXCEPTION_POLICY = loadAttestationExceptionPolicy();
 
 const DEMO_ATTESTATION_OUTCOME_LABEL = "Demo";
 const DEMO_INTEGRITY_VERDICT = "DEMO_BYPASS";
@@ -569,7 +556,8 @@ async function runAndroidAttestation(
   input: ValidatedAndroidInput,
   uid: string
 ): Promise<PlatformAttestationOutcome> {
-  if (DEMO_UIDS.has(uid)) {
+  const exception = resolveAttestationException(ATTESTATION_EXCEPTION_POLICY, uid);
+  if (exception === "demo") {
     console.warn(
       `[issueRoleCertificate] DEMO uid=${uid} deviceId=${input.deviceId} — bypassing ALL Android ` +
         "attestation (Play Integrity + device integrity + key attestation). Demo/test only."
@@ -580,7 +568,7 @@ async function runAndroidAttestation(
       integrityVerdicts: [DEMO_INTEGRITY_VERDICT],
     };
   }
-  const isTester = TESTER_UIDS.has(uid);
+  const isTester = exception === "tester";
   if (isTester) {
     console.warn(
       `[issueRoleCertificate] tester uid=${uid} — relaxing Play-recognition only ` +
@@ -664,7 +652,7 @@ async function runIosAttestation(
   input: ValidatedIosInput,
   uid: string
 ): Promise<PlatformAttestationOutcome> {
-  if (DEMO_UIDS.has(uid)) {
+  if (resolveAttestationException(ATTESTATION_EXCEPTION_POLICY, uid) === "demo") {
     console.warn(
       `[issueRoleCertificate] DEMO uid=${uid} deviceId=${input.deviceId} — bypassing ALL iOS ` +
         "attestation (Apple App Attest). Demo/test only."
