@@ -10,7 +10,7 @@
     "deploy": "npm run build && firebase deploy --only functions",
     "verify:crisis-sentinel-storage": "node scripts/verify_crisis_sentinel_storage_release.mjs",
     "logs": "firebase functions:log",
-    "test": "npm run build && node scripts/test_authority_mls_preparation.mjs && node scripts/test_authority_mls_preparation.property.js && npm run test:firestore-rules",
+    "test": "npm run build && node --test scripts/test_attestation_exception_policy.mjs && node scripts/test_authority_mls_preparation.mjs && node scripts/test_authority_mls_preparation.property.js && npm run test:firestore-rules",
     "test:firestore-rules": "firebase emulators:exec --config ../firebase.json --project demo-crisis-connect --only firestore \"node --test scripts/test_firestore_rules.mjs\"",
     "test:authority-mls-preparation": "npm run build && node scripts/test_authority_mls_preparation.mjs",
     "test:property": "npm run build && node scripts/test_authority_mls_preparation.property.js"
