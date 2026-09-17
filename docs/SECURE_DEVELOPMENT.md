@@ -68,8 +68,10 @@ does not store end-user password verifiers.
   diagnostic fail CI. Baseline changes require the same review as source changes.
 - CodeQL runs on pull requests and pushes to `main`. Dependency review is automated with Dependabot
   and npm audit. Native frame handling is fuzzed with AddressSanitizer and ClusterFuzzLite.
-- Release assets are delivered over HTTPS and accompanied by keyless Sigstore bundles. Hashes are
-  never fetched over unauthenticated HTTP and treated as trusted verification data.
+- Release assets are delivered over HTTPS and accompanied by keyless Sigstore bundles, a CycloneDX
+  SBOM, SHA-256 checksums, and a GitHub artifact attestation binding the SBOM to the asset digests.
+  Follow [Release verification](RELEASE_VERIFICATION.md) before pilot distribution. Hashes fetched
+  over unauthenticated HTTP are never treated as trusted verification data.
 
 The public workflows under [`.github/workflows`](../.github/workflows) and test suites under the
 platform source trees are the executable evidence for this policy.
