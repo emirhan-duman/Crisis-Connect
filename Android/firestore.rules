@@ -898,7 +898,7 @@ service cloud.firestore {
       // Clients never mutate a persisted envelope: allowing even a subset of metadata changes
       // would let a recipient corrupt crypto/routing fields or extend server retention.
       allow update: if false;
-      allow delete: if isMessageParticipant();
+      allow delete: if false;
     }
 
     match /{panelCollection}/{panelId} {

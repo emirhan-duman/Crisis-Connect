@@ -252,17 +252,15 @@ test("message creation binds sender and recipient", async () => {
   );
 });
 
-test("only message participants can get or delete an envelope", async () => {
+test("only message participants can get an envelope and clients cannot delete it", async () => {
   await seedDocuments({ "messages/message-1": validV1Message() });
 
   await assertSucceeds(getDoc(doc(userDatabase("alice"), "messages/message-1")));
   await assertSucceeds(getDoc(doc(userDatabase("bob"), "messages/message-1")));
   await assertFails(getDoc(doc(userDatabase("mallory"), "messages/message-1")));
   await assertFails(deleteDoc(doc(userDatabase("mallory"), "messages/message-1")));
-  await assertSucceeds(deleteDoc(doc(userDatabase("bob"), "messages/message-1")));
-
-  await seedDocuments({ "messages/message-1": validV1Message() });
-  await assertSucceeds(deleteDoc(doc(userDatabase("alice"), "messages/message-1")));
+  await assertFails(deleteDoc(doc(userDatabase("bob"), "messages/message-1")));
+  await assertFails(deleteDoc(doc(userDatabase("alice"), "messages/message-1")));
 });
 
 test("message list queries must be constrained to the recipient", async () => {
