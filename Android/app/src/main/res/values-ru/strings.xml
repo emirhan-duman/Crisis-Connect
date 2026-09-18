@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">Открытый код — любой может проверить код</string>
     <string name="welcome_trust_no_ads">Без рекламы — ваши личные данные никогда не продаются</string>
     <string name="welcome_trust_emergency">Создано только для экстренной связи</string>
-    <string name="welcome_trust_diagnostics_note">Собираются только анонимные отчёты о сбоях для стабильности приложения.</string>
+    <string name="welcome_trust_diagnostics_note">Отчёты о сбоях отключены, пока вы не включите диагностику.</string>
     <string name="welcome_legal_acceptance">Я принимаю условия использования Crisis Connect.</string>
     <string name="welcome_setup_title">Включить связь поблизости</string>
     <string name="welcome_setup_body">Приложению это нужно, чтобы находить ближайшие устройства и показывать срочный статус.</string>

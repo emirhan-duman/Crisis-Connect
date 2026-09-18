@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">مفتوح المصدر — يمكن لأي شخص فحص الشيفرة</string>
     <string name="welcome_trust_no_ads">بلا إعلانات — لا تُباع بياناتك الشخصية أبدًا</string>
     <string name="welcome_trust_emergency">مبني حصريًا للتواصل في حالات الطوارئ</string>
-    <string name="welcome_trust_diagnostics_note">تُجمع تقارير الأعطال المجهولة الهوية فقط للحفاظ على استقرار التطبيق.</string>
+    <string name="welcome_trust_diagnostics_note">تظل تقارير الأعطال متوقفة حتى تفعّل بيانات التشخيص.</string>
     <string name="welcome_legal_acceptance">أوافق على شروط استخدام Crisis Connect.</string>
     <string name="welcome_setup_title">تفعيل التواصل القريب</string>
     <string name="welcome_setup_body">يحتاج التطبيق إلى هذه الأذونات للعثور على الأجهزة القريبة وإبقاء الحالة العاجلة مرئية.</string>

@@ -27,7 +27,7 @@ import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.service.BleRadioPolicy
 import com.auralis.crisisconnect.service.scan.BleScanCoordinator
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,7 +41,7 @@ import kotlinx.coroutines.withContext
 class SignalFinderViewModel(application: Application) : AndroidViewModel(application) {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     data class CellSignal(

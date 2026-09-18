@@ -30,7 +30,7 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import kotlin.coroutines.resume
 
 private const val TAG = "NewChatViewModel"
@@ -39,7 +39,7 @@ class NewChatViewModel(application: Application) : AndroidViewModel(application)
     private val context = getApplication<Application>()
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     private val _permissionGranted = MutableStateFlow(hasAllRuntimePermissions())

@@ -74,14 +74,17 @@ enum AppAnalytics {
         log(AnalyticsEventScreenView, [AnalyticsParameterScreenName: String(route.prefix(100))])
     }
 
-    /// Applies the user's stored consent to the SDK. Called at launch (after Firebase configures)
-    /// and from the privacy toggle — without both, the switch is theater over unconditional logging.
+    /// Applies the user's stored consent to the SDK. Called at launch after Firebase configures
+    /// and again whenever the privacy setting changes.
     static func applyStoredConsent() {
         setCollectionEnabled(PrivacyPreferences.isShareAnalyticsEnabled())
     }
 
     static func setCollectionEnabled(_ enabled: Bool) {
         Analytics.setAnalyticsCollectionEnabled(enabled)
+        if !enabled {
+            Analytics.resetAnalyticsData()
+        }
     }
 
     private static func log(_ name: String, _ parameters: [String: Any]? = nil) {

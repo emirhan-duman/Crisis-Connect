@@ -1186,7 +1186,7 @@
     <string name="welcome_trust_open_source">オープンソース — 誰でもコードを検証可能</string>
     <string name="welcome_trust_no_ads">広告なし — 個人データが販売されることはありません</string>
     <string name="welcome_trust_emergency">緊急通信専用に構築</string>
-    <string name="welcome_trust_diagnostics_note">アプリの安定性向上のため、匿名のクラッシュレポートのみが収集されます。</string>
+    <string name="welcome_trust_diagnostics_note">診断を有効にするまで、クラッシュレポートは送信されません。</string>
     <string name="welcome_legal_acceptance">Crisis Connect の利用規約に同意します。</string>
     <string name="welcome_setup_title">近接通信を有効にする</string>
     <string name="welcome_setup_body">近くのデバイスを見つけ、緊急ステータスを表示し続けるために、これらの許可が必要です。</string>

@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Çavkaniya vekirî — her kes dikare kodê venêre";
 "ONBOARDING_TRUST_NO_ADS" = "Tu reklam tune — daneyên te yên kesane tucaran nayên firotin";
 "ONBOARDING_TRUST_EMERGENCY" = "Tenê ji bo têkiliya awarte hatiye çêkirin";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Tenê raporên têkçûnê yên nenaskirî têne berhevkirin da ku sepan aram bimîne.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Heta ku teşhîsê çalak nekî, raporên têkçûnê girtî dimînin.";
 "ONBOARDING_FINISH" = "Crisis Connect dest pê bike";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Ewr";

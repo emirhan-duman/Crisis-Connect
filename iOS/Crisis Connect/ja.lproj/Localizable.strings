@@ -1282,7 +1282,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "オープンソース — 誰でもコードを検査できます";
 "ONBOARDING_TRUST_NO_ADS" = "広告なし — あなたの個人データが売られることはありません";
 "ONBOARDING_TRUST_EMERGENCY" = "緊急通信のためだけに作られました";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "アプリを安定させるため、匿名のクラッシュレポートのみを収集します。";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "診断を有効にするまで、クラッシュレポートは送信されません。";
 "ONBOARDING_FINISH" = "Crisis Connect を始める";
 
 /* Crisis Sentinel — engine / online errors / model picker / cards */

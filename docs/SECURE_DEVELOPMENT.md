@@ -72,6 +72,10 @@ does not store end-user password verifiers.
   SBOM, SHA-256 checksums, and a GitHub artifact attestation binding the SBOM to the asset digests.
   Follow [Release verification](RELEASE_VERIFICATION.md) before pilot distribution. Hashes fetched
   over unauthenticated HTTP are never treated as trusted verification data.
+- Firebase Analytics, Crashlytics, and Performance Monitoring must be disabled in platform
+  configuration before application startup. Collection begins only after an explicit stored opt-in;
+  disabling consent resets Analytics data and deletes queued crash reports. Crash reports must not
+  carry Firebase user IDs or message/location content.
 
 The public workflows under [`.github/workflows`](../.github/workflows) and test suites under the
 platform source trees are the executable evidence for this policy.

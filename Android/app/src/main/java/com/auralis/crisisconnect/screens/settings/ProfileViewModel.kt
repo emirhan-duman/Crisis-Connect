@@ -69,7 +69,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 
 /**
  * UI state of the profile screen.
@@ -131,7 +131,7 @@ class ProfileViewModel(
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance(FUNCTIONS_REGION)
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     private val _uiState = MutableStateFlow(
@@ -680,7 +680,7 @@ class ProfileViewModel(
             val error = serverWipe.exceptionOrNull()
             if (error != null) {
                 Log.e(TAG, "Account deletion failed", error)
-                runCatching { FirebaseCrashlytics.getInstance().recordException(error) }
+                TelemetryConsent.recordException(error)
                 _uiState.update { it.copy(isDeletingAccount = false) }
                 notifyMessage(
                     if (FirebaseAppCheckFailures.isLikelyAppCheckFailure(error)) {

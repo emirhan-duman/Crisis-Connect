@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Código abierto: cualquiera puede inspeccionar el código";
 "ONBOARDING_TRUST_NO_ADS" = "Sin anuncios: tus datos personales nunca se venden";
 "ONBOARDING_TRUST_EMERGENCY" = "Creado solo para la comunicación de emergencia";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Solo se recopilan informes de fallos anónimos para mantener la app estable.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Los informes de fallos permanecen desactivados hasta que habilites los diagnósticos.";
 "ONBOARDING_FINISH" = "Iniciar Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Nube";

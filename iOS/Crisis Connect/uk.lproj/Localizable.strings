@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Відкритий код — будь-хто може перевірити код";
 "ONBOARDING_TRUST_NO_ADS" = "Без реклами — ваші особисті дані ніколи не продаються";
 "ONBOARDING_TRUST_EMERGENCY" = "Створено лише для екстреного зв’язку";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Збираються лише анонімні звіти про збої для підтримання стабільності застосунку.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Звіти про збої вимкнені, доки ви не ввімкнете діагностику.";
 "ONBOARDING_FINISH" = "Запустити Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Хмара";

@@ -10,18 +10,28 @@ import FirebaseCrashlytics
 
 enum CrashReporter {
     static func configure() {
-        let crashlytics = Crashlytics.crashlytics()
-        crashlytics.setCrashlyticsCollectionEnabled(true)
+        applyConsent(PrivacyPreferences.isShareDiagnosticsEnabled())
     }
 
-    static func updateCurrentUser(
-        uid: String?,
+    /// Automatic collection remains disabled so an in-session opt-out cannot upload a later crash.
+    /// With consent, reports cached by a previous run are sent explicitly at the next launch.
+    static func applyConsent(_ enabled: Bool) {
+        let crashlytics = Crashlytics.crashlytics()
+        crashlytics.setCrashlyticsCollectionEnabled(false)
+        if enabled {
+            crashlytics.sendUnsentReports()
+        } else {
+            crashlytics.setUserID("")
+            crashlytics.deleteUnsentReports()
+        }
+    }
+
+    static func updateContext(
         role: String? = nil,
         certificateReady: Bool? = nil
     ) {
+        guard PrivacyPreferences.isShareDiagnosticsEnabled() else { return }
         let crashlytics = Crashlytics.crashlytics()
-        let normalizedUid = uid?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        crashlytics.setUserID(normalizedUid)
 
         if let role {
             crashlytics.setCustomValue(role, forKey: "rescue_role")

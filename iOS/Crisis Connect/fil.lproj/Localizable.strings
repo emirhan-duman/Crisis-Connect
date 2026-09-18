@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Open source — maaaring suriin ng sinuman ang code";
 "ONBOARDING_TRUST_NO_ADS" = "Walang ad — hindi kailanman ibinebenta ang iyong personal na data";
 "ONBOARDING_TRUST_EMERGENCY" = "Ginawa lang para sa komunikasyong pang-emergency";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Mga anonymous na crash report lang ang kinokolekta para panatilihing matatag ang app.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Naka-off ang crash reporting hanggang i-enable mo ang diagnostics.";
 "ONBOARDING_FINISH" = "Simulan ang Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Cloud";

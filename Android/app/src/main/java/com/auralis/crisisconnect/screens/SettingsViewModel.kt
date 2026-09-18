@@ -24,7 +24,7 @@ import com.auralis.crisisconnect.messaging.InternetChatTransport
 import com.auralis.crisisconnect.messaging.MessagingBootstrap
 import com.auralis.crisisconnect.security.ChildPinResult
 import com.auralis.crisisconnect.security.ChildProfileManager
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.launch
 
@@ -32,7 +32,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val appContext = getApplication<Application>()
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     var selectedCode by mutableStateOf("en")

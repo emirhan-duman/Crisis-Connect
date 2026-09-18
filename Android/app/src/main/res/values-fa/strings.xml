@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">متن‌باز — هر کسی می‌تواند کد را بررسی کند</string>
     <string name="welcome_trust_no_ads">بدون تبلیغات — داده‌های شخصی شما هرگز فروخته نمی‌شود</string>
     <string name="welcome_trust_emergency">فقط برای ارتباطات اضطراری ساخته شده است</string>
-    <string name="welcome_trust_diagnostics_note">فقط گزارش‌های ناشناس خرابی جمع‌آوری می‌شود تا برنامه پایدار بماند.</string>
+    <string name="welcome_trust_diagnostics_note">گزارش خرابی تا زمانی که داده‌های تشخیصی را فعال نکنید خاموش می‌ماند.</string>
     <string name="welcome_legal_acceptance">شرایط استفاده از Crisis Connect را می‌پذیرم.</string>
     <string name="welcome_setup_title">فعال‌سازی ارتباط نزدیک</string>
     <string name="welcome_setup_body">برنامه برای یافتن دستگاه‌های نزدیک و نمایش وضعیت فوری به این‌ها نیاز دارد.</string>

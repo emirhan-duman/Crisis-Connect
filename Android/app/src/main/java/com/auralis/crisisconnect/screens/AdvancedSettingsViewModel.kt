@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.data.observeHasBleContacts
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import com.auralis.crisisconnect.messaging.PresenceReporter
 import com.auralis.crisisconnect.service.gattmesh.GattMeshForegroundService
 import com.auralis.crisisconnect.settingsDataStore
@@ -18,13 +19,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import android.util.Log
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 
 class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     data class AdvancedSettingsUiState(
@@ -35,7 +35,7 @@ class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(app
         val highRangeModeForcedByBleContacts: Boolean = false,
         val batterySaverMode: Boolean = true,
         val deliveryRetryEnabled: Boolean = true,
-        val diagnosticsUploadEnabled: Boolean = true,
+        val diagnosticsUploadEnabled: Boolean = false,
         val experimentalFeaturesEnabled: Boolean = false,
         val isLoaded: Boolean = false,
     )
@@ -66,7 +66,9 @@ class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(app
                     highRangeModeForcedByBleContacts = isBleForced,
                     batterySaverMode = prefs[BATTERY_SAVER_MODE] ?: true,
                     deliveryRetryEnabled = prefs[DELIVERY_RETRY_ENABLED] ?: true,
-                    diagnosticsUploadEnabled = prefs[DIAGNOSTICS_UPLOAD_ENABLED] ?: true,
+                    diagnosticsUploadEnabled = TelemetryConsent.resolveEnabled(
+                        prefs[TelemetryConsent.DIAGNOSTICS_UPLOAD_ENABLED]
+                    ),
                     experimentalFeaturesEnabled = prefs[EXPERIMENTAL_FEATURES_ENABLED] ?: false,
                     isLoaded = true
                 )
@@ -115,7 +117,14 @@ class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(app
 
     fun setDeliveryRetryEnabled(enabled: Boolean) = updateBoolean(DELIVERY_RETRY_ENABLED, enabled)
 
-    fun setDiagnosticsUploadEnabled(enabled: Boolean) = updateBoolean(DIAGNOSTICS_UPLOAD_ENABLED, enabled)
+    fun setDiagnosticsUploadEnabled(enabled: Boolean) {
+        viewModelScope.launch(exceptionHandler) {
+            appContext.settingsDataStore.edit { prefs ->
+                prefs[TelemetryConsent.DIAGNOSTICS_UPLOAD_ENABLED] = enabled
+            }
+            TelemetryConsent.apply(enabled)
+        }
+    }
 
     fun setExperimentalFeaturesEnabled(enabled: Boolean) = updateBoolean(EXPERIMENTAL_FEATURES_ENABLED, enabled)
 
@@ -147,7 +156,6 @@ class AdvancedSettingsViewModel(application: Application) : AndroidViewModel(app
         val HIGH_RANGE_MODE_ENABLED = booleanPreferencesKey("advanced_high_range_mode_enabled")
         val BATTERY_SAVER_MODE = booleanPreferencesKey("advanced_battery_saver_mode")
         val DELIVERY_RETRY_ENABLED = booleanPreferencesKey("advanced_delivery_retry_enabled")
-        val DIAGNOSTICS_UPLOAD_ENABLED = booleanPreferencesKey("advanced_diagnostics_upload_enabled")
         val EXPERIMENTAL_FEATURES_ENABLED = booleanPreferencesKey("advanced_experimental_features_enabled")
     }
 }

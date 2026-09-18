@@ -111,7 +111,7 @@ import com.auralis.crisisconnect.core.media.prepareImageAttachmentForTransfer
 import com.auralis.crisisconnect.data.observeCallEvents
 import com.auralis.crisisconnect.isScreenshotDemoModeEnabledSync
 import com.auralis.crisisconnect.settingsDataStore
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlin.random.Random
 
@@ -163,7 +163,7 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     private val mainHandler = Handler(Looper.getMainLooper())
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())

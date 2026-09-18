@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">Open source — chacun peut inspecter le code</string>
     <string name="welcome_trust_no_ads">Sans publicité — vos données personnelles ne sont jamais vendues</string>
     <string name="welcome_trust_emergency">Conçue uniquement pour la communication d\'urgence</string>
-    <string name="welcome_trust_diagnostics_note">Seuls des rapports de plantage anonymes sont collectés pour garder l\'application stable.</string>
+    <string name="welcome_trust_diagnostics_note">Les rapports de plantage restent désactivés tant que vous n’activez pas les diagnostics.</string>
     <string name="welcome_legal_acceptance">J\'accepte les conditions d\'utilisation de Crisis Connect.</string>
     <string name="welcome_setup_title">Activer la communication à proximité</string>
     <string name="welcome_setup_body">L\'application en a besoin pour trouver les appareils proches et garder les états urgents visibles.</string>

@@ -35,7 +35,6 @@ final class PrivacySettingsViewModel: ObservableObject {
 
     @Published var shareAnalytics: Bool {
         didSet {
-            // The choice must actually REACH the SDK, or the switch is theater.
             AppAnalytics.setCollectionEnabled(shareAnalytics && canShareAnalytics)
             PrivacyPreferences.setShareAnalytics(
                 shareAnalytics && canShareAnalytics,
@@ -44,20 +43,28 @@ final class PrivacySettingsViewModel: ObservableObject {
         }
     }
 
+    @Published var shareDiagnostics: Bool {
+        didSet {
+            PrivacyPreferences.setShareDiagnostics(
+                shareDiagnostics,
+                userDefaults: userDefaults
+            )
+            CrashReporter.applyConsent(shareDiagnostics)
+        }
+    }
+
     private let userDefaults: UserDefaults
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
         self.canShareLiveLocation = RescueSettingsStore.shared.canUseCrisisLink
-        // This was hardcoded false — the toggle rendered permanently off and disabled while
-        // Analytics.logEvent fired unconditionally underneath it. In an open-source app that
-        // advertises an auditable privacy contract, a consent switch that lies is worse than none.
         self.canShareAnalytics = true
         self.shareLocationInSOS = canShareLiveLocation
             && PrivacyPreferences.isShareLocationInSOSEnabled(userDefaults: userDefaults)
         self.shareProfileDetails = PrivacyPreferences.isShareProfileDetailsEnabled(userDefaults: userDefaults)
         self.shareAnalytics = canShareAnalytics
             && PrivacyPreferences.isShareAnalyticsEnabled(userDefaults: userDefaults)
+        self.shareDiagnostics = PrivacyPreferences.isShareDiagnosticsEnabled(userDefaults: userDefaults)
     }
 
     func openSystemSettings() {
@@ -88,9 +95,7 @@ enum PrivacyPreferences {
     }
 
     static func isShareAnalyticsEnabled(userDefaults: UserDefaults = .standard) -> Bool {
-        // Default ON: collection has always run, so on is the truthful default — the change is
-        // that turning it OFF now genuinely stops collection instead of only repainting a switch.
-        userDefaults.object(forKey: Keys.shareAnalytics) as? Bool ?? true
+        userDefaults.object(forKey: Keys.shareAnalytics) as? Bool ?? false
     }
 
     static func setShareAnalytics(_ enabled: Bool, userDefaults: UserDefaults = .standard) {
@@ -98,10 +103,19 @@ enum PrivacyPreferences {
         NotificationCenter.default.post(name: .privacyPreferencesDidChange, object: nil)
     }
 
+    static func isShareDiagnosticsEnabled(userDefaults: UserDefaults = .standard) -> Bool {
+        userDefaults.object(forKey: Keys.shareDiagnostics) as? Bool ?? false
+    }
+
+    static func setShareDiagnostics(_ enabled: Bool, userDefaults: UserDefaults = .standard) {
+        userDefaults.set(enabled, forKey: Keys.shareDiagnostics)
+    }
+
     fileprivate enum Keys {
         static let shareLocationInSOS = "privacy.shareLocationInSOS"
         static let shareProfileDetails = "privacy.shareProfileDetails"
         static let shareAnalytics = "privacy.shareAnalytics"
+        static let shareDiagnostics = "privacy.shareDiagnostics"
     }
 }
 

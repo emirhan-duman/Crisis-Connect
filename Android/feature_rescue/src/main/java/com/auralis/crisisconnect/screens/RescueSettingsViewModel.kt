@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import com.auralis.crisisconnect.settingsDataStore
 import com.auralis.crisisconnect.service.CrisisLinkForegroundService
 import com.auralis.crisisconnect.service.mesh.MeshAwareService
@@ -19,13 +20,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.util.Log
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 
 class RescueSettingsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     data class RescueSettingsUiState(

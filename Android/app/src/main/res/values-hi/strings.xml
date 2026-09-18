@@ -1187,7 +1187,7 @@
     <string name="welcome_trust_open_source">ओपन सोर्स — कोई भी कोड का निरीक्षण कर सकता है</string>
     <string name="welcome_trust_no_ads">कोई विज्ञापन नहीं — आपका व्यक्तिगत डेटा कभी बेचा नहीं जाता</string>
     <string name="welcome_trust_emergency">केवल आपातकालीन संचार के लिए निर्मित</string>
-    <string name="welcome_trust_diagnostics_note">ऐप को स्थिर रखने के लिए केवल अज्ञात क्रैश रिपोर्ट एकत्र की जाती हैं।</string>
+    <string name="welcome_trust_diagnostics_note">जब तक आप निदान सक्षम नहीं करते, क्रैश रिपोर्ट बंद रहती हैं।</string>
     <string name="welcome_legal_acceptance">मैं Crisis Connect का उपयोग करने की शर्तों को स्वीकार करता हूँ।</string>
     <string name="welcome_setup_title">आसपास का संचार सक्षम करें</string>
     <string name="welcome_setup_body">आसपास के उपकरणों को खोजने और तत्काल स्थिति को दृश्यमान रखने के लिए ऐप को इन अनुमतियों की आवश्यकता है।</string>

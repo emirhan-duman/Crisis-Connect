@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "مفتوح المصدر — يمكن لأي شخص فحص الشيفرة";
 "ONBOARDING_TRUST_NO_ADS" = "بلا إعلانات — لا تُباع بياناتك الشخصية أبدًا";
 "ONBOARDING_TRUST_EMERGENCY" = "مصمّم فقط للتواصل في حالات الطوارئ";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "تُجمع تقارير الأعطال المجهولة فقط للحفاظ على استقرار التطبيق.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "تظل تقارير الأعطال متوقفة حتى تفعّل بيانات التشخيص.";
 "ONBOARDING_FINISH" = "ابدأ Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "سحابي";

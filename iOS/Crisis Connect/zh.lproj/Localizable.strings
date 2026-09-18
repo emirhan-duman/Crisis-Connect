@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "开源——任何人都可以检查代码";
 "ONBOARDING_TRUST_NO_ADS" = "无广告——您的个人数据绝不出售";
 "ONBOARDING_TRUST_EMERGENCY" = "仅为紧急通信而构建";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "仅收集匿名崩溃报告以保持应用稳定。";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "在您启用诊断之前，崩溃报告将保持关闭。";
 "ONBOARDING_FINISH" = "启动 Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "云端";

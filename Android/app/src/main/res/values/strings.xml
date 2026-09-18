@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">Open source — anyone can inspect the code</string>
     <string name="welcome_trust_no_ads">No ads — your personal data is never sold</string>
     <string name="welcome_trust_emergency">Built only for emergency communication</string>
-    <string name="welcome_trust_diagnostics_note">Only anonymous crash reports are collected to keep the app stable.</string>
+    <string name="welcome_trust_diagnostics_note">Crash reporting stays off until you enable diagnostics.</string>
     <string name="welcome_legal_acceptance">I accept the terms for using Crisis Connect.</string>
     <string name="welcome_setup_title">Enable nearby communication</string>
     <string name="welcome_setup_body">The app needs these to find nearby devices and keep urgent status visible.</string>

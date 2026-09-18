@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "متن‌باز — هرکسی می‌تواند کد را بررسی کند";
 "ONBOARDING_TRUST_NO_ADS" = "بدون تبلیغات — داده‌های شخصی شما هرگز فروخته نمی‌شود";
 "ONBOARDING_TRUST_EMERGENCY" = "فقط برای ارتباطات اضطراری ساخته شده";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "فقط گزارش‌های خرابی ناشناس برای پایدار نگه‌داشتن برنامه جمع‌آوری می‌شود.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "گزارش خرابی تا زمانی که داده‌های تشخیصی را فعال نکنید خاموش می‌ماند.";
 "ONBOARDING_FINISH" = "شروع Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "ابری";
