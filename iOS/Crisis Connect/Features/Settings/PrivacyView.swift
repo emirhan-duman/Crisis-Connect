@@ -33,6 +33,11 @@ struct PrivacyView: View {
                 }
                 .disabled(!viewModel.canShareAnalytics)
                 .listRowBackground(Color.appRowBackground)
+
+                Toggle(isOn: $viewModel.shareDiagnostics) {
+                    Text(LocalizedStringKey("ADVANCED_SETTING_DIAGNOSTICS_UPLOAD_TITLE"))
+                }
+                .listRowBackground(Color.appRowBackground)
             }
 
             Section(footer: Text(LocalizedStringKey("PRIVACY_OPEN_SETTINGS_FOOTER"))) {

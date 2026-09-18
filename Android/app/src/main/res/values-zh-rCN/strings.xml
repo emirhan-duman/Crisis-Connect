@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">开源——任何人都可以检查代码</string>
     <string name="welcome_trust_no_ads">无广告——您的个人数据绝不出售</string>
     <string name="welcome_trust_emergency">仅为紧急通信而构建</string>
-    <string name="welcome_trust_diagnostics_note">仅收集匿名崩溃报告以保持应用稳定。</string>
+    <string name="welcome_trust_diagnostics_note">在您启用诊断之前，崩溃报告将保持关闭。</string>
     <string name="welcome_legal_acceptance">我接受使用 Crisis Connect 的条款。</string>
     <string name="welcome_setup_title">启用附近通信</string>
     <string name="welcome_setup_body">应用需要这些权限来查找附近设备并保持紧急状态可见。</string>

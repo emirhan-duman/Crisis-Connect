@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">Open source — maaaring suriin ninuman ang code</string>
     <string name="welcome_trust_no_ads">Walang ad — hindi kailanman ibinebenta ang iyong personal na data</string>
     <string name="welcome_trust_emergency">Ginawa lamang para sa komunikasyon sa emergency</string>
-    <string name="welcome_trust_diagnostics_note">Mga anonymous na crash report lang ang kinokolekta upang panatilihing stable ang app.</string>
+    <string name="welcome_trust_diagnostics_note">Naka-off ang crash reporting hanggang i-enable mo ang diagnostics.</string>
     <string name="welcome_legal_acceptance">Tinatanggap ko ang mga tuntunin sa paggamit ng Crisis Connect.</string>
     <string name="welcome_setup_title">I-enable ang komunikasyon sa malapit</string>
     <string name="welcome_setup_body">Kailangan ng app ang mga ito upang makahanap ng mga malapit na device at panatilihing nakikita ang mahalagang status.</string>

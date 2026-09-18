@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">Código aberto — qualquer pessoa pode inspecionar o código</string>
     <string name="welcome_trust_no_ads">Sem anúncios — seus dados pessoais nunca são vendidos</string>
     <string name="welcome_trust_emergency">Criado apenas para comunicação de emergência</string>
-    <string name="welcome_trust_diagnostics_note">Apenas relatórios de falha anônimos são coletados para manter o aplicativo estável.</string>
+    <string name="welcome_trust_diagnostics_note">Os relatórios de falhas permanecem desativados até você ativar os diagnósticos.</string>
     <string name="welcome_legal_acceptance">Aceito os termos de uso do Crisis Connect.</string>
     <string name="welcome_setup_title">Ativar comunicação por proximidade</string>
     <string name="welcome_setup_body">O aplicativo precisa disso para encontrar dispositivos próximos e manter o status urgente visível.</string>

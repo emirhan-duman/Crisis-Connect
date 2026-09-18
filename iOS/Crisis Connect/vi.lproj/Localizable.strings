@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Mã nguồn mở — bất kỳ ai cũng có thể kiểm tra mã";
 "ONBOARDING_TRUST_NO_ADS" = "Không quảng cáo — dữ liệu cá nhân của bạn không bao giờ bị bán";
 "ONBOARDING_TRUST_EMERGENCY" = "Chỉ được xây dựng cho liên lạc khẩn cấp";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Chỉ thu thập báo cáo sự cố ẩn danh để giữ ứng dụng ổn định.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Báo cáo sự cố luôn tắt cho đến khi bạn bật dữ liệu chẩn đoán.";
 "ONBOARDING_FINISH" = "Khởi động Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Đám mây";

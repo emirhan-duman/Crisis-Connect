@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "ओपन सोर्स — कोई भी कोड की जाँच कर सकता है";
 "ONBOARDING_TRUST_NO_ADS" = "कोई विज्ञापन नहीं — आपका व्यक्तिगत डेटा कभी नहीं बेचा जाता";
 "ONBOARDING_TRUST_EMERGENCY" = "केवल आपातकालीन संचार के लिए बनाया गया";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "ऐप को स्थिर रखने के लिए केवल अनाम क्रैश रिपोर्ट एकत्र की जाती हैं।";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "जब तक आप निदान सक्षम नहीं करते, क्रैश रिपोर्ट बंद रहती हैं।";
 "ONBOARDING_FINISH" = "Crisis Connect शुरू करें";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "क्लाउड";

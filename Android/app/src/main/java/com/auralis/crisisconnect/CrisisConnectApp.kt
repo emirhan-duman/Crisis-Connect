@@ -2,6 +2,7 @@ package com.auralis.crisisconnect
 
 import android.app.Activity
 import android.app.Application
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
@@ -10,6 +11,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.View
 import com.auralis.crisisconnect.analytics.Analytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import com.auralis.crisisconnect.data.hasAnyBleGattContacts
 import com.auralis.crisisconnect.data.normalizeClassicCapableBleContacts
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
@@ -28,7 +30,6 @@ import com.google.firebase.appcheck.AppCheckProviderFactory
 import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicReference
@@ -38,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 class CrisisConnectApp : Application() {
@@ -51,20 +53,23 @@ class CrisisConnectApp : Application() {
 
         installFirebaseAppCheck()
 
-        // Crashlytics – enable early so every subsequent crash is reported.
-        runCatching {
-            FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(true)
-        }
-
         Analytics.init(this)
+        // Apply the persisted choice before app features can emit events. This also replaces a
+        // collection override persisted by an older app version before the opt-in policy existed.
+        runCatching {
+            runBlocking(Dispatchers.IO) {
+                TelemetryConsent.applyStored(this@CrisisConnectApp)
+            }
+        }.onFailure {
+            runCatching { TelemetryConsent.apply(false) }
+            Log.w(TAG, "Failed to apply telemetry preference; collection remains disabled", it)
+        }
 
         // Global safety-net: forward uncaught exceptions to Crashlytics before the
         // default handler terminates the process.
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            runCatching {
-                FirebaseCrashlytics.getInstance().recordException(throwable)
-            }
+            TelemetryConsent.recordException(throwable)
             defaultHandler?.uncaughtException(thread, throwable)
         }
 
@@ -389,6 +394,7 @@ class CrisisConnectApp : Application() {
         Log.d(TAG, "Seeded Firebase App Check debug token from local configuration.")
     }
 
+    @SuppressLint("LogNotTimber")
     private fun warmUpDebugAppCheckToken(firebaseAppCheck: FirebaseAppCheck) {
         runCatching {
             firebaseAppCheck.getAppCheckToken(false)

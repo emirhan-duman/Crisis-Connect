@@ -1230,7 +1230,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Open source — anyone can inspect the code";
 "ONBOARDING_TRUST_NO_ADS" = "No ads — your personal data is never sold";
 "ONBOARDING_TRUST_EMERGENCY" = "Built only for emergency communication";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Only anonymous crash reports are collected to keep the app stable.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Crash reporting stays off until you enable diagnostics.";
 "ONBOARDING_FINISH" = "Start Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Cloud";

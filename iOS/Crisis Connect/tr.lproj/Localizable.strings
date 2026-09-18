@@ -1230,7 +1230,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Açık kaynak — kodu herkes inceleyebilir";
 "ONBOARDING_TRUST_NO_ADS" = "Reklam yok — kişisel verilerin asla satılmaz";
 "ONBOARDING_TRUST_EMERGENCY" = "Yalnızca acil durum iletişimi için üretildi";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Uygulamayı stabil tutmak için yalnızca anonim çökme raporları toplanır.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Tanılamayı etkinleştirene kadar çökme raporları kapalı kalır.";
 "ONBOARDING_FINISH" = "Crisis Connect'i Başlat";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Bulut";

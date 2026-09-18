@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "ওপেন সোর্স — যে কেউ কোড পরিদর্শন করতে পারে";
 "ONBOARDING_TRUST_NO_ADS" = "কোনো বিজ্ঞাপন নেই — আপনার ব্যক্তিগত ডেটা কখনও বিক্রি হয় না";
 "ONBOARDING_TRUST_EMERGENCY" = "কেবল জরুরি যোগাযোগের জন্য নির্মিত";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "অ্যাপ স্থিতিশীল রাখতে কেবল বেনামী ক্র্যাশ রিপোর্ট সংগ্রহ করা হয়।";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "আপনি ডায়াগনস্টিকস চালু না করা পর্যন্ত ক্র্যাশ রিপোর্ট বন্ধ থাকে।";
 "ONBOARDING_FINISH" = "Crisis Connect শুরু করুন";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "ক্লাউড";

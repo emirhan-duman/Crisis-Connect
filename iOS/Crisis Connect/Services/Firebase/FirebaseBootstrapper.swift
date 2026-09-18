@@ -191,7 +191,7 @@ final class FirebaseBootstrapper {
         }
 
         secureStore.saveUid(user.uid)
-        CrashReporter.updateCurrentUser(uid: user.uid)
+        CrashReporter.updateContext()
         await ensureUserDocument(for: user)
         await PrivacyRemoteSync.syncProfileDetails()
         _ = await refreshRescueAccess()
@@ -210,15 +210,14 @@ final class FirebaseBootstrapper {
         guard let user = auth.currentUser, !user.isAnonymous else {
             if let cachedRescueRole {
                 secureStore.saveRole(cachedRescueRole)
-                CrashReporter.updateCurrentUser(
-                    uid: secureStore.loadUid(),
+                CrashReporter.updateContext(
                     role: cachedRescueRole,
                     certificateReady: true
                 )
                 return RescueAccessState(role: cachedRescueRole, certificateReady: true)
             }
             secureStore.clearRole()
-            CrashReporter.updateCurrentUser(uid: secureStore.loadUid(), role: "user", certificateReady: false)
+            CrashReporter.updateContext(role: "user", certificateReady: false)
             return RescueAccessState(role: "user", certificateReady: false)
         }
 
@@ -230,33 +229,33 @@ final class FirebaseBootstrapper {
             let warmed = await warmUpCertificateWithBanner()
             let hasStoredCertificate = await securityRepository.hasUsableStoredCertificate(allowExpired: true)
             let certificateReady = warmed || hasStoredCertificate
-            CrashReporter.updateCurrentUser(uid: user.uid, role: role, certificateReady: certificateReady)
+            CrashReporter.updateContext(role: role, certificateReady: certificateReady)
             return RescueAccessState(role: role, certificateReady: certificateReady)
 
         case .unauthorized:
             secureStore.clearRole()
             securityRepository.clearStoredCertificate()
-            CrashReporter.updateCurrentUser(uid: user.uid, role: "user", certificateReady: false)
+            CrashReporter.updateContext(role: "user", certificateReady: false)
             return RescueAccessState(role: "user", certificateReady: false)
 
         case .unauthenticated:
             if let cachedRescueRole {
                 secureStore.saveRole(cachedRescueRole)
-                CrashReporter.updateCurrentUser(uid: user.uid, role: cachedRescueRole, certificateReady: true)
+                CrashReporter.updateContext(role: cachedRescueRole, certificateReady: true)
                 return RescueAccessState(role: cachedRescueRole, certificateReady: true)
             }
             secureStore.clearRole()
-            CrashReporter.updateCurrentUser(uid: user.uid, role: "user", certificateReady: false)
+            CrashReporter.updateContext(role: "user", certificateReady: false)
             return RescueAccessState(role: "user", certificateReady: false)
 
         case .failure:
             if let cachedRescueRole {
                 secureStore.saveRole(cachedRescueRole)
-                CrashReporter.updateCurrentUser(uid: user.uid, role: cachedRescueRole, certificateReady: true)
+                CrashReporter.updateContext(role: cachedRescueRole, certificateReady: true)
                 return RescueAccessState(role: cachedRescueRole, certificateReady: true)
             }
             secureStore.clearRole()
-            CrashReporter.updateCurrentUser(uid: user.uid, role: "user", certificateReady: false)
+            CrashReporter.updateContext(role: "user", certificateReady: false)
             return RescueAccessState(role: "user", certificateReady: false)
         }
     }

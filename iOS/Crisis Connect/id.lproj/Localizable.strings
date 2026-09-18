@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Sumber terbuka — siapa pun dapat memeriksa kodenya";
 "ONBOARDING_TRUST_NO_ADS" = "Tanpa iklan — data pribadi Anda tidak pernah dijual";
 "ONBOARDING_TRUST_EMERGENCY" = "Dibuat hanya untuk komunikasi darurat";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Hanya laporan kerusakan anonim yang dikumpulkan untuk menjaga aplikasi tetap stabil.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Laporan kerusakan tetap nonaktif sampai Anda mengaktifkan diagnostik.";
 "ONBOARDING_FINISH" = "Mulai Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Awan";

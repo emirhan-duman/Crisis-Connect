@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">Відкритий код — будь-хто може перевірити код</string>
     <string name="welcome_trust_no_ads">Без реклами — ваші особисті дані ніколи не продаються</string>
     <string name="welcome_trust_emergency">Створено лише для екстреного зв’язку</string>
-    <string name="welcome_trust_diagnostics_note">Збираються лише анонімні звіти про збої, щоб застосунок був стабільним.</string>
+    <string name="welcome_trust_diagnostics_note">Звіти про збої вимкнені, доки ви не ввімкнете діагностику.</string>
     <string name="welcome_legal_acceptance">Я приймаю умови користування Crisis Connect.</string>
     <string name="welcome_setup_title">Увімкнути зв’язок поблизу</string>
     <string name="welcome_setup_body">Застосунку потрібні ці дозволи, щоб знаходити пристрої поблизу та зберігати видимість термінового стану.</string>

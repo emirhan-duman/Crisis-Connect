@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">اوپن سورس — کوئی بھی کوڈ کا معائنہ کر سکتا ہے</string>
     <string name="welcome_trust_no_ads">کوئی اشتہار نہیں — آپ کا ذاتی ڈیٹا کبھی فروخت نہیں ہوتا</string>
     <string name="welcome_trust_emergency">صرف ہنگامی رابطے کے لیے بنایا گیا</string>
-    <string name="welcome_trust_diagnostics_note">ایپ کو مستحکم رکھنے کے لیے صرف گمنام کریش رپورٹس جمع کی جاتی ہیں۔</string>
+    <string name="welcome_trust_diagnostics_note">جب تک آپ تشخیصی ڈیٹا فعال نہ کریں، کریش رپورٹس بند رہتی ہیں۔</string>
     <string name="welcome_legal_acceptance">میں Crisis Connect استعمال کرنے کی شرائط قبول کرتا ہوں۔</string>
     <string name="welcome_setup_title">قریبی رابطہ فعال کریں</string>
     <string name="welcome_setup_body">قریبی آلات تلاش کرنے اور فوری حیثیت کو نظر آنے کے لیے ایپ کو ان کی ضرورت ہے۔</string>

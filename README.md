@@ -727,7 +727,7 @@ Test coverage includes:
 
 Crisis Connect is designed with privacy as a core principle:
 
-- **No telemetry or analytics on messages.** Firebase Analytics is included for app-level usage metrics (screen views, crash-free rates) but never touches message content. Analytics consent is asked for explicitly.
+- **Telemetry is opt-in.** Firebase Analytics and Crashlytics start disabled and are enabled only by explicit privacy/diagnostics choices. Events use coarse app-level categories and never include message content, phone numbers, location, or Firebase user IDs.
 - **No plaintext on servers.** P2P messages never leave the two devices. Internet messages transit the relay as Signal Protocol ciphertext and are purged after delivery.
 - **No contact upload.** Contact discovery is opt-in, gated behind phone verification, and can be turned off. Contact exchange works entirely locally through QR or SPAKE2 pairing.
 - **No tracking.** No advertising SDKs. No third-party tracking.

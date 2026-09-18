@@ -81,12 +81,12 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineExceptionHandler
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 
 class BleChatViewModel(application: Application) : AndroidViewModel(application) {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     private val serviceBinding = RescueClientServiceBinding(application.applicationContext)

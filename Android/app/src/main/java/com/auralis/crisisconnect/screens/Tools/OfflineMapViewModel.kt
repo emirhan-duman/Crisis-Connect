@@ -7,7 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.R
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import com.auralis.crisisconnect.data.offline.OfflineRegionEntity
 import com.auralis.crisisconnect.data.offline.OfflineRegionStatus
 import com.auralis.crisisconnect.data.offline.OfflineServiceLocator
@@ -43,7 +43,7 @@ class OfflineMapViewModel internal constructor(
 ) : ViewModel() {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     private val _uiState = MutableStateFlow(OfflineMapUiState())

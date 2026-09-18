@@ -15,7 +15,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.R
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,7 +42,7 @@ data class WhistleUiState(
 class WhistleViewModel(application: Application) : AndroidViewModel(application) {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     private val appContext = application.applicationContext

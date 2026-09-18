@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">ওপেন সোর্স — যে কেউ কোড পরীক্ষা করতে পারে</string>
     <string name="welcome_trust_no_ads">কোনো বিজ্ঞাপন নেই — আপনার ব্যক্তিগত তথ্য কখনো বিক্রি হয় না</string>
     <string name="welcome_trust_emergency">শুধুমাত্র জরুরি যোগাযোগের জন্য তৈরি</string>
-    <string name="welcome_trust_diagnostics_note">অ্যাপটি স্থিতিশীল রাখতে কেবল বেনামী ক্র্যাশ রিপোর্ট সংগ্রহ করা হয়।</string>
+    <string name="welcome_trust_diagnostics_note">আপনি ডায়াগনস্টিকস চালু না করা পর্যন্ত ক্র্যাশ রিপোর্ট বন্ধ থাকে।</string>
     <string name="welcome_legal_acceptance">আমি Crisis Connect ব্যবহারের শর্তাবলী গ্রহণ করছি।</string>
     <string name="welcome_setup_title">কাছাকাছি যোগাযোগ সক্ষম করুন</string>
     <string name="welcome_setup_body">কাছাকাছি ডিভাইস খুঁজতে এবং জরুরি অবস্থা দৃশ্যমান রাখতে অ্যাপটির এগুলো প্রয়োজন।</string>

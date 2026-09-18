@@ -18,6 +18,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.BuildConfig
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import com.auralis.crisisconnect.data.local.ContactLastSeenStore
 import com.auralis.crisisconnect.settingsDataStore
 import com.auralis.crisisconnect.ai.CrisisSentinelLiteRtModelRuntime
@@ -57,13 +58,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.withContext
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 
 class RescueScreenViewModel(application: Application) : AndroidViewModel(application) {
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     /**

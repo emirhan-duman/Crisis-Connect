@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">Açık kaynak — kodu herkes inceleyebilir</string>
     <string name="welcome_trust_no_ads">Reklam yok — kişisel verileriniz satılmaz</string>
     <string name="welcome_trust_emergency">Yalnızca acil iletişim için tasarlandı</string>
-    <string name="welcome_trust_diagnostics_note">Uygulamayı kararlı tutmak için yalnızca anonim çökme kayıtları toplanır.</string>
+    <string name="welcome_trust_diagnostics_note">Tanılamayı etkinleştirene kadar çökme raporları kapalı kalır.</string>
     <string name="welcome_legal_acceptance">Crisis Connect kullanım şartlarını kabul ediyorum.</string>
     <string name="welcome_setup_title">Yakın iletişimi açın</string>
     <string name="welcome_setup_body">Yakındaki cihazları bulmak ve acil bildirimleri görünür tutmak için bu izinler gerekir.</string>

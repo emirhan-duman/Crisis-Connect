@@ -53,7 +53,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import kotlin.collections.LinkedHashMap
 
 private val TERMS_ACCEPTED_KEY = booleanPreferencesKey("terms_v2_accepted")
@@ -77,7 +77,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     private val context = getApplication<Application>()

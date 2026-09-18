@@ -25,6 +25,13 @@ object Analytics {
         }
     }
 
+    fun setCollectionEnabled(enabled: Boolean) {
+        runCatching {
+            instance?.setAnalyticsCollectionEnabled(enabled)
+            if (!enabled) instance?.resetAnalyticsData()
+        }
+    }
+
     /** SOS mode switched on (BLE broadcast started). */
     fun sosActivated() = log("sos_activated")
 

@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">Mã nguồn mở — bất kỳ ai cũng có thể kiểm tra mã</string>
     <string name="welcome_trust_no_ads">Không quảng cáo — dữ liệu cá nhân của bạn không bao giờ bị bán</string>
     <string name="welcome_trust_emergency">Chỉ được xây dựng cho liên lạc khẩn cấp</string>
-    <string name="welcome_trust_diagnostics_note">Chỉ thu thập báo cáo sự cố ẩn danh để giữ ứng dụng ổn định.</string>
+    <string name="welcome_trust_diagnostics_note">Báo cáo sự cố luôn tắt cho đến khi bạn bật dữ liệu chẩn đoán.</string>
     <string name="welcome_legal_acceptance">Tôi chấp nhận các điều khoản sử dụng Crisis Connect.</string>
     <string name="welcome_setup_title">Bật liên lạc gần đây</string>
     <string name="welcome_setup_body">Ứng dụng cần những quyền này để tìm các thiết bị gần đó và giữ trạng thái khẩn cấp hiển thị.</string>

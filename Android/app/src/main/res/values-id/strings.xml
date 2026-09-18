@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">Sumber terbuka — siapa pun dapat memeriksa kodenya</string>
     <string name="welcome_trust_no_ads">Tanpa iklan — data pribadi Anda tidak pernah dijual</string>
     <string name="welcome_trust_emergency">Dibuat hanya untuk komunikasi darurat</string>
-    <string name="welcome_trust_diagnostics_note">Hanya laporan kerusakan anonim yang dikumpulkan agar aplikasi tetap stabil.</string>
+    <string name="welcome_trust_diagnostics_note">Laporan kerusakan tetap nonaktif sampai Anda mengaktifkan diagnostik.</string>
     <string name="welcome_legal_acceptance">Saya menerima ketentuan penggunaan Crisis Connect.</string>
     <string name="welcome_setup_title">Aktifkan komunikasi terdekat</string>
     <string name="welcome_setup_body">Aplikasi memerlukan ini untuk menemukan perangkat terdekat dan menjaga status mendesak tetap terlihat.</string>

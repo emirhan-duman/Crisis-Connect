@@ -24,7 +24,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auralis.crisisconnect.screens.Tools.data.MetalDetectorSettings
 import com.auralis.crisisconnect.screens.Tools.data.MetalDetectorSettingsDataStore
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.auralis.crisisconnect.analytics.TelemetryConsent
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,7 +37,7 @@ class MetalDetectorViewModel(application: Application) : AndroidViewModel(applic
     SensorEventListener {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Coroutine failed", throwable)
-        runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
+        TelemetryConsent.recordException(throwable)
     }
 
     private val sensorManager =

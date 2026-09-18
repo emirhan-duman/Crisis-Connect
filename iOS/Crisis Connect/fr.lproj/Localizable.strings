@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Open source — n'importe qui peut inspecter le code";
 "ONBOARDING_TRUST_NO_ADS" = "Pas de publicité — vos données personnelles ne sont jamais vendues";
 "ONBOARDING_TRUST_EMERGENCY" = "Conçu uniquement pour la communication d'urgence";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Seuls des rapports de plantage anonymes sont collectés pour garder l'app stable.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Les rapports de plantage restent désactivés tant que vous n’activez pas les diagnostics.";
 "ONBOARDING_FINISH" = "Démarrer Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Cloud";
