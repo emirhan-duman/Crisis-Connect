@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import com.auralis.crisisconnect.settingsDataStore
 import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.google.firebase.perf.FirebasePerformance
 import kotlinx.coroutines.flow.first
 
 /**
@@ -31,10 +32,15 @@ object TelemetryConsent {
     fun apply(isEnabled: Boolean) {
         enabled = isEnabled
         Analytics.setCollectionEnabled(isEnabled)
+        FirebasePerformance.getInstance().setPerformanceCollectionEnabled(isEnabled)
 
         val crashlytics = FirebaseCrashlytics.getInstance()
-        crashlytics.setCrashlyticsCollectionEnabled(isEnabled)
-        if (!isEnabled) {
+        // Keep automatic upload off because an opt-out only changes that override next launch.
+        // Explicitly send reports from the previous run only while consent remains enabled.
+        crashlytics.setCrashlyticsCollectionEnabled(false)
+        if (isEnabled) {
+            crashlytics.sendUnsentReports()
+        } else {
             // Do not retain a pre-consent crash for upload after a later opt-in.
             crashlytics.deleteUnsentReports()
         }

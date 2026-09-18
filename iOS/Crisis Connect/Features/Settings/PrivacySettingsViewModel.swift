@@ -49,7 +49,7 @@ final class PrivacySettingsViewModel: ObservableObject {
                 shareDiagnostics,
                 userDefaults: userDefaults
             )
-            CrashReporter.setCollectionEnabled(shareDiagnostics)
+            CrashReporter.applyConsent(shareDiagnostics)
         }
     }
 

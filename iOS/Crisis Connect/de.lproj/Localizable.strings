@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Open Source – jeder kann den Code prüfen";
 "ONBOARDING_TRUST_NO_ADS" = "Keine Werbung – deine persönlichen Daten werden nie verkauft";
 "ONBOARDING_TRUST_EMERGENCY" = "Nur für die Notfallkommunikation entwickelt";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Absturzberichte bleiben deaktiviert, bis du Diagnosen aktivierst.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Absturzberichte bleiben deaktiviert, bis du den Diagnose-Upload aktivierst.";
 "ONBOARDING_FINISH" = "Crisis Connect starten";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Cloud";

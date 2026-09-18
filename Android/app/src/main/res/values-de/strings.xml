@@ -67,7 +67,7 @@
     <string name="welcome_trust_open_source">Open Source – jeder kann den Code prüfen</string>
     <string name="welcome_trust_no_ads">Keine Werbung – Ihre persönlichen Daten werden nie verkauft</string>
     <string name="welcome_trust_emergency">Nur für die Notfallkommunikation entwickelt</string>
-    <string name="welcome_trust_diagnostics_note">Absturzberichte bleiben deaktiviert, bis du Diagnosen aktivierst.</string>
+    <string name="welcome_trust_diagnostics_note">Absturzberichte bleiben deaktiviert, bis Sie Diagnose-Uploads aktivieren.</string>
     <string name="welcome_legal_acceptance">Ich akzeptiere die Bedingungen für die Nutzung von Crisis Connect.</string>
     <string name="welcome_setup_title">Kommunikation in der Nähe aktivieren</string>
     <string name="welcome_setup_body">Die App benötigt diese, um Geräte in der Nähe zu finden und dringende Status sichtbar zu halten.</string>

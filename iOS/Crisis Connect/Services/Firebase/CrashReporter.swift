@@ -10,13 +10,17 @@ import FirebaseCrashlytics
 
 enum CrashReporter {
     static func configure() {
-        setCollectionEnabled(PrivacyPreferences.isShareDiagnosticsEnabled())
+        applyConsent(PrivacyPreferences.isShareDiagnosticsEnabled())
     }
 
-    static func setCollectionEnabled(_ enabled: Bool) {
+    /// Automatic collection remains disabled so an in-session opt-out cannot upload a later crash.
+    /// With consent, reports cached by a previous run are sent explicitly at the next launch.
+    static func applyConsent(_ enabled: Bool) {
         let crashlytics = Crashlytics.crashlytics()
-        crashlytics.setCrashlyticsCollectionEnabled(enabled)
-        if !enabled {
+        crashlytics.setCrashlyticsCollectionEnabled(false)
+        if enabled {
+            crashlytics.sendUnsentReports()
+        } else {
             crashlytics.setUserID("")
             crashlytics.deleteUnsentReports()
         }
