@@ -732,7 +732,12 @@ Crisis Connect is designed with privacy as a core principle:
 - **No contact upload.** Contact discovery is opt-in, gated behind phone verification, and can be turned off. Contact exchange works entirely locally through QR or SPAKE2 pairing.
 - **No tracking.** No advertising SDKs. No third-party tracking.
 - **Location is user-controlled.** GPS is only accessed when you explicitly use offline maps, share a location, or opt into live location sharing during rescue operations.
-- **Data deletion.** Uninstalling the app permanently deletes all local messages and keys. There is no cloud backup of conversations.
+- **Data deletion.** In-app account deletion clears the account's enumerated cloud and local data;
+  active SOS records are identity-redacted so an ongoing rescue is not destroyed. Uninstalling the
+  app removes app-local messages and data. Internet message envelopes are deleted after delivery and
+  are never cloud conversation backups. See the
+  [data inventory, retention, and deletion standard](docs/DATA_INVENTORY_AND_RETENTION.md) for the
+  implemented controls and pilot gaps.
 
 ## Permissions
 
