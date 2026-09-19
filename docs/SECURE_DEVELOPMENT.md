@@ -79,3 +79,9 @@ does not store end-user password verifiers.
 
 The public workflows under [`.github/workflows`](../.github/workflows) and test suites under the
 platform source trees are the executable evidence for this policy.
+
+Data model changes must also follow the
+[data inventory, retention, and deletion standard](DATA_INVENTORY_AND_RETENTION.md). A new collection,
+object prefix, log field, telemetry event, export, backup, or processor is incomplete until its
+purpose, classification, access boundary, retention trigger, deletion mechanism, and account-erasure
+behavior are documented and tested.
