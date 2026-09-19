@@ -48,7 +48,7 @@ linked, replayed, or used to contact a person.
 | Contact discovery identifiers | Restricted; opt-in discovery by normalized identifier | `messagingDirectory`, `messagingKeys`; server-only writes and scoped lookups | Retained until replacement, opt-out, or account deletion | Directory hashes and identity-key tree are deleted |
 | Signal prekeys, device routing, and presence | Restricted; encrypted session setup, delivery, and online state | `signalPreKeys`, `messagingTokens`, `presence`, `presenceSettings`; server-only or owner-scoped | Replaced as clients rotate state; no repository-wide age sweep | Trees, push tokens, presence, and settings are deleted |
 | Store-and-forward message envelopes | Restricted ciphertext; temporary internet delivery | Root `messages`; sender/recipient and Functions only | **Enforced:** recipient acknowledgement deletes the envelope. `expireAt` is purged every 24 hours; legacy envelopes older than 30 days are swept. Clients normally request 24 hours; backend maximum is 30 days. | Queued envelopes sent by or addressed to the UID are deleted |
-| On-device conversations, attachments, and keys | Restricted; offline and delivered conversation history | SQLCipher/SwiftData, app files, Android Keystore, iOS Keychain; app sandbox | User-controlled local history; no cloud conversation backup | In-app erase clears personal databases/files, credentials, and preferences. Platform uninstall removes the app sandbox; platform-managed key behavior must be included in release testing. |
+| On-device conversations, attachments, and keys | Restricted; offline and delivered conversation history | SQLCipher/SwiftData, app files, Android Keystore, iOS Keychain; app sandbox | User-controlled local history; no cloud conversation backup | In-app erase clears the enumerated personal databases/files and selected identity state. Android deliberately retains SQLCipher/AES keys, both platforms retain their attested device key, and other platform-managed key lifecycles require verification. |
 | Cloud attachment objects and avatars | Restricted; profile and encrypted message media | Cloud Storage under `users/{uid}/` and `messageAttachments/{uid}/` | No repository-controlled age policy; Storage Rules are not versioned in this repository | Both UID prefixes are deleted by the server callable |
 | SOS signal and routing records | Restricted; locate, triage, and coordinate aid | Panel `signals`, root routing records, related events/reporters; authorized rescue roles | **Decision required:** incident retention is not bounded in repository code | Direct identity is redacted rather than destroying an active rescue record; the user's reporter entries are deleted |
 | Live rescue breadcrumb points | Restricted precise location; current field-team movement | Panel responder `track` subcollections | **Deployment-dependent:** clients write `expiresAt` at seven days. The target Firestore project must enable TTL for every matching collection group. Firebase deletion is asynchronous. | Parent rescue records may remain; deletion coverage must be proven with a collection-group test |
@@ -125,10 +125,20 @@ path and its tests in the same pull request.
 
 ### 5.2 Device flow
 
-Android clears the local encrypted message database, role certificate, cached profile/contact state,
-and identity preferences, then rotates the rescue-device identifier. iOS removes the personal app
-support directories and sensitive preferences and clears the SwiftData model through its managed
-context. Offline map/model assets may be preserved when they do not identify the former user.
+Android clears the local encrypted message database, stored role certificate, cached profile/contact
+state, and selected identity preferences, then rotates the rescue-device identifier. It deliberately
+retains SQLCipher/AES keys so the cleared database remains openable, and `clearStoredCertificate`
+does not delete the attested signing key. iOS removes enumerated personal app-support directories and
+sensitive preferences, clears the SwiftData model through its managed context, and deletes stored
+certificate/public-key metadata; its attested device key and other non-enumerated Keychain items are
+not deleted by this flow. Offline map/model assets may be preserved when they do not identify the
+former user.
+
+These retained keys MUST be classified by purpose and account linkage before the pilot. The deletion
+design must either rotate/delete account-bound material or demonstrate with tests that retained
+device-bound material cannot expose prior data, identify the former account, or grant its privileges.
+Uninstall behavior for Keystore, Keychain, backup, and restore is platform-dependent and must not be
+used as an erasure guarantee without release-specific evidence.
 
 Release validation MUST cover sign-out, in-app account deletion, application reinstall, device
 backup/restore, and interrupted deletion. Tests must prove that a new user cannot inherit the prior
@@ -212,6 +222,7 @@ or unbounded collection of Restricted data.
 | **P1** | Cloud AI plaintext and operational dashboard records lack approved maximum retention | Controller decision plus automated recursive cleanup and tests |
 | **P1** | Backup/provider-log configuration is not represented in repository evidence | Approved configuration record, access review, expiry monitor, restore and erasure-replay test |
 | **P1** | Audit, certificate, nonce, throttle, and deletion-tombstone physical retention is incomplete | Approved periods, automated cleanup, and oldest-record-age alert |
+| **P1** | Account deletion retains Android SQLCipher/AES keys and both platforms' attested device key | Written key classification plus rotation/deletion or tests proving no prior-data access, former-account linkage, or privilege reuse |
 
 ## 11. References
 
@@ -223,4 +234,3 @@ or unbounded collection of Restricted data.
 - [Firebase: Delete data](https://firebase.google.com/docs/firestore/enterprise/delete-data-native)
 - [Firebase Authentication: Manage users](https://firebase.google.com/docs/auth/admin/manage-users)
 - [Firebase: Disaster recovery planning](https://firebase.google.com/docs/firestore/disaster-recovery)
-
