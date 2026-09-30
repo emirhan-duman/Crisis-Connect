@@ -383,7 +383,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
     implementation("androidx.navigation:navigation-compose:2.9.4")
     implementation("androidx.compose.foundation:foundation")
-    implementation("com.airbnb.android:lottie-compose:6.4.0")  // Lottie animasyonları
+    implementation("com.airbnb.android:lottie-compose:6.7.1")  // Lottie animasyonları
     implementation("androidx.compose.material:material-ripple")
 
     // Glance — home-screen widgets with a Compose-style API (SOS quick-access widget)
