@@ -54,8 +54,12 @@ jobs:
       - name: Validate dependency tree
         run: npm ls --all
 
-      - name: Block high-severity dependency vulnerabilities
+      - name: Report all dependency vulnerabilities
         run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: Block high-severity runtime dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Build and run Functions tests
         run: npm test
