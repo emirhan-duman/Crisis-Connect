@@ -1,0 +1,62 @@
+{
+  "$schema": "https://fundingjson.org/schema/v1.1.0.json",
+  "version": "v1.0.0",
+  "entity": {
+    "type": "individual",
+    "role": "maintainer",
+    "name": "Emirhan Duman",
+    "email": "emirhan@crisisconnect.network",
+    "description": "Solo maintainer and lead developer of Crisis Connect, an open-source mobile project for offline emergency communication.",
+    "webpageUrl": {
+      "url": "https://crisisconnect.network"
+    }
+  },
+  "projects": [
+    {
+      "guid": "crisis-connect",
+      "name": "Crisis Connect",
+      "description": "Crisis Connect is an offline-first emergency communication application published for Android and iOS. The public repository contains both mobile implementations and the first-party Firebase Functions and Firestore security rules, under the project's declared AGPL-3.0 license. The Google Play listing displays 10K+ downloads as checked on 10 October 2026; downloads do not establish active usage or independently verified emergency deployments. This request would support independent assessment of selected security-critical paths and repeatable real-device testing of the public codebase.",
+      "webpageUrl": {
+        "url": "https://crisisconnect.network"
+      },
+      "repositoryUrl": {
+        "url": "https://github.com/emirhan-duman/Crisis-Connect"
+      },
+      "licenses": [
+        "spdx:AGPL-3.0"
+      ],
+      "tags": [
+        "android",
+        "ios",
+        "emergency-communication",
+        "offline-first",
+        "privacy",
+        "security"
+      ]
+    }
+  ],
+  "funding": {
+    "channels": [
+      {
+        "guid": "grant-contact",
+        "type": "other",
+        "description": "Please email the maintainer to arrange an appropriate payment route before disbursement. Banking, identity and tax documents will be handled separately."
+      }
+    ],
+    "plans": [
+      {
+        "guid": "security-and-sustainability",
+        "status": "active",
+        "name": "Independent security review and iOS test device",
+        "description": "USD 18,420 total: USD 18,000 for a bounded independent Android, iOS and Firebase trust-boundary review, report and one retest, plus USD 420 for a physical iOS test device if still unfunded elsewhere.\n\nThe service estimate assumes 12 reviewer-days at USD 1,500 per day: scope and setup 1 day (USD 1,500); Android critical paths 3 days (USD 4,500); iOS and cross-platform cases 3 days (USD 4,500); Firebase authorization boundaries 2 days (USD 3,000); findings and coverage report 1 day (USD 1,500); one bounded fix-verification phase 2 days (USD 3,000). These are planning assumptions, not a supplier quotation; no auditor has been selected.\n\nThe review would target agreed high-risk identity/pairing, authentication, replay, malformed-input, local-storage and backend-authorization paths at a fixed code revision. Outputs would document coverage and exclusions, reproducible findings, and verification results. Twelve reviewer-days are a work allocation, not a completion deadline or an exhaustive security certification. The retest is included within the service allocation, not an extra charge on top of a package that already includes it. Final scope and applicable service taxes/fees must fit the available award or be revised with the funder before commitment.\n\nRelated applications for independent review and the same device need remain pending. This request is an alternative funding route for overlapping costs: each expense and deliverable would be funded only once. If the device is funded elsewhere, its USD 420 allocation would be removed or revised with the funder before spending. Company formation, maintainer remuneration and non-public products are outside this budget.",
+        "amount": 18420,
+        "currency": "USD",
+        "frequency": "one-time",
+        "channels": [
+          "grant-contact"
+        ]
+      }
+    ]
+  }
+}
+
