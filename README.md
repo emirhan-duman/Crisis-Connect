@@ -764,7 +764,17 @@ Crisis Connect ships in **19 languages** on both platforms:
 
 Arabic · Bengali · Chinese (Simplified) · English · Filipino · French · German · Hindi · Indonesian · Japanese · Kurdish · Persian · Portuguese · Russian · Spanish · Turkish · Ukrainian · Urdu · Vietnamese
 
-The UI, the Survival Guide and the sensor tooling are localized. We welcome contributions for additional languages -- see [Contributing](#contributing).
+The UI, the Survival Guide and the sensor tooling are localized.
+
+### Translate with Weblate
+
+Crisis Connect uses [Hosted Weblate](https://hosted.weblate.org/projects/crisis-connect/) for community translations. The project maintainer approves the use of Weblate for this repository.
+
+[![Translation status](https://hosted.weblate.org/widget/crisis-connect/svg-badge.svg)](https://hosted.weblate.org/engage/crisis-connect/)
+
+To contribute, sign in to Weblate, choose your language and an Android or iOS component, and translate or review the available strings. English is the source language. Preserve format placeholders (such as `%1$s`, `%d` and `%@`), markup, escape sequences and line breaks. Keep emergency instructions clear and accurate; leave a comment for maintainer review if safety-related wording is uncertain.
+
+Translations are kept alongside the source code in this repository and are covered by its [GNU Affero General Public License v3.0](./LICENSE). Maintainers review translation changes before including them in releases. Contributions for additional languages are welcome -- see [Contributing](#contributing).
 
 ## Contributing
 
