@@ -91,7 +91,7 @@
 - [Security Policy](#security-policy)
 - [Roadmap](#roadmap)
 - [Links](#links)
-- [Acknowledgments](#acknowledgments)
+- [Supported by](#supported-by)
 - [License](#license)
 
 ---
@@ -894,9 +894,17 @@ Crisis Connect is in production on both app stores and under active development.
 </tr>
 </table>
 
-## Acknowledgments
+## Supported by
 
-Thank you to [Codemagic](https://codemagic.io/) for supporting Crisis Connect with free native Android and iOS CI build resources through its non-profit program, including unlimited monthly build minutes on Mac mini M2 machines with one concurrent build.
+<a href="https://codemagic.io/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://codemagic.io/media/landing/press-kit/svg/logo-white.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="https://codemagic.io/media/landing/press-kit/svg/logo-blue.svg" />
+    <img src="https://codemagic.io/media/landing/press-kit/svg/logo-blue.svg" alt="Codemagic" width="150" />
+  </picture>
+</a>
+
+Codemagic supports Crisis Connect with free native Android and iOS CI builds through its non-profit program.
 
 ## License
 
