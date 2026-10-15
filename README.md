@@ -28,7 +28,7 @@
   <img src="https://img.shields.io/badge/version-1.1.9-green" alt="Version" />&nbsp;
   <img src="https://img.shields.io/badge/kotlin-161k%20LOC-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />&nbsp;
   <img src="https://img.shields.io/badge/swift-92k%20LOC-F05138?logo=swift&logoColor=white" alt="Swift" />&nbsp;
-  <img src="https://img.shields.io/badge/tests-611-brightgreen" alt="Tests" />&nbsp;
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-see%20Testing-lightgrey" alt="Testing" /></a>&nbsp;
   <img src="https://img.shields.io/badge/languages-19-orange" alt="Languages" />
 </p>
 
@@ -375,8 +375,8 @@ Crisis-Connect/
 │   │   │   ├── telecom/                Android Telecom integration for call management
 │   │   │   ├── ui/                     Theme, design system, shared components
 │   │   │   └── widget/                 Home-screen SOS + Recent Disasters widgets
-│   │   ├── src/test/                   370 unit tests
-│   │   └── src/androidTest/            20 instrumented tests
+│   │   ├── src/test/                   Unit tests
+│   │   └── src/androidTest/            Instrumented tests (device or emulator)
 │   │
 │   ├── feature_rescue/                 Dynamic feature module (rescue mesh, CrisisLink sync)
 │   ├── baselineprofile/                Baseline profile generator for startup/jank
@@ -403,7 +403,7 @@ Crisis-Connect/
 │   ├── BroadcastExtension/             ReplayKit screen-share upload extension
 │   ├── Packages/                       Vendored LibSignalClient and LiteRT-LM
 │   ├── Config/                         Info.plist, entitlements
-│   └── Crisis ConnectTests/            175 unit tests
+│   └── Crisis ConnectTests/            Unit tests
 │
 ├── docs/                               Screenshots and design notes
 ├── LICENSE                             AGPL-3.0
@@ -438,7 +438,7 @@ Pilot operators should assign the private on-call roster and exercise the
 | **Backend** | Firestore · Cloud Functions | Firestore · Cloud Functions |
 | **App Security** | Play Integrity · App Check | App Attest · App Check |
 | **Crash Reporting** | Firebase Crashlytics | Firebase Crashlytics |
-| **Build verification** | GitHub Actions | Xcode 16+ |
+| **Public CI** | GitHub Actions: lint, debug build, unit tests ([scope](#testing)) | GitHub Actions: project and Swift syntax validation ([scope](#testing)) |
 | **Min Version** | Android 7.0 (API 24) | iOS 17.0 |
 | **Target Version** | Android 16 (API 36) | iOS 18 |
 | **Test Frameworks** | JUnit · Espresso · MockK · Robolectric | XCTest |
@@ -631,7 +631,6 @@ counted separately, not as first-party code.
 <td align="center"><strong>252,689</strong><br/><sub>Kotlin + Swift</sub></td>
 <td align="center"><strong>997</strong><br/><sub>source files</sub></td>
 <td align="center"><strong>21</strong><br/><sub>languages</sub></td>
-<td align="center"><strong>611</strong><br/><sub>tests</sub></td>
 </tr>
 </table>
 
@@ -694,24 +693,71 @@ tokei Android iOS --exclude Packages --sort code
 
 ## Testing
 
-The project includes 611 tests across both platforms:
+This section is the single place in this README that describes test scope. It intentionally
+does not state test totals: counts drift as suites change, and a meaningful number needs a
+reproducible counting method, a commit, a platform scope, and a distinction between tests that
+exist and tests that a given run actually executed.
+
+### What public CI runs
+
+The workflow definitions are the source of truth for what runs automatically. The descriptions
+below summarize their configured steps; they do not claim that any particular run passed. Check
+the [Actions tab](https://github.com/emirhan-duman/Crisis-Connect/actions) for run results.
+
+| Workflow | Triggers | Configured steps | Not run |
+|:--|:--|:--|:--|
+| [Android CI](.github/workflows/android-ci.yml) | Every pull request; pushes to `main` that touch `Android/` | Native frame fuzz-target smoke run (`-runs=10000`) · `:app:lintDebug` · `:app:assembleDebug` · `:app:testDebugUnitTest` · `:feature_rescue:testDebugUnitTest` | Instrumented tests (`connectedDebugAndroidTest`) |
+| [iOS CI](.github/workflows/ios-ci.yml) | Pull requests and pushes to `main` that touch `iOS/`; manual dispatch | [`iOS/Scripts/ci-validate.sh`](iOS/Scripts/ci-validate.sh): Xcode project, shared scheme, test plan and local Swift package manifest validation, a syntax check of every Swift source file, and a check that no App Check debug token is committed in the shared scheme | App build, `xcodebuild test`, unit and UI tests |
+
+Android CI uses the public `google-services.json.example` configuration, so it exercises the
+build and JVM unit tests without real Firebase credentials.
+
+iOS CI is **source and project validation, not build-and-test execution**. A clean public
+checkout cannot currently link or run the Xcode test plan because the vendored
+`SignalFfi.xcframework` and `OrangeMlsWorker.xcframework` static libraries are not committed. See
+[iOS/README.md -- Continuous integration](iOS/README.md#continuous-integration) for details.
+
+### Running tests locally
+
+These commands are available to contributors but, unless noted in the table above, are **not**
+executed by public CI.
+
+**Android** -- requires JDK 21 and Android SDK 36, plus the configuration files from
+[Build From Source](#build-from-source) (`app/google-services.json` can be the example file for
+local unit tests):
 
 ```bash
-# ── Android (409 unit tests + 27 instrumented tests) ──────────
 cd Android
-./gradlew :app:testDebugUnitTest              # Unit tests
-./gradlew :app:connectedDebugAndroidTest      # Instrumented tests (physical device)
-./gradlew :app:lintDebug                      # Static analysis
-./gradlew :feature_rescue:testDebugUnitTest   # Rescue module tests
+./gradlew :app:lintDebug                      # Static analysis (also run in CI)
+./gradlew :app:testDebugUnitTest              # App unit tests (also run in CI)
+./gradlew :feature_rescue:testDebugUnitTest   # Rescue module unit tests (also run in CI)
+./gradlew :app:connectedDebugAndroidTest      # Instrumented tests -- manual only, needs a connected device or emulator
+```
 
-# ── iOS (175 tests) ───────────────────────────────────────────
+Instrumented tests that touch Bluetooth need a **physical device**; emulators have no BLE radio.
+
+**iOS** -- the validation that CI runs needs macOS with Xcode 16+, but does not build the app or
+need the vendored native libraries:
+
+```bash
+cd iOS
+./Scripts/ci-validate.sh                      # Project + Swift syntax validation (same as CI)
+```
+
+Running the XCTest suites is manual and requires the vendored native libraries to be built
+first (Xcode 16+ and a Rust toolchain; see [iOS/README.md](iOS/README.md)):
+
+```bash
 cd iOS
 xcodebuild test \
   -scheme "Crisis Connect" \
   -destination "platform=iOS Simulator,name=iPhone 16"
 ```
 
-Test coverage includes:
+### Areas covered by the test suites
+
+The suites include tests for the following areas. This list describes intent, not a measured
+coverage percentage:
 - Cryptographic operations (AES-GCM encrypt/decrypt, key derivation, SPAKE2)
 - Signal Protocol session handling, downgrade rejection and replay handling
 - Cross-platform E2E golden vectors shared between Android and iOS
@@ -858,7 +904,7 @@ Crisis Connect is in production on both app stores and under active development.
 - [x] Rescuer ↔ victim voice calls, medical info hand-off and remote signal feed
 - [x] Localization in 19 languages
 - [x] Baseline profiles for startup and scroll performance (Android)
-- [x] 611 automated tests · GitHub Actions CI (Android) · Xcode build verification (iOS)
+- [x] Unit test suites on both platforms · public GitHub Actions CI for Android and iOS (scope described in [Testing](#testing))
 - [x] Published on Google Play and App Store
 
 ### In Progress
@@ -928,5 +974,5 @@ Crisis Connect vendors [libsignal](https://github.com/signalapp/libsignal) (AGPL
 
 <p align="center">
   <strong>Built for resilience. Designed for crisis. Open for everyone.</strong><br/><br/>
-  <sub>300,000 lines of first-party code across Android and iOS, 611 tests,<br/>19 spoken languages, 2 platforms, 1 mission: keeping people connected when it matters most.</sub>
+  <sub>300,000 lines of first-party code across Android and iOS,<br/>19 spoken languages, 2 platforms, 1 mission: keeping people connected when it matters most.</sub>
 </p>
