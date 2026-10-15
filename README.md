@@ -952,14 +952,6 @@ Crisis Connect is in production on both app stores and under active development.
 
 ## Supported by
 
-<a href="https://clemta.com/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/supporters/clemta-dark.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="docs/supporters/clemta-light.svg" />
-    <img src="docs/supporters/clemta-light.svg" alt="Clemta" width="150" />
-  </picture>
-</a>
-&nbsp;&nbsp;&nbsp;
 <a href="https://codemagic.io/">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://codemagic.io/media/landing/press-kit/svg/logo-white.svg" />
@@ -969,6 +961,14 @@ Crisis Connect is in production on both app stores and under active development.
 </a>
 
 Codemagic supports Crisis Connect with free native Android and iOS CI builds through its non-profit program.
+
+<a href="https://clemta.com/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/supporters/clemta-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/supporters/clemta-light.svg" />
+    <img src="docs/supporters/clemta-light.svg" alt="Clemta" width="150" />
+  </picture>
+</a>
 
 ## License
 
