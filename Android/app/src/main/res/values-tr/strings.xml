@@ -1,4 +1,4 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Kriz Bağlantısı</string>
     <string name="Home">Ev</string>
@@ -102,7 +102,7 @@
         <item quantity="other">%1$d araç bulundu</item>
     </plurals>
     <string name="guide">Rehber</string>
-    <string name="select_language">Dil Seç</string>
+    <string name="select_language">Dil seç</string>
     <string name="language_description">Menüler ve etiketler için uygulama dilini seçin.</string>
     <string name="english">İngilizce</string>
     <string name="turkish">Türkçe</string>
@@ -257,7 +257,7 @@
     <string name="main_search_pull_ready">Aramayı açmak için bırak</string>
     <string name="main_search_section_chats">Sohbetler</string>
     <string name="main_search_section_messages">Mesajlar</string>
-    <string name="main_search_no_results_for">\&quot;%1$s\&quot; için sonuç bulunamadı</string>
+    <string name="main_search_no_results_for">\"%1$s\" için sonuç bulunamadı</string>
     <string name="new_chat_title">Yeni Sohbet</string>
     <string name="rescue_screen_placeholder">Kurtarma araçları - yakında</string>
     <string name="rescue_screen_title">Kurtarma koordinasyonu</string>
@@ -1589,7 +1589,6 @@
     <string name="profile_verify_server_managed">Kurtarma profili doğrulaması sunucu tarafından yönetilir.</string>
     <string name="profile_logout_button">Çıkış yap</string>
     <string name="profile_logout_success">Çıkış yapıldı.</string>
-
     <!-- Profil ekranındaki kurtarma rol sertifikası kartı -->
     <string name="profile_cert_card_title">Kurtarma sertifikası</string>
     <string name="profile_cert_card_subtitle">Kurtarma sunucusunun verdiği, bu cihaza özel kimlik.</string>
@@ -1624,7 +1623,6 @@
     <string name="profile_cert_inactive_subtitle">Yeni sertifika alana kadar kurtarma modu kapalı kalır.</string>
     <string name="profile_cert_expires_relative">%1$s sona erecek</string>
     <string name="profile_cert_manage_label">Sertifika yönetimi</string>
-
     <!-- Giriş sonrası kurtarma sertifikası verilirken görünen kayar banner -->
     <string name="cert_banner_in_progress_title">Kurtarma sertifikası alınıyor…</string>
     <string name="cert_banner_in_progress_body">Cihazın kurtarma modunda yetkili olacak şekilde güvenceye alınıyor.</string>
@@ -1725,14 +1723,12 @@
     <string name="ble_peer_role_victim_label">Kazazede</string>
     <string name="gatt_mesh_default_sender_label">Yakındaki Kullanıcı</string>
     <string name="mesh_service_default_node_label_prefix">KurtarmaMesh</string>
-
     <string name="advanced_settings_section_mesh">Örgüsel Ağ (Mesh) Bağlantısı</string>
     <string name="advanced_settings_section_privacy">Gizlilik</string>
     <string name="advanced_setting_share_last_seen_title">Son görülmeyi paylaş</string>
     <string name="advanced_setting_share_last_seen_description">Kişilerin en son ne zaman çevrimiçi olduğunu görmesine izin ver. Kapatırsan çevrimiçi durumun tamamen gizlenir.</string>
     <string name="advanced_settings_section_performance">Performans ve Optimizasyon</string>
     <string name="advanced_settings_section_diagnostics">Hata Tanılama ve Deneysel</string>
-
     <string name="rescue_settings_section_scanning">Tarama ve Bağlantı Ayarları</string>
     <string name="rescue_settings_section_connectivity">Acil Durum Bağlantısı</string>
     <string name="rescue_settings_section_display">Ekran ve Arayüz Seçenekleri</string>
@@ -1784,7 +1780,6 @@
     <string name="rescue_remote_signals_empty_title">Her şey sakin</string>
     <string name="rescue_remote_hero_count">%1$d aktif sinyal</string>
     <string name="rescue_remote_signals_subtitle">Kurum panelinden canlı akış</string>
-
     <!-- Account and data deletion (Play data-safety requirement) -->
     <string name="profile_delete_account_button">Hesabı ve verileri sil</string>
     <string name="profile_delete_account_progress">Siliniyor…</string>
@@ -1943,7 +1938,6 @@
     <string name="cpr_session_ended">Oturum tamamlandı</string>
     <string name="cpr_session_summary">Yardım süresi: %1$s\nZamanlanan göğüs basısı: %2$d</string>
     <string name="cpr_new_session">Yeni oturum başlat</string>
-
     <string name="cpr_aed_guide_title">AED yardımcısı</string>
     <string name="cpr_aed_step_count">Adım %1$d / %2$d</string>
     <string name="cpr_aed_power_title">AED’yi açın</string>
@@ -1963,7 +1957,6 @@
     <string name="cpr_aed_shock_delivered">AED: şok uygulandı</string>
     <string name="cpr_aed_no_shock">AED: şok önerilmedi</string>
     <string name="cpr_aed_resume_now">CPR sayacına dön</string>
-
     <string name="cpr_info_title">CPR Assist hakkında</string>
     <string name="cpr_info_scope_title">Bu akış kimler içindir?</string>
     <string name="cpr_info_scope_body">Bu sürüm; tepkisiz ve normal nefes almayan yetişkin veya ergen için 2025 temel yaşam desteği akışını izler. Çocuk, bebek, boğulma, travma ve diğer özel durumlarda farklı uygulamalar gerekebilir.</string>
@@ -1974,7 +1967,6 @@
     <string name="cpr_info_offline_title">İnternetsiz çalışır</string>
     <string name="cpr_info_offline_body">Metronom, sayaçlar, AED rehberi ve yazılı talimatlar tamamen çevrimdışıdır. Sesli yönlendirme cihazdaki sistem sesini kullanır; çevrimdışı ses yoksa görsel ritim ve metronom çalışmaya devam eder.</string>
     <string name="cpr_disclaimer_long">CPR Assist acil durum zamanlama yardımcısıdır; tıbbi tanı, sertifikalı CPR eğitimi veya profesyonel yardımın yerine geçmez. Acil servisi arayın, hoparlörü açın ve çağrı görevlisi ile AED’yi izleyin.</string>
-
     <string name="cpr_voice_start">Göğüs basısına şimdi başlayın. Göğsün ortasına güçlü ve hızlı basın. Ritmi izleyin.</string>
     <string name="cpr_voice_resume">Göğüs basısına şimdi devam edin.</string>
     <string name="cpr_voice_two_breaths">Eğitimliyseniz iki soluk verin. Göğsün yükselmesini izleyin.</string>
