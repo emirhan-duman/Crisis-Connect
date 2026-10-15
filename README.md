@@ -706,8 +706,8 @@ the [Actions tab](https://github.com/emirhan-duman/Crisis-Connect/actions) for r
 
 | Workflow | Triggers | Configured steps | Not run |
 |:--|:--|:--|:--|
-| [Android CI](.github/workflows/android-ci.yml) | Every pull request; pushes to `main` that touch `Android/` | Native frame fuzz-target smoke run (`-runs=10000`) · `:app:lintDebug` · `:app:assembleDebug` · `:app:testDebugUnitTest` · `:feature_rescue:testDebugUnitTest` | Instrumented tests (`connectedDebugAndroidTest`) |
-| [iOS CI](.github/workflows/ios-ci.yml) | Pull requests and pushes to `main` that touch `iOS/`; manual dispatch | [`iOS/Scripts/ci-validate.sh`](iOS/Scripts/ci-validate.sh): Xcode project, shared scheme, test plan and local Swift package manifest validation, a syntax check of every Swift source file, and a check that no App Check debug token is committed in the shared scheme | App build, `xcodebuild test`, unit and UI tests |
+| [Android CI](.github/workflows/android-ci.yml) | Every pull request; pushes to `main` that touch `Android/` or `.github/workflows/android-ci.yml` | Native frame fuzz-target smoke run (`-runs=10000`) · `:app:lintDebug` · `:app:assembleDebug` · `:app:testDebugUnitTest` · `:feature_rescue:testDebugUnitTest` | Instrumented tests (`connectedDebugAndroidTest`) |
+| [iOS CI](.github/workflows/ios-ci.yml) | Pull requests that touch `iOS/` or `.github/workflows/ios-ci.yml`; pushes to `main` with those same paths; manual dispatch | [`iOS/Scripts/ci-validate.sh`](iOS/Scripts/ci-validate.sh): Xcode project, shared scheme, test plan and local Swift package manifest validation, a syntax check of every Swift source file, and a check that no App Check debug token is committed in the shared scheme | App build, `xcodebuild test`, unit and UI tests |
 
 Android CI uses the public `google-services.json.example` configuration, so it exercises the
 build and JVM unit tests without real Firebase credentials.
@@ -952,6 +952,14 @@ Crisis Connect is in production on both app stores and under active development.
 
 ## Supported by
 
+<a href="https://clemta.com/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/supporters/clemta-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/supporters/clemta-light.svg" />
+    <img src="docs/supporters/clemta-light.svg" alt="Clemta" width="150" />
+  </picture>
+</a>
+&nbsp;&nbsp;&nbsp;
 <a href="https://codemagic.io/">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://codemagic.io/media/landing/press-kit/svg/logo-white.svg" />
