@@ -950,6 +950,14 @@ Crisis Connect is in production on both app stores and under active development.
 </tr>
 </table>
 
+## BrowserStack open-source testing
+
+BrowserStack's open-source sponsorship application requests this exact verification statement:
+
+> This project is tested with BrowserStack.
+
+**Status:** Sponsorship activation pending. BrowserStack-based mobile compatibility and UI testing will begin after access is granted. Bluetooth communication testing is performed separately on physical devices.
+
 ## Supported by
 
 <a href="https://codemagic.io/">
