@@ -972,6 +972,8 @@ Codemagic supports Crisis Connect with free native Android and iOS CI builds thr
   </a>
 </p>
 
+Clemta supports Crisis Connect by covering U.S. company formation and incorporation fees.
+
 <p>
   <a href="https://www.browserstack.com/open-source">
     <picture>
@@ -982,11 +984,9 @@ Codemagic supports Crisis Connect with free native Android and iOS CI builds thr
   </a>
 </p>
 
-BrowserStack supports Crisis Connect through its Open Source Program with sponsored **Live, Automate, and Percy** access (active through 19 October 2027) for browser compatibility, web automation, and visual regression testing.
+BrowserStack supports Crisis Connect through its Open Source Program with sponsored **Live, Automate, App Live, App Automate, and Percy** access (active through 19 October 2027) for mobile app testing, browser compatibility, web automation, and visual regression testing.
 
 BrowserStack's required README verification statement: **This project is tested with BrowserStack.**
-
-_Native App Live/App Automate currently remain trial access; Bluetooth/BLE communication is tested separately on physical devices._
 
 ## License
 
