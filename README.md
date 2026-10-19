@@ -950,14 +950,6 @@ Crisis Connect is in production on both app stores and under active development.
 </tr>
 </table>
 
-## BrowserStack open-source testing
-
-BrowserStack's open-source sponsorship application requests this exact verification statement:
-
-> This project is tested with BrowserStack.
-
-**Status:** Sponsorship activation pending. BrowserStack-based mobile compatibility and UI testing will begin after access is granted. Bluetooth communication testing is performed separately on physical devices.
-
 ## Supported by
 
 <a href="https://codemagic.io/">
@@ -977,6 +969,16 @@ Codemagic supports Crisis Connect with free native Android and iOS CI builds thr
     <img src="docs/supporters/clemta-light.svg" alt="Clemta" width="150" />
   </picture>
 </a>
+
+<a href="https://www.browserstack.com/open-source">
+  <img src="https://mma.prnewswire.com/media/2490455/BrowserStack_Logo.jpg" alt="BrowserStack" width="150" />
+</a>
+
+BrowserStack supports Crisis Connect through its Open Source Program with sponsored **Live, Automate, and Percy** access (active through 19 October 2027) for browser compatibility, web automation, and visual regression testing.
+
+BrowserStack's required README verification statement: **This project is tested with BrowserStack.**
+
+_Native App Live/App Automate currently remain trial access; Bluetooth/BLE communication is tested separately on physical devices._
 
 ## License
 
