@@ -962,17 +962,25 @@ Crisis Connect is in production on both app stores and under active development.
 
 Codemagic supports Crisis Connect with free native Android and iOS CI builds through its non-profit program.
 
-<a href="https://clemta.com/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/supporters/clemta-dark.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="docs/supporters/clemta-light.svg" />
-    <img src="docs/supporters/clemta-light.svg" alt="Clemta" width="150" />
-  </picture>
-</a>
+<p>
+  <a href="https://clemta.com/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/supporters/clemta-dark.svg" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/supporters/clemta-light.svg" />
+      <img src="docs/supporters/clemta-light.svg" alt="Clemta" width="150" />
+    </picture>
+  </a>
+</p>
 
-<a href="https://www.browserstack.com/open-source">
-  <img src="https://mma.prnewswire.com/media/2490455/BrowserStack_Logo.jpg" alt="BrowserStack" width="150" />
-</a>
+<p>
+  <a href="https://www.browserstack.com/open-source">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/supporters/browserstack-dark.svg" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/supporters/browserstack-light.svg" />
+      <img src="docs/supporters/browserstack-light.svg" alt="BrowserStack" width="150" />
+    </picture>
+  </a>
+</p>
 
 BrowserStack supports Crisis Connect through its Open Source Program with sponsored **Live, Automate, and Percy** access (active through 19 October 2027) for browser compatibility, web automation, and visual regression testing.
 
