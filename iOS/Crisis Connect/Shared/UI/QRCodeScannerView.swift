@@ -8,32 +8,66 @@
 import SwiftUI
 import AVFoundation
 
+struct QRCodeCameraState: Equatable {
+    var isRunning = false
+    var hasTorch = false
+    var torchOn = false
+}
+
 struct QRCodeScannerView: UIViewControllerRepresentable {
     let onScan: (String) -> Void
     let onError: (String) -> Void
+    var isScanningPaused = false
+    var torchEnabled = false
+    var onStateChange: ((QRCodeCameraState) -> Void)?
 
     func makeUIViewController(context: Context) -> ScannerViewController {
         let controller = ScannerViewController()
         controller.onScan = onScan
         controller.onError = onError
+        controller.onStateChange = onStateChange
+        controller.isScanningPaused = isScanningPaused
         return controller
     }
 
-    func updateUIViewController(_ uiViewController: ScannerViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: ScannerViewController, context: Context) {
+        uiViewController.onScan = onScan
+        uiViewController.onError = onError
+        uiViewController.onStateChange = onStateChange
+        uiViewController.isScanningPaused = isScanningPaused
+        uiViewController.setTorchEnabled(torchEnabled)
+    }
+
+    static func dismantleUIViewController(_ uiViewController: ScannerViewController, coordinator: ()) {
+        uiViewController.stopCapture()
+    }
 }
 
 final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
     var onScan: ((String) -> Void)?
     var onError: ((String) -> Void)?
+    var onStateChange: ((QRCodeCameraState) -> Void)?
+    var isScanningPaused = false
 
     private let session = AVCaptureSession()
     private let metadataOutput = AVCaptureMetadataOutput()
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var didScan = false
+    private var sessionConfigured = false
+    private var isVisible = false
+    private var requestedTorch = false
+    private var videoDevice: AVCaptureDevice?
+    private var torchStateObservation: NSKeyValueObservation?
+    private var torchAvailabilityObservation: NSKeyValueObservation?
+    private let sessionQueue = DispatchQueue(label: "com.auralis.crisisconnect.qr-camera", qos: .userInitiated)
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+        NotificationCenter.default.addObserver(self, selector: #selector(sessionStarted), name: AVCaptureSession.didStartRunningNotification, object: session)
+        NotificationCenter.default.addObserver(self, selector: #selector(sessionInterrupted), name: AVCaptureSession.wasInterruptedNotification, object: session)
+        NotificationCenter.default.addObserver(self, selector: #selector(sessionInterruptionEnded), name: AVCaptureSession.interruptionEndedNotification, object: session)
+        NotificationCenter.default.addObserver(self, selector: #selector(sessionFailed), name: AVCaptureSession.runtimeErrorNotification, object: session)
         configureSession()
     }
 
@@ -45,6 +79,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        isVisible = true
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleOrientationChange),
@@ -57,10 +92,11 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         NotificationCenter.default.removeObserver(self, name: UIDevice.orientationDidChangeNotification, object: nil)
-        session.stopRunning()
+        stopCapture()
     }
 
     private func configureSession() {
+        guard !sessionConfigured else { return }
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             break
@@ -100,40 +136,128 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
             metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
             metadataOutput.metadataObjectTypes = [.qr]
         } else {
+            session.removeInput(input)
             session.commitConfiguration()
             onError?("CAMERA_UNAVAILABLE")
             return
         }
 
         session.commitConfiguration()
+        sessionConfigured = true
+        videoDevice = device
+        torchStateObservation = device.observe(\.isTorchActive, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.publishCameraState() }
+        }
+        torchAvailabilityObservation = device.observe(\.isTorchAvailable, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.publishCameraState() }
+        }
 
         let preview = AVCaptureVideoPreviewLayer(session: session)
         preview.videoGravity = .resizeAspectFill
         previewLayer = preview
         view.layer.insertSublayer(preview, at: 0)
+        preview.frame = view.bounds
+        updateVideoOrientation()
+        startSessionIfNeeded()
     }
 
     private func startSessionIfNeeded() {
-        guard !session.isRunning else { return }
+        guard isVisible, sessionConfigured else { return }
         didScan = false
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.session.startRunning()
+        sessionQueue.async { [weak self] in
+            guard let self, !self.session.isRunning else { return }
+            self.session.startRunning()
         }
     }
+
+    func stopCapture() {
+        isVisible = false
+        requestedTorch = false
+        sessionQueue.async { [self] in
+            if let device = videoDevice, device.hasTorch, device.isTorchActive {
+                if (try? device.lockForConfiguration()) != nil {
+                    device.torchMode = .off
+                    device.unlockForConfiguration()
+                }
+            }
+            if session.isRunning { session.stopRunning() }
+        }
+    }
+
+    func setTorchEnabled(_ enabled: Bool) {
+        guard requestedTorch != enabled else { return }
+        requestedTorch = enabled
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard let device = self.videoDevice,
+                  device.hasTorch, device.isTorchAvailable else {
+                DispatchQueue.main.async {
+                    self.publishCameraState()
+                    if enabled { self.onError?("CAMERA_TORCH_UNAVAILABLE") }
+                }
+                return
+            }
+            do {
+                try device.lockForConfiguration()
+                device.torchMode = enabled ? .on : .off
+                device.unlockForConfiguration()
+                DispatchQueue.main.async { self.publishCameraState() }
+            } catch {
+                DispatchQueue.main.async { self.onError?("CAMERA_TORCH_UNAVAILABLE") }
+            }
+        }
+    }
+
+    private func publishCameraState() {
+        guard isVisible, !didScan else { return }
+        onStateChange?(QRCodeCameraState(
+            isRunning: session.isRunning && !session.isInterrupted,
+            hasTorch: videoDevice?.hasTorch == true && videoDevice?.isTorchAvailable == true,
+            torchOn: videoDevice?.isTorchActive == true
+        ))
+    }
+
+    @objc private func sessionStarted() {
+        DispatchQueue.main.async { [weak self] in self?.publishCameraState() }
+    }
+
+    @objc private func sessionInterrupted() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.requestedTorch = false
+            self.onError?("CAMERA_INTERRUPTED")
+        }
+    }
+
+    @objc private func sessionInterruptionEnded() {
+        DispatchQueue.main.async { [weak self] in
+            self?.publishCameraState()
+            self?.startSessionIfNeeded()
+        }
+    }
+
+    @objc private func sessionFailed() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVisible, !self.didScan else { return }
+            self.onError?("CAMERA_UNAVAILABLE")
+        }
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     func metadataOutput(
         _ output: AVCaptureMetadataOutput,
         didOutput metadataObjects: [AVMetadataObject],
         from connection: AVCaptureConnection
     ) {
-        guard !didScan else { return }
+        guard isVisible, !didScan, !isScanningPaused else { return }
         guard let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
               object.type == .qr,
               let value = object.stringValue else {
             return
         }
         didScan = true
-        session.stopRunning()
+        sessionQueue.async { [self] in session.stopRunning() }
         onScan?(value)
     }
 

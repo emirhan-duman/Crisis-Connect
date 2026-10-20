@@ -1452,3 +1452,30 @@
 "guide_redesign_subtitle_now" = "Chọn tình huống và xem hành động đúng đầu tiên trong vài giây.";
 "guide_redesign_subtitle_prepare" = "Hoàn thành kế hoạch và danh sách kiểm tra ngoại tuyến.";
 "guide_redesign_unknown_region" = "Không rõ khu vực";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Tìm liên hệ trực tuyến";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect đọc tên và số điện thoại trong danh bạ để tìm người dùng ứng dụng. Số điện thoại được gửi để đối chiếu đến máy chủ Crisis Connect do Google Firebase lưu trữ tại Hoa Kỳ. Tên vẫn ở trên thiết bị. Các số được tra cứu được xử lý mà không lưu trữ vĩnh viễn; kết quả đối chiếu nằm trên thiết bị. Làm mới hoặc quay lại màn hình này khi màn hình còn mở có thể gửi lại các số. Lựa chọn được ghi nhớ cho tài khoản này trên thiết bị này. Bạn có thể rút lại sự đồng ý trong Cài đặt, mục Quyền truy cập danh bạ.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Tìm liên hệ ở gần";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect đọc tên và số điện thoại trên thiết bị để bạn chọn người cần tìm ở gần. Số được chọn dùng để xác minh danh tính qua Bluetooth. Tính năng này không gửi danh bạ đến máy chủ. Lựa chọn được ghi nhớ cho tài khoản này trên thiết bị này. Bạn có thể rút lại sự đồng ý trong Cài đặt, mục Quyền truy cập danh bạ.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "Tôi đồng ý";
+"CONTACTS_DISCLOSURE_DECLINE" = "Để sau";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Quyền truy cập danh bạ";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Lựa chọn được ghi nhớ cho tài khoản này trên thiết bị này. Bạn có thể rút lại sự đồng ý trong Cài đặt, mục Quyền truy cập danh bạ.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "Rút lại đồng ý đối chiếu trực tuyến";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Rút lại đồng ý truy cập liên hệ ở gần";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "Có kết nối Internet";

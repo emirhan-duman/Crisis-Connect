@@ -41,6 +41,7 @@ enum MessagingRegistrar {
     // sign-ins never race — the exact failure that mints duplicate accounts.
     private static let gate = AsyncGate()
     private static let connectivityRetry = ConnectivityRetry()
+    private static let preKeyMaintenance = DeferredPreKeyMaintenance()
 
     /// Idempotent; safe to call on every launch. Never throws — messaging registration is
     /// best-effort and must not block or crash app start.
@@ -92,12 +93,7 @@ enum MessagingRegistrar {
         // Signal-protocol (v3) prekeys: publish/rotate + top up one-time pools so peers can start
         // a forward-secret session with us. Best-effort — messaging falls back to the v2 envelope
         // for peers without a session if this fails.
-        do {
-            let store = try SignalProtocolFileStore()
-            try await SignalPreKeyManager(store: store).ensurePublished()
-        } catch {
-            NSLog("MessagingRegistrar: failed to publish Signal prekeys: %@", String(describing: error))
-        }
+        await preKeyMaintenance.schedule(uid: uid)
 
         // Start the realtime downlink so incoming internet messages land in the chat, and the
         // store-and-forward queue that redelivers any message stuck pending (offline compose,
@@ -159,6 +155,31 @@ enum MessagingRegistrar {
             let first = await group.next() ?? nil
             group.cancelAll()
             return first
+        }
+    }
+}
+
+/// Bulk key maintenance waits locally for recovery; inbox startup never waits on key uploads.
+private actor DeferredPreKeyMaintenance {
+    private var job: Task<Void, Never>?
+    private var uid: String?
+    private var generation = UUID()
+    func schedule(uid: String) {
+        if self.uid == uid, job != nil { return }
+        job?.cancel()
+        self.uid = uid
+        let token = UUID()
+        generation = token
+        job = Task {
+            defer { if generation == token { job = nil } }
+            while DisasterTrafficController.shared.isSaving {
+                do { try await Task.sleep(nanoseconds: 15_000_000_000) } catch { return }
+            }
+            guard !Task.isCancelled, Auth.auth().currentUser?.uid == uid else { return }
+            do {
+                let store = try SignalProtocolFileStore()
+                try await SignalPreKeyManager(store: store).ensurePublished()
+            } catch { NSLog("MessagingRegistrar: failed to publish Signal prekeys: %@", String(describing: error)) }
         }
     }
 }

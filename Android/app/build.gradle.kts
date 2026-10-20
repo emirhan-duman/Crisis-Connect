@@ -95,10 +95,16 @@ val isInternalTaskRequested = gradle.startParameter.taskNames.any { taskName ->
 }
 
 android {
+    sourceSets.getByName("main").java.srcDir("../watch-protocol/src/main/java")
+    sourceSets.getByName("main").java.srcDir("../wear/src/main/java/com/auralis/crisisconnect/wear/independent")
+    if (providers.gradleProperty("recoveryDevTests").isPresent) {
+        // Other instrumentation suites depend on internal-only verification activities.
+        sourceSets.getByName("androidTest").java.setSrcDirs(listOf("src/androidTestWatchTest/java"))
+    }
     namespace = "com.auralis.crisisconnect"
-    compileSdk = 36
+    compileSdk = 37
     ndkVersion = "27.0.12077973"
-    testBuildType = if (hasReleaseSigning) "internal" else "debug"
+    testBuildType = if (providers.gradleProperty("recoveryDevTests").isPresent) "watchTest" else if (hasReleaseSigning) "internal" else "debug"
     dynamicFeatures += setOf(":feature_rescue")
 
     // Native MLS FrameEncryptor/FrameDecryptor bridge (libmls_frame_crypto.so) — the per-frame E2EE
@@ -112,10 +118,11 @@ android {
 
     defaultConfig {
         applicationId = "com.auralis.crisisconnect"
+        buildConfigField("boolean", "WATCH_TEST", "false")
         minSdk = 24
-        targetSdk = 36
-        versionCode = 64
-        versionName = "1.1.9"
+        targetSdk = 37
+        versionCode = 69
+        versionName = "1.2.0"
         ndk {
             // SQLCipher ships x86_64, but keeping only ARM here produced an installable
             // test/universal APK whose database crashed immediately on the x86_64 virtual
@@ -207,6 +214,16 @@ android {
             )
         }
 
+        create("watchTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".watchtest"
+            versionNameSuffix = "-watch-test"
+            matchingFallbacks += listOf("debug")
+            buildConfigField("boolean", "WATCH_TEST", "true")
+            buildConfigField("String", "APP_CHECK_DEBUG_TOKEN", buildConfigString(""))
+            resValue("string", "app_name", "Crisis Connect — Saat Testi")
+        }
+
         create("internal") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".internal"
@@ -277,6 +294,8 @@ android {
         }
     }
 
+    testOptions { unitTests.isIncludeAndroidResources = true }
+
     lint {
         // The app deliberately ships with partial translations and falls back to the default English
         // resources while localization is completed. Keep runtime/security lint fatal, but do not
@@ -329,6 +348,7 @@ if (!hasReleaseSigning && isInternalTaskRequested) {
 }
 
 dependencies {
+    implementation("com.google.android.gms:play-services-wearable:20.0.1")
 
     implementation(libs.androidx.core.ktx)
     // AOT-compiles the baseline profiles shipped in our APK + library AARs (Compose ships its own)
@@ -364,7 +384,11 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.12.2")
     testImplementation("io.mockk:mockk:1.13.12")
     androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
+    // API 37 removed InputManager.getInstance used by the older test injector.
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation(libs.androidx.uiautomator)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
@@ -453,6 +477,7 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("com.google.firebase:firebase-appcheck-playintegrity")
     debugImplementation("com.google.firebase:firebase-appcheck-debug")
+    add("internalImplementation", "com.google.firebase:firebase-appcheck-debug")
 
     // Standalone Play Integrity for raw integrity tokens used by attestation flow
     implementation("com.google.android.play:integrity:1.4.0")
@@ -476,3 +501,6 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
 }
+
+// The isolated watch-test app has no Firebase registration or startup provider.
+tasks.matching { it.name == "processWatchTestGoogleServices" }.configureEach { enabled = false }

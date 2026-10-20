@@ -59,11 +59,13 @@ class ServiceManifestContractInstrumentedTest {
         val crisisType = crisisInfo.foregroundServiceType
         val gattType = gattInfo.foregroundServiceType
         assertTrue(
-            crisisType and android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC != 0
+            crisisType and android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE != 0
         )
         assertTrue(
-            crisisType and android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION != 0
+            crisisType and android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE != 0
         )
+        assertTrue(crisisType and android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL != 0)
+        assertFalse(crisisType and android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC != 0)
         assertTrue(
             gattType and android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE != 0
         )

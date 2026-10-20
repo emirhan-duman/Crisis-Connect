@@ -15,6 +15,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.security.FirebaseRoleHelper
 import com.auralis.crisisconnect.security.SecurityRepository
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +46,11 @@ fun RescueFeatureRedirectScreen(
         RescueFeatureManager(context.applicationContext)
     }
     var installProgress by rememberSaveable(startDestination) { mutableStateOf<Int?>(null) }
-    var launchStarted by rememberSaveable(startDestination) { mutableStateOf(false) }
+    var launchStarted by remember(startDestination) { mutableStateOf(false) }
+    var detachInstall by remember { mutableStateOf<(() -> Unit)?>(null) }
+    DisposableEffect(Unit) {
+        onDispose { detachInstall?.invoke() }
+    }
     val rescueInstallConfirmationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) {
@@ -63,7 +69,9 @@ fun RescueFeatureRedirectScreen(
                 ?.trim()
                 ?.lowercase(Locale.US) in RESCUE_FEATURE_ROLES
         }
-        if (!hasAccess) {
+        val verifiedAccess = hasAccess ||
+            FirebaseRoleHelper.fetchRescueRole() is FirebaseRoleHelper.RescueRoleResult.Authorized
+        if (!verifiedAccess) {
             Toast.makeText(
                 context,
                 context.getString(R.string.rescue_forbidden_toast),
@@ -89,10 +97,14 @@ fun RescueFeatureRedirectScreen(
             return@LaunchedEffect
         }
 
-        rescueFeatureManager.installAndLaunch(
-            activity = hostActivity,
+        detachInstall = rescueFeatureManager.installIfNeeded(
             confirmationLauncher = rescueInstallConfirmationLauncher,
-            startDestination = startDestination,
+            onInstalled = {
+                if (!rescueFeatureManager.launchInstalled(hostActivity, startDestination)) {
+                    Toast.makeText(context, R.string.rescue_module_unavailable, Toast.LENGTH_LONG).show()
+                }
+                navController.popBackStack()
+            },
             onStateChanged = { state ->
                 when (state) {
                     is RescueFeatureManager.InstallState.Installing -> {
@@ -101,9 +113,6 @@ fun RescueFeatureRedirectScreen(
 
                     RescueFeatureManager.InstallState.NotInstalling -> {
                         installProgress = null
-                        if (rescueFeatureManager.isInstalled()) {
-                            navController.popBackStack()
-                        }
                     }
                 }
             },

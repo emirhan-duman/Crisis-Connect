@@ -174,10 +174,11 @@ class P2pGattServerService : Service() {
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var advertiser: BluetoothLeAdvertiser? = null
     private var gattServer: BluetoothGattServer? = null
-    private var shareSession: PublishedSession? = null
+    @Volatile private var shareSession: PublishedSession? = null
     private var hasBleContacts = false
     private var messageOutCharacteristic: BluetoothGattCharacteristic? = null
     private var startCommandJob: Job? = null
+    private var shareStopJob: Job? = null
     private var hostedShareSession: PublishedSession? = null
     private var isGattHostingActive = false
     private var sharedHostEnabled = false
@@ -495,9 +496,55 @@ class P2pGattServerService : Service() {
         val action = intent?.action
         when (action) {
             ACTION_START_SHARE -> {
+                shareStopJob?.cancel()
+                shareStopJob = null
                 shareSession = intent.toPublishedSession()
+                val recoveryDeadline = intent.getLongExtra(EXTRA_RECOVERY_DEADLINE, 0L)
+                if (recoveryDeadline > 0L) {
+                    val restored = shareSession
+                    shareStopJob = serviceScope.launch {
+                        kotlinx.coroutines.delay((recoveryDeadline - System.currentTimeMillis()).coerceIn(0L, 30_000L))
+                        publicationMutex.withLock {
+                            if (shareSession !== restored) return@withLock
+                            runCatching { com.auralis.crisisconnect.screens.QR.QrShareRecovery.stop(applicationContext) }
+                            shareSession = null
+                            hasBleContacts = hasAnyBleGattContacts(applicationContext)
+                            if (shareSession != null) return@withLock
+                            if (!sharedHostEnabled && !hasBleContacts) {
+                                stopForeground(STOP_FOREGROUND_REMOVE)
+                                stopSelf()
+                                publishRunningState(running = false, session = null)
+                            } else if (!restartGattPublication()) { stopSelf() }
+                        }
+                    }
+                }
             }
             ACTION_STOP_SHARE -> {
+                shareStopJob?.cancel()
+                shareStopJob = null
+                val graceMillis = intent?.getLongExtra(EXTRA_STOP_GRACE_MILLIS, 0L)?.coerceIn(0L, 12_000L) ?: 0L
+                val finishingSession = shareSession
+                if (graceMillis > 0L && finishingSession != null) {
+                    shareStopJob = serviceScope.launch {
+                        kotlinx.coroutines.delay(graceMillis)
+                        publicationMutex.withLock {
+                            // A new QR publication owns a new session; old cleanup cannot stop it.
+                            if (shareSession !== finishingSession) return@withLock
+                            shareSession = null
+                            hasBleContacts = hasAnyBleGattContacts(applicationContext)
+                            // A new publication can arrive while the contact query is running.
+                            if (shareSession != null) return@withLock
+                            if (!sharedHostEnabled && !hasBleContacts) {
+                                stopForeground(STOP_FOREGROUND_REMOVE)
+                                stopSelf()
+                                publishRunningState(running = false, session = null)
+                            } else if (!restartGattPublication()) {
+                                stopSelf()
+                            }
+                        }
+                    }
+                    return START_STICKY
+                }
                 shareSession = null
             }
             ACTION_ENSURE_HOST, null -> {
@@ -985,6 +1032,17 @@ class P2pGattServerService : Service() {
             setErrorResponse(deviceKey, "auth_failed", "Client finish proof mismatch")
             return
         }
+        // Commit the reciprocal contact before returning server_finish. A kill after the ATT
+        // response must not leave the scanner saved while the displaying side has no record.
+        val saved = device != null && runCatching {
+            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                kotlinx.coroutines.withTimeout(2_500L) { persistAuthenticatedPeer(session, device, pending) }
+            }
+        }.getOrDefault(false)
+        if (!saved) {
+            setErrorResponse(deviceKey, "save_failed", "Could not save peer")
+            return
+        }
         pendingHandshakes.remove(deviceKey)
         setDeviceResponse(
             deviceKey,
@@ -996,11 +1054,8 @@ class P2pGattServerService : Service() {
                 put("serverDeviceId", session.deviceId)
             }.toString()
         )
-        if (device != null) {
-            serviceScope.launch {
-                persistAuthenticatedPeer(session, device, pending)
-            }
-        }
+        // Keep the share recovery intent until the user stops/leaves the QR. A process kill
+        // before the central reads server_finish must still allow a fresh handshake on reopen.
     }
 
     private fun handleDescriptorWrite(device: BluetoothDevice?, value: ByteArray): Int {
@@ -1531,10 +1586,10 @@ class P2pGattServerService : Service() {
         session: PublishedSession,
         device: BluetoothDevice,
         pending: PendingHandshake
-    ) {
+    ): Boolean {
         val address = device.address?.trim().orEmpty()
         if (address.isBlank()) {
-            return
+            return false
         }
         val remotePlatform = normalizeRemotePlatform(pending.clientPlatform)
         val classicSessionCode = pending.clientSessionCode.trim()
@@ -1555,7 +1610,7 @@ class P2pGattServerService : Service() {
                 classicSessionCode.equals(session.sessionCode.trim(), ignoreCase = true))
         ) {
             Log.w(TAG, "Rejecting pairing: the peer identity is this device")
-            return
+            return false
         }
         val localUid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }
             .getOrNull()?.trim().orEmpty()
@@ -1571,7 +1626,7 @@ class P2pGattServerService : Service() {
             fallbackSessionCode = pending.clientSessionCode,
             fallbackAddress = address
         )
-        runCatching {
+        return runCatching {
             val savedContact = saveBleContactAndMigrateLegacySession(
                 context = applicationContext,
                 contact = Contact(
@@ -1618,9 +1673,10 @@ class P2pGattServerService : Service() {
                     payloadBase64 = avatarPayload
                 )
             }
+            true
         }.onFailure { throwable ->
             Log.e(TAG, "Failed to persist authenticated P2P peer", throwable)
-        }
+        }.getOrDefault(false)
     }
 
     @SuppressLint("MissingPermission")
@@ -2385,6 +2441,8 @@ class P2pGattServerService : Service() {
         private const val EXTRA_AES_KEY_BASE64 = "extra_aes_key_base64"
         private const val ACTION_START_SHARE = "com.auralis.crisisconnect.action.P2P_START_SHARE"
         private const val ACTION_STOP_SHARE = "com.auralis.crisisconnect.action.P2P_STOP_SHARE"
+        private const val EXTRA_STOP_GRACE_MILLIS = "stop_grace_millis"
+        private const val EXTRA_RECOVERY_DEADLINE = "recovery_deadline"
         private const val ACTION_ENSURE_HOST = "com.auralis.crisisconnect.action.P2P_ENSURE_HOST"
         private const val ACTION_ACQUIRE_SHARED_HOST =
             "com.auralis.crisisconnect.action.P2P_ACQUIRE_SHARED_HOST"
@@ -2459,23 +2517,31 @@ class P2pGattServerService : Service() {
             shareId: String,
             sessionCode: String,
             displayName: String?,
-            aesKeyBase64: String
+            aesKeyBase64: String,
+            recoveryDeadline: Long = 0L
         ) {
             val appContext = context.applicationContext
+            runCatching { com.auralis.crisisconnect.screens.QR.QrShareRecovery.save(appContext, shareId, sessionCode,
+                displayName, aesKeyBase64, recoveryDeadline) }
+                .onFailure { Log.w(TAG, "Unable to checkpoint QR share") }
             val intent = Intent(appContext, P2pGattServerService::class.java).apply {
                 action = ACTION_START_SHARE
                 putExtra(EXTRA_SHARE_ID, shareId)
                 putExtra(EXTRA_SESSION_CODE, sessionCode)
                 putExtra(EXTRA_DISPLAY_NAME, displayName)
                 putExtra(EXTRA_AES_KEY_BASE64, aesKeyBase64)
+                putExtra(EXTRA_RECOVERY_DEADLINE, recoveryDeadline)
             }
             ContextCompat.startForegroundService(appContext, intent)
         }
 
-        fun stopPublishing(context: Context) {
+        fun stopPublishing(context: Context, graceMillis: Long = 0L) {
             val appContext = context.applicationContext
+            runCatching { com.auralis.crisisconnect.screens.QR.QrShareRecovery.stop(appContext, graceMillis.coerceIn(0L, 12_000L)) }
+                .onFailure { Log.w(TAG, "Unable to checkpoint QR share stop") }
             val intent = Intent(appContext, P2pGattServerService::class.java).apply {
                 action = ACTION_STOP_SHARE
+                putExtra(EXTRA_STOP_GRACE_MILLIS, graceMillis.coerceIn(0L, 12_000L))
             }
             ContextCompat.startForegroundService(appContext, intent)
         }

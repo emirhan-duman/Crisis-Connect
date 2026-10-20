@@ -6,10 +6,10 @@ import org.junit.Test
 
 class AuthorityMlsTrustTest {
     @Test
-    fun approvalNeverCarriesForwardToFirstOrChangedDeviceSet() {
-        assertEquals(false, AuthorityMlsTrust.approvalCarriesForward(existingApproved = false, exactDeviceSetMatch = true))
-        assertEquals(false, AuthorityMlsTrust.approvalCarriesForward(existingApproved = true, exactDeviceSetMatch = false))
-        assertEquals(true, AuthorityMlsTrust.approvalCarriesForward(existingApproved = true, exactDeviceSetMatch = true))
+    fun automaticTrustRequiresACompleteUniqueDeviceSet() {
+        assertEquals(true, AuthorityMlsTrust.automaticTrustEligible(2, listOf("device-a", "device-b")))
+        assertEquals(false, AuthorityMlsTrust.automaticTrustEligible(0, emptyList()))
+        assertEquals(false, AuthorityMlsTrust.automaticTrustEligible(2, listOf("device-a", "device-a")))
     }
 
     @Test

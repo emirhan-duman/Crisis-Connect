@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -26,11 +27,23 @@ class OfflineRegionRepositoryImpl internal constructor(
 ) : OfflineRegionRepository {
 
     private val dao = database.offlineRegionDao()
+    init {
+        externalScope.launch {
+            com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.collectLatest { saving ->
+                if (saving) regionsFlow.collectLatest { regions ->
+                    regions.filter { it.status == OfflineRegionStatus.Downloading && !it.isPaused }
+                        .forEach { it.regionId?.let { id -> pause(id) } }
+                }
+            }
+        }
+    }
 
     override val regionsFlow = dao.observeRegions()
 
     override suspend fun startDownload(request: OfflineDownloadRequest): OfflineRegionEntity =
         withContext(dispatcher) {
+            check(com.auralis.crisisconnect.connectivity.DisasterTrafficController.permits(
+                com.auralis.crisisconnect.connectivity.NetworkWork.MAP_DOWNLOAD)) { "Map download paused by traffic policy" }
             val now = System.currentTimeMillis()
             val entity = OfflineRegionEntity(
                 name = request.name,
@@ -76,6 +89,8 @@ class OfflineRegionRepositoryImpl internal constructor(
     }
 
     override suspend fun resume(regionId: Long) {
+        if (!com.auralis.crisisconnect.connectivity.DisasterTrafficController.permits(
+                com.auralis.crisisconnect.connectivity.NetworkWork.MAP_DOWNLOAD)) return
         withRegion(regionId) { offlineRegion, entity ->
             offlineRegion.setDownloadState(OfflineRegion.STATE_ACTIVE)
             dao.update(entity.copy(isPaused = false, status = OfflineRegionStatus.Downloading))

@@ -41,6 +41,7 @@ class ProfilePhotoUploadWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
+        if (com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value) return Result.retry()
         val generation = inputData.getString(KEY_GENERATION) ?: return Result.success()
         if (!ProfileImageStorage.isUploadPending(applicationContext)
             || ProfileImageStorage.getUploadGeneration(applicationContext) != generation) {
@@ -57,7 +58,7 @@ class ProfilePhotoUploadWorker(
             ?: return Result.failure()
         if (bytes.isEmpty()) return Result.failure()
 
-        val firestore = FirebaseFirestore.getInstance()
+        val firestore = com.auralis.crisisconnect.messaging.ResilientApplicationStore.profiles()
         val docRef = firestore.collection("users").document(user.uid)
 
         val snapshot = runCatching { docRef.get().await() }
@@ -82,8 +83,12 @@ class ProfilePhotoUploadWorker(
             .build()
 
         val downloadUrl = try {
-            storageRef.putBytes(bytes, metadata).await()
-            storageRef.downloadUrl.await().toString()
+            if (com.auralis.crisisconnect.messaging.ResilientApplicationStore.ENABLED) {
+                com.auralis.crisisconnect.messaging.ResilientMediaClient.uploadAvatar(bytes, generation)
+            } else {
+                storageRef.putBytes(bytes, metadata).await()
+                storageRef.downloadUrl.await().toString()
+            }
         } catch (t: Throwable) {
             Log.w(TAG, "Avatar upload failed; will retry", t)
             return Result.retry()

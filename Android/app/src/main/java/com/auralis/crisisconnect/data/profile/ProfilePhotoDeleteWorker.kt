@@ -27,8 +27,9 @@ class ProfilePhotoDeleteWorker(
     override suspend fun doWork(): Result {
         val user = FirebaseAuth.getInstance().currentUser?.takeUnless { it.isAnonymous }
             ?: return Result.failure()
-        val doc = FirebaseFirestore.getInstance().collection("users").document(user.uid)
+        val doc = com.auralis.crisisconnect.messaging.ResilientApplicationStore.profiles().collection("users").document(user.uid)
 
+        val oldUrl = runCatching { doc.get().await().getString("photoURL") }.getOrNull()
         try {
             doc.set(
                 mapOf(
@@ -44,6 +45,11 @@ class ProfilePhotoDeleteWorker(
         }
 
         runCatching {
+            if (com.auralis.crisisconnect.messaging.ResilientApplicationStore.ENABLED && oldUrl != null) {
+                com.auralis.crisisconnect.messaging.ResilientMediaClient.avatarPath(oldUrl)?.let {
+                    com.auralis.crisisconnect.messaging.ResilientMediaClient.delete(it)
+                }
+            }
             FirebaseStorage.getInstance().reference
                 .child("users/${user.uid}/avatar.jpg")
                 .delete()

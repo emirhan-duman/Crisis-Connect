@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 17: Wi-Fi mesh TCP connections require runtime local-network access. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
     <uses-permission
         android:name="android.permission.ACCESS_ADSERVICES_AD_ID"
@@ -55,8 +57,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Android 16 "Live Update" promotion (status-bar chip) for the active-SOS notification. -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
-    <!-- Optional: only requested when the user taps "Add from contacts" to find address-book
-         entries who are discoverable Crisis Connect users. Numbers are matched by hash and never stored. -->
+    <!-- Optional, online address-book matching only, after disclosure and affirmative consent.
+         Nearby selection uses the system phone picker without broad contact access.
+         Target 37 requires a Contacts Permission declaration in Play Console. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
@@ -99,6 +102,18 @@
         <meta-data
             android:name="firebase_performance_collection_enabled"
             android:value="false" />
+        <service android:name=".watch.PhoneWatchListenerService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:path="/crisis-connect/v1/command" />
+            </intent-filter>
+        </service>
+        <activity android:name=".watch.IndependentMessagingActivity" android:exported="false" />
+        <activity android:name=".watch.WatchSosApprovalActivity" android:exported="false" android:excludeFromRecents="true" android:theme="@android:style/Theme.DeviceDefault" />
+        <!-- Opt in after constraining text and emergency payloads in the network transport. -->
+        <meta-data
+            android:name="android.telephony.PROPERTY_SATELLITE_DATA_OPTIMIZED"
+            android:value="${applicationId}" />
         <meta-data
             android:name="android.view.force_framerate_compatibility"
             android:value="true" />
@@ -115,6 +130,11 @@
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="ocr" />
+        <service
+            android:name=".service.QrPairingForegroundService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="connectedDevice" />
         <service
             android:name=".service.RfcommForegroundService"
             android:enabled="true"

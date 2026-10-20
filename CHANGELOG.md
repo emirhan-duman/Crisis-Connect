@@ -4,6 +4,35 @@ All notable changes to Crisis Connect are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.0-beta.1] - 2026-10-20
+
+**Early access / pre-release.** Android phone `1.2.0` (`versionCode` 69), Wear OS `1.2.0`
+(`versionCode` 70), iOS and watchOS `1.2.0` (`CURRENT_PROJECT_VERSION` 38).
+
+### Added
+
+- Experimental Apple Watch and Wear OS companion experiences, including contact, chat and SOS flows
+- Constrained-network traffic policies, compact inbox synchronization and regional messaging support
+- Regression coverage for contact onboarding, watch recovery, traffic budgets and messaging compatibility
+
+### Changed
+
+- Updated Android SDK configuration to API 37
+- Migrated authority MLS conversation identifiers to v10, with prior-generation compatibility and gated resilient v11 routing
+- Synchronized current mobile source into the public repository while retaining its existing privacy controls, CI checks and dependency hardening
+
+### Fixed
+
+- Contact consent, QR pairing and onboarding recovery across mobile platforms
+- SOS recovery and connection-state handling across reconnects and background transitions
+- Backend property-test reference updated to the v10 conversation identifier already asserted by Android and iOS
+
+### Distribution
+
+- Published separately from the stable line as `v1.2.0-beta.1`; see [release notes](docs/releases/1.2.0-beta.1.md)
+- iOS version metadata does not imply an App Store or TestFlight upload
+- Watch features and constrained satellite behavior remain experimental and depend on device, account and backend rollout support
+
 ## [1.1.9] - 2026-08-13
 
 Android `versionCode` 64, iOS `MARKETING_VERSION` 1.1.9 (`CURRENT_PROJECT_VERSION` 36).

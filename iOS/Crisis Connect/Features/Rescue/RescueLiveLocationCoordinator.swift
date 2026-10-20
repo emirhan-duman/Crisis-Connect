@@ -39,6 +39,8 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
     private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
     private let pendingSyncStore = PendingDashboardSyncStore()
     private var pendingSyncOperations: [PendingDashboardSyncOperation] = []
+    private var queueReportTask: Task<Void, Never>?
+    private var lastQueueReportAt: Date?
 
     init(
         rescueManager: RescueClientManager? = nil,
@@ -79,6 +81,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard liveLocationEnabled else { return }
         guard let location = locations.last else { return }
+        MessagingRegionHint.observe(location)
         if !applicationIsActive {
             beginBackgroundTaskIfNeeded()
         }
@@ -177,7 +180,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
                 // Crisis Link on, live location off: Android still sends location-less roster
                 // heartbeats, so keep the responder on the dashboard instead of marking it
                 // inactive. Foreground-driven, like the live-location timer.
-                pendingSyncOperations.removeAll { $0.kind == .responderInactive }
+                pendingSyncOperations.removeAll { $0.kind == .responderInactive && ($0.ownerUid == nil || $0.ownerUid == Auth.auth().currentUser?.uid) }
                 persistPendingSyncOperations()
                 if applicationIsActive {
                     ensurePresenceTimer()
@@ -194,7 +197,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
         }
 
         stopPresenceTimer()
-        pendingSyncOperations.removeAll { $0.kind == .responderInactive }
+        pendingSyncOperations.removeAll { $0.kind == .responderInactive && ($0.ownerUid == nil || $0.ownerUid == Auth.auth().currentUser?.uid) }
         persistPendingSyncOperations()
 
         let profile = currentRuntimeProfile
@@ -251,7 +254,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
     private static let presenceSyncInterval: TimeInterval = 300
 
     var shouldScheduleBackgroundRefresh: Bool {
-        !pendingSyncOperations.isEmpty
+        !currentActorPendingOperations.isEmpty
     }
 
     var backgroundRefreshEarliestDelay: TimeInterval {
@@ -320,6 +323,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
         Task { [dashboardSyncService, weak self] in
             if await dashboardSyncService.syncResponderPresence() {
                 self?.hasPublishedPresence = true
+                self?.reportPendingQueueStatus()
             }
         }
     }
@@ -478,6 +482,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
         reporterLocation: CrisisLinkDashboardSyncService.LocationPayload?
     ) {
         let operation = PendingDashboardSyncOperation(
+                ownerUid: Auth.auth().currentUser?.uid,
             kind: .signalObservation,
             payload: nil,
             attemptCount: 0,
@@ -494,9 +499,10 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
     }
 
     private func enqueueLiveLocationSync(_ payload: CrisisLinkDashboardSyncService.LocationPayload) {
-        pendingSyncOperations.removeAll { $0.kind == .liveLocation }
+        pendingSyncOperations.removeAll { $0.kind == .liveLocation && ($0.ownerUid == nil || $0.ownerUid == Auth.auth().currentUser?.uid) }
         pendingSyncOperations.append(
             PendingDashboardSyncOperation(
+                ownerUid: Auth.auth().currentUser?.uid,
                 kind: .liveLocation,
                 payload: payload,
                 attemptCount: 0,
@@ -513,10 +519,11 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
         // Presence heartbeats create the roster row too, so a presence-only rescuer also needs
         // the inactive mark on the way out.
         guard hasPublishedDashboardLocation || hasPublishedPresence else { return }
-        pendingSyncOperations.removeAll { $0.kind == .liveLocation }
-        pendingSyncOperations.removeAll { $0.kind == .responderInactive }
+        pendingSyncOperations.removeAll { $0.kind == .liveLocation && ($0.ownerUid == nil || $0.ownerUid == Auth.auth().currentUser?.uid) }
+        pendingSyncOperations.removeAll { $0.kind == .responderInactive && ($0.ownerUid == nil || $0.ownerUid == Auth.auth().currentUser?.uid) }
         pendingSyncOperations.append(
             PendingDashboardSyncOperation(
+                ownerUid: Auth.auth().currentUser?.uid,
                 kind: .responderInactive,
                 payload: nil,
                 attemptCount: 0,
@@ -532,7 +539,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
         syncRetryWorkItem?.cancel()
         syncRetryWorkItem = nil
 
-        guard !pendingSyncOperations.isEmpty else {
+        guard !currentActorPendingOperations.isEmpty else {
             endBackgroundTaskIfNeeded()
             return
         }
@@ -541,7 +548,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
         }
 
         let now = Date()
-        let nextDate = pendingSyncOperations
+        let nextDate = currentActorPendingOperations
             .map(\.nextRetryAt)
             .min() ?? now
         let delay = immediate ? 0 : max(0, nextDate.timeIntervalSince(now))
@@ -559,7 +566,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
 
     private func flushPendingSyncOperations() {
         guard pendingSyncDrainTask == nil else { return }
-        guard !pendingSyncOperations.isEmpty else {
+        guard !currentActorPendingOperations.isEmpty else {
             endBackgroundTaskIfNeeded()
             return
         }
@@ -577,7 +584,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
     private func performPendingSyncDrain() async {
         defer {
             pendingSyncDrainTask = nil
-            if pendingSyncOperations.isEmpty {
+            if currentActorPendingOperations.isEmpty {
                 endBackgroundTaskIfNeeded()
             } else {
                 schedulePendingSyncDrain(immediate: false)
@@ -612,6 +619,9 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
             }
 
             if success {
+                if let uid = Auth.auth().currentUser?.uid {
+                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "crisisLink.queueSuccess.\(uid)")
+                }
                 removePendingSyncOperation(operation.id)
             } else {
                 reschedulePendingSyncOperation(operation.id, failure: "sync_failed")
@@ -620,8 +630,13 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
         }
     }
 
+    private var currentActorPendingOperations: [PendingDashboardSyncOperation] {
+        let uid = Auth.auth().currentUser?.uid
+        return pendingSyncOperations.filter { $0.ownerUid == nil || $0.ownerUid == uid }
+    }
+
     private func nextPendingSyncOperation() -> PendingDashboardSyncOperation? {
-        pendingSyncOperations
+        currentActorPendingOperations
             .filter { $0.nextRetryAt <= Date() }
             .sorted { lhs, rhs in
                 if lhs.nextRetryAt == rhs.nextRetryAt {
@@ -649,6 +664,23 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
     private func persistPendingSyncOperations() {
         pendingSyncStore.save(pendingSyncOperations)
         CrisisLinkBackgroundRefreshManager.shared.scheduleIfNeeded()
+        reportPendingQueueStatus()
+    }
+
+    private func reportPendingQueueStatus() {
+        guard queueReportTask == nil, let uid = Auth.auth().currentUser?.uid else { return }
+        // Legacy entries cannot be attributed safely after an account change.
+        guard !pendingSyncOperations.contains(where: { $0.ownerUid == nil }) else { return }
+        if let lastQueueReportAt, Date().timeIntervalSince(lastQueueReportAt) < 30 { return }
+        lastQueueReportAt = Date()
+        let rows = pendingSyncOperations.filter { $0.ownerUid == uid }
+        let success = UserDefaults.standard.double(forKey: "crisisLink.queueSuccess.\(uid)")
+        queueReportTask = Task { [weak self] in
+            await MobileSyncClient.reportQueueStatus(pendingCount: rows.count, oldestAt: rows.map(\.createdAt).min(),
+                lastSuccessAt: success > 0 ? Date(timeIntervalSince1970: success) : nil,
+                failed: rows.contains { $0.lastError != nil })
+            self?.queueReportTask = nil
+        }
     }
 
     func handleBackgroundRefresh() async -> Bool {
@@ -658,7 +690,7 @@ final class RescueLiveLocationCoordinator: NSObject, CLLocationManagerDelegate {
         if let cachedLocation = locationManager.location, isFresh(location: cachedLocation) {
             publishLocationUpdate(from: cachedLocation, allowTransportBroadcast: false)
         }
-        if !pendingSyncOperations.isEmpty {
+        if !currentActorPendingOperations.isEmpty {
             await performPendingSyncDrain()
         }
         return !Task.isCancelled

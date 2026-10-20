@@ -632,7 +632,7 @@ Android: %3$s</string>
     <string name="add_from_contacts_empty">Ninguém nos seus contatos está no Crisis Connect ainda.</string>
     <string name="add_from_contacts_permission_needed">É necessária a permissão de contatos para encontrar pessoas que você conhece.</string>
     <string name="add_from_contacts_sign_in_required">Entre para encontrar contatos no Crisis Connect.</string>
-    <string name="add_from_contacts_privacy_note">Seus números são correspondidos por hash e nunca armazenados no servidor. Apenas as pessoas que optaram por ser detectáveis aparecem.</string>
+    <string name="add_from_contacts_privacy_note">O Crisis Connect lê nomes e números de telefone dos seus contatos para encontrar pessoas que usam o aplicativo. Envia os números aos servidores do Crisis Connect hospedados pelo Google Firebase nos Estados Unidos para encontrar correspondências. Os nomes ficam no seu dispositivo. Os números consultados são processados sem armazenamento permanente; as correspondências ficam no seu dispositivo. Atualizar esta tela ou voltar a ela enquanto estiver aberta pode enviar os números novamente. Sua escolha é lembrada para esta conta neste dispositivo. Você pode retirar o consentimento em Configurações, em Acesso aos contatos.</string>
     <string name="add_from_contacts_found_count">%1$d no Crisis Connect</string>
     <string name="add_from_contacts_empty_hint">Elas aparecerão aqui assim que verificarem o número de telefone no aplicativo.</string>
     <string name="add_from_contacts_search_hint">Pesquisar nome ou número</string>
@@ -1228,6 +1228,7 @@ Data: %4$s</string>
     <string name="chat_status_connected">Conectado</string>
     <string name="chat_status_connected_bluetooth">Conectado via Bluetooth</string>
     <string name="chat_status_connected_internet">Conectado via internet</string>
+    <string name="chat_status_connected_satellite">Conectado via satélite</string>
     <string name="internet_message_channel_name">Mensagens de internet</string>
     <string name="internet_message_notification_title">Nova mensagem</string>
     <string name="channel_message_notification_body">Nova mensagem</string>
@@ -1790,4 +1791,20 @@ Data: %4$s</string>
     <string name="profile_delete_account_error_verification">Não foi possível verificar a exclusão neste dispositivo. Verifique sua conexão e tente novamente.</string>
     <string name="profile_delete_account_error_signed_out">Você precisa estar conectado para excluir sua conta.</string>
     <string name="profile_delete_account_reauth_needed">Por segurança, precisamos confirmar que é você antes de excluir. Saia da conta, entre novamente e tente de novo.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">Encontrar contatos online</string>
+    <string name="contacts_disclosure_body">O Crisis Connect lê nomes e números de telefone dos seus contatos para encontrar pessoas que usam o aplicativo. Envia os números aos servidores do Crisis Connect hospedados pelo Google Firebase nos Estados Unidos para encontrar correspondências. Os nomes ficam no seu dispositivo. Os números consultados são processados sem armazenamento permanente; as correspondências ficam no seu dispositivo. Atualizar esta tela ou voltar a ela enquanto estiver aberta pode enviar os números novamente. Sua escolha é lembrada para esta conta neste dispositivo. Você pode retirar o consentimento em Configurações, em Acesso aos contatos.</string>
+    <string name="contacts_local_disclosure_title">Encontrar contatos próximos</string>
+    <string name="contacts_local_disclosure_body">O Crisis Connect lê apenas o nome e o número que você compartilha pelo seletor de contatos do sistema para encontrar alguém por perto. O número escolhido é usado para verificar a identidade via Bluetooth. Este recurso não envia seus contatos a um servidor. Sua escolha é lembrada para esta conta neste dispositivo. Você pode retirar o consentimento em Configurações, em Acesso aos contatos.</string>
+    <string name="contacts_disclosure_accept">Concordo</string>
+    <string name="contacts_disclosure_decline">Agora não</string>
+    <string name="contacts_consent_settings_title">Acesso aos contatos</string>
+    <string name="contacts_consent_settings_hint">Sua escolha é lembrada para esta conta neste dispositivo. Você pode retirar o consentimento em Configurações, em Acesso aos contatos.</string>
+    <string name="contacts_consent_revoke_online">Retirar consentimento de busca online</string>
+    <string name="contacts_consent_revoke_nearby">Retirar consentimento de contatos próximos</string>
+    <string name="nearby_choose_contact">Escolher contato</string>
+    <string name="nearby_contact_selection_failed">Não foi possível ler o número selecionado. Escolha outro contato.</string>
+    <string name="chat_status_internet_available">Internet disponível</string>
+    <string name="chat_status_satellite_available">Ligação por satélite disponível</string>
 </resources>

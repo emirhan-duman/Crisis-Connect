@@ -4,6 +4,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
@@ -41,11 +42,24 @@ data class DiscoveredContact(
  * Both converge on the same `onMessageCreated` push fan-out.
  */
 class InternetMessagingClient(
-    private val functions: FirebaseFunctions = FirebaseFunctions.getInstance(REGION),
+    functions: FirebaseFunctions? = null,
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+    firestore: FirebaseFirestore? = null,
+    private val regionalCalls: RegionalMessagingCalls? = if (functions == null) RegionalMessagingCalls() else null
 ) {
+    private val firestore = firestore ?: if (functions == null && MessagingDatabaseTarget.HIGH_AVAILABILITY_ENABLED)
+        FirebaseFirestore.getInstance(MessagingDatabaseTarget.DATABASE_ID) else FirebaseFirestore.getInstance()
+    private val functions = functions ?: FirebaseFunctions.getInstance(REGION)
+    val usesRegionalDelivery: Boolean get() = regionalCalls != null
+    private suspend fun callRegional(operation: String, payload: Map<String, Any>): Any? {
+        val uid = currentUid() ?: error("Not signed in.")
+        return checkNotNull(regionalCalls).call(operation, payload + ("requestUid" to uid)) { currentUid() == uid }
+    }
+    private suspend fun callRouted(operation: String, payload: Map<String, Any> = emptyMap()): Any? =
+        if (regionalCalls != null) callRegional(operation, payload)
+        else functions.getHttpsCallable(operation).call(payload).await().data
     fun currentUid(): String? = auth.currentUser?.uid
+    internal val messageStore: FirebaseFirestore get() = firestore
 
     suspend fun publishIdentityKey(
         publicKeyBase64: String,
@@ -68,7 +82,7 @@ class InternetMessagingClient(
         }
         displayName?.takeIf { it.isNotBlank() }?.let { payload["displayName"] = it }
         photoUrl?.takeIf { it.isNotBlank() }?.let { payload["photoUrl"] = it }
-        functions.getHttpsCallable("publishIdentityKey").call(payload).await()
+        callRouted("publishIdentityKey", payload)
         Unit
     }
 
@@ -81,8 +95,8 @@ class InternetMessagingClient(
         uid?.takeIf { it.isNotBlank() }?.let { payload["uid"] = it }
         phone?.takeIf { it.isNotBlank() }?.let { payload["phone"] = it }
         username?.takeIf { it.isNotBlank() }?.let { payload["username"] = it }
-        val result = functions.getHttpsCallable("lookupIdentityKey").call(payload).await()
-        val data = result.data as? Map<*, *>
+        val result = callRouted("lookupIdentityKey", payload)
+        val data = result as? Map<*, *>
             ?: throw IllegalStateException("lookupIdentityKey returned no data.")
         PeerIdentityKey(
             uid = data["uid"] as? String ?: throw IllegalStateException("Missing uid."),
@@ -104,10 +118,8 @@ class InternetMessagingClient(
     suspend fun findContacts(phones: List<String>): List<DiscoveredContact> =
         withContext(Dispatchers.IO) {
             if (phones.isEmpty()) return@withContext emptyList()
-            val result = functions.getHttpsCallable("findContactsOnCrisisConnect")
-                .call(hashMapOf("phones" to phones))
-                .await()
-            val data = result.data as? Map<*, *> ?: return@withContext emptyList()
+            val result = callRouted("findContactsOnCrisisConnect", mapOf("phones" to phones))
+            val data = result as? Map<*, *> ?: return@withContext emptyList()
             val matches = data["matches"] as? List<*> ?: return@withContext emptyList()
             matches.mapNotNull { raw ->
                 val m = raw as? Map<*, *> ?: return@mapNotNull null
@@ -129,21 +141,22 @@ class InternetMessagingClient(
 
     suspend fun registerPushToken(token: String, platform: String = "android") =
         withContext(Dispatchers.IO) {
-            functions.getHttpsCallable("registerPushToken")
-                .call(hashMapOf("token" to token, "platform" to platform))
-                .await()
+            callRouted("registerPushToken", mapOf("token" to token, "platform" to platform,
+                    "installationId" to MessagingInstallation.id(), "trafficPolicyVersion" to 1))
             Unit
         }
 
     suspend fun unregisterPushToken(token: String) = withContext(Dispatchers.IO) {
-        functions.getHttpsCallable("unregisterPushToken")
-            .call(hashMapOf("token" to token))
-            .await()
+        callRouted("unregisterPushToken", mapOf("token" to token))
         Unit
     }
 
     /** Content-free, authenticated wake; the backend derives the recipient from the MLS parent. */
     suspend fun requestAuthorityMlsPreparation(conversationId: String) = withContext(Dispatchers.IO) {
+        if (ResilientApplicationStore.ENABLED) {
+            callRouted("requestAuthorityMlsPreparation", mapOf("conversationId" to conversationId))
+            return@withContext
+        }
         functions.getHttpsCallable("requestAuthorityMlsPreparation")
             .call(hashMapOf("conversationId" to conversationId))
             .await()
@@ -154,13 +167,54 @@ class InternetMessagingClient(
      * Confirms a message was received and stored, so the server deletes its copy (WhatsApp-style).
      * Best-effort: failure just means the server's safety-net purge cleans it up later.
      */
-    suspend fun acknowledgeMessage(messageId: String) = withContext(Dispatchers.IO) {
-        runCatching {
-            functions.getHttpsCallable("acknowledgeMessage")
-                .call(hashMapOf("messageId" to messageId))
-                .await()
-        }
+    suspend fun acknowledgeMessage(messageId: String, expectedUid: String? = null) = withContext(Dispatchers.IO) {
+        val uid = currentUid() ?: return@withContext
+        if (expectedUid != null && uid != expectedUid) return@withContext
+        // Persist first in every mode: failed normal-mode ACKs are retried by the sync worker.
+        CompactInboxState.enqueue(uid, messageId)
+        if (com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value) return@withContext
+        try {
+            kotlinx.coroutines.withTimeout(if (regionalCalls != null) 20_000L else 12_000L) {
+                if (regionalCalls != null) callRegional("acknowledgeMessage", mapOf("messageId" to messageId))
+                else functions.getHttpsCallable("acknowledgeMessage").call(hashMapOf("messageId" to messageId)).await()
+            }
+            CompactInboxState.confirm(uid, listOf(messageId))
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            if (cancelled !is kotlinx.coroutines.TimeoutCancellationException) throw cancelled
+        } catch (_: Exception) { /* Already queued; never lose a failed ACK. */ }
         Unit
+    }
+
+    data class CompactInboxPage(val messages: List<Map<String, Any>>, val cursor: String?)
+
+    suspend fun compactInbox(cursor: String?, receive: Boolean = true): CompactInboxPage = withContext(Dispatchers.IO) {
+        val uid = currentUid() ?: throw IllegalStateException("Not signed in.")
+        val ids = CompactInboxState.pending(uid)
+        val request = hashMapOf<String, Any>("acknowledgements" to ids)
+        request["installationId"] = MessagingInstallation.id()
+        request["policyVersion"] = 2
+        request["profileRevision"] = CompactInboxState.nextRevision(uid)
+        request["receive"] = receive
+        request["saving"] = com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value
+        if (cursor != null) request["cursor"] = cursor
+        val result = try {
+            kotlinx.coroutines.withTimeout(20_000) {
+                if (regionalCalls != null) callRegional("compactInbox", request)
+                else functions.getHttpsCallable("compactInbox").call(request).await().data
+            }
+        } catch (error: Exception) {
+            com.auralis.crisisconnect.connectivity.TrafficMeasurements.request(false)
+            throw error
+        }
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        check(currentUid() == uid) { "Account changed during inbox sync." }
+        val data = result as? Map<*, *> ?: error("Malformed compact inbox.")
+        com.auralis.crisisconnect.connectivity.TrafficMeasurements.request(true, org.json.JSONObject(data).toString().toByteArray().size.toLong())
+        com.auralis.crisisconnect.connectivity.DisasterTrafficController.applyServerPolicy(data["policy"] as? Map<*, *>)
+        CompactInboxState.confirm(uid, ids)
+        CompactInboxState.setProfile(uid, request["saving"] == true)
+        @Suppress("UNCHECKED_CAST")
+        CompactInboxPage((data["messages"] as? List<Map<String, Any>>).orEmpty(), data["cursor"] as? String)
     }
 
     // ---- Signal-protocol (v3) prekeys (FS-1 backend) ----
@@ -208,13 +262,13 @@ class InternetMessagingClient(
             "preKeys" to preKeys.map { it.toMap() },
             "kyberPreKeys" to kyberPreKeys.map { it.toMap() },
         )
-        functions.getHttpsCallable("publishSignalPreKeys").call(payload).await()
+        callRouted("publishSignalPreKeys", payload)
         Unit
     }
 
     suspend fun checkSignalPreKeys(): SignalPreKeyInventory = withContext(Dispatchers.IO) {
-        val result = functions.getHttpsCallable("checkSignalPreKeys").call().await()
-        val data = result.data as? Map<*, *> ?: emptyMap<Any, Any>()
+        val result = callRouted("checkSignalPreKeys")
+        val data = result as? Map<*, *> ?: emptyMap<Any, Any>()
         SignalPreKeyInventory(
             published = data["published"] as? Boolean ?: false,
             ecCount = (data["ecCount"] as? Number)?.toInt() ?: 0,
@@ -225,9 +279,7 @@ class InternetMessagingClient(
     /** Returns null when the target has never published Signal prekeys (caller falls back to v2). */
     suspend fun fetchSignalPreKeyBundle(targetUid: String): SignalBundle? = withContext(Dispatchers.IO) {
         val result = runCatching {
-            functions.getHttpsCallable("fetchSignalPreKeyBundle")
-                .call(hashMapOf("targetUid" to targetUid))
-                .await()
+            callRouted("fetchSignalPreKeyBundle", mapOf("targetUid" to targetUid))
         }.getOrElse { error ->
             val code = (error as? com.google.firebase.functions.FirebaseFunctionsException)?.code
             if (code == com.google.firebase.functions.FirebaseFunctionsException.Code.NOT_FOUND) {
@@ -235,7 +287,7 @@ class InternetMessagingClient(
             }
             throw error
         }
-        val data = result.data as? Map<*, *>
+        val data = result as? Map<*, *>
             ?: throw IllegalStateException("fetchSignalPreKeyBundle returned no data.")
         val signed = data["signedPreKey"] as? Map<*, *>
             ?: throw IllegalStateException("Missing signedPreKey.")
@@ -267,22 +319,35 @@ class InternetMessagingClient(
 
     /** Crisis-mode compact uplink. Returns the accepted messageId. */
     suspend fun relayMessage(envelope: RelayableEnvelope): String = withContext(Dispatchers.IO) {
-        functions.getHttpsCallable("relayMessage").call(envelope.toMap()).await()
+        if (regionalCalls != null) {
+            callRegional("relayMessage", envelope.toMap() + ("trafficPolicyVersion" to 2))
+            return@withContext envelope.messageId
+        }
+        functions.getHttpsCallable("relayMessage").apply { setTimeout(20, java.util.concurrent.TimeUnit.SECONDS) }
+            .call(envelope.toMap() + ("trafficPolicyVersion" to 2)).await()
         envelope.messageId
     }
 
     /** Normal-mode direct Firestore write of the same ciphertext envelope. */
     suspend fun writeMessageDoc(envelope: RelayableEnvelope) = withContext(Dispatchers.IO) {
+        if (regionalCalls != null) {
+            // New clients use the same durable receipt in normal mode too: no late offline
+            // Firestore write can recreate a message after regional delivery and ACK.
+            callRegional("relayMessage", envelope.toMap() + ("trafficPolicyVersion" to 1))
+            return@withContext
+        }
         val uid = currentUid() ?: throw IllegalStateException("Not signed in.")
         // expireAt mirrors what the relay stamps server-side; without it a never-acked direct-write
         // doc is invisible to the purgeExpiredMessages sweep and replays on every listener attach.
         val expireAt = com.google.firebase.Timestamp(
             java.util.Date(envelope.createdAtMs + envelope.ttlMs)
         )
-        firestore.collection("messages")
-            .document(envelope.messageId)
-            .set(envelope.toMap() + mapOf("senderUid" to uid, "expireAt" to expireAt))
-            .await()
+        kotlinx.coroutines.withTimeout(12_000) {
+            firestore.collection("messages")
+                .document(envelope.messageId)
+                .set(envelope.toMap() + mapOf("senderUid" to uid, "expireAt" to expireAt))
+                .await()
+        }
         Unit
     }
 

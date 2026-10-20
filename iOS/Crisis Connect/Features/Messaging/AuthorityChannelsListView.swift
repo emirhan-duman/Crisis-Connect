@@ -61,6 +61,7 @@ struct AuthorityThreadDeepLinkView: View {
 /// Kurum avatar: the roster/panel photo when one is published, initials circle otherwise —
 /// Android's ContactAvatar for the authority screens (ChatAvatarCircleView only loads local files).
 struct AuthorityAvatarView: View {
+    @ObservedObject private var traffic = DisasterTrafficController.shared
     let name: String
     let uid: String
     let photoUrl: String?
@@ -70,7 +71,7 @@ struct AuthorityAvatarView: View {
 
     var body: some View {
         if let photoUrl, photoUrl.hasPrefix("http"), let url = URL(string: photoUrl) {
-            AsyncImage(url: url) { phase in
+            AsyncImage(url: traffic.saving ? nil : url) { phase in
                 if let image = phase.image {
                     image.resizable().scaledToFill()
                 } else {
@@ -504,13 +505,13 @@ final class AuthorityChannelsListStore: ObservableObject {
     /// its kind — never raw control payloads. Also used for the kurum push notification body.
     static func previewText(text: String, attachmentKind: String) -> String {
         if text.hasPrefix("\u{01}") {
-            if let call = HierarchyThreadView.parseCallLog(text) {
+            if let call = HierarchyThreadContent.parseCallLog(text) {
                 if !call.answered { return NSLocalizedString("AUTHORITY_CHANNEL_CALL_MISSED", comment: "") }
                 if call.video { return NSLocalizedString("AUTHORITY_CHANNEL_CALL_VIDEO", comment: "") }
             }
             return NSLocalizedString("AUTHORITY_CHANNEL_CALL_AUDIO", comment: "")
         }
-        if HierarchyThreadView.parseSharedLocation(text) != nil {
+        if HierarchyThreadContent.parseSharedLocation(text) != nil {
             return NSLocalizedString("AUTHORITY_SHARED_LOCATION", comment: "")
         }
         if text.isEmpty {
@@ -599,10 +600,14 @@ final class AuthorityChannelsListStore: ObservableObject {
         guard let user = Auth.auth().currentUser, !user.isAnonymous else {
             throw URLError(.userAuthenticationRequired)
         }
-        let result = try await Functions.functions(region: InternetMessagingClient.region)
-            .httpsCallable("listAuthorityRoster")
-            .callAsync(["agencySlug": ""])
-        guard let data = result.data as? [String: Any],
+        let raw: Any
+        if ResilientApplicationStore.enabled {
+            raw = try await RegionalMessagingCalls().call("listAuthorityRoster", ["agencySlug": ""])
+        } else {
+            raw = try await Functions.functions(region: InternetMessagingClient.region)
+                .httpsCallable("listAuthorityRoster").callAsync(["agencySlug": ""]).data
+        }
+        guard let data = raw as? [String: Any],
               let members = data["members"] as? [[String: Any]] else {
             throw URLError(.cannotParseResponse)
         }
@@ -856,7 +861,7 @@ struct AuthorityChannelsListView: View {
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                    if let label = HierarchyThreadView.roleLabel(member.role) {
+                    if let label = HierarchyThreadContent.roleLabel(member.role) {
                         Text(label)
                             .font(.caption)
                             .foregroundStyle(Color.appTextSecondary)
@@ -901,8 +906,6 @@ final class HierarchyThreadStore: ObservableObject {
     @Published private(set) var mlsPreparation: AuthorityMlsPreparation?
     @Published private(set) var mlsSendReady = false
     @Published private(set) var mlsSecurityError: String?
-    @Published private(set) var mlsApprovalUid: String?
-    @Published private(set) var mlsApprovalError = false
     /// A live Bluetooth link to this peer's hidden bridge contact (drives the badge + send routing).
     @Published private(set) var bluetoothLinked = false
     /// Bluetooth-carried voice notes/images by merged-row id ("bt:<uuid>") — rendered from local files.
@@ -919,7 +922,8 @@ final class HierarchyThreadStore: ObservableObject {
     private var pendingBluetoothAttachments: [String: [ChannelAttachment]] = [:]
     private var cloudRetryTask: Task<Void, Never>?
 
-    private let client = HierarchyMessagingClient()
+    private let client: HierarchyMessagingClient
+    private let compatibility: Bool
     private let channel: HierarchyChannel
     private let peer: HierarchyPeer
     private let scopeType: AuthorityMlsScopeType
@@ -943,8 +947,11 @@ final class HierarchyThreadStore: ObservableObject {
     init(
         channel: HierarchyChannel,
         peer: HierarchyPeer,
-        scopeType: AuthorityMlsScopeType = .hierarchy
+        scopeType: AuthorityMlsScopeType = .hierarchy,
+        compatibility: Bool = false
     ) {
+        self.compatibility = compatibility
+        self.client = HierarchyMessagingClient(compatibility: compatibility)
         self.channel = channel
         self.peer = peer
         self.scopeType = scopeType
@@ -1236,7 +1243,8 @@ final class HierarchyThreadStore: ObservableObject {
                         peerUid: peer.uid,
                         scopeType: scopeType,
                         channelId: channel.channelId,
-                        deviceLabel: "iOS"
+                        deviceLabel: "iOS",
+                        compatibility: compatibility
                     )
                     mlsChannel = mls
                     let cached = try await mls.loadCachedMessages()
@@ -1267,6 +1275,7 @@ final class HierarchyThreadStore: ObservableObject {
                 mlsSendReady = false
                 mlsSecurityError = "automatic-retry"
             } catch {
+                if Task.isCancelled { return }
                 mlsSendReady = false
                 mlsSecurityError = "automatic-retry"
                 NSLog("Authority MLS setup will retry automatically: %@", String(describing: error))
@@ -1276,29 +1285,6 @@ final class HierarchyThreadStore: ObservableObject {
             let retryDelay: UInt64 = attempt < 10 ? 400_000_000 : 1_500_000_000
             attempt += 1
             try? await Task.sleep(nanoseconds: retryDelay)
-        }
-    }
-
-    func approveDeviceSet(uid: String, expectedFingerprint: String) {
-        guard let mlsChannel,
-              !uid.isEmpty,
-              !expectedFingerprint.isEmpty,
-              mlsApprovalUid == nil else { return }
-        mlsApprovalUid = uid
-        mlsApprovalError = false
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                mlsPreparation = try await mlsChannel.approveDeviceSet(
-                    uid: uid,
-                    expectedFingerprint: expectedFingerprint
-                )
-                mlsApprovalUid = nil
-            } catch {
-                NSLog("Authority MLS device-set approval failed closed: %@", String(describing: error))
-                mlsApprovalUid = nil
-                mlsApprovalError = true
-            }
         }
     }
 
@@ -1607,11 +1593,47 @@ final class HierarchyThreadStore: ObservableObject {
 }
 
 struct HierarchyThreadView: View {
+    let channel: HierarchyChannel
+    let peer: HierarchyPeer
+    var scopeType: AuthorityMlsScopeType = .hierarchy
+    @State private var compatibility = false
+
+    init(channel: HierarchyChannel, peer: HierarchyPeer, scopeType: AuthorityMlsScopeType = .hierarchy) {
+        self.channel = channel; self.peer = peer; self.scopeType = scopeType
+        let binding = AuthorityMlsBinding(scopeType: scopeType, channelId: channel.channelId,
+            participants: [Auth.auth().currentUser?.uid ?? "", peer.uid])
+        _compatibility = State(initialValue: ResilientApplicationStore.prefersCompatibility(binding))
+    }
+
+    var body: some View {
+        HierarchyThreadContent(channel: channel, peer: peer, scopeType: scopeType, compatibility: compatibility)
+            .id(compatibility)
+            .onChange(of: compatibility) { _, value in
+                let binding = AuthorityMlsBinding(scopeType: scopeType, channelId: channel.channelId,
+                    participants: [Auth.auth().currentUser?.uid ?? "", peer.uid])
+                ResilientApplicationStore.rememberSessionChoice(binding, compatibility: value)
+            }
+            .safeAreaInset(edge: .top) {
+                VStack(spacing: 6) {
+                    Picker("AUTHORITY_SESSION", selection: $compatibility) {
+                        Text("AUTHORITY_RESILIENT_SESSION").tag(false)
+                        Text("AUTHORITY_COMPATIBILITY_SESSION").tag(true)
+                    }.pickerStyle(.segmented)
+                    Text(LocalizedStringKey(compatibility ? "AUTHORITY_COMPATIBILITY_NOTICE" : "AUTHORITY_RESILIENT_NOTICE"))
+                        .font(.caption).foregroundStyle(Color.appTextSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(.horizontal).padding(.vertical, 6).background(Color.appBackground)
+            }
+    }
+}
+
+private struct HierarchyThreadContent: View {
     @Environment(\.scenePhase) private var scenePhase
 
     let channel: HierarchyChannel
     let peer: HierarchyPeer
     let scopeType: AuthorityMlsScopeType
+    let compatibility: Bool
 
     @StateObject private var store: HierarchyThreadStore
     @StateObject private var nearbyCallController: ChatPeerVoiceCallController
@@ -1632,13 +1654,15 @@ struct HierarchyThreadView: View {
     init(
         channel: HierarchyChannel,
         peer: HierarchyPeer,
-        scopeType: AuthorityMlsScopeType = .hierarchy
+        scopeType: AuthorityMlsScopeType = .hierarchy,
+        compatibility: Bool = false
     ) {
+        self.compatibility = compatibility
         self.channel = channel
         self.peer = peer
         self.scopeType = scopeType
         _store = StateObject(
-            wrappedValue: HierarchyThreadStore(channel: channel, peer: peer, scopeType: scopeType)
+            wrappedValue: HierarchyThreadStore(channel: channel, peer: peer, scopeType: scopeType, compatibility: compatibility)
         )
         let nearbySessionId = ContactStore.shared.contactForPeerUid(peer.uid)?.id
             ?? BroadcastSessionId.fromRawIdentifier(peer.uid)
@@ -1800,50 +1824,6 @@ struct HierarchyThreadView: View {
 
     private var conversation: some View {
         VStack(spacing: 0) {
-            if !pendingDeviceSets.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("AUTHORITY_DEVICE_VERIFICATION_TITLE", systemImage: "exclamationmark.shield.fill")
-                        .font(.subheadline.weight(.semibold))
-                    Text("AUTHORITY_DEVICE_VERIFICATION_BODY")
-                        .font(.caption)
-                        .foregroundStyle(Color.appTextSecondary)
-                    ForEach(pendingDeviceSets, id: \.uid) { assessment in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(assessment.safetyNumber)
-                                .font(.caption.monospaced())
-                                .textSelection(.enabled)
-                            Button {
-                                store.approveDeviceSet(
-                                    uid: assessment.uid,
-                                    expectedFingerprint: assessment.fingerprint
-                                )
-                            } label: {
-                                if store.mlsApprovalUid == assessment.uid {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                } else {
-                                    Text("AUTHORITY_DEVICE_VERIFICATION_APPROVE")
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(store.mlsApprovalUid != nil)
-                        }
-                        .padding(10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.appSurfaceElevated)
-                        )
-                    }
-                    if store.mlsApprovalError {
-                        Text("AUTHORITY_DEVICE_VERIFICATION_CHANGED")
-                            .font(.caption)
-                            .foregroundStyle(Color.appDanger)
-                    }
-                }
-                .padding(AppTheme.screenPadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.1))
-            }
             // Offline transport badge: the peer's hidden bridge contact has a live Bluetooth link.
             if store.bluetoothLinked {
                 HStack(spacing: 5) {
@@ -2076,10 +2056,6 @@ struct HierarchyThreadView: View {
                 }
             }
         }
-    }
-
-    private var pendingDeviceSets: [AuthorityMlsTrustAssessment] {
-        store.mlsPreparation?.trust.filter { !$0.approved && !$0.fingerprint.isEmpty } ?? []
     }
 
     private func dateHeader(_ date: Date) -> some View {

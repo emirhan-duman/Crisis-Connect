@@ -27,6 +27,8 @@ data class AuthorityMlsBinding(
     val scopeType: AuthorityMlsScopeType,
     val channelId: String,
     val participants: List<String>,
+    val resilient: Boolean = false,
+    val routeResolved: Boolean = false,
 )
 
 data class AuthorityMlsDirectoryRecord(
@@ -72,16 +74,27 @@ class AuthorityMlsPublishedDeviceRecoveryException : SecurityException(
 )
 
 object AuthorityMlsIdentifiers {
+    private val conversationContexts = listOf(
+        "cc-authority-mls-conversation:v10",
+        "cc-authority-mls-conversation:v9",
+        "cc-authority-mls-conversation:v8",
+        "cc-authority-mls-conversation:v7",
+        "cc-authority-mls-conversation:v6",
+        "cc-authority-mls-conversation:v5",
+        "cc-authority-mls-conversation:v4",
+        "cc-authority-mls-conversation:v3",
+    )
+
     fun conversationId(binding: AuthorityMlsBinding): String {
+        return conversationIdForContext(canonicalBinding(binding), if (binding.resilient) "cc-authority-mls-conversation:v11" else conversationContexts.first())
+    }
+
+    /** Read-only migration ids, newest first. New writes always use [conversationId]. */
+    fun legacyConversationIds(binding: AuthorityMlsBinding): List<String> {
         val canonical = canonicalBinding(binding)
-        return "am2_" + hash(
-            listOf(
-                "cc-authority-mls-conversation:v7",
-                canonical.scopeType.wireName,
-                canonical.channelId,
-                canonical.participants.size.toString(),
-            ) + canonical.participants,
-        )
+        // Separate sessions never move an old pending outbox into a new cryptographic context.
+        if (binding.resilient) return emptyList()
+        return conversationContexts.drop(1).map { conversationIdForContext(canonical, it) }
     }
 
     fun controlEventId(
@@ -110,8 +123,18 @@ object AuthorityMlsIdentifiers {
         require(participants.isNotEmpty() && participants.size <= 100 && participants.size == binding.participants.size) {
             "Authority MLS participant set is invalid."
         }
-        return AuthorityMlsBinding(binding.scopeType, channelId, participants)
+        return AuthorityMlsBinding(binding.scopeType, channelId, participants, binding.resilient, binding.routeResolved)
     }
+
+    private fun conversationIdForContext(binding: AuthorityMlsBinding, context: String): String =
+        "am2_" + hash(
+            listOf(
+                context,
+                binding.scopeType.wireName,
+                binding.channelId,
+                binding.participants.size.toString(),
+            ) + binding.participants,
+        )
 
     private fun hash(fields: List<String>): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -138,8 +161,13 @@ class AuthorityMlsControlSubscription internal constructor(
 
 /** Firestore is an untrusted, opaque relay; every identity and event binding is checked locally. */
 class AuthorityMlsTransport(
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
+    firestore: FirebaseFirestore? = null,
 ) {
+    internal val usesApplicationRouting = firestore == null
+    private var firestore: FirebaseFirestore = firestore ?: FirebaseFirestore.getInstance()
+    internal fun configure(binding: AuthorityMlsBinding) {
+        if (usesApplicationRouting) firestore = if (binding.resilient) FirebaseFirestore.getInstance(MessagingDatabaseTarget.DATABASE_ID) else FirebaseFirestore.getInstance()
+    }
     suspend fun ensureConversation(
         binding: AuthorityMlsBinding,
         creatorUid: String,
@@ -523,7 +551,10 @@ class AuthorityMlsTransport(
             BASE64URL.matches(message.ciphertext)) { "Authority MLS application ciphertext is malformed." }
         val parent = firestore.collection(ROOT).document(conversationId)
         val reference = parent.collection("messages").document(message.messageId)
-        return firestore.runTransaction { transaction ->
+        for (retry in 0..2) {
+            val attempted = java.util.concurrent.atomic.AtomicLong(-1L)
+            try {
+                return firestore.runTransaction { transaction ->
             val parentSnapshot = transaction.get(parent)
             val existing = transaction.get(reference)
             check(parentSnapshot.exists()) { "Authority MLS conversation does not exist." }
@@ -542,6 +573,7 @@ class AuthorityMlsTransport(
                 val sequence = parentSnapshot.getLong("nextApplicationSequence")
                     ?: throw SecurityException("Authority MLS application cursor is malformed.")
                 validateSequence(sequence)
+                attempted.set(sequence)
                 transaction.set(reference, mapOf(
                     "senderUid" to message.senderUid,
                     "senderDeviceId" to message.senderDeviceId,
@@ -558,7 +590,20 @@ class AuthorityMlsTransport(
                 ))
                 sequence
             }
-        }.await()
+                }.await()
+            } catch (error: com.google.firebase.firestore.FirebaseFirestoreException) {
+                if (retry == 2 || error.code != com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED || attempted.get() < 0) throw error
+                val latest = try { parent.get(com.google.firebase.firestore.Source.SERVER).await().getLong("nextApplicationSequence") }
+                    catch (lookup: Throwable) { if (lookup is kotlinx.coroutines.CancellationException) throw lookup; throw error }
+                if (latest == null || latest <= attempted.get()) throw error
+                val device = try { parent.collection("devices").document(message.senderDeviceId).get(com.google.firebase.firestore.Source.SERVER).await() }
+                    catch (lookup: Throwable) { if (lookup is kotlinx.coroutines.CancellationException) throw lookup; throw error }
+                if (device.getString("uid") != message.senderUid || device.getString("credential") != message.senderCredential) throw error
+                // Keep the exact MLS id/ciphertext; retry only proven relay contention, at most twice.
+                kotlinx.coroutines.delay(50L * (retry + 1))
+            }
+        }
+        error("Authority MLS relay sequence did not converge")
     }
 
     /** True only when this immutable message id is already owned by the expected sender account. */

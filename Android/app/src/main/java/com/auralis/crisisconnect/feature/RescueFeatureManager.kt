@@ -1,24 +1,28 @@
 package com.auralis.crisisconnect.feature
 
 import android.app.Activity
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.IntentSenderRequest
+import androidx.annotation.MainThread
 import androidx.core.content.ContextCompat
 import com.auralis.crisisconnect.R
+import com.google.android.gms.tasks.Task
+import com.google.android.play.core.splitinstall.SplitInstallManager
 import com.google.android.play.core.splitinstall.SplitInstallManagerFactory
 import com.google.android.play.core.splitinstall.SplitInstallRequest
 import com.google.android.play.core.splitinstall.SplitInstallSessionState
 import com.google.android.play.core.splitinstall.SplitInstallStateUpdatedListener
 import com.google.android.play.core.splitinstall.model.SplitInstallSessionStatus
 
-class RescueFeatureManager(private val context: Context) {
-
+class RescueFeatureManager(
+    context: Context,
+    private val splitInstallManager: SplitInstallManager =
+        SplitInstallManagerFactory.create(context.applicationContext)
+) {
     private val appContext = context.applicationContext
-    private val splitInstallManager = SplitInstallManagerFactory.create(appContext)
 
     fun isInstalled(): Boolean = MODULE_NAME in splitInstallManager.installedModules
 
@@ -69,95 +73,137 @@ class RescueFeatureManager(private val context: Context) {
         }
     }
 
+    @MainThread
     fun installAndLaunch(
         activity: Activity,
         confirmationLauncher: ActivityResultLauncher<IntentSenderRequest>,
         startDestination: String = START_DESTINATION_HOME,
         onStateChanged: (InstallState) -> Unit,
         onError: (String) -> Unit
-    ) {
-        if (launchInstalled(activity, startDestination = startDestination)) {
-            onStateChanged(InstallState.NotInstalling)
-            return
-        }
-
-        val request = SplitInstallRequest.newBuilder()
-            .addModule(MODULE_NAME)
-            .build()
-
-        lateinit var listener: SplitInstallStateUpdatedListener
-        var confirmationRequested = false
-        fun cleanup() {
-            splitInstallManager.unregisterListener(listener)
-        }
-
-        listener = SplitInstallStateUpdatedListener { state ->
-            if (!state.moduleNames().contains(MODULE_NAME)) {
-                return@SplitInstallStateUpdatedListener
+    ): () -> Unit = installIfNeeded(
+        confirmationLauncher = confirmationLauncher,
+        onStateChanged = onStateChanged,
+        onInstalled = {
+            if (!launchInstalled(activity, startDestination)) {
+                onError(appContext.getString(R.string.rescue_module_unavailable))
             }
+        },
+        onError = onError
+    )
 
-            val progressPercent = state.totalBytesToDownload()
-                .takeIf { it > 0L }
-                ?.let { total ->
-                    ((state.bytesDownloaded() * 100L) / total).toInt().coerceIn(0, 100)
-                }
+    /** Starts delivery immediately without navigating. Dispose only detaches this UI observer. */
+    @MainThread
+    fun installIfNeeded(
+        confirmationLauncher: ActivityResultLauncher<IntentSenderRequest>,
+        requestIfMissing: Boolean = true,
+        onStateChanged: (InstallState) -> Unit = {},
+        onInstalled: () -> Unit = {},
+        onError: (String) -> Unit = {},
+        onRequestStarted: () -> Unit = {}
+    ): () -> Unit {
+        if (isInstalled()) {
+            onStateChanged(InstallState.NotInstalling)
+            onInstalled()
+            return {}
+        }
 
+        var disposed = false
+        var sessionId: Int? = null
+        lateinit var listener: SplitInstallStateUpdatedListener
+        fun cleanup() {
+            if (!disposed) {
+                disposed = true
+                splitInstallManager.unregisterListener(listener)
+            }
+        }
+        fun fail() {
+            if (disposed) return
+            cleanup()
+            onStateChanged(InstallState.NotInstalling)
+            onError(appContext.getString(R.string.rescue_module_install_failed))
+        }
+        fun handleState(state: SplitInstallSessionState) {
+            if (disposed || sessionId != state.sessionId()) return
+            val progress = state.totalBytesToDownload().takeIf { it > 0L }?.let {
+                ((state.bytesDownloaded() * 100L) / it).toInt().coerceIn(0, 100)
+            }
             when (state.status()) {
                 SplitInstallSessionStatus.PENDING,
                 SplitInstallSessionStatus.DOWNLOADING,
                 SplitInstallSessionStatus.DOWNLOADED,
-                SplitInstallSessionStatus.INSTALLING -> {
-                    onStateChanged(InstallState.Installing(progressPercent))
-                }
-
+                SplitInstallSessionStatus.INSTALLING,
+                SplitInstallSessionStatus.CANCELING ->
+                    onStateChanged(InstallState.Installing(progress))
                 SplitInstallSessionStatus.REQUIRES_USER_CONFIRMATION -> {
-                    onStateChanged(InstallState.Installing(progressPercent))
-                    if (confirmationRequested) {
-                        return@SplitInstallStateUpdatedListener
-                    }
-                    confirmationRequested = true
-                    if (!startConfirmationDialog(state, confirmationLauncher)) {
-                        cleanup()
-                        onStateChanged(InstallState.NotInstalling)
-                        onError(appContext.getString(R.string.rescue_module_install_failed))
+                    onStateChanged(InstallState.Installing(progress))
+                    // The automatic preload and a user-selected entry may observe the same session.
+                    if (confirmationSessions.add(state.sessionId()) &&
+                        !startConfirmationDialog(state, confirmationLauncher)
+                    ) {
+                        confirmationSessions.remove(state.sessionId())
+                        fail()
                     }
                 }
-
                 SplitInstallSessionStatus.INSTALLED -> {
+                    confirmationSessions.remove(state.sessionId())
                     cleanup()
                     onStateChanged(InstallState.NotInstalling)
-                    if (!launchInstalled(activity, startDestination = startDestination)) {
-                        onError(appContext.getString(R.string.rescue_module_unavailable))
-                    }
+                    onInstalled()
                 }
-
                 SplitInstallSessionStatus.CANCELED,
-                SplitInstallSessionStatus.CANCELING,
                 SplitInstallSessionStatus.FAILED -> {
-                    cleanup()
-                    onStateChanged(InstallState.NotInstalling)
-                    onError(appContext.getString(R.string.rescue_module_install_failed))
+                    confirmationSessions.remove(state.sessionId())
+                    fail()
                 }
-
-                else -> Unit
             }
         }
-
+        listener = SplitInstallStateUpdatedListener(::handleState)
         splitInstallManager.registerListener(listener)
-        onStateChanged(InstallState.Installing(progressPercent = 0))
-        splitInstallManager.startInstall(request)
-            .addOnFailureListener {
+        onStateChanged(InstallState.Installing(0))
+        // Reattach after navigation/activity recreation instead of starting a competing download.
+        splitInstallManager.sessionStates.addOnSuccessListener { states ->
+            if (disposed) return@addOnSuccessListener
+            if (isInstalled()) {
                 cleanup()
                 onStateChanged(InstallState.NotInstalling)
-                val message = when (it) {
-                    is ActivityNotFoundException -> {
-                        appContext.getString(R.string.rescue_module_unavailable)
-                    }
-
-                    else -> appContext.getString(R.string.rescue_module_install_failed)
-                }
-                onError(message)
+                onInstalled()
+                return@addOnSuccessListener
             }
+            val existing = states.firstOrNull {
+                MODULE_NAME in it.moduleNames() && it.status() in ACTIVE_INSTALL_STATUSES
+            }
+            if (existing != null) {
+                sessionId = existing.sessionId()
+                handleState(existing)
+            } else if (!requestIfMissing) {
+                cleanup()
+                onStateChanged(InstallState.NotInstalling)
+            } else {
+                onRequestStarted()
+                // Share even the short interval before Play returns a session ID.
+                val task = pendingInstallTask ?: splitInstallManager.startInstall(
+                    SplitInstallRequest.newBuilder().addModule(MODULE_NAME).build()
+                ).also { pendingInstallTask = it }
+                task.addOnCompleteListener {
+                    if (pendingInstallTask === task) pendingInstallTask = null
+                }
+                task.addOnSuccessListener installStarted@{ id ->
+                    if (disposed) return@installStarted
+                    sessionId = id
+                    if (id == 0 && isInstalled()) {
+                        cleanup()
+                        onStateChanged(InstallState.NotInstalling)
+                        onInstalled()
+                    } else {
+                        // Completion/confirmation may precede the startInstall callback.
+                        splitInstallManager.getSessionState(id)
+                            .addOnSuccessListener(::handleState)
+                            .addOnFailureListener { fail() }
+                    }
+                }.addOnFailureListener { fail() }
+            }
+        }.addOnFailureListener { fail() }
+        return { cleanup() }
     }
 
     fun startRescueClientService(): Boolean {
@@ -318,6 +364,16 @@ class RescueFeatureManager(private val context: Context) {
             "com.auralis.crisisconnect.action.SIGNAL_LOCATION_UPDATED"
         const val EXTRA_IMMEDIATE_SYNC_REASON = "extra_immediate_sync_reason"
         const val IMMEDIATE_SYNC_REASON_SIGNAL_LOCATION_CHANGED = "signal_location_changed"
+        private var pendingInstallTask: Task<Int>? = null
+        private val confirmationSessions = mutableSetOf<Int>()
+        private val ACTIVE_INSTALL_STATUSES = setOf(
+            SplitInstallSessionStatus.PENDING,
+            SplitInstallSessionStatus.DOWNLOADING,
+            SplitInstallSessionStatus.DOWNLOADED,
+            SplitInstallSessionStatus.INSTALLING,
+            SplitInstallSessionStatus.REQUIRES_USER_CONFIRMATION,
+            SplitInstallSessionStatus.CANCELING
+        )
         private const val LOG_TAG = "RescueFeatureManager"
     }
 }

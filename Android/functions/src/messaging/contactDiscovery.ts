@@ -1,5 +1,7 @@
+import { compatibleCallable } from "./compatibilityRouting";
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
+import { getMessagingFirestore as getFirestore } from "./databaseTarget";
 import { requireUid, requireNonAnonymous } from "../certificates/callerRole";
 import { hashIdentifier, normalizePhone } from "./identityKeys";
 
@@ -29,7 +31,7 @@ interface ContactMatch {
   isChild: boolean;
 }
 
-export const findContactsOnCrisisConnect = onCall(
+export const findContactsOnCrisisConnect = compatibleCallable("findContactsOnCrisisConnect",
   { enforceAppCheck: true },
   async (request: CallableRequest<unknown>) => {
     const uid = requireUid(request);

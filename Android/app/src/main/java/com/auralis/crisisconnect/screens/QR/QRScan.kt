@@ -13,6 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.TorchState
 import androidx.camera.mlkit.vision.MlKitAnalyzer
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
@@ -30,6 +31,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,6 +42,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bluetooth
@@ -46,15 +51,21 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PersonAddAlt1
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.FlashlightOn
+import androidx.compose.material.icons.filled.FlashlightOff
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -81,13 +92,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,11 +113,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Observer
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.screens.Chat.ChatScreenViewModel
 import com.auralis.crisisconnect.screens.Chat.EncryptionSetupResult
 import java.net.URLDecoder
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -115,6 +135,18 @@ fun QrScannerScreen(navController: NavController) {
     val manualName by viewModel.manualName.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val statusMessage by viewModel.statusMessage.collectAsStateWithLifecycle()
+
+    LaunchedEffect(lifecycleOwner, navController, viewModel) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.connectionState.collect { state ->
+                if (state.result is QrConnectResult.Saved &&
+                    navController.currentBackStackEntry?.destination?.route == "qr_scan" &&
+                    viewModel.consumeSuccess(state.id)) {
+                    navController.navigate("main") { popUpTo("main") { inclusive = true } }
+                }
+            }
+        }
+    }
 
     val previewView = remember {
         PreviewView(context).apply {
@@ -135,6 +167,42 @@ fun QrScannerScreen(navController: NavController) {
     var detectedQrBounds by remember { mutableStateOf<Rect?>(null) }
     var lastHandledQr by remember { mutableStateOf<String?>(null) }
     var lastHandledQrAtMs by remember { mutableLongStateOf(0L) }
+    var showTips by remember { mutableStateOf(false) }
+    var cameraStreaming by remember { mutableStateOf(false) }
+    var hasFlash by remember { mutableStateOf(false) }
+    var torchOn by remember { mutableStateOf(false) }
+    var torchPending by remember { mutableStateOf(false) }
+
+    DisposableEffect(previewView, controller, lifecycleOwner) {
+        val streamObserver = Observer<PreviewView.StreamState> { state ->
+            cameraStreaming = state == PreviewView.StreamState.STREAMING
+            hasFlash = controller.cameraInfo?.hasFlashUnit() == true
+        }
+        val torchObserver = Observer<Int> { state -> torchOn = state == TorchState.ON }
+        previewView.previewStreamState.observe(lifecycleOwner, streamObserver)
+        controller.torchState.observe(lifecycleOwner, torchObserver)
+        onDispose {
+            previewView.previewStreamState.removeObserver(streamObserver)
+            controller.torchState.removeObserver(torchObserver)
+        }
+    }
+
+    fun toggleTorch() {
+        if (!hasFlash || !cameraStreaming || torchPending) return
+        torchPending = true
+        val request = runCatching { controller.enableTorch(!torchOn) }.getOrNull()
+        if (request == null) {
+            torchPending = false
+            Toast.makeText(context, R.string.qr_scanner_torch_error, Toast.LENGTH_SHORT).show()
+            return
+        }
+        request.addListener({
+            torchPending = false
+            if (runCatching { request.get() }.isFailure) {
+                Toast.makeText(context, R.string.qr_scanner_torch_error, Toast.LENGTH_SHORT).show()
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
 
     val prominentStatus = statusMessage?.takeIf {
         !showNameDialog && it.stage in PROMINENT_SCAN_STAGES
@@ -249,7 +317,7 @@ fun QrScannerScreen(navController: NavController) {
                 val barcode = result.getValue(scanner)?.firstOrNull()
                 val raw = barcode?.rawValue
 
-                if (raw.isNullOrEmpty() || pendingPermissionAction != null) {
+                if (raw.isNullOrEmpty() || pendingPermissionAction != null || showTips) {
                     return@MlKitAnalyzer
                 }
 
@@ -264,11 +332,7 @@ fun QrScannerScreen(navController: NavController) {
                 captureDetectedQr(barcode?.boundingBox)
 
                 val processAction = {
-                    viewModel.onQrResult(context, raw) {
-                        navController.navigate("main") {
-                            popUpTo("main") { inclusive = true }
-                        }
-                    }
+                    viewModel.onQrResult(context, raw)
                     controller.clearImageAnalysisAnalyzer()
                     analyzerSet = false
                 }
@@ -348,217 +412,247 @@ fun QrScannerScreen(navController: NavController) {
                             contentDescription = stringResource(R.string.back)
                         )
                     }
+                },
+                actions = {
+                    IconButton(
+                        onClick = { showTips = true },
+                        enabled = overlayState != QrScannerOverlayState.Locked || !hasCameraPermission
+                    ) {
+                        Icon(Icons.Default.HelpOutline, contentDescription = stringResource(R.string.qr_scanner_help_action))
+                    }
                 }
             )
         }
     ) { paddingValues ->
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            val compactLayout = maxHeight < 560.dp || LocalDensity.current.fontScale > 1.3f
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .then(if (compactLayout || !hasCameraPermission) Modifier.verticalScroll(rememberScrollState()) else Modifier)
                     .padding(horizontal = 20.dp, vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = if (hasCameraPermission) Arrangement.spacedBy(16.dp) else Arrangement.Center
             ) {
-                Surface(
-                    tonalElevation = 2.dp,
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .widthIn(max = 560.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.qr_scan_instruction),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                        textAlign = TextAlign.Center
-                    )
-                }
-
                 if (hasCameraPermission) {
-                    val previewShape = RoundedCornerShape(28.dp)
                     Box(
                         modifier = Modifier
+                            .widthIn(max = 560.dp)
                             .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        contentAlignment = Alignment.Center
+                            .then(if (compactLayout) Modifier.height(320.dp) else Modifier.weight(1f))
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color.Black)
                     ) {
+                        AndroidView(
+                            factory = { previewView },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        frozenPreview?.let { bitmap ->
+                            Image(
+                                bitmap = bitmap,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        QrScannerOverlay(
+                            cornerRadius = 20.dp,
+                            borderWidth = 2.5.dp,
+                            overlayState = overlayState,
+                            highlightedBounds = detectedQrBounds,
+                            modifier = Modifier.fillMaxSize()
+                        )
                         Box(
-                            modifier = Modifier
-                                .fillMaxWidth(0.92f)
-                                .widthIn(max = 420.dp)
-                                .aspectRatio(1f)
-                                .clip(previewShape)
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
                         ) {
-                            AndroidView(
-                                factory = { previewView },
-                                modifier = Modifier.fillMaxSize()
-                            )
-                            frozenPreview?.let { bitmap ->
-                                Image(
-                                    bitmap = bitmap,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                            QrScannerOverlay(
-                                cornerRadius = 28.dp,
-                                borderWidth = 4.dp,
-                                overlayState = overlayState,
-                                highlightedBounds = detectedQrBounds,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = prominentStatus != null,
+                                enter = fadeIn(),
+                                exit = fadeOut(),
+                                modifier = Modifier.padding(24.dp)
                             ) {
-                                androidx.compose.animation.AnimatedVisibility(
-                                    visible = prominentStatus != null,
-                                    enter = fadeIn(),
-                                    exit = fadeOut(),
-                                    modifier = Modifier.padding(24.dp)
-                                ) {
-                                    prominentStatus?.let { status ->
-                                        QrScannerProgressCard(
-                                            status = status,
-                                            modifier = Modifier
-                                                .fillMaxWidth(0.94f)
-                                                .widthIn(max = 408.dp)
-                                        )
-                                    }
-                                }
-                            }
-                            if (showNameDialog) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                                    shape = RoundedCornerShape(18.dp),
-                                    tonalElevation = 8.dp,
-                                    modifier = Modifier
-                                        .align(Alignment.Center)
-                                        .padding(horizontal = 28.dp)
-                                ) {
-                                    Text(
-                                        text = statusMessage?.text.orEmpty(),
-                                        modifier = Modifier.padding(
-                                            horizontal = 20.dp,
-                                            vertical = 16.dp
-                                        ),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        textAlign = TextAlign.Center
+                                prominentStatus?.let { status ->
+                                    QrScannerProgressCard(
+                                        status = status,
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.94f)
+                                            .widthIn(max = 408.dp)
                                     )
                                 }
                             }
                         }
+                        if (showNameDialog) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                                shape = RoundedCornerShape(18.dp),
+                                tonalElevation = 8.dp,
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .padding(horizontal = 28.dp)
+                            ) {
+                                Text(
+                                    text = statusMessage?.text.orEmpty(),
+                                    modifier = Modifier.padding(
+                                        horizontal = 20.dp,
+                                        vertical = 16.dp
+                                    ),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                        if (!compactLayout && overlayState == QrScannerOverlayState.Scanning) {
+                            Surface(
+                                modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
+                                shape = RoundedCornerShape(999.dp),
+                                color = Color.Black.copy(alpha = 0.7f),
+                                contentColor = Color.White
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Text(
+                                        stringResource(if (cameraStreaming) R.string.qr_scanner_camera_ready else R.string.qr_scanner_camera_starting),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                                    )
+                                }
+                            }
+                        }
+                        if (hasFlash && overlayState == QrScannerOverlayState.Scanning) {
+                            OutlinedButton(
+                                onClick = ::toggleTorch,
+                                enabled = cameraStreaming && !torchPending,
+                                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp).heightIn(min = 48.dp),
+                                shape = RoundedCornerShape(999.dp),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.45f)),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = Color.Black.copy(alpha = 0.7f),
+                                    contentColor = Color.White
+                                )
+                            ) {
+                                Icon(if (torchOn) Icons.Default.FlashlightOff else Icons.Default.FlashlightOn, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(if (torchOn) R.string.qr_scanner_torch_off else R.string.qr_scanner_torch_on))
+                            }
+                        }
                     }
-
-                    Surface(
-                        tonalElevation = 3.dp,
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .widthIn(max = 560.dp)
+                    Column(
+                        modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                            horizontalAlignment = Alignment.Start,
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
+                        Text(
+                            text = stringResource(R.string.qr_scanner_heading),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.semantics { heading() }
+                        )
+                        Text(
+                            text = stringResource(R.string.qr_scanner_auto_hint),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (compactLayout && overlayState == QrScannerOverlayState.Scanning) {
                             Text(
-                                text = stringResource(R.string.qr_scan_help_title),
-                                style = MaterialTheme.typography.labelLarge
-                            )
-                            Text(
-                                text = stringResource(R.string.qr_scan_help_step_align),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Text(
-                                text = stringResource(R.string.qr_scan_help_step_still),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Text(
-                                text = stringResource(R.string.qr_scan_help_step_light),
-                                style = MaterialTheme.typography.bodySmall
+                                text = stringResource(if (cameraStreaming) R.string.qr_scanner_camera_ready else R.string.qr_scanner_camera_starting),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                             )
                         }
                     }
                 } else {
-                    Spacer(modifier = Modifier.size(8.dp))
-
-                    Surface(
-                        tonalElevation = 4.dp,
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .widthIn(max = 560.dp)
+                    Column(
+                        modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth().padding(vertical = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.qr_scan_camera_permission_required),
-                                style = MaterialTheme.typography.titleMedium,
-                                textAlign = TextAlign.Center
-                            )
-                            Text(
-                                text = stringResource(R.string.qr_scan_camera_permission_help),
-                                style = MaterialTheme.typography.bodyMedium,
-                                textAlign = TextAlign.Center
-                            )
-                            Button(
-                                onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(stringResource(R.string.qr_scan_grant_camera_permission))
-                            }
-                            TextButton(onClick = ::openAppSettings) {
-                                Text(stringResource(R.string.qr_scan_open_settings))
+                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+                            Box(modifier = Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(32.dp))
                             }
                         }
+                        Text(
+                            text = stringResource(R.string.qr_scanner_permission_title),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.semantics { heading() }
+                        )
+                        Text(
+                            text = stringResource(R.string.qr_scanner_permission_detail),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Button(
+                            onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Text(stringResource(R.string.qr_scan_grant_camera_permission))
+                        }
+                        TextButton(onClick = ::openAppSettings, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(stringResource(R.string.qr_scan_open_settings))
+                        }
                     }
-
-                    Spacer(modifier = Modifier.size(8.dp))
                 }
             }
 
             if (showNameDialog) {
                 AlertDialog(
                     onDismissRequest = { viewModel.dismissNameDialog() },
+                    shape = RoundedCornerShape(24.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    icon = { Icon(Icons.Default.QrCodeScanner, null, tint = MaterialTheme.colorScheme.onSurface) },
                     title = { Text(stringResource(R.string.qr_scan_enter_name_title)) },
                     text = {
-                        OutlinedTextField(
-                            value = manualName,
-                            onValueChange = { viewModel.updateManualName(it) },
-                            label = { Text(stringResource(R.string.qr_scan_name_label)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Text(stringResource(R.string.qr_scan_status_detail_scanned),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedTextField(
+                                value = manualName,
+                                onValueChange = { viewModel.updateManualName(it) },
+                                label = { Text(stringResource(R.string.qr_scan_name_label)) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MaterialTheme.colorScheme.onSurface,
+                                    focusedLabelColor = MaterialTheme.colorScheme.onSurface,
+                                    cursorColor = MaterialTheme.colorScheme.onSurface)
+                            )
+                        }
                     },
                     confirmButton = {
-                        TextButton(onClick = {
-                            val action = {
-                                viewModel.saveManualContact(context) {
-                                    navController.navigate("main") {
-                                        popUpTo("main") { inclusive = true }
-                                    }
+                        Button(
+                            modifier = Modifier.heightIn(min = 48.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.onSurface,
+                                contentColor = MaterialTheme.colorScheme.surface),
+                            onClick = {
+                                val action = {
+                                    viewModel.saveManualContact(context)
                                 }
+                                lastRetryAction = action
+                                action()
                             }
-                            lastRetryAction = action
-                            action()
-                        }) {
+                        ) {
                             Text(stringResource(R.string.save))
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { viewModel.dismissNameDialog() }) {
+                        TextButton(onClick = { viewModel.dismissNameDialog() },
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)) {
                             Text(stringResource(R.string.cancel))
                         }
                     }
@@ -609,6 +703,20 @@ fun QrScannerScreen(navController: NavController) {
             }
         }
     }
+    if (showTips) {
+        ModalBottomSheet(onDismissRequest = { showTips = false }) {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(stringResource(R.string.qr_scan_help_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+                Text(stringResource(R.string.qr_scan_help_step_align), style = MaterialTheme.typography.bodyLarge)
+                Text(stringResource(R.string.qr_scan_help_step_still), style = MaterialTheme.typography.bodyLarge)
+                Text(stringResource(R.string.qr_scan_help_step_light), style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+    }
+
 }
 
 private val PROMINENT_SCAN_STAGES = setOf(
@@ -634,274 +742,6 @@ private fun AndroidRect.toComposeRect(): Rect = Rect(
     right = right.toFloat(),
     bottom = bottom.toFloat()
 )
-
-private data class QrStatusVisuals(
-    val badge: String,
-    val title: String,
-    val supportingText: String,
-    val icon: ImageVector,
-    val accentColor: Color,
-    val showProgress: Boolean,
-    val footerHint: String? = null
-)
-
-@Composable
-private fun qrStatusVisuals(status: ScanStatusMessage): QrStatusVisuals {
-    val colorScheme = MaterialTheme.colorScheme
-    return when (status.stage) {
-        ScanStatusStage.SEARCHING -> QrStatusVisuals(
-            badge = stringResource(R.string.qr_scan_status_badge_scanned),
-            title = stringResource(R.string.qr_scan_status_title_searching),
-            supportingText = stringResource(R.string.qr_scan_status_detail_searching),
-            icon = Icons.Filled.Search,
-            accentColor = colorScheme.primary,
-            showProgress = true,
-            footerHint = stringResource(R.string.qr_scan_status_hint_hold_steady)
-        )
-
-        ScanStatusStage.PAIRING -> QrStatusVisuals(
-            badge = stringResource(R.string.qr_scan_status_badge_pairing),
-            title = stringResource(R.string.qr_scan_status_title_pairing),
-            supportingText = stringResource(R.string.qr_scan_status_detail_pairing),
-            icon = Icons.Filled.Bluetooth,
-            accentColor = Color(0xFF2563EB),
-            showProgress = true,
-            footerHint = stringResource(R.string.qr_scan_status_hint_hold_steady)
-        )
-
-        ScanStatusStage.SAVING -> QrStatusVisuals(
-            badge = stringResource(R.string.qr_scan_status_badge_saving),
-            title = stringResource(R.string.qr_scan_status_title_saving),
-            supportingText = stringResource(R.string.qr_scan_status_detail_saving),
-            icon = Icons.Filled.PersonAddAlt1,
-            accentColor = Color(0xFF7C3AED),
-            showProgress = true,
-            footerHint = stringResource(R.string.qr_scan_status_hint_hold_steady)
-        )
-
-        ScanStatusStage.SAVED -> QrStatusVisuals(
-            badge = stringResource(R.string.qr_scan_status_badge_saved),
-            title = stringResource(R.string.qr_scan_status_title_saved),
-            supportingText = stringResource(R.string.qr_scan_status_detail_saved),
-            icon = Icons.Filled.CheckCircle,
-            accentColor = Color(0xFF15803D),
-            showProgress = false
-        )
-
-        ScanStatusStage.ALREADY_REGISTERED -> QrStatusVisuals(
-            badge = stringResource(R.string.qr_scan_status_badge_already_registered),
-            title = stringResource(R.string.qr_scan_status_title_already_registered),
-            supportingText = stringResource(R.string.qr_scan_status_detail_already_registered),
-            icon = Icons.Filled.CheckCircle,
-            accentColor = Color(0xFF0F766E),
-            showProgress = false
-        )
-
-        ScanStatusStage.SCANNED -> QrStatusVisuals(
-            badge = stringResource(R.string.qr_scan_status_badge_scanned),
-            title = status.text,
-            supportingText = stringResource(R.string.qr_scan_status_detail_scanned),
-            icon = Icons.Filled.QrCodeScanner,
-            accentColor = colorScheme.primary,
-            showProgress = false
-        )
-
-        ScanStatusStage.ERROR -> QrStatusVisuals(
-            badge = stringResource(R.string.qr_scan_status_badge_error),
-            title = status.text,
-            supportingText = stringResource(R.string.qr_scan_status_detail_error),
-            icon = Icons.Filled.QrCodeScanner,
-            accentColor = colorScheme.error,
-            showProgress = false
-        )
-    }
-}
-
-@Composable
-private fun QrScannerProgressCard(
-    status: ScanStatusMessage,
-    modifier: Modifier = Modifier
-) {
-    val visuals = qrStatusVisuals(status)
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(28.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 14.dp,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-        border = BorderStroke(
-            width = 1.dp,
-            color = visuals.accentColor.copy(alpha = 0.18f)
-        )
-    ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val compactLayout = maxWidth < 340.dp || maxHeight < 290.dp
-            val contentPadding = if (compactLayout) 14.dp else 18.dp
-            val sectionSpacing = if (compactLayout) 10.dp else 14.dp
-            val headerShape = if (compactLayout) 18.dp else 20.dp
-            val iconContainerSize = if (compactLayout) 34.dp else 40.dp
-            val iconSize = if (compactLayout) 18.dp else 20.dp
-            val badgeShape = RoundedCornerShape(999.dp)
-            val showExtendedCopy = !compactLayout
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = contentPadding, vertical = contentPadding),
-                verticalArrangement = Arrangement.spacedBy(sectionSpacing)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            color = visuals.accentColor.copy(alpha = 0.08f),
-                            shape = RoundedCornerShape(headerShape)
-                        )
-                        .padding(
-                            horizontal = if (compactLayout) 10.dp else 12.dp,
-                            vertical = if (compactLayout) 8.dp else 10.dp
-                        )
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(if (compactLayout) 10.dp else 12.dp)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = visuals.accentColor.copy(alpha = 0.14f),
-                            modifier = Modifier.size(iconContainerSize)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = visuals.icon,
-                                    contentDescription = null,
-                                    tint = visuals.accentColor,
-                                    modifier = Modifier.size(iconSize)
-                                )
-                            }
-                        }
-
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(if (compactLayout) 3.dp else 4.dp)
-                        ) {
-                            Surface(
-                                modifier = Modifier.align(Alignment.Start),
-                                shape = badgeShape,
-                                color = visuals.accentColor.copy(alpha = 0.14f)
-                            ) {
-                                Text(
-                                    text = visuals.badge,
-                                    modifier = Modifier.padding(
-                                        horizontal = if (compactLayout) 8.dp else 10.dp,
-                                        vertical = if (compactLayout) 4.dp else 5.dp
-                                    ),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = visuals.accentColor,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = if (compactLayout) 1 else 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Text(
-                                text = visuals.title,
-                                modifier = Modifier.fillMaxWidth(),
-                                style = if (compactLayout) {
-                                    MaterialTheme.typography.titleSmall
-                                } else {
-                                    MaterialTheme.typography.titleMedium
-                                },
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-
-                if (showExtendedCopy) {
-                    Text(
-                        text = visuals.supportingText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Start
-                    )
-                }
-
-                if (visuals.showProgress) {
-                    LinearProgressIndicator(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = if (showExtendedCopy) 2.dp else 0.dp),
-                        color = visuals.accentColor,
-                        trackColor = visuals.accentColor.copy(alpha = 0.16f)
-                    )
-                }
-
-                if (showExtendedCopy) {
-                    visuals.footerHint?.let { footerHint ->
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = visuals.accentColor.copy(alpha = 0.1f)
-                        ) {
-                            Text(
-                                text = footerHint,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = visuals.accentColor
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun QrScannerBottomStatus(
-    status: ScanStatusMessage,
-    modifier: Modifier = Modifier
-) {
-    val isError = status.stage == ScanStatusStage.ERROR
-    val containerColor = if (isError) {
-        MaterialTheme.colorScheme.errorContainer
-    } else {
-        MaterialTheme.colorScheme.surface
-    }
-    val contentColor = if (isError) {
-        MaterialTheme.colorScheme.onErrorContainer
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-
-    Surface(
-        modifier = modifier,
-        tonalElevation = 6.dp,
-        shape = RoundedCornerShape(16.dp),
-        color = containerColor,
-        contentColor = contentColor
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (status.isLoading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    strokeWidth = 2.dp
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-            }
-            Text(
-                text = status.text,
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1258,7 +1098,7 @@ private fun QrScannerOverlay(
 
     Canvas(modifier = modifier) {
         val radius = cornerRadius.toPx()
-        val cutSize = size.minDimension * 0.7f
+        val cutSize = size.minDimension * 0.78f
         val topLeft = Offset(
             (size.width - cutSize) / 2f,
             (size.height - cutSize) / 2f
@@ -1278,24 +1118,43 @@ private fun QrScannerOverlay(
 
         drawPath(
             path = path,
-            color = Color.Black.copy(alpha = if (overlayState == QrScannerOverlayState.Locked) 0.62f else 0.5f)
+            color = Color.Black.copy(alpha = if (overlayState == QrScannerOverlayState.Locked) 0.62f else 0.42f)
         )
 
         drawRoundRect(
-            color = frameColor.copy(alpha = 0.2f),
+            color = frameColor.copy(alpha = 0.24f),
             topLeft = topLeft,
             size = frameSize,
             cornerRadius = CornerRadius(radius),
-            style = Stroke(width = borderWidth.toPx() * 2f)
+            style = Stroke(width = 1.dp.toPx())
         )
 
-        drawRoundRect(
-            color = frameColor,
-            topLeft = topLeft,
-            size = frameSize,
-            cornerRadius = CornerRadius(radius),
-            style = Stroke(width = borderWidth.toPx())
-        )
+        val left = topLeft.x
+        val top = topLeft.y
+        val right = left + cutSize
+        val bottom = top + cutSize
+        val cornerLength = 32.dp.toPx().coerceAtMost(cutSize / 3f)
+        val corner = radius.coerceAtMost(cornerLength * 0.75f)
+        val guides = Path().apply {
+            moveTo(left, top + cornerLength)
+            lineTo(left, top + corner)
+            quadraticTo(left, top, left + corner, top)
+            lineTo(left + cornerLength, top)
+            moveTo(right - cornerLength, top)
+            lineTo(right - corner, top)
+            quadraticTo(right, top, right, top + corner)
+            lineTo(right, top + cornerLength)
+            moveTo(right, bottom - cornerLength)
+            lineTo(right, bottom - corner)
+            quadraticTo(right, bottom, right - corner, bottom)
+            lineTo(right - cornerLength, bottom)
+            moveTo(left + cornerLength, bottom)
+            lineTo(left + corner, bottom)
+            quadraticTo(left, bottom, left, bottom - corner)
+            lineTo(left, bottom - cornerLength)
+        }
+        drawPath(guides, Color.Black.copy(alpha = 0.4f), style = Stroke(width = borderWidth.toPx() + 2.dp.toPx(), cap = StrokeCap.Round))
+        drawPath(guides, frameColor, style = Stroke(width = borderWidth.toPx(), cap = StrokeCap.Round))
 
         highlightedBounds?.let { rawBounds ->
             val clampedBounds = Rect(

@@ -126,7 +126,7 @@ class ProfileViewModel(
 
     private val appContext = getApplication<Application>()
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+    private val firestore: FirebaseFirestore = com.auralis.crisisconnect.messaging.ResilientApplicationStore.profiles()
     private val securityRepository: SecurityRepository = SecurityRepository(appContext)
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance(FUNCTIONS_REGION)
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->

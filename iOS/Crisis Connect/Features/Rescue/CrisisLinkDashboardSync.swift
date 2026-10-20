@@ -766,6 +766,7 @@ struct PendingDashboardSyncOperation: Codable, Equatable, Identifiable {
     }
 
     let id: UUID
+    var ownerUid: String?
     let kind: Kind
     let payload: CrisisLinkDashboardLocationPayload?
     // signalObservation only. Optionals, so operations persisted by older builds decode as nil.
@@ -779,6 +780,7 @@ struct PendingDashboardSyncOperation: Codable, Equatable, Identifiable {
 
     init(
         id: UUID = UUID(),
+        ownerUid: String? = nil,
         kind: Kind,
         payload: CrisisLinkDashboardLocationPayload?,
         attemptCount: Int,
@@ -790,6 +792,7 @@ struct PendingDashboardSyncOperation: Codable, Equatable, Identifiable {
         signalReporterLocation: CrisisLinkDashboardLocationPayload? = nil
     ) {
         self.id = id
+        self.ownerUid = ownerUid
         self.kind = kind
         self.payload = payload
         self.signalId = signalId

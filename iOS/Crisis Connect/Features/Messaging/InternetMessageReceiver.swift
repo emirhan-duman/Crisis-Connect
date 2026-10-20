@@ -41,33 +41,112 @@ enum InternetConversation {
 final class InternetMessageReceiver: @unchecked Sendable {
     static let shared = InternetMessageReceiver()
 
-    private let client = InternetMessagingClient()
+    private let client: InternetMessagingClient
     private var listener: ListenerRegistration?
     private var listeningUid: String?
+    private var compactTask: Task<Void, Never>?
+    private var policyObserver: NSObjectProtocol?
+    private var foregroundObserver: NSObjectProtocol?
+    @MainActor private var schedule = CompactSyncSchedule()
+    @MainActor private var enabled = false
+    @MainActor private var savingMode: Bool?
+    @MainActor private var generation = 0
+    private let available: () -> Bool
 
-    private init() {}
+    init(client: InternetMessagingClient = InternetMessagingClient(), available: @escaping () -> Bool = { InternetChatTransport.shared.isAvailable(allowUltraConstrained: true) }) {
+        self.client = client
+        self.available = available
+    }
 
-    /// Starts (or re-targets) the listener for the currently signed-in uid. Idempotent.
-    func start() {
-        guard let uid = Auth.auth().currentUser?.uid else { return }
-        if listeningUid == uid, listener != nil { return }
-        stop()
+    @MainActor func start() { enabled = true; refresh() }
+
+    @MainActor private func refresh() {
+        guard enabled else { return }
+        if policyObserver == nil {
+            policyObserver = NotificationCenter.default.addObserver(forName: .disasterTrafficChanged, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refresh() }
+            }
+            foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.restartOnForeground() }
+            }
+        }
+        guard let uid = client.currentUid else { invalidateSession(); return }
+        let saving = DisasterTrafficController.shared.isSaving
+        if listeningUid == uid, savingMode == saving, compactTask != nil { return }
+        invalidateSession()
         listeningUid = uid
-        listener = Firestore.firestore()
-            .collection("messages")
-            .whereField("recipientUid", isEqualTo: uid)
-            .addSnapshotListener { [weak self] snapshot, error in
-                guard let self else { return }
-                if let error {
-                    NSLog("InternetMessageReceiver: listener error: %@", String(describing: error))
-                    return
+        savingMode = saving
+        let session = generation
+        compactTask = Task { [weak self] in
+            var cursor: String?
+            try? await Task.sleep(nanoseconds: UInt64.random(in: 0...2_000_000_000))
+            while !Task.isCancelled {
+                guard let self, self.generation == session, self.client.currentUid == uid else { return }
+                let work = saving || !CompactInboxState.pending(uid: uid).isEmpty || UserDefaults.standard.bool(forKey: "messaging.compactProfile.\(uid)") || (try? ReceiptJournal.shared.next(uid:uid)) != nil
+                if work && DisasterTrafficController.shared.foreground && self.available() && self.schedule.reserve(now: ProcessInfo.processInfo.systemUptime) {
+                    let started = ProcessInfo.processInfo.systemUptime
+                    do {
+                        let page = try await self.client.compactInbox(cursor: cursor, receive: saving)
+                        try Task.checkCancellation()
+                        guard self.generation == session else { return }
+                        DisasterTrafficController.shared.record(succeeded: true, duration: ProcessInfo.processInfo.systemUptime - started)
+                        for data in page.messages {
+                            try Task.checkCancellation()
+                            _ = await self.handle(data: data, myUid: uid)
+                        }
+                        cursor = page.cursor
+                        if let receipt = try ReceiptJournal.shared.next(uid:uid),
+                           let contact = ContactStore.shared.contactForPeerUid(receipt.peer) {
+                            guard await InternetChatTransport(client:self.client).sendReceipt(contact:contact,templateCode:receipt.template,messageIds:receipt.ids,journal:false) else { throw CocoaError(.fileReadUnknown) }
+                            if self.client.currentUid == uid { try ReceiptJournal.shared.confirm(uid:uid,batch:receipt) }
+                        }
+                        let hasReceipts = try ReceiptJournal.shared.next(uid:uid) != nil
+                        self.schedule.succeeded(now: ProcessInfo.processInfo.systemUptime, moreWork: page.cursor != nil || !CompactInboxState.pending(uid: uid).isEmpty || hasReceipts, jitter: Double.random(in: 0...60))
+                        self.schedule.deferUntil(now:ProcessInfo.processInfo.systemUptime,delay:DisasterTrafficController.shared.retryAfter)
+                    } catch is CancellationError { return }
+                    catch {
+                        guard !Task.isCancelled else { return }
+                        self.schedule.failed(now: ProcessInfo.processInfo.systemUptime, jitter: Double.random(in: 0...60))
+                        self.schedule.deferUntil(now:ProcessInfo.processInfo.systemUptime,delay:DisasterTrafficController.shared.retryAfter)
+                        DisasterTrafficController.shared.record(succeeded: false, duration: ProcessInfo.processInfo.systemUptime - started, error: error)
+                        MessagingDiagLog.log("compact inbox retry scheduled")
+                    }
                 }
-                guard let snapshot else { return }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+        guard !saving else { return }
+        listener = client.messageStore.collection("messages").whereField("recipientUid", isEqualTo: uid)
+            .addSnapshotListener { [weak self] snapshot, error in
+                guard let self, error == nil, let snapshot else { return }
                 for change in snapshot.documentChanges where change.type == .added {
                     let data = change.document.data()
-                    Task { _ = await self.handle(data: data, myUid: uid) }
+                    Task { @MainActor in
+                        guard self.generation == session else { return }
+                        _ = await self.handle(data: data, myUid: uid)
+                    }
                 }
             }
+    }
+
+    @MainActor private func restartOnForeground() {
+        guard enabled else { return }
+        invalidateSession()
+        refresh() // The monotonic budget survives UI resumes and prevents bursts.
+    }
+
+    @MainActor private func invalidateSession() {
+        generation += 1
+        compactTask?.cancel(); compactTask = nil
+        listener?.remove(); listener = nil
+        listeningUid = nil; savingMode = nil
+    }
+
+    deinit {
+        compactTask?.cancel()
+        listener?.remove()
+        if let policyObserver { NotificationCenter.default.removeObserver(policyObserver) }
+        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
     }
 
     // Debounces the stale-prekey recovery so a burst of failing messages triggers exactly one
@@ -92,10 +171,12 @@ final class InternetMessageReceiver: @unchecked Sendable {
         recoveryLock.lock(); recoveryInFlight = false; recoveryLock.unlock()
     }
 
-    func stop() {
-        listener?.remove()
-        listener = nil
-        listeningUid = nil
+    @MainActor func stop() {
+        enabled = false
+        invalidateSession()
+        if let policyObserver { NotificationCenter.default.removeObserver(policyObserver) }
+        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+        policyObserver = nil; foregroundObserver = nil
     }
 
     /// Entry point for the silent APNs data push (the FCM fan-out from the backend's
@@ -120,10 +201,21 @@ final class InternetMessageReceiver: @unchecked Sendable {
             return false
         }
         guard (userInfo["type"] as? String) == "chat" else { return false }
-        guard let myUid = Auth.auth().currentUser?.uid else { return false }
+        guard let myUid = client.currentUid else { return false }
         var data: [String: Any] = [:]
         for (key, value) in userInfo {
             if let key = key as? String { data[key] = value }
+        }
+        // First-session SOS may exceed the push budget due to PQXDH setup. Fetch one document.
+        if data["fetch"] as? String == "1", data["priority"] as? String == "high",
+           let id = data["messageId"] as? String,
+           id.range(of: #"^[A-Za-z0-9._:~-]{1,128}$"#, options: .regularExpression) != nil {
+            if let snapshot = try? await client.messageStore.collection("messages").document(id).getDocument(),
+               let fetched = snapshot.data(), fetched["recipientUid"] as? String == myUid,
+               ((fetched["ciphertext"] as? String)?.utf8.count ?? Int.max) <= 8_000 {
+                return await handle(data: fetched, myUid: myUid)
+            }
+            return false
         }
         return await handle(data: data, myUid: myUid)
     }
@@ -136,7 +228,7 @@ final class InternetMessageReceiver: @unchecked Sendable {
             return false
         }
         do {
-            let parent = try await Firestore.firestore()
+            let parent = try await (userInfo["store"] as? String == "ha" ? ResilientApplicationStore.profiles() : Firestore.firestore())
                 .document("authorityMlsV2/\(conversationId)")
                 .getDocument()
             guard try exactInt64(parent.get("version")) == 2,
@@ -152,7 +244,7 @@ final class InternetMessageReceiver: @unchecked Sendable {
             let canonical = try AuthorityMlsIdentifiers.canonicalBinding(AuthorityMlsBinding(
                 scopeType: scopeType,
                 channelId: channelId,
-                participants: participants
+                participants: participants, resilient: userInfo["store"] as? String == "ha"
             ))
             guard canonical.participants == participants,
                   try AuthorityMlsIdentifiers.conversationId(canonical) == conversationId else { return false }
@@ -160,7 +252,8 @@ final class InternetMessageReceiver: @unchecked Sendable {
                 selfUid: myUid,
                 peerUid: peerUid,
                 scopeType: scopeType,
-                channelId: channelId
+                channelId: channelId,
+                resilient: canonical.resilient
             )
         } catch {
             NSLog("Authority MLS prepare wake validation failed: %@", String(describing: error))
@@ -180,7 +273,7 @@ final class InternetMessageReceiver: @unchecked Sendable {
             return false
         }
         do {
-            let database = Firestore.firestore()
+            let database = userInfo["store"] as? String == "ha" ? ResilientApplicationStore.profiles() : Firestore.firestore()
             let parent = try await database.document("authorityMlsV2/\(conversationId)").getDocument()
             guard try exactInt64(parent.get("version")) == 2,
                   let participants = parent.get("participants") as? [String],
@@ -194,7 +287,7 @@ final class InternetMessageReceiver: @unchecked Sendable {
             let canonical = try AuthorityMlsIdentifiers.canonicalBinding(AuthorityMlsBinding(
                 scopeType: scopeType,
                 channelId: channelId,
-                participants: participants
+                participants: participants, resilient: userInfo["store"] as? String == "ha"
             ))
             guard canonical.participants == participants,
                   try AuthorityMlsIdentifiers.conversationId(canonical) == conversationId else {
@@ -221,6 +314,7 @@ final class InternetMessageReceiver: @unchecked Sendable {
                   message.get("messageId") as? String == messageId,
                   message.get("senderUid") as? String == peerUid else { return false }
 
+            ResilientApplicationStore.rememberSessionChoice(canonical, compatibility: !canonical.resilient)
             SOSNotificationCenter.postAuthorityChannelNotification(
                 senderUid: peerUid,
                 senderName: "",
@@ -325,10 +419,14 @@ final class InternetMessageReceiver: @unchecked Sendable {
     ///     a message decrypts only if it was authored with the sender's private key (pinned key when
     ///     we have one, else a directory lookup on first contact = trust-on-first-use).
     @discardableResult
-    private func handle(data: [String: Any], myUid: String) async -> Bool {
+    func handle(data: [String: Any], myUid: String) async -> Bool {
+        guard client.currentUid == myUid else { return false }
         let conversationId = (data["conversationId"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let senderUid = (data["senderUid"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let messageId = (data["messageId"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        // Leave ALL attachment chunks on the server, even a tiny last chunk. Decrypting/acking
+        // a tail early would consume its Signal key and break later media reassembly.
+        if DisasterTrafficController.shared.isSaving, DisasterTrafficPolicy.isAttachmentChunk(messageId) { return false }
         guard !conversationId.isEmpty, !messageId.isEmpty, !senderUid.isEmpty, senderUid != myUid else { return false }
 
         let ciphertext = data["ciphertext"] as? String ?? ""
@@ -344,6 +442,12 @@ final class InternetMessageReceiver: @unchecked Sendable {
             ciphertext: ciphertext,
             alg: (data["alg"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? InternetE2eEnvelope.alg
         )
+
+        // Both stores restore asynchronously on first use. Await that restore BEFORE lookup,
+        // decrypt/persist/ACK; otherwise a late disk snapshot can erase an acknowledged message.
+        await ContactStore.shared.waitUntilLoaded()
+        await SOSChatStore.shared.waitUntilLoaded()
+        guard client.currentUid == myUid else { return false }
 
         // Find the local thread for this peer: by the conversation id's session code, else by the
         // peer's uid — a local contact is keyed by its own session code (which differs per peer), so
@@ -420,7 +524,7 @@ final class InternetMessageReceiver: @unchecked Sendable {
         } catch SignalError.duplicatedMessage {
             // libsignal's authoritative "already decrypted" — it WAS delivered. Ack so the lost/
             // failed original ack doesn't leave a server copy replaying on every listener attach.
-            await client.acknowledgeMessage(messageId)
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
             return false
         } catch {
             MessagingDiagLog.log("recv drop: authenticate/decrypt failed: \(String(describing: error))")
@@ -440,12 +544,16 @@ final class InternetMessageReceiver: @unchecked Sendable {
         NSLog("InternetMessageReceiver: internet recv template=%d via %@", content.templateCode, isSignal ? "v3" : "v2")
 
         // Reserved control codes ride the same sealed channel but are never chat messages.
+        if DisasterTrafficController.shared.isSaving, [200, 201].contains(content.templateCode) {
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
+            return false
+        }
         if content.templateCode == InternetChatTransport.typingSignalTemplate {
             // Ephemeral "peer is typing" pulse → in-memory bus only; never stored, never notified.
             if let existing {
                 await MainActor.run { TypingIndicatorBus.shared.signalTyping(sessionId: existing.id) }
             }
-            await client.acknowledgeMessage(messageId)
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
             return false
         }
         if content.templateCode == InternetChatTransport.identityAnnounceTemplate {
@@ -474,13 +582,13 @@ final class InternetMessageReceiver: @unchecked Sendable {
                     MessagingDiagLog.log("healed BLE contact '\(healed.name)' with internet identity from announce peer=\(senderUid.prefix(8))")
                 }
             }
-            await client.acknowledgeMessage(messageId)
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
             return didHeal
         }
         if content.templateCode == InternetChatTransport.callSignalTemplate {
             // Route to the call-signal bus (the WebRTC engine subscribes there); never filed as a
             // chat message.
-            await client.acknowledgeMessage(messageId)
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
             // Auto-create/pin the caller's contact (trust-on-first-use) when we don't have one —
             // exactly like the plain-message path below. Without this, an incoming call from a peer
             // we never messaged, OR a BLE/QR-paired peer whose internet identity we never captured
@@ -514,7 +622,7 @@ final class InternetMessageReceiver: @unchecked Sendable {
         // sender, so try that variant too (mirrors Android's applyInternetReceipt).
         if content.templateCode == InternetChatTransport.deliveryReceiptTemplate
             || content.templateCode == InternetChatTransport.readReceiptTemplate {
-            await client.acknowledgeMessage(messageId)
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
             guard let existing else { return false }
             let ids = Self.parseReceiptIds(content.text)
             guard !ids.isEmpty else { return false }
@@ -532,7 +640,7 @@ final class InternetMessageReceiver: @unchecked Sendable {
         // A child device asks this user to become its parent → file the pending request (surfaced
         // in Settings > Child Profile) + notify; never a chat message.
         if content.templateCode == InternetChatTransport.parentRequestTemplate {
-            await client.acknowledgeMessage(messageId)
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
             guard let existing else { return false }
             await MainActor.run {
                 ChildProfileManager.shared.addIncomingRequest(existing.id)
@@ -549,7 +657,7 @@ final class InternetMessageReceiver: @unchecked Sendable {
         // The asked contact answered our parent request: promote or drop the pending entry.
         // confirmParent's pending check makes a duplicate push+listener delivery a no-op.
         if content.templateCode == InternetChatTransport.parentResponseTemplate {
-            await client.acknowledgeMessage(messageId)
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
             guard let existing else { return false }
             let accepted = (try? JSONSerialization.jsonObject(
                 with: Data(content.text.utf8)
@@ -593,14 +701,14 @@ final class InternetMessageReceiver: @unchecked Sendable {
         // Attachment chunk (voice / image / file): ack it so the relay drops its copy, buffer it,
         // and only persist + notify once every chunk of the transfer has arrived and reassembled.
         if let attachment = content.attachment {
-            await client.acknowledgeMessage(messageId)
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
             guard let complete = InternetAttachmentReassembler.shared.offer(attachment) else {
                 return false
             }
             let filed = await persistReceivedAttachment(attachment, data: complete, contact: contact)
             if filed {
                 // The sender's bubble uuid IS the transferId, so this flips it to "delivered".
-                _ = await InternetChatTransport.shared.sendReceipt(
+                _ = await InternetChatTransport(client:client).sendReceipt(
                     contact: contact,
                     templateCode: InternetChatTransport.deliveryReceiptTemplate,
                     messageIds: [attachment.transferId]
@@ -613,7 +721,6 @@ final class InternetMessageReceiver: @unchecked Sendable {
         // original alert never arrived, file the update AS an SOS-styled alert so the contact still
         // ends up with the emergency + latest location (mirrors Android).
         if content.templateCode == InternetChatTransport.sosLocationUpdateTemplate {
-            await client.acknowledgeMessage(messageId)
             guard let data = content.text.data(using: .utf8),
                   let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let ref = (payload["ref"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -638,6 +745,9 @@ final class InternetMessageReceiver: @unchecked Sendable {
                     )
                 }
             }
+            do { try await SOSChatStore.shared.flushToDisk() }
+            catch { InternetMessageDedup.shared.release(messageId); return false }
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
             return false
         }
 
@@ -672,9 +782,16 @@ final class InternetMessageReceiver: @unchecked Sendable {
             )
         }
 
+        do { try await SOSChatStore.shared.flushToDisk() }
+        catch {
+            InternetMessageDedup.shared.release(messageId)
+            MessagingDiagLog.log("inbound chat disk commit unavailable; server copy retained")
+            return false
+        }
+
         // Tell the sender their bubble reached this device (idempotent on their side — re-sending
         // for a duplicate delivery is harmless and covers a first receipt that got lost).
-        _ = await InternetChatTransport.shared.sendReceipt(
+        _ = await InternetChatTransport(client:client).sendReceipt(
             contact: contact,
             templateCode: InternetChatTransport.deliveryReceiptTemplate,
             messageIds: [messageId]
@@ -709,7 +826,7 @@ final class InternetMessageReceiver: @unchecked Sendable {
         }
 
         // Acknowledge so the server drops its copy (best-effort; a purge cleans up otherwise).
-        await client.acknowledgeMessage(messageId)
+        await client.acknowledgeMessage(messageId, expectedUid: myUid)
         return isNewMessage
     }
 

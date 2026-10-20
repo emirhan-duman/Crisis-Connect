@@ -1500,6 +1500,9 @@ private fun BleChatBubble(
                         }
                     }
                     Spacer(modifier = Modifier.height(6.dp))
+                    if (message.outboundRoute == com.auralis.crisisconnect.watch.WatchReplyChat.ROUTE && message.status.name !in listOf("DELIVERED", "READ")) {
+                        Text(stringResource(if (message.status.name == "SENT") R.string.watch_reply_chat_handoff else if (message.lastError == "watch_noPeer") R.string.watch_reply_chat_failed else R.string.watch_reply_chat_uncertain), style = MaterialTheme.typography.labelSmall, color = contentColor.copy(alpha = 0.8f))
+                    }
                     Row(
                         modifier = Modifier.align(if (message.isLocal) Alignment.End else Alignment.Start),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1511,7 +1514,7 @@ private fun BleChatBubble(
                             color = contentColor.copy(alpha = 0.7f),
                             textAlign = if (message.isLocal) TextAlign.End else TextAlign.Start,
                         )
-                        if (message.isLocal) {
+                        if (message.isLocal && (message.outboundRoute != com.auralis.crisisconnect.watch.WatchReplyChat.ROUTE || message.status.name in listOf("DELIVERED", "READ"))) {
                             val readIndicatorColor = MaterialTheme.colorScheme.primary
                             val (icon, statusLabel, tint) = when (message.status) {
                                 BleMessageStatus.QUEUED -> Triple(

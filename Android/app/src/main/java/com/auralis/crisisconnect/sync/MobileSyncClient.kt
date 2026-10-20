@@ -124,6 +124,23 @@ object MobileSyncClient {
         postEvents(token = token, body = body)
     }
 
+    suspend fun reportQueueStatus(context: Context, panelId: String, deviceId: String, pendingCount: Int,
+                                oldestAt: Long?, lastSuccessAt: Long?, errorCode: String?) {
+        runCatching {
+            val user = FirebaseAuth.getInstance().currentUser?.takeUnless { it.isAnonymous } ?: return
+            val token = user.getIdToken(false).awaitTask().token?.trim().takeUnless { it.isNullOrBlank() } ?: return
+            val now = System.currentTimeMillis()
+            val status = JSONObject().put("scope", "crisis-link").put("pendingCount", pendingCount).put("reportedAt", now)
+            oldestAt?.let { status.put("oldestAt", it) }
+            lastSuccessAt?.let { status.put("lastSuccessAt", it) }
+            errorCode?.let { status.put("errorCode", it) }
+            val body = JSONObject().put("clientEventId", "android-queue-$now").put("source", "android")
+                .put("deviceId", deviceId.ifBlank { LocalKeyStorage.getOrCreateRescueDeviceId(context.applicationContext) })
+                .put("panelId", panelId).put("queueOnly", true).put("events", JSONArray()).put("queueStatus", status)
+            postEvents(token, body)
+        }.onFailure { Log.w(TAG, "Queue summary report unavailable", it) }
+    }
+
     private suspend fun postEvents(token: String, body: JSONObject) {
         val baseUrl = BuildConfig.MOBILE_SYNC_BASE_URL.trim().trimEnd('/')
         if (baseUrl.isBlank()) return

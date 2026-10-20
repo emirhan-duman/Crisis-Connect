@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -56,12 +58,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -90,12 +96,22 @@ fun ToolsMainScreen(navController: NavController) {
             tools.filter { tool ->
                 val title = context.getString(tool.title)
                 val description = context.getString(tool.description)
+                val summary = context.getString(toolSummaryRes(tool))
                 title.contains(normalizedQuery, ignoreCase = true) ||
-                    description.contains(normalizedQuery, ignoreCase = true)
+                    description.contains(normalizedQuery, ignoreCase = true) ||
+                    summary.contains(normalizedQuery, ignoreCase = true)
             }
         }
     }
 
+    val openTool: (ToolsMainScreenViewModel.ToolItem) -> Unit = { tool ->
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        focusManager.clearFocus(force = true)
+        navController.navigate(tool.route)
+    }
+    val groupedTools = remember(filteredTools) {
+        filteredTools.groupBy { tool -> toolSection(tool.route) }
+    }
     val hasNoResults = normalizedQuery.isNotBlank() && filteredTools.isEmpty()
     Scaffold(
         topBar = {
@@ -112,6 +128,7 @@ fun ToolsMainScreen(navController: NavController) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            val useQuickTiles = maxWidth >= 360.dp && LocalDensity.current.fontScale <= 1.3f
             val columns = when {
                 maxWidth < 600.dp -> 1
                 maxWidth < 900.dp -> 2
@@ -137,9 +154,9 @@ fun ToolsMainScreen(navController: NavController) {
 
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columns),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
                 item(key = "tools_search", span = { GridItemSpan(maxLineSpan) }) {
@@ -153,8 +170,7 @@ fun ToolsMainScreen(navController: NavController) {
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .widthIn(max = searchFieldMaxWidth)
-                                .heightIn(min = searchFieldHeight, max = searchFieldHeight)
-                                .padding(horizontal = 2.dp),
+                                .heightIn(min = searchFieldHeight),
                             textStyle = searchTextStyle,
                             singleLine = true,
                             maxLines = 1,
@@ -204,19 +220,55 @@ fun ToolsMainScreen(navController: NavController) {
                     }
                 }
 
-                items(
-                    items = filteredTools,
-                    key = { tool -> tool.title },
-                    contentType = { "tool_card" }
-                ) { tool ->
-                    ToolCard(
-                        tool = tool,
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            focusManager.clearFocus(force = true)
-                            navController.navigate(tool.route)
+                if (normalizedQuery.isNotBlank()) {
+                    items(
+                        items = filteredTools,
+                        key = { tool -> tool.route },
+                        contentType = { "tool_card" }
+                    ) { tool ->
+                        ToolRow(tool = tool, onClick = { openTool(tool) })
+                    }
+                } else {
+                    ToolSection.entries.forEach { section ->
+                        val sectionTools = groupedTools[section].orEmpty()
+                        if (sectionTools.isNotEmpty()) {
+                            item(key = "section_${section.name}", span = { GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = stringResource(section.titleRes),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .padding(top = 16.dp, bottom = 4.dp)
+                                        .semantics { heading() }
+                                )
+                            }
+                            if (section == ToolSection.Quick && useQuickTiles) {
+                                item(key = "quick_tools", span = { GridItemSpan(maxLineSpan) }) {
+                                    Row(
+                                        modifier = Modifier.height(IntrinsicSize.Min),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        sectionTools.forEach { tool ->
+                                            QuickToolCard(
+                                                tool = tool,
+                                                onClick = { openTool(tool) },
+                                                modifier = Modifier.weight(1f).fillMaxHeight()
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                items(
+                                    items = sectionTools,
+                                    key = { tool -> tool.route },
+                                    contentType = { "tool_card" }
+                                ) { tool ->
+                                    ToolRow(tool = tool, onClick = { openTool(tool) })
+                                }
+                            }
                         }
-                    )
+                    }
                 }
             }
         }
@@ -291,64 +343,69 @@ private fun NoResultsCard(query: String) {
 }
 
 @Composable
-private fun ToolCard(
+private fun ToolRow(
     tool: ToolsMainScreenViewModel.ToolItem,
     onClick: () -> Unit
 ) {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.elevatedCardElevation(),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = ripple(bounded = true),
-                onClick = onClick
-            )
-    ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 88.dp)
-                .padding(16.dp),
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(bounded = true),
+                    onClick = onClick
+                )
+                .heightIn(min = 76.dp)
+                .padding(horizontal = 4.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = CircleShape
-                    ),
+                modifier = Modifier.size(40.dp).background(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = CircleShape
+                ),
                 contentAlignment = Alignment.Center
             ) {
                 ToolIcon(tool = tool, contentDescription = null)
             }
             Spacer(modifier = Modifier.width(16.dp))
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = stringResource(tool.title),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = stringResource(tool.description),
-                    style = MaterialTheme.typography.bodySmall,
+                    text = stringResource(toolSummaryRes(tool)),
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            Spacer(modifier = Modifier.width(8.dp))
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.outline
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
             )
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 60.dp, end = 4.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+        )
     }
+}
+
+private fun toolSummaryRes(tool: ToolsMainScreenViewModel.ToolItem): Int = when (tool.route) {
+    "crisis_sentinel" -> R.string.tools_summary_crisis_sentinel
+    "breadcrumb_trail" -> R.string.tools_summary_breadcrumb
+    "metal_detector" -> R.string.tools_summary_metal_detector
+    else -> tool.description
 }
 
 @Composable
@@ -361,13 +418,60 @@ private fun ToolIcon(
         tool.drawableIcon != null -> Icon(
             painter = painterResource(id = tool.drawableIcon),
             contentDescription = contentDescription,
-            tint = iconTint
+            tint = iconTint,
+            modifier = Modifier.size(24.dp)
         )
 
         tool.icon != null -> Icon(
             imageVector = tool.icon,
             contentDescription = contentDescription,
-            tint = iconTint
+            tint = iconTint,
+            modifier = Modifier.size(24.dp)
         )
+    }
+}
+
+// Keep every visible tool in exactly one group; unknown future routes remain discoverable.
+private enum class ToolSection(val titleRes: Int) {
+    Quick(R.string.tools_section_quick),
+    Guidance(R.string.tools_section_guidance),
+    Navigate(R.string.tools_section_navigate),
+    Detect(R.string.tools_section_detect),
+    Awareness(R.string.tools_section_awareness),
+    Other(R.string.tools_section_other)
+}
+
+private fun toolSection(route: String): ToolSection = when (route) {
+    "whistle", "flashlight", "cpr_assist" -> ToolSection.Quick
+    "crisis_sentinel", "secure_dossiers" -> ToolSection.Guidance
+    "offline_map", "breadcrumb_trail", "compass" -> ToolSection.Navigate
+    "metal_detector", "signal_finder", "sensor_tool" -> ToolSection.Detect
+    "recent_disasters" -> ToolSection.Awareness
+    else -> ToolSection.Other
+}
+
+@Composable
+private fun QuickToolCard(
+    tool: ToolsMainScreenViewModel.ToolItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight().heightIn(min = 96.dp).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            ToolIcon(tool = tool, contentDescription = null)
+            Text(
+                text = stringResource(tool.title),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
     }
 }

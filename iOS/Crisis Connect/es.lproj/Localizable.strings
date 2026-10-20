@@ -1452,3 +1452,30 @@
 "guide_redesign_subtitle_now" = "Elige la situación y consulta la primera acción correcta en segundos.";
 "guide_redesign_subtitle_prepare" = "Completa tus planes y listas de verificación sin conexión.";
 "guide_redesign_unknown_region" = "Región desconocida";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Buscar contactos en línea";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect lee los nombres y números de teléfono de tus contactos para encontrar personas que usan la aplicación. Envía los números a los servidores de Crisis Connect alojados por Google Firebase en Estados Unidos para buscar coincidencias. Los nombres permanecen en tu dispositivo. Los números consultados se procesan sin guardarse permanentemente; las coincidencias quedan en tu dispositivo. Actualizar esta pantalla o volver a ella mientras está abierta puede enviar los números de nuevo. Tu elección se recuerda para esta cuenta en este dispositivo. Puedes retirar tu consentimiento en Ajustes, en Acceso a contactos.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Buscar contactos cercanos";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect lee los nombres y números de teléfono en tu dispositivo para que elijas a quién buscar cerca. El número elegido se usa para verificar la identidad mediante Bluetooth. Esta función no envía tus contactos a un servidor. Tu elección se recuerda para esta cuenta en este dispositivo. Puedes retirar tu consentimiento en Ajustes, en Acceso a contactos.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "Acepto";
+"CONTACTS_DISCLOSURE_DECLINE" = "Ahora no";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Acceso a contactos";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Tu elección se recuerda para esta cuenta en este dispositivo. Puedes retirar tu consentimiento en Ajustes, en Acceso a contactos.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "Retirar consentimiento de búsqueda en línea";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Retirar consentimiento de contactos cercanos";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "Internet disponible";

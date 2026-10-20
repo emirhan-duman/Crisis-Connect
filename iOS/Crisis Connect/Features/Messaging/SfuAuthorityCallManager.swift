@@ -106,7 +106,7 @@ final class SfuAuthorityCallManager: NSObject, ObservableObject {
         let uid = user.uid
         let authPhoto = user.photoURL?.absoluteString
         Task { [weak self] in
-            let snapshot = try? await Firestore.firestore()
+            let snapshot = try? await ResilientApplicationStore.profiles()
                 .collection("users").document(uid).getDocument()
             let stored = (snapshot?.get("photoURL") as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)

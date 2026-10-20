@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.screens
 
+import com.auralis.crisisconnect.messaging.ResilientApplicationStore
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,13 +28,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.navigation.NavController
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Surface
+import androidx.compose.ui.semantics.Role
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -58,6 +66,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.Manifest
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -70,6 +79,9 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.core.content.ContextCompat
 import com.auralis.crisisconnect.R
@@ -122,7 +134,7 @@ fun NewChatScreen(navController: NavController) {
             // cert-first resolution would list the WRONG panel's members. Prefer the doc; the cert is
             // only a last-resort fallback (offline / doc unreadable).
             val fromDoc = runCatching {
-                FirebaseFirestore.getInstance().document("users/${user.uid}").get().await()
+                ResilientApplicationStore.profiles().document("users/${user.uid}").get().await()
                     .getString("agencySlug")?.trim()?.takeIf { it.isNotBlank() }
             }.getOrNull()
             fromDoc ?: runCatching {
@@ -366,15 +378,7 @@ fun NewChatScreen(navController: NavController) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.06f),
-                            MaterialTheme.colorScheme.surface,
-                            MaterialTheme.colorScheme.surface
-                        )
-                    )
-                )
+                .background(MaterialTheme.colorScheme.background)
         ) {
             Column(
                 modifier = Modifier
@@ -391,41 +395,32 @@ fun NewChatScreen(navController: NavController) {
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surface
                     ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         Text(
                             text = stringResource(R.string.your_qr_code),
-                            style = MaterialTheme.typography.titleMedium
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().semantics { heading() }
                         )
                         if (!qrShareRequested) {
                             Text(
-                                text = stringResource(R.string.new_chat_prepare_qr_description),
+                                text = stringResource(R.string.new_chat_share_qr_description),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
                             )
 
-                            Button(
-                                onClick = onCreateQrClick,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(52.dp),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Icon(Icons.Default.QrCode, contentDescription = null)
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = stringResource(R.string.new_chat_prepare_qr_action),
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                            }
+                            QrCreatePreview(qrBitmap = qrBitmap, onCreate = onCreateQrClick)
                         } else {
                             Box(
                                 modifier = Modifier
@@ -519,6 +514,32 @@ fun NewChatScreen(navController: NavController) {
                                 }
                             }
 
+                            if (!shouldObscureQr) {
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(MaterialTheme.colorScheme.primaryContainer)
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.QrCode,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(
+                                            if (qrBitmap == null) R.string.new_chat_qr_preparing
+                                            else R.string.new_chat_qr_ready
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+
                             Text(
                                 text = stringResource(R.string.qr_scan_info),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -566,70 +587,49 @@ fun NewChatScreen(navController: NavController) {
 
                 Button(
                     onClick = { navController.navigate("qr_scan") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                    shape = RoundedCornerShape(14.dp)
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                    shape = RoundedCornerShape(16.dp)
                 ) {
                     Icon(Icons.Default.QrCodeScanner, contentDescription = null)
                     Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = stringResource(R.string.scan_qr),
-                        style = MaterialTheme.typography.titleMedium
-                    )
+                    Text(stringResource(R.string.scan_qr), style = MaterialTheme.typography.labelLarge)
                 }
 
-                OutlinedButton(
-                    onClick = {
-                        viewModel.resetManualConnectState()
-                        showManualDialog = true
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Icon(Icons.Default.Bluetooth, contentDescription = null)
-                    Spacer(modifier = Modifier.width(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = stringResource(R.string.manual_connect_open_button),
-                        style = MaterialTheme.typography.titleMedium
+                        text = stringResource(R.string.new_chat_other_ways),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp).semantics { heading() }
                     )
-                }
-
-                Button(
-                    onClick = { navController.navigate("add_from_contacts") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Icon(Icons.Default.Person, contentDescription = null)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = stringResource(R.string.new_chat_add_from_contacts),
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                }
-
-                if (agencySlug != null) {
-                    Button(
-                        onClick = { navController.navigate("authority_contact_picker") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(14.dp)
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow
                     ) {
-                        Icon(Icons.Default.Groups, contentDescription = null)
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = stringResource(R.string.new_chat_add_from_agency),
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Column {
+                            NewChatMethodRow(
+                                icon = Icons.Default.Bluetooth,
+                                label = stringResource(R.string.manual_connect_open_button),
+                                onClick = {
+                                    viewModel.resetManualConnectState()
+                                    showManualDialog = true
+                                }
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(start = 56.dp, end = 16.dp))
+                            NewChatMethodRow(
+                                icon = Icons.Default.Person,
+                                label = stringResource(R.string.new_chat_add_from_contacts),
+                                onClick = { navController.navigate("add_from_contacts") }
+                            )
+                            if (agencySlug != null) {
+                                HorizontalDivider(modifier = Modifier.padding(start = 56.dp, end = 16.dp))
+                                NewChatMethodRow(
+                                    icon = Icons.Default.Groups,
+                                    label = stringResource(R.string.new_chat_add_from_agency),
+                                    onClick = { navController.navigate("authority_contact_picker") }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -680,6 +680,133 @@ fun NewChatScreen(navController: NavController) {
             }
         )
     }
+}
+
+@Composable
+private fun NewChatMethodRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Icon(
+            Icons.AutoMirrored.Filled.ArrowForward,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+@Composable
+private fun QrCreatePreview(qrBitmap: ImageBitmap?, onCreate: () -> Unit) {
+    val backgroundColor = if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) {
+        MaterialTheme.colorScheme.surfaceContainerLow.toArgb()
+    } else {
+        null
+    }
+    val preview by produceState<ImageBitmap?>(initialValue = null, qrBitmap, backgroundColor) {
+        value = qrBitmap?.let { bitmap ->
+            withContext(Dispatchers.Default) { createBlurredQrPreview(bitmap, backgroundColor) }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(230.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        preview?.let { bitmap ->
+            Image(
+                bitmap = bitmap,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize().padding(12.dp)
+            )
+        }
+        OutlinedButton(
+            onClick = onCreate,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 16.dp)
+                .heightIn(min = 48.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            )
+        ) {
+            Icon(Icons.Default.QrCode, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(stringResource(R.string.new_chat_prepare_qr_action), textAlign = TextAlign.Center)
+        }
+    }
+}
+
+// Blur a separate raster copy of the actual branded QR. This keeps its logo and colors
+// and works before Android 12, where Modifier.blur has no effect. Never alter the scan-ready bitmap.
+private fun createBlurredQrPreview(qrBitmap: ImageBitmap, backgroundColor: Int?): ImageBitmap {
+    val original = qrBitmap.asAndroidBitmap()
+    val width = original.width
+    val height = original.height
+    val pixels = IntArray(width * height)
+    val scratch = IntArray(pixels.size)
+    original.getPixels(pixels, 0, width, 0, 0, width, height)
+    if (backgroundColor != null) {
+        // Adapt the preview's white paper (including the logo backing) to the dark
+        // surface. Keep the branded ink colors and the scan-ready bitmap intact.
+        for (index in pixels.indices) {
+            val pixel = pixels[index]
+            val isWhitePaper = ((pixel ushr 16) and 255) >= 245 &&
+                ((pixel ushr 8) and 255) >= 245 && (pixel and 255) >= 245
+            if (isWhitePaper) pixels[index] = backgroundColor
+        }
+    }
+    val radius = 6
+    val kernelSize = radius * 2 + 1
+
+    fun blurPass(source: IntArray, target: IntArray, horizontal: Boolean) {
+        val length = if (horizontal) width else height
+        val lineCount = if (horizontal) height else width
+        val stride = if (horizontal) 1 else width
+        for (line in 0 until lineCount) {
+            val start = if (horizontal) line * width else line
+            var alpha = 0
+            var red = 0
+            var green = 0
+            var blue = 0
+            fun accumulate(pixel: Int, sign: Int) {
+                alpha += (pixel ushr 24) * sign
+                red += ((pixel ushr 16) and 255) * sign
+                green += ((pixel ushr 8) and 255) * sign
+                blue += (pixel and 255) * sign
+            }
+            for (offset in -radius..radius) {
+                accumulate(source[start + offset.coerceIn(0, length - 1) * stride], 1)
+            }
+            for (position in 0 until length) {
+                target[start + position * stride] =
+                    ((alpha / kernelSize) shl 24) or
+                    ((red / kernelSize) shl 16) or
+                    ((green / kernelSize) shl 8) or
+                    (blue / kernelSize)
+                accumulate(source[start + (position - radius).coerceIn(0, length - 1) * stride], -1)
+                accumulate(source[start + (position + radius + 1).coerceIn(0, length - 1) * stride], 1)
+            }
+        }
+    }
+    repeat(3) {
+        blurPass(pixels, scratch, horizontal = true)
+        blurPass(scratch, pixels, horizontal = false)
+    }
+    return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888).asImageBitmap()
 }
 
 @Suppress("UNUSED_PARAMETER")
@@ -997,5 +1124,3 @@ private fun currentBluetoothName(context: Context): String {
         BluetoothAdapter.getDefaultAdapter()?.name?.trim().orEmpty()
     }.getOrDefault("")
 }
-
-/** Which section of the "Kurumdan ekle" picker an entry sits in — mirrors the web messages picker. */

@@ -511,6 +511,8 @@ class AuthorityMlsConversationSession private constructor(
             deviceLabel: String,
             transport: AuthorityMlsTransport = AuthorityMlsTransport(),
         ): AuthorityMlsConversationSession {
+            val binding = if (transport.usesApplicationRouting) ResilientApplicationStore.resolve(context, binding) else binding
+            transport.configure(binding)
             val canonicalParticipants = AuthorityMlsIdentifiers.canonicalBinding(binding).participants
             val conversationId = AuthorityMlsIdentifiers.conversationId(binding)
             val lease = sessionLeases.computeIfAbsent("$accountUid\u0000$conversationId") { Mutex() }

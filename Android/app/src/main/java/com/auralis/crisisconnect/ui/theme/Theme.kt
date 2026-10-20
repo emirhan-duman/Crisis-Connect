@@ -4,43 +4,43 @@ import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-private val DarkBase = Color(0xFF121416)
-private val DarkSurfaceLow = Color(0xFF1A1D21)
-private val DarkSurface = Color(0xFF20252B)
-private val DarkSurfaceHigh = Color(0xFF272D35)
-private val DarkSurfaceHighest = Color(0xFF303741)
-private val DarkSurfaceVariant = Color(0xFF2A3038)
-private val DarkOnSurfaceVariant = Color(0xFFC0C8D4)
-private val DarkOutline = Color(0xFF4B5563)
+private val DarkBase = Color(0xFF121212)
+private val DarkSurfaceLow = Color(0xFF1A1A1A)
+private val DarkSurface = Color(0xFF222222)
+private val DarkSurfaceHigh = Color(0xFF2A2A2A)
+private val DarkSurfaceHighest = Color(0xFF333333)
+private val DarkSurfaceVariant = Color(0xFF303030)
+private val DarkOnSurface = Color(0xFFF2F2F2)
+private val DarkOnSurfaceVariant = Color(0xFFC4C4C4)
+private val DarkOutline = Color(0xFF757575)
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Color(0xFFC6CDD8),
-    onPrimary = Color(0xFF101216),
+    primary = Color(0xFFE0E0E0),
+    onPrimary = Color(0xFF161616),
     primaryContainer = DarkSurfaceHigh,
-    onPrimaryContainer = Gray100,
-    inversePrimary = Color(0xFF8D98A8),
-    secondary = Gray300,
-    onSecondary = Color(0xFF101216),
+    onPrimaryContainer = DarkOnSurface,
+    inversePrimary = Color(0xFF555555),
+    secondary = Color(0xFFC7C7C7),
+    onSecondary = Color(0xFF181818),
     secondaryContainer = DarkSurface,
-    onSecondaryContainer = Gray100,
-    tertiary = Gray300,
-    onTertiary = Color(0xFF101216),
+    onSecondaryContainer = DarkOnSurface,
+    tertiary = Color(0xFFC7C7C7),
+    onTertiary = Color(0xFF181818),
     tertiaryContainer = DarkSurfaceHigh,
-    onTertiaryContainer = Gray100,
+    onTertiaryContainer = DarkOnSurface,
     background = DarkBase,
-    onBackground = Gray100,
+    onBackground = DarkOnSurface,
     surface = DarkBase,
-    onSurface = Gray100,
+    onSurface = DarkOnSurface,
     surfaceDim = DarkBase,
     surfaceBright = DarkSurfaceHigh,
-    surfaceContainerLowest = Color(0xFF0D0F11),
+    surfaceContainerLowest = Color(0xFF0D0D0D),
     surfaceContainerLow = DarkSurfaceLow,
     surfaceContainer = DarkSurface,
     surfaceContainerHigh = DarkSurfaceHigh,
@@ -48,8 +48,8 @@ private val DarkColorScheme = darkColorScheme(
     surfaceVariant = DarkSurfaceVariant,
     onSurfaceVariant = DarkOnSurfaceVariant,
     surfaceTint = Color.Transparent,
-    inverseSurface = Gray100,
-    inverseOnSurface = Color(0xFF14171B),
+    inverseSurface = DarkOnSurface,
+    inverseOnSurface = DarkBase,
     outline = DarkOutline,
     outlineVariant = DarkSurfaceVariant,
     scrim = Color(0xB3000000)
@@ -58,8 +58,8 @@ private val DarkColorScheme = darkColorScheme(
 private val LightColorScheme = lightColorScheme(
     primary = PrimaryBlue,
     onPrimary = Color.White,
-    primaryContainer = Gray200,
-    onPrimaryContainer = MidnightBlue,
+    primaryContainer = Color(0xFFE4EDF9),
+    onPrimaryContainer = Color(0xFF213D62),
     inversePrimary = PrimaryBlueLight,
     secondary = Gray700,
     onSecondary = Color.White,
@@ -98,12 +98,12 @@ fun DisasterCommunicationSystemTheme(
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
+        // Keep dark mode neutral even when the system uses wallpaper-derived colors.
+        darkTheme -> DarkColorScheme
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            dynamicLightColorScheme(context)
         }
-
-        darkTheme -> DarkColorScheme
         else -> LightColorScheme
     }
 

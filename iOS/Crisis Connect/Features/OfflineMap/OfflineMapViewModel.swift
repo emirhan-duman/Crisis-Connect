@@ -453,6 +453,7 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if let location=locations.last {MessagingRegionHint.observe(location)}
         lastKnownLocation = locations.last
         if pendingLocationFocus {
             centerOnUserToken = UUID()
@@ -638,7 +639,7 @@ enum OfflineMapDownloader {
                            currentOrdinal <= resumeOrdinal {
                             continue
                         }
-                        if Task.isCancelled { return .paused }
+                        if Task.isCancelled || !DisasterTrafficController.shared.permits(.mapDownload) { return .paused }
                         if tileStore.tileExists(regionId: plan.region.id, z: zoom, x: x, y: y) {
                             downloaded += 1
                             lastCompletedOrdinal = currentOrdinal
@@ -662,7 +663,7 @@ enum OfflineMapDownloader {
                                 lastCompletedOrdinal = currentOrdinal
                                 await reportProgressIfNeeded(force: downloaded + missing == total)
                             } catch {
-                                if Task.isCancelled { return .paused }
+                                if Task.isCancelled || !DisasterTrafficController.shared.permits(.mapDownload) { return .paused }
                                 return .failed(error.localizedDescription)
                             }
                         case .missing:

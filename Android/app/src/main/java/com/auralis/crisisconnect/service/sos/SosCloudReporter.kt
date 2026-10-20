@@ -8,6 +8,8 @@ import android.net.NetworkCapabilities
 import android.telephony.TelephonyManager
 import android.util.Log
 import com.auralis.crisisconnect.analytics.Analytics
+import com.auralis.crisisconnect.analytics.SatelliteCrashReporter
+import com.auralis.crisisconnect.connectivity.SatelliteNetworkStatus
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.service.BlePeerIdentityUtils
 import com.auralis.crisisconnect.service.GattSOSServerService
@@ -68,6 +70,7 @@ object SosCloudReporter {
     private const val CALL_TIMEOUT_MS = 20_000L
     private const val HEARTBEAT_INTERVAL_MS = 45_000L
     private const val HEARTBEAT_INTERVAL_LOW_BATTERY_MS = 90_000L
+    private const val SATELLITE_HEARTBEAT_INTERVAL_MS = 15 * 60_000L
     private const val LOW_BATTERY_THRESHOLD_PERCENT = 20
     private const val OFFLINE_POLL_INTERVAL_MS = 10_000L
     private const val FAILURE_RETRY_DELAY_MS = 20_000L
@@ -86,13 +89,14 @@ object SosCloudReporter {
     fun onSosStarted(
         context: Context,
         locationProvider: suspend () -> BlePeerIdentityUtils.PeerLocationSnapshot?,
-        batteryProvider: () -> Int?
+        batteryProvider: () -> Int?,
+        resuming: Boolean = false
     ) {
         val appContext = context.applicationContext
         heartbeatJob?.cancel()
         cachedPlace = null
         // A new broadcast supersedes any queued resolve for the same device signal.
-        prefs(appContext).edit()
+        if (!resuming) prefs(appContext).edit()
             .remove(KEY_PENDING_RESOLVE_SIGNAL_ID)
             .putBoolean(KEY_HAS_REPORTED_ACTIVE, false)
             .apply()
@@ -119,7 +123,9 @@ object SosCloudReporter {
                         placeName = resolvePlaceName(appContext, location),
                         lastReportedAtMillis = System.currentTimeMillis()
                     )
-                    val interval = if (battery != null && battery < LOW_BATTERY_THRESHOLD_PERCENT) {
+                    val interval = if (SatelliteNetworkStatus.isConstrained(appContext)) {
+                        SATELLITE_HEARTBEAT_INTERVAL_MS
+                    } else if (battery != null && battery < LOW_BATTERY_THRESHOLD_PERCENT) {
                         HEARTBEAT_INTERVAL_LOW_BATTERY_MS
                     } else {
                         HEARTBEAT_INTERVAL_MS
@@ -139,6 +145,12 @@ object SosCloudReporter {
      * network appears. Only signals that were actually reported as active get resolved, so a
      * fully-offline SOS session never writes a phantom "resolved" marker.
      */
+    fun pause() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        _state.value = State.Idle
+    }
+
     fun onSosStopped(context: Context) {
         val appContext = context.applicationContext
         heartbeatJob?.cancel()
@@ -201,14 +213,22 @@ object SosCloudReporter {
         batteryPercent: Int?,
         signalIdOverride: String? = null
     ): Boolean {
+        val onSatellite = SatelliteNetworkStatus.isSatellite(context)
         if (status == STATUS_ACTIVE && location == null) {
             Log.w(TAG, "Skipping SOS cloud report: no usable location fix yet")
+            if (onSatellite) {
+                Analytics.satelliteSosReport(status, "skipped", "location_unavailable")
+            }
             return false
         }
         val uid = ensureSignedInUid() ?: run {
             Log.w(TAG, "Skipping SOS cloud report: no Firebase identity available")
+            if (onSatellite) {
+                Analytics.satelliteSosReport(status, "skipped", "identity_unavailable")
+            }
             return false
         }
+        if (onSatellite) Analytics.satelliteSosReport(status, "attempted")
         val signalId = signalIdOverride ?: LocalKeyStorage.getOrCreateRescueDeviceId(context)
         val payload = buildMap<String, Any> {
             put("signalId", signalId)
@@ -235,19 +255,29 @@ object SosCloudReporter {
         if (status == STATUS_ACTIVE) {
             prefs(context).edit().putBoolean(KEY_HAS_REPORTED_ACTIVE, true).apply()
         }
-        return withTimeoutOrNull(CALL_TIMEOUT_MS) {
+        val result = withTimeoutOrNull(CALL_TIMEOUT_MS) {
             runCatching {
                 FirebaseFunctions.getInstance(FUNCTIONS_REGION)
                     .getHttpsCallable(CALLABLE_NAME)
                     .call(payload)
                     .await()
                 Analytics.sosCloudReported(status)
+                if (onSatellite) Analytics.satelliteSosReport(status, "accepted_by_backend")
                 Log.d(TAG, "SOS cloud report ok status=$status uid=${uid.takeLast(6)}")
                 true
             }.onFailure { throwable ->
                 Log.w(TAG, "SOS cloud report failed status=$status", throwable)
+                if (onSatellite) {
+                    Analytics.satelliteSosReport(status, "failed", "callable_failure")
+                    SatelliteCrashReporter.recordFailure("sos_report", "callable_failure", throwable)
+                }
             }.getOrDefault(false)
-        } ?: false
+        }
+        if (result == null && onSatellite) {
+            Analytics.satelliteSosReport(status, "failed", "timeout")
+            SatelliteCrashReporter.recordFailure("sos_report", "timeout")
+        }
+        return result ?: false
     }
 
     /** Restores the persisted Firebase session or signs in anonymously, time-bounded. */
@@ -356,7 +386,8 @@ object SosCloudReporter {
             ?: return false
         val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) ||
+                SatelliteNetworkStatus.isConstrained(this))
     }
 
     private const val STATUS_ACTIVE = "active"

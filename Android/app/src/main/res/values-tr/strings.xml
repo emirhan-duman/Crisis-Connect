@@ -591,7 +591,7 @@
     <string name="qr_scan_status_saved">Kişi kaydedildi</string>
     <string name="qr_scan_status_already_registered">Kişi zaten kayıtlı</string>
     <string name="qr_scan_status_title_searching">Cihaz aranıyor</string>
-    <string name="qr_scan_status_title_pairing">Eşleştiriliyor</string>
+    <string name="qr_scan_status_title_pairing">Güvenli eşleştirme</string>
     <string name="qr_scan_status_title_saving">Kişi kaydediliyor</string>
     <string name="qr_scan_status_title_saved">Kişi hazır</string>
     <string name="qr_scan_status_title_already_registered">Kişi zaten kayıtlı</string>
@@ -602,10 +602,10 @@
     <string name="qr_scan_status_badge_already_registered">Kayıt bulundu</string>
     <string name="qr_scan_status_badge_error">İşlem gerekli</string>
     <string name="qr_scan_status_detail_scanned">Kod başarıyla okundu. Devam etmek için kişi adını gir.</string>
-    <string name="qr_scan_status_detail_searching">Tarama doğrulandı. Yakındaki Bluetooth oturumları şimdi kontrol ediliyor.</string>
-    <string name="qr_scan_status_detail_pairing">Diğer cihaz yanıt verdi. Güvenilir Bluetooth bağlantısı kuruluyor.</string>
-    <string name="qr_scan_status_detail_saving">Bağlantı tamamlandı. Kişi kartı güvenli şekilde kaydediliyor.</string>
-    <string name="qr_scan_status_detail_saved">Kişi artık rehberde. Hemen sohbet başlatabilirsin.</string>
+    <string name="qr_scan_status_detail_searching">Diğer cihazı yakında tutun ve QR ekranını açık bırakın.</string>
+    <string name="qr_scan_status_detail_pairing">Güvenli bağlantı kurmak için diğer cihaz doğrulanıyor.</string>
+    <string name="qr_scan_status_detail_saving">Kişi ekleniyor ve sohbetiniz hazırlanıyor.</string>
+    <string name="qr_scan_status_detail_saved">Kişi kaydedildi. Sohbetiniz açılıyor…</string>
     <string name="qr_scan_status_detail_already_registered">Bu kişi zaten kayıtlı olduğu için ikinci bir kayıt oluşturulmadı.</string>
     <string name="qr_scan_status_detail_error">QR okundu ancak sonraki adım tamamlanamadı.</string>
     <string name="qr_scan_status_hint_hold_steady">İşlem bitene kadar telefonu sabit tut.</string>
@@ -642,7 +642,7 @@
     <string name="add_from_contacts_empty">Rehberinde henüz Crisis Connect kullanan yok.</string>
     <string name="add_from_contacts_permission_needed">Tanıdıklarını bulmak için rehber erişim izni gerekli.</string>
     <string name="add_from_contacts_sign_in_required">Rehberdeki kişileri bulmak için giriş yap.</string>
-    <string name="add_from_contacts_privacy_note">Numaraların hash ile eşleştirilir, sunucuda asla saklanmaz. Yalnızca keşfedilebilir olmayı seçenler görünür.</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect, uygulamayı kullanan kişileri bulmak için rehberindeki adları ve telefon numaralarını okur. Telefon numaralarını eşleştirme amacıyla Google Firebase tarafından ABD’de barındırılan Crisis Connect sunucularına gönderir. Rehberdeki adlar cihazında kalır. Sorgulanan numaralar kalıcı olarak saklanmadan işlenir; eşleşmeler cihazında tutulur. Bu ekran açıkken yenileme veya ekrana geri dönme numaraların tekrar gönderilmesine yol açabilir. Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.</string>
     <string name="add_from_contacts_found_count">%1$d kişi Crisis Connect\'te</string>
     <string name="add_from_contacts_empty_hint">Uygulamada telefon numaralarını doğruladıklarında burada görünecekler.</string>
     <string name="add_from_contacts_error_title">Kişiler yüklenemedi</string>
@@ -1232,6 +1232,7 @@
     <string name="chat_status_connected">Bağlandı</string>
     <string name="chat_status_connected_bluetooth">Bluetooth ile bağlı</string>
     <string name="chat_status_connected_internet">İnternet ile bağlı</string>
+    <string name="chat_status_connected_satellite">Uydu üzerinden bağlı</string>
     <string name="internet_message_channel_name">İnternet mesajları</string>
     <string name="internet_message_notification_title">Yeni mesaj</string>
     <string name="channel_message_notification_body">Yeni mesaj</string>
@@ -2021,4 +2022,47 @@
     <string name="dossier_file_unreadable">Seçilen dosya güvenli biçimde okunamadı.</string>
     <string name="dossier_error_title">Güvenli dosya</string>
     <string name="dossier_error_generic">Güvenli dosya işlemi tamamlanamadı.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">Rehberindeki kişileri internette bul</string>
+    <string name="contacts_disclosure_body">Crisis Connect, uygulamayı kullanan kişileri bulmak için rehberindeki adları ve telefon numaralarını okur. Telefon numaralarını eşleştirme amacıyla Google Firebase tarafından ABD’de barındırılan Crisis Connect sunucularına gönderir. Rehberdeki adlar cihazında kalır. Sorgulanan numaralar kalıcı olarak saklanmadan işlenir; eşleşmeler cihazında tutulur. Bu ekran açıkken yenileme veya ekrana geri dönme numaraların tekrar gönderilmesine yol açabilir. Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.</string>
+    <string name="contacts_local_disclosure_title">Yakındaki rehber kişilerini bul</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect, yakınında arayacağın kişi için yalnızca sistem kişi seçicisinden paylaştığın adı ve telefon numarasını okur. Seçilen numara Bluetooth üzerinden kimlik doğrulamada kullanılır. Bu özellik rehberini sunucuya göndermez. Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.</string>
+    <string name="contacts_disclosure_accept">Kabul ediyorum</string>
+    <string name="contacts_disclosure_decline">Şimdi değil</string>
+    <string name="contacts_consent_settings_title">Rehber erişimi</string>
+    <string name="contacts_consent_settings_hint">Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.</string>
+    <string name="contacts_consent_revoke_online">İnternet eşleştirme onayını kaldır</string>
+    <string name="contacts_consent_revoke_nearby">Yakındaki kişiler onayını kaldır</string>
+    <string name="nearby_choose_contact">Kişi seç</string>
+    <string name="nearby_contact_selection_failed">Seçilen telefon numarası okunamadı. Lütfen başka bir kişi seç.</string>
+
+    <!-- Mobile UI: task-based grouping and connection hierarchy. -->
+    <string name="tools_section_quick">Hızlı erişim</string>
+    <string name="tools_section_guidance">Rehberlik ve koordinasyon</string>
+    <string name="tools_section_navigate">Yön bulma</string>
+    <string name="tools_section_detect">Algılama</string>
+    <string name="tools_section_awareness">Çevrede olup bitenler</string>
+    <string name="tools_section_other">Diğer araçlar</string>
+    <string name="new_chat_nearby_title">Yakındaki kişiye bağlan</string>
+    <string name="new_chat_nearby_description">Sohbet başlatmak için karşı tarafın QR kodunu tara.</string>
+    <string name="new_chat_other_ways">Diğer bağlantı yolları</string>
+    <string name="new_chat_share_qr_description">Bağlanmak için QR kodunu karşı tarafa göster.</string>
+    <string name="new_chat_qr_preparing">QR hazırlanıyor…</string>
+    <string name="new_chat_qr_ready">Taramaya hazır</string>
+    <string name="qr_scan_step_search">Ara</string>
+    <string name="qr_scan_step_pair">Eşleştir</string>
+    <string name="qr_scan_step_save">Kaydet</string>
+    <string name="qr_scan_step_done">Tamamlandı</string>
+    <string name="qr_scan_step_active">Devam ediyor</string>
+    <string name="qr_scan_step_waiting">Bekliyor</string>
+    <string name="qr_pairing_notification_title">Kişiye bağlanılıyor</string>
+    <string name="qr_pairing_notification_message">Bu ekrandan ayrılsanız da eşleşme devam eder.</string>
+    <string name="authority_session">Sohbet</string>
+    <string name="authority_resilient_session">Dayanıklı</string>
+    <string name="authority_compatibility_session">Eski sürüm uyumu</string>
+    <string name="authority_resilient_notice">Güncel uygulamalar için ayrı sohbet. Mesajlar yalnız bu oturuma katılan doğrulanmış cihazlara ulaşır; eski uygulamalar uyum sohbetini kullanır.</string>
+    <string name="authority_compatibility_notice">Eski uygulamalarla ayrı sohbet. İlk bölgenin bağlantısı gerekir; dayanıklı oturumun mesajları buraya aktarılmaz.</string>
+    <string name="chat_status_internet_available">İnternet kullanılabilir</string>
+    <string name="chat_status_satellite_available">Uydu bağlantısı kullanılabilir</string>
 </resources>

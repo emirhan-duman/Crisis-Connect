@@ -91,7 +91,7 @@ class RecentDisastersViewModel(application: Application) : AndroidViewModel(appl
                     isLoading = false,
                     isRefreshing = false,
                     isStale = result.isStale,
-                    error = if (result.events.isEmpty()) (result.error ?: DisasterErrorType.NO_DATA) else null,
+                    error = if (result.error == DisasterErrorType.DEFERRED) result.error else if (result.events.isEmpty()) (result.error ?: DisasterErrorType.NO_DATA) else null,
                     lastUpdatedMillis = result.lastUpdatedMillis,
                     hasAnyEvents = result.events.isNotEmpty(),
                     primarySource = result.primarySource

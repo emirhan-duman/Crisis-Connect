@@ -632,7 +632,7 @@ Android: %3$s</string>
     <string name="add_from_contacts_empty">آپ کے رابطوں میں سے ابھی تک کوئی Crisis Connect پر نہیں ہے۔</string>
     <string name="add_from_contacts_permission_needed">آپ جن لوگوں کو جانتے ہیں انہیں تلاش کرنے کے لیے رابطوں کی اجازت درکار ہے۔</string>
     <string name="add_from_contacts_sign_in_required">Crisis Connect پر رابطے تلاش کرنے کے لیے سائن ان کریں۔</string>
-    <string name="add_from_contacts_privacy_note">آپ کے نمبر ہیش کے ذریعے ملائے جاتے ہیں اور کبھی سرور پر محفوظ نہیں ہوتے۔ صرف وہی لوگ نظر آتے ہیں جنہوں نے قابل دریافت ہونے کا انتخاب کیا۔</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect ایپ استعمال کرنے والوں کو تلاش کرنے کے لیے آپ کے رابطوں کے نام اور فون نمبر پڑھتا ہے۔ نمبروں کو ملانے کے لیے امریکہ میں Google Firebase پر موجود Crisis Connect سرورز کو بھیجتا ہے۔ نام آپ کے آلے پر رہتے ہیں۔ تلاش کیے گئے نمبروں پر مستقل ذخیرے کے بغیر کارروائی ہوتی ہے؛ ملنے والے نتائج آلے پر رہتے ہیں۔ یہ اسکرین کھلی ہونے کے دوران ریفریش کرنے یا واپس آنے سے نمبر دوبارہ بھیجے جا سکتے ہیں۔ آپ کی پسند اس آلے پر اس اکاؤنٹ کے لیے محفوظ رہتی ہے۔ آپ ترتیبات میں رابطوں تک رسائی کے تحت رضامندی واپس لے سکتے ہیں۔</string>
     <string name="add_from_contacts_found_count">%1$d Crisis Connect پر</string>
     <string name="add_from_contacts_empty_hint">جب وہ ایپ میں اپنا فون نمبر تصدیق کریں گے تو یہاں نظر آئیں گے۔</string>
     <string name="add_from_contacts_search_hint">نام یا نمبر تلاش کریں</string>
@@ -1215,6 +1215,7 @@ Android: %3$s</string>
     <string name="chat_status_connected">جڑ گیا</string>
     <string name="chat_status_connected_bluetooth">بلوٹوتھ کے ذریعے جڑا</string>
     <string name="chat_status_connected_internet">انٹرنیٹ کے ذریعے جڑا</string>
+    <string name="chat_status_connected_satellite">سیٹلائٹ کے ذریعے جڑا</string>
     <string name="internet_message_channel_name">انٹرنیٹ پیغامات</string>
     <string name="internet_message_notification_title">نیا پیغام</string>
     <string name="channel_message_notification_body">نیا پیغام</string>
@@ -1790,4 +1791,20 @@ Android: %3$s</string>
     <string name="profile_delete_account_error_verification">اس ڈیوائس پر حذف کی تصدیق نہیں ہو سکی۔ اپنا کنیکشن دیکھ کر دوبارہ کوشش کریں۔</string>
     <string name="profile_delete_account_error_signed_out">اکاؤنٹ حذف کرنے کے لیے سائن ان ہونا لازمی ہے۔</string>
     <string name="profile_delete_account_reauth_needed">آپ کی حفاظت کے لیے حذف کرنے سے پہلے تصدیق ضروری ہے کہ یہ آپ ہی ہیں۔ سائن آؤٹ کر کے دوبارہ سائن ان کریں، پھر دوبارہ کوشش کریں۔</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">اپنے رابطے آن لائن تلاش کریں</string>
+    <string name="contacts_disclosure_body">Crisis Connect ایپ استعمال کرنے والوں کو تلاش کرنے کے لیے آپ کے رابطوں کے نام اور فون نمبر پڑھتا ہے۔ نمبروں کو ملانے کے لیے امریکہ میں Google Firebase پر موجود Crisis Connect سرورز کو بھیجتا ہے۔ نام آپ کے آلے پر رہتے ہیں۔ تلاش کیے گئے نمبروں پر مستقل ذخیرے کے بغیر کارروائی ہوتی ہے؛ ملنے والے نتائج آلے پر رہتے ہیں۔ یہ اسکرین کھلی ہونے کے دوران ریفریش کرنے یا واپس آنے سے نمبر دوبارہ بھیجے جا سکتے ہیں۔ آپ کی پسند اس آلے پر اس اکاؤنٹ کے لیے محفوظ رہتی ہے۔ آپ ترتیبات میں رابطوں تک رسائی کے تحت رضامندی واپس لے سکتے ہیں۔</string>
+    <string name="contacts_local_disclosure_title">قریبی رابطے تلاش کریں</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect قریب کسی کو تلاش کرنے کے لیے صرف وہ نام اور نمبر پڑھتا ہے جو آپ سسٹم کے رابطہ منتخب کرنے والے ٹول سے شیئر کرتے ہیں۔ منتخب نمبر Bluetooth کے ذریعے شناخت کی تصدیق کے لیے استعمال ہوتا ہے۔ یہ خصوصیت آپ کے رابطے سرور کو نہیں بھیجتی۔ آپ کی پسند اس آلے پر اس اکاؤنٹ کے لیے محفوظ رہتی ہے۔ آپ ترتیبات میں رابطوں تک رسائی کے تحت رضامندی واپس لے سکتے ہیں۔</string>
+    <string name="contacts_disclosure_accept">میں متفق ہوں</string>
+    <string name="contacts_disclosure_decline">ابھی نہیں</string>
+    <string name="contacts_consent_settings_title">رابطوں تک رسائی</string>
+    <string name="contacts_consent_settings_hint">آپ کی پسند اس آلے پر اس اکاؤنٹ کے لیے محفوظ رہتی ہے۔ آپ ترتیبات میں رابطوں تک رسائی کے تحت رضامندی واپس لے سکتے ہیں۔</string>
+    <string name="contacts_consent_revoke_online">آن لائن مماثلت کی رضامندی واپس لیں</string>
+    <string name="contacts_consent_revoke_nearby">قریبی رابطوں کی رضامندی واپس لیں</string>
+    <string name="nearby_choose_contact">رابطہ منتخب کریں</string>
+    <string name="nearby_contact_selection_failed">منتخب نمبر پڑھا نہیں جا سکا۔ کوئی دوسرا رابطہ منتخب کریں۔</string>
+    <string name="chat_status_internet_available">انٹرنیٹ دستیاب ہے</string>
+    <string name="chat_status_satellite_available">سیٹلائٹ کنکشن دستیاب ہے</string>
 </resources>

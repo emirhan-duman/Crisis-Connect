@@ -1,0 +1,24 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <application android:name=".watch.DevLinkApplication" tools:replace="android:name,android:networkSecurityConfig" android:networkSecurityConfig="@xml/watch_phone_test_network_security">
+        <provider android:name="com.google.firebase.provider.FirebaseInitProvider" android:authorities="${applicationId}.firebaseinitprovider" tools:node="remove" />
+        <provider android:name="androidx.startup.InitializationProvider" android:authorities="${applicationId}.androidx-startup" tools:node="remove" />
+        <meta-data android:name="firebase_analytics_collection_deactivated" android:value="true" />
+        <meta-data android:name="firebase_crashlytics_collection_enabled" android:value="false" />
+        <meta-data android:name="firebase_performance_collection_deactivated" android:value="true" />
+        <activity android:name=".MainActivity" tools:node="remove" />
+        <service android:name=".watch.PhoneWatchListenerService" tools:node="remove" />
+        <service android:name=".watch.DevLinkService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Emulator-only local watch development transport; no production traffic" />
+        </service>
+        <service android:name=".service.GattSOSServerService" android:foregroundServiceType="specialUse" tools:replace="android:foregroundServiceType">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Isolated emulator UI test; no BLE, contacts, or cloud effects" />
+        </service>
+        <activity android:name=".watch.ChatPreviewActivity" android:exported="true" android:theme="@android:style/Theme.Material.NoActionBar" />
+        <activity android:name=".watch.ContactPreviewActivity" android:exported="true" android:theme="@android:style/Theme.Material.NoActionBar" />
+        <activity android:name=".watch.RecoveryPreviewActivity" android:exported="true" android:theme="@android:style/Theme.Material.NoActionBar" />
+        <activity android:name=".watch.DevLinkActivity" android:exported="true" android:theme="@android:style/Theme.Material.NoActionBar">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity>
+    </application>
+</manifest>

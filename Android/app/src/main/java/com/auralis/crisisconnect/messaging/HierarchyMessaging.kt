@@ -125,21 +125,24 @@ object AuthorityNameResolver {
  */
 class HierarchyMessagingClient(
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+    private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
+    val compatibility: Boolean = false,
 ) {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     /** Lists the cross-panel channels this manager may use, each with the peer panel's roster. */
     suspend fun fetchChannels(): List<HierarchyChannel> = withContext(Dispatchers.IO) {
         val base = requireBaseUrl()
-        val token = idToken()
-        val url = base.newBuilder().addPathSegments(API_PATH).build()
-        val request = Request.Builder()
-            .url(url)
-            .header("Authorization", "Bearer $token")
-            .get()
-            .build()
-        val bodyText = execute(request) ?: return@withContext emptyList()
+        val bodyText = if (ResilientApplicationStore.ENABLED) {
+            val data = RegionalMessagingCalls().call("listResilientHierarchy", emptyMap()) as? Map<*, *>
+                ?: error("Malformed hierarchy response")
+            JSONObject(data).toString()
+        } else {
+            val token = idToken()
+            val request = Request.Builder().url(base.newBuilder().addPathSegments(API_PATH).build())
+                .header("Authorization", "Bearer $token").get().build()
+            execute(request) ?: return@withContext emptyList()
+        }
         val channels = JSONObject(bodyText).optJSONArray("channels") ?: return@withContext emptyList()
         buildList {
             for (i in 0 until channels.length()) {
@@ -238,18 +241,16 @@ class HierarchyMessagingClient(
     private fun channel(channelId: String) =
         firestore.collection("hierarchyChannels").document(channelId).collection("secureMessages")
 
-    private fun metadataRoot(channelId: String, scopeType: AuthorityMlsScopeType) =
-        if (scopeType == AuthorityMlsScopeType.AGENCY) {
-            firestore.collection("agencyPanels").document(channelId)
-        } else {
-            firestore.collection("hierarchyChannels").document(channelId)
-        }
+    private fun metadataRoot(channelId: String, scopeType: AuthorityMlsScopeType, peerUid: String): com.google.firebase.firestore.DocumentReference {
+        val db = if (!compatibility && ResilientApplicationStore.ENABLED) ResilientApplicationStore.profiles() else firestore
+        return db.collection(if (scopeType == AuthorityMlsScopeType.AGENCY) "agencyPanels" else "hierarchyChannels").document(channelId)
+    }
 
-    private fun readReceipts(channelId: String, scopeType: AuthorityMlsScopeType) =
-        metadataRoot(channelId, scopeType).collection("readReceipts")
+    private fun readReceipts(channelId: String, scopeType: AuthorityMlsScopeType, peerUid: String) =
+        metadataRoot(channelId, scopeType, peerUid).collection("readReceipts")
 
-    private fun typingCol(channelId: String, scopeType: AuthorityMlsScopeType) =
-        metadataRoot(channelId, scopeType).collection("typing")
+    private fun typingCol(channelId: String, scopeType: AuthorityMlsScopeType, peerUid: String) =
+        metadataRoot(channelId, scopeType, peerUid).collection("typing")
 
     // --- Read receipts (✓/✓✓) + typing, byte-compatible with the web (lib/messaging/receipts.ts,
     // typing.ts). Metadata only (uids + timestamps), so no encryption — a member only writes its own doc.
@@ -264,7 +265,7 @@ class HierarchyMessagingClient(
     ) {
         if (myUid.isBlank() || peerUid.isBlank() || atMillis <= 0L) return
         runCatching {
-            readReceipts(channelId, scopeType).document("${myUid}__${peerUid}").set(
+            readReceipts(channelId, scopeType, peerUid).document("${myUid}__${peerUid}").set(
                 hashMapOf(
                     "viewerUid" to myUid,
                     "partnerUid" to peerUid,
@@ -287,7 +288,7 @@ class HierarchyMessagingClient(
     ) {
         if (myUid.isBlank() || peerUid.isBlank() || atMillis <= 0L) return
         runCatching {
-            readReceipts(channelId, scopeType).document("${myUid}__${peerUid}").set(
+            readReceipts(channelId, scopeType, peerUid).document("${myUid}__${peerUid}").set(
                 hashMapOf(
                     "viewerUid" to myUid,
                     "partnerUid" to peerUid,
@@ -307,7 +308,7 @@ class HierarchyMessagingClient(
         onAt: (Long) -> Unit,
         scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
     ): ListenerRegistration =
-        readReceipts(channelId, scopeType).document("${peerUid}__${myUid}").addSnapshotListener { snap, _ ->
+        readReceipts(channelId, scopeType, peerUid).document("${peerUid}__${myUid}").addSnapshotListener { snap, _ ->
             onAt(
                 when (val at = snap?.get("at")) {
                     is Number -> at.toLong()
@@ -325,7 +326,7 @@ class HierarchyMessagingClient(
         onAt: (Long) -> Unit,
         scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
     ): ListenerRegistration =
-        readReceipts(channelId, scopeType).document("${peerUid}__${myUid}").addSnapshotListener { snap, _ ->
+        readReceipts(channelId, scopeType, peerUid).document("${peerUid}__${myUid}").addSnapshotListener { snap, _ ->
             onAt(
                 when (val at = snap?.get("deliveredAt")) {
                     is Number -> at.toLong()
@@ -345,7 +346,7 @@ class HierarchyMessagingClient(
     ) {
         if (myUid.isBlank() || peerUid.isBlank()) return
         runCatching {
-            typingCol(channelId, scopeType).document(myUid).set(
+            typingCol(channelId, scopeType, peerUid).document(myUid).set(
                 hashMapOf(
                     "uid" to myUid,
                     "to" to peerUid,
@@ -365,7 +366,7 @@ class HierarchyMessagingClient(
         onTyping: (Boolean) -> Unit,
         scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
     ): ListenerRegistration =
-        typingCol(channelId, scopeType).document(peerUid).addSnapshotListener { snap, _ ->
+        typingCol(channelId, scopeType, peerUid).document(peerUid).addSnapshotListener { snap, _ ->
             onTyping(snap?.getBoolean("typing") == true && snap.getString("to").orEmpty() == myUid)
         }
 

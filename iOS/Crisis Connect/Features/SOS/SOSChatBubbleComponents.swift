@@ -233,7 +233,12 @@ struct SOSChatBubble: View, Equatable {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         } else if message.isLocal {
-            if message.status == .read {
+            if let result = message.watchReplyResult, ![.delivered, .read].contains(message.status) {
+                let tr = Locale.current.language.languageCode?.identifier == "tr"
+                Text(result == "accepted" ? (tr ? "Saat · Bağlantıya verildi; teslim doğrulanmadı" : "Watch · Handed to connection; delivery unconfirmed") : result == "noPeer" ? (tr ? "Saat · Gönderilemedi" : "Watch · Could not send") : (tr ? "Saat · Doğrulanmadı; otomatik tekrar gönderilmez" : "Watch · Not confirmed; no automatic resend"))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("watchReplyStatus_" + result)
+            } else if message.status == .read {
                 HStack(spacing: 4) {
                     Text(timeLabel)
                     Text("·")
