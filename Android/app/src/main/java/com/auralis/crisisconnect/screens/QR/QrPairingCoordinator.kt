@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.screens.QR
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -104,6 +105,7 @@ internal class QrPairingCoordinator private constructor(context: Context) {
     fun failLease(code: com.auralis.crisisconnect.data.DeviceError) = operation.failLease(code)
 
     companion object {
+        @SuppressLint("StaticFieldLeak") // QrPairingCoordinator retains only applicationContext.
         @Volatile private var instance: QrPairingCoordinator? = null
         fun get(context: Context): QrPairingCoordinator = instance ?: synchronized(this) {
             instance ?: QrPairingCoordinator(context).also { instance = it }

@@ -3,6 +3,7 @@ package com.auralis.crisisconnect.analytics
 import kotlinx.coroutines.launch
 import android.annotation.SuppressLint
 import android.content.Context
+import com.auralis.crisisconnect.connectivity.DisasterTrafficController
 import android.os.Bundle
 import com.google.firebase.analytics.FirebaseAnalytics
 
@@ -24,10 +25,9 @@ object Analytics {
         runCatching {
             instance = FirebaseAnalytics.getInstance(context.applicationContext)
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
-                com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.collect { saving ->
-                    // Preserve the app's existing collection policy; pause SDK uploads during conservation.
-                    instance?.setAnalyticsCollectionEnabled(!saving)
-                    com.google.firebase.crashlytics.FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(!saving)
+                DisasterTrafficController.saving.collect {
+                    // Traffic recovery must never grant telemetry consent or enable automatic crash uploads.
+                    TelemetryConsent.refreshTrafficPolicy()
                 }
             }
         }
@@ -35,7 +35,7 @@ object Analytics {
 
     fun setCollectionEnabled(enabled: Boolean) {
         runCatching {
-            instance?.setAnalyticsCollectionEnabled(enabled)
+            instance?.setAnalyticsCollectionEnabled(enabled && !DisasterTrafficController.saving.value)
             if (!enabled) instance?.resetAnalyticsData()
         }
     }
@@ -134,7 +134,7 @@ object Analytics {
     }
 
     private inline fun log(event: String, crossinline params: Bundle.() -> Unit = {}) {
-        if (!com.auralis.crisisconnect.connectivity.DisasterTrafficController.permits(com.auralis.crisisconnect.connectivity.NetworkWork.TELEMETRY)) return
+        if (!TelemetryConsent.isCollectionAllowed()) return
         val analytics = instance ?: return
         runCatching {
             analytics.logEvent(event, Bundle().apply(params))

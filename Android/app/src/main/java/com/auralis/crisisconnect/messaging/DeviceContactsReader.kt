@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.messaging
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -24,6 +25,8 @@ data class DeviceContact(
  */
 object DeviceContactsReader {
 
+    // Only inlined intent strings are read; the SDK argument defaults to the running OS.
+    @SuppressLint("InlinedApi")
     fun phonePickerIntent(sdk: Int = Build.VERSION.SDK_INT): Intent =
         if (sdk >= 37) {
             Intent(ContactsPickerSessionContract.ACTION_PICK_CONTACTS).apply {

@@ -26,6 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Contact consent, QR pairing and onboarding recovery across mobile platforms
 - SOS recovery and connection-state handling across reconnects and background transitions
 - Backend property-test reference updated to the v10 conversation identifier already asserted by Android and iOS
+- Telemetry consent remains revoked after traffic conservation/recovery, including satellite error reporting
+- Watch SOS notification compatibility on Android 7.x and Wear capability retention during resource shrinking
+- Independent-watch phone setup and approval strings localized in English and Turkish
 
 ### Distribution
 

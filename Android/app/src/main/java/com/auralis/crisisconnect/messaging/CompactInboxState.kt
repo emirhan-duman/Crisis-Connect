@@ -1,8 +1,11 @@
 package com.auralis.crisisconnect.messaging
 
+import android.annotation.SuppressLint
 import android.content.Context
 
 /** Recipient acknowledgements survive process death and are isolated by Firebase account. */
+// Every retained context is normalized to applicationContext.
+@SuppressLint("StaticFieldLeak")
 internal object CompactInboxState {
     private var context: Context? = null
     @Synchronized fun start(context: Context) {

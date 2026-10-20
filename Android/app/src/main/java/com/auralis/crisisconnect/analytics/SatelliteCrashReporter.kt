@@ -10,6 +10,7 @@ object SatelliteCrashReporter {
     private val lastReportAt = ConcurrentHashMap<String, Long>()
 
     fun recordFailure(feature: String, failureCategory: String, cause: Throwable? = null) {
+        if (!TelemetryConsent.isCollectionAllowed()) return
         val safeFeature = feature.take(24)
         val safeCategory = failureCategory.take(32)
         val throttleKey = "$safeFeature:$safeCategory"

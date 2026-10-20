@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.connectivity
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.TrafficStats
 import android.os.Process
@@ -8,6 +9,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Local-only counters. UID bytes include network-layer traffic, but NOT Play Services' push socket. */
+// Every retained context is normalized to applicationContext.
+@SuppressLint("StaticFieldLeak")
 object TrafficMeasurements {
     private var context: Context? = null
     private var mode = "normal"

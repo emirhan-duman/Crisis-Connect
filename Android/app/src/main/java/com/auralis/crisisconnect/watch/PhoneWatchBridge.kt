@@ -229,7 +229,9 @@ object PhoneWatchBridge {
         }
         val manager = context.getSystemService(NotificationManager::class.java)
         if (!manager.areNotificationsEnabled()) return "openPhone"
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.watch_sos_channel), NotificationManager.IMPORTANCE_HIGH))
+        if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.watch_sos_channel), NotificationManager.IMPORTANCE_HIGH))
+        }
         // Only this private Activity receives the confirmed, expiring watch command.
         val intent = Intent(context, WatchSosApprovalActivity::class.java).putExtra("command", command.encode())
         val pending = PendingIntent.getActivity(context, 7304, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

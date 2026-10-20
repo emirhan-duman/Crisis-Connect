@@ -1,1 +1,6 @@
-<resources><string-array name="android_wear_capabilities"><item>crisis_connect_phone_v1</item></string-array></resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Reserved Data Layer discovery name and protocol token, consumed by Play Services. -->
+    <string-array name="android_wear_capabilities" translatable="false" tools:ignore="UnusedResources,Typos">
+        <item>crisis_connect_phone_v1</item>
+    </string-array>
+</resources>

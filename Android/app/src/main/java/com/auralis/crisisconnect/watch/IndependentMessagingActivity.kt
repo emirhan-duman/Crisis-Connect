@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.os.Bundle
 import android.widget.*
+import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.*
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.*
@@ -12,40 +13,74 @@ import java.security.MessageDigest
 
 /** Explicit account and saved-contact consent. Device fingerprints are never accepted silently. */
 class IndependentMessagingActivity : Activity() {
-    private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var content: LinearLayout
     private lateinit var notice: TextView
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        content=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(32,32,32,32) }
+        content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
         setContentView(ScrollView(this).apply { addView(content) })
-        content.addView(TextView(this).apply { text="Bağımsız saat mesajları";textSize=22f })
-        notice=TextView(this);content.addView(notice)
-        val user=FirebaseAuth.getInstance().currentUser
-        if(user==null || user.isAnonymous){notice.text="Devam etmek için hesabına giriş yap.";return}
-        val inbox=IndependentPhoneInbox(applicationContext,user.uid)
-        notice.text="Saatten gelen şifreli mesajlar normal sohbetlerinde görünür. Gönderen cihazı ve kişiyi burada onayla."
-        button("Bu telefonda mesaj almayı aç") { inbox.enable();notice.text="Telefon alıcısı hazır. Kişinin cihazını seçip onayla." }
-        button("Bağlı saatimi bu hesapla yetkilendir") { inbox.pairWatch();notice.text="Saat yetkilendirildi. Kişi cihazlarını onaylayabilirsin." }
-        button("Mesajları kontrol et") { inbox.refresh();notice.text="Kayıtlı mesajlar ve teslim durumları güncellendi." }
-        button("Bu telefonun yetkisini kaldır") { inbox.disable();notice.text="Alıcı yetkisi kaldırıldı; sohbet geçmişi korundu." }
+        content.addView(TextView(this).apply { setText(R.string.watch_independent_title); textSize = 22f })
+        notice = TextView(this)
+        content.addView(notice)
+        val user = FirebaseAuth.getInstance().currentUser
+        if (user == null || user.isAnonymous) {
+            notice.setText(R.string.watch_independent_sign_in)
+            return
+        }
+        val inbox = IndependentPhoneInbox(applicationContext, user.uid)
+        notice.setText(R.string.watch_independent_explanation)
+        button(getString(R.string.watch_independent_enable_phone)) {
+            inbox.enable(); notice.setText(R.string.watch_independent_phone_ready)
+        }
+        button(getString(R.string.watch_independent_authorize_watch)) {
+            inbox.pairWatch(); notice.setText(R.string.watch_independent_watch_ready)
+        }
+        button(getString(R.string.watch_independent_refresh)) {
+            inbox.refresh(); notice.setText(R.string.watch_independent_refreshed)
+        }
+        button(getString(R.string.watch_independent_disable_phone)) {
+            inbox.disable(); notice.setText(R.string.watch_independent_phone_disabled)
+        }
         scope.launch {
-            val contacts=withContext(Dispatchers.IO){observeContacts(applicationContext).first()}.filter(WatchContactMessaging::eligible)
-            for(contact in contacts) button(contact.name) {
-                require(inbox.isEnabled()) { "Önce bu telefonda mesaj almayı aç." }
-                val devices=inbox.devices(contact)
-                if(devices.isEmpty())notice.text="Bu kişi henüz bağımsız mesajlaşmayı açmamış."
-                for(device in devices) {
-                    val identity=device.getJSONObject("bundle").getString("identityKey")
-                    val fingerprint=MessageDigest.getInstance("SHA-256").digest(android.util.Base64.decode(identity,android.util.Base64.NO_WRAP)).joinToString(""){"%02x".format(it)}.chunked(8).joinToString(" ")
-                    AlertDialog.Builder(this@IndependentMessagingActivity).setTitle("${contact.name} · ${device.optString("kind","watch")}")
-                        .setMessage("Bu cihazdan mesaj almaya izin verilsin mi?\n\nCihaz doğrulama kodu:\n$fingerprint\n\nKarşı tarafta da onay gereklidir.")
-                        .setNegativeButton("İptal",null).setNeutralButton("Yetkiyi kaldır") { _,_->launchAction { inbox.revokeContact(device);notice.text="Cihazın kişi onayı kaldırıldı." } }.setPositiveButton("Cihazı onayla") { _,_->launchAction { inbox.approve(contact,device);notice.text="Cihaz onaylandı." } }.show()
+            val contacts = withContext(Dispatchers.IO) { observeContacts(applicationContext).first() }
+                .filter(WatchContactMessaging::eligible)
+            for (contact in contacts) button(contact.name) {
+                require(inbox.isEnabled()) { getString(R.string.watch_independent_enable_first) }
+                val devices = inbox.devices(contact)
+                if (devices.isEmpty()) notice.setText(R.string.watch_independent_contact_unavailable)
+                for (device in devices) {
+                    val identity = device.getJSONObject("bundle").getString("identityKey")
+                    val fingerprint = MessageDigest.getInstance("SHA-256")
+                        .digest(android.util.Base64.decode(identity, android.util.Base64.NO_WRAP))
+                        .joinToString("") { "%02x".format(it) }.chunked(8).joinToString(" ")
+                    AlertDialog.Builder(this@IndependentMessagingActivity)
+                        .setTitle(getString(R.string.watch_independent_device_title, contact.name, device.optString("kind", "watch")))
+                        .setMessage(getString(R.string.watch_independent_device_consent, fingerprint))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setNeutralButton(R.string.watch_independent_revoke_device) { _, _ ->
+                            launchAction { inbox.revokeContact(device); notice.setText(R.string.watch_independent_device_revoked) }
+                        }
+                        .setPositiveButton(R.string.watch_independent_approve_device) { _, _ ->
+                            launchAction { inbox.approve(contact, device); notice.setText(R.string.watch_independent_device_approved) }
+                        }.show()
                 }
             }
         }
     }
-    private fun button(title:String,action:suspend()->Unit){content.addView(Button(this).apply{text=title;setOnClickListener{launchAction(action)}})}
-    private fun launchAction(action:suspend()->Unit){scope.launch{try{action()}catch(e:Exception){notice.text=e.message?:"İşlem tamamlanamadı; tekrar gönderim yapılmadı."}}}
-    override fun onDestroy(){scope.cancel();super.onDestroy()}
+
+    private fun button(title: String, action: suspend () -> Unit) {
+        content.addView(Button(this).apply { text = title; setOnClickListener { launchAction(action) } })
+    }
+
+    private fun launchAction(action: suspend () -> Unit) {
+        scope.launch {
+            try { action() } catch (e: Exception) {
+                notice.text = e.message ?: getString(R.string.watch_independent_action_failed)
+            }
+        }
+    }
+
+    override fun onDestroy() { scope.cancel(); super.onDestroy() }
 }

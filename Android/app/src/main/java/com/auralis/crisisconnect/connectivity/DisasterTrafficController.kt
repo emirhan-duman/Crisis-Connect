@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.connectivity
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
@@ -15,6 +16,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.random.Random
 
 /** App-wide pacing; observes real traffic and OS capabilities, never runs speed-test probes. */
+// Every retained context is normalized to applicationContext.
+@SuppressLint("StaticFieldLeak")
 object DisasterTrafficController {
     private val policy = DisasterTrafficPolicy()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -35,19 +38,20 @@ object DisasterTrafficController {
         private set
 
     @Synchronized fun start(context: Context) {
+        val appContext = context.applicationContext
         if (this.context != null) return
-        this.context = context.applicationContext
-        TrafficMeasurements.start(context)
-        val prefs = context.getSharedPreferences("disaster_traffic", Context.MODE_PRIVATE)
+        this.context = appContext
+        TrafficMeasurements.start(appContext)
+        val prefs = appContext.getSharedPreferences("disaster_traffic", Context.MODE_PRIVATE)
         policy.emergencyUntil = SystemClock.elapsedRealtime() +
             (prefs.getLong("emergencyUntil", 0) - System.currentTimeMillis()).coerceIn(0, 1_800_000)
-        val manager = context.getSystemService(ConnectivityManager::class.java)
+        val manager = appContext.getSystemService(ConnectivityManager::class.java)
         fun refresh() {
             val caps = manager?.activeNetwork?.let { manager.getNetworkCapabilities(it) }
             synchronized(this) {
                 val cellular = caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
                 online = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-                val restricted = SatelliteNetworkStatus.isConstrained(context) ||
+                val restricted = SatelliteNetworkStatus.isConstrained(appContext) ||
                     (cellular && manager?.restrictBackgroundStatus == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED)
                 policy.updateNetwork(restricted, cellular, SystemClock.elapsedRealtime())
                 publish()
@@ -59,7 +63,7 @@ object DisasterTrafficController {
             override fun onLost(network: Network) = refresh()
         }.also { manager?.registerDefaultNetworkCallback(it) }
         refresh()
-        androidx.core.content.ContextCompat.registerReceiver(context.applicationContext,
+        androidx.core.content.ContextCompat.registerReceiver(appContext,
             object : android.content.BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: android.content.Intent?) = refresh()
             }, android.content.IntentFilter(ConnectivityManager.ACTION_RESTRICT_BACKGROUND_CHANGED),

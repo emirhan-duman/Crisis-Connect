@@ -150,6 +150,7 @@ class RescueFeatureManager(
                     onStateChanged(InstallState.NotInstalling)
                     onInstalled()
                 }
+                SplitInstallSessionStatus.UNKNOWN,
                 SplitInstallSessionStatus.CANCELED,
                 SplitInstallSessionStatus.FAILED -> {
                     confirmationSessions.remove(state.sessionId())

@@ -1,0 +1,22 @@
+<resources>
+    <string name="watch_independent_title">Bağımsız saat mesajları</string>
+    <string name="watch_independent_sign_in">Devam etmek için hesabına giriş yap.</string>
+    <string name="watch_independent_explanation">Saatten gelen şifreli mesajlar normal sohbetlerinde görünür. Gönderen cihazı ve kişiyi burada onayla.</string>
+    <string name="watch_independent_enable_phone">Bu telefonda mesaj almayı aç</string>
+    <string name="watch_independent_phone_ready">Telefon alıcısı hazır. Kişinin cihazını seçip onayla.</string>
+    <string name="watch_independent_authorize_watch">Bağlı saatimi bu hesapla yetkilendir</string>
+    <string name="watch_independent_watch_ready">Saat yetkilendirildi. Kişi cihazlarını onaylayabilirsin.</string>
+    <string name="watch_independent_refresh">Mesajları kontrol et</string>
+    <string name="watch_independent_refreshed">Kayıtlı mesajlar ve teslim durumları güncellendi.</string>
+    <string name="watch_independent_disable_phone">Bu telefonun yetkisini kaldır</string>
+    <string name="watch_independent_phone_disabled">Alıcı yetkisi kaldırıldı; sohbet geçmişi korundu.</string>
+    <string name="watch_independent_enable_first">Önce bu telefonda mesaj almayı aç.</string>
+    <string name="watch_independent_contact_unavailable">Bu kişi henüz bağımsız mesajlaşmayı açmamış.</string>
+    <string name="watch_independent_device_title">%1$s · %2$s</string>
+    <string name="watch_independent_device_consent">Bu cihazdan mesaj almaya izin verilsin mi?\n\nCihaz doğrulama kodu:\n%1$s\n\nKarşı tarafta da onay gereklidir.</string>
+    <string name="watch_independent_revoke_device">Yetkiyi kaldır</string>
+    <string name="watch_independent_device_revoked">Cihazın kişi onayı kaldırıldı.</string>
+    <string name="watch_independent_approve_device">Cihazı onayla</string>
+    <string name="watch_independent_device_approved">Cihaz onaylandı.</string>
+    <string name="watch_independent_action_failed">İşlem tamamlanamadı; tekrar gönderim yapılmadı.</string>
+</resources>
