@@ -34,7 +34,7 @@ object SatelliteNetworkStatus {
 
     private fun NetworkCapabilities.isSatelliteTransport(): Boolean {
         if (Build.VERSION.SDK_INT >= 35) return hasTransport(NetworkCapabilities.TRANSPORT_SATELLITE)
-        if (Build.VERSION.SDK_INT >= 34 && SdkExtensions.getExtensionVersion(34) >= 12) {
+        if (Build.VERSION.SDK_INT >= 34 && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.UPSIDE_DOWN_CAKE) >= 12) {
             return hasTransport(NetworkCapabilities.TRANSPORT_SATELLITE)
         }
         return false
