@@ -1,4 +1,4 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Kriz Bağlantısı</string>
     <string name="Home">Ev</string>
@@ -6,7 +6,7 @@
     <string name="Guide">Afet Rehberi</string>
     <string name="welcome_title">Hoşgeldin</string>
     <string name="welcome_description">Bu uygulama afet anlarında iletişim sağlamak için tasarlanmıştır. Devam etmek için aşağıdaki şartları okuduğunuzu ve kabul ettiğinizi belirtmelisiniz.</string>
-    <string name="welcome_checkbox">Tümünü okudum, kabul ediyorum</string>
+    <string name="welcome_checkbox">Tümünü okudum, kabul ediyorum.</string>
     <string name="welcome_terms_link_label">Hizmet Şartları</string>
     <string name="welcome_privacy_link_label">Gizlilik Politikası</string>
     <string name="welcome_terms_url">https://crisisconnect.com.tr/terms</string>
@@ -102,7 +102,7 @@
         <item quantity="other">%1$d araç bulundu</item>
     </plurals>
     <string name="guide">Rehber</string>
-    <string name="select_language">Dil Seç</string>
+    <string name="select_language">Dil seç</string>
     <string name="language_description">Menüler ve etiketler için uygulama dilini seçin.</string>
     <string name="english">İngilizce</string>
     <string name="turkish">Türkçe</string>
@@ -257,7 +257,7 @@
     <string name="main_search_pull_ready">Aramayı açmak için bırak</string>
     <string name="main_search_section_chats">Sohbetler</string>
     <string name="main_search_section_messages">Mesajlar</string>
-    <string name="main_search_no_results_for">\&quot;%1$s\&quot; için sonuç bulunamadı</string>
+    <string name="main_search_no_results_for">\"%1$s\" için sonuç bulunamadı</string>
     <string name="new_chat_title">Yeni Sohbet</string>
     <string name="rescue_screen_placeholder">Kurtarma araçları - yakında</string>
     <string name="rescue_screen_title">Kurtarma koordinasyonu</string>
@@ -1086,7 +1086,7 @@
     <string name="whistle_intensity_preset_max">Maksimum</string>
     <string name="whistle_alarm_volume_label">Alarm: %1$d/%2$d</string>
     <string name="whistle_alarm_volume_maxed">Alarm: maksimum</string>
-    <string name="whistle_boost_label">Boost: +%1$d dB</string>
+    <string name="whistle_boost_label">Güçlendirme: +%1$d dB</string>
     <string name="whistle_route_label">Çıkış: %1$s</string>
     <string name="whistle_route_builtin_speaker">Telefon hoparlörü</string>
     <string name="whistle_route_earpiece">Ahize</string>
@@ -1103,7 +1103,7 @@
     <string name="whistle_mode_continuous">Sürekli</string>
     <string name="whistle_mode_pulse">Vurmalı</string>
     <string name="whistle_mode_sos">SOS</string>
-    <string name="whistle_mode_sweep">Siren Sweep</string>
+    <string name="whistle_mode_sweep">Siren taraması</string>
     <string name="whistle_mode_rescue">Kurtarma</string>
     <string name="whistle_loudness_dialog_title">Dijital düdük sesi</string>
     <string name="whistle_loudness_dialog_body">Düdük çok yüksek olabilir. Devam edersen uygulama alarm sesini geçici olarak en yükseğe çekmeye çalışır. Telefonu kulak hizasından uzak tut.</string>
@@ -1300,8 +1300,8 @@
     <string name="chat_bluetooth_lost_simple">Bluetooth bağlantısı koptu — lütfen Bluetooth\'u açın.</string>
     <string name="chat_camera_permission_required">Fotoğraf çekmek için kamera izni gerekli.</string>
     <string name="chat_voice_permission_required">Sesli mesaj kaydetmek için mikrofon izni gerekli.</string>
-    <string name="chat_voice_recording_failed">Could not start recording audio. Try again.</string>
-    <string name="chat_voice_recording_stop_failed">Recording could not be completed. Please try again.</string>
+    <string name="chat_voice_recording_failed">Ses kaydı başlatılamadı. Tekrar deneyin.</string>
+    <string name="chat_voice_recording_stop_failed">Kayıt tamamlanamadı. Lütfen tekrar deneyin.</string>
     <string name="chat_voice_send_failed">Sesli mesaj gönderilemedi. Tekrar dene.</string>
     <string name="chat_voice_file_missing">Kaydedilen ses dosyasına erişilemiyor.</string>
     <string name="chat_voice_recording">Kaydediliyor…</string>
@@ -1330,17 +1330,17 @@
     <string name="chat_image_transfer_waiting">Onay bekleniyor…</string>
     <string name="chat_image_transfer_verifying">Görsel bütünlüğü doğrulanıyor…</string>
     <string name="chat_image_transfer_failed">Görsel aktarımı başarısız oldu.</string>
-    <string name="chat_image_transfer_sending">%1$d%% sent · %2$d chunks remaining</string>
-    <string name="chat_image_transfer_receiving">%1$d%% received · %2$d chunks remaining</string>
+    <string name="chat_image_transfer_sending">%%%1$d gönderildi · %2$d parça kaldı</string>
+    <string name="chat_image_transfer_receiving">%%%1$d alındı · %2$d parça kaldı</string>
     <string name="chat_image_file_missing">Seçilen görsele erişilemiyor.</string>
     <string name="chat_image_send_failed">Görsel gönderilemedi. Tekrar dene.</string>
     <string name="chat_image_viewer_more_options">Daha fazla görsel seçeneği</string>
     <string name="chat_image_viewer_zoom_in">Zoom in</string>
-    <string name="chat_image_viewer_zoom_out">Zoom out</string>
+    <string name="chat_image_viewer_zoom_out">Uzaklaştır</string>
     <string name="chat_image_viewer_reset_zoom">Reset zoom</string>
     <string name="chat_image_viewer_share">Paylaş</string>
     <string name="chat_image_viewer_open_external">Şununla aç…</string>
-    <string name="chat_image_viewer_action_failed">Action could not be completed.</string>
+    <string name="chat_image_viewer_action_failed">İşlem tamamlanamadı.</string>
     <string name="chat_voice_seek_forward">10 saniye ileri sar</string>
     <string name="chat_voice_transfer_sending">Gönderiliyor… %1$d%% · kalan %2$d parça</string>
     <string name="chat_voice_transfer_receiving">Alınıyor… %1$d%% · kalan %2$d parça</string>
@@ -1505,7 +1505,7 @@
     <string name="profile_country">Ülke</string>
     <string name="profile_agency">Bağlı Birim</string>
     <string name="profile_role">Rol</string>
-    <string name="profile_verified">Doğrulandı mı</string>
+    <string name="profile_verified">Doğrulandı mı?</string>
     <string name="profile_verified_yes">Onaylandı</string>
     <string name="profile_verified_no">Onaylanmadı</string>
     <string name="profile_login_button">Giriş Yap</string>
@@ -1528,7 +1528,7 @@
     <string name="profile_username_required">Lütfen bir kullanıcı adı girin.</string>
     <string name="profile_login_authorized_only_title">Kurumsal giriş</string>
     <string name="profile_login_authorized_only_message">Bu giriş alanı yalnızca yetkili kurumlar içindir. Burası normal kullanıcılar için değil.</string>
-    <string name="profile_photo_saved">"Profil fotoğrafı kaydedildi "</string>
+    <string name="profile_photo_saved">Profil fotoğrafı kaydedildi</string>
     <string name="profile_photo_error">Görsel okunamadı</string>
     <string name="profile_login_soon">Giriş sistemi yakında 🔐</string>
     <string name="profile_photo_content_description">Profil fotoğrafı</string>
@@ -1589,7 +1589,6 @@
     <string name="profile_verify_server_managed">Kurtarma profili doğrulaması sunucu tarafından yönetilir.</string>
     <string name="profile_logout_button">Çıkış yap</string>
     <string name="profile_logout_success">Çıkış yapıldı.</string>
-
     <!-- Profil ekranındaki kurtarma rol sertifikası kartı -->
     <string name="profile_cert_card_title">Kurtarma sertifikası</string>
     <string name="profile_cert_card_subtitle">Kurtarma sunucusunun verdiği, bu cihaza özel kimlik.</string>
@@ -1624,7 +1623,6 @@
     <string name="profile_cert_inactive_subtitle">Yeni sertifika alana kadar kurtarma modu kapalı kalır.</string>
     <string name="profile_cert_expires_relative">%1$s sona erecek</string>
     <string name="profile_cert_manage_label">Sertifika yönetimi</string>
-
     <!-- Giriş sonrası kurtarma sertifikası verilirken görünen kayar banner -->
     <string name="cert_banner_in_progress_title">Kurtarma sertifikası alınıyor…</string>
     <string name="cert_banner_in_progress_body">Cihazın kurtarma modunda yetkili olacak şekilde güvenceye alınıyor.</string>
@@ -1725,14 +1723,12 @@
     <string name="ble_peer_role_victim_label">Kazazede</string>
     <string name="gatt_mesh_default_sender_label">Yakındaki Kullanıcı</string>
     <string name="mesh_service_default_node_label_prefix">KurtarmaMesh</string>
-
     <string name="advanced_settings_section_mesh">Örgüsel Ağ (Mesh) Bağlantısı</string>
     <string name="advanced_settings_section_privacy">Gizlilik</string>
     <string name="advanced_setting_share_last_seen_title">Son görülmeyi paylaş</string>
     <string name="advanced_setting_share_last_seen_description">Kişilerin en son ne zaman çevrimiçi olduğunu görmesine izin ver. Kapatırsan çevrimiçi durumun tamamen gizlenir.</string>
     <string name="advanced_settings_section_performance">Performans ve Optimizasyon</string>
     <string name="advanced_settings_section_diagnostics">Hata Tanılama ve Deneysel</string>
-
     <string name="rescue_settings_section_scanning">Tarama ve Bağlantı Ayarları</string>
     <string name="rescue_settings_section_connectivity">Acil Durum Bağlantısı</string>
     <string name="rescue_settings_section_display">Ekran ve Arayüz Seçenekleri</string>
@@ -1784,7 +1780,6 @@
     <string name="rescue_remote_signals_empty_title">Her şey sakin</string>
     <string name="rescue_remote_hero_count">%1$d aktif sinyal</string>
     <string name="rescue_remote_signals_subtitle">Kurum panelinden canlı akış</string>
-
     <!-- Account and data deletion (Play data-safety requirement) -->
     <string name="profile_delete_account_button">Hesabı ve verileri sil</string>
     <string name="profile_delete_account_progress">Siliniyor…</string>
@@ -1806,7 +1801,7 @@
     <string name="flashlight_mode_normal_description">Desteklenen cihazlarda ayarlanabilir şiddetle kesintisiz arka fener.</string>
     <string name="flashlight_mode_sos">SOS</string>
     <string name="flashlight_mode_sos_description">Uluslararası Mors yardım desenini tekrarlar: üç kısa, üç uzun, üç kısa.</string>
-    <string name="flashlight_mode_strobe">Strobe</string>
+    <string name="flashlight_mode_strobe">Çakar</string>
     <string name="flashlight_mode_strobe_description">Güvenlik için saniyede en fazla üç kez yanan dikkat ışığı.</string>
     <string name="flashlight_mode_low_power">Düşük Güç</string>
     <string name="flashlight_mode_low_power_description">Pili korumak için cihazın sunduğu en düşük fener seviyesini kullanır.</string>
@@ -1943,7 +1938,6 @@
     <string name="cpr_session_ended">Oturum tamamlandı</string>
     <string name="cpr_session_summary">Yardım süresi: %1$s\nZamanlanan göğüs basısı: %2$d</string>
     <string name="cpr_new_session">Yeni oturum başlat</string>
-
     <string name="cpr_aed_guide_title">AED yardımcısı</string>
     <string name="cpr_aed_step_count">Adım %1$d / %2$d</string>
     <string name="cpr_aed_power_title">AED’yi açın</string>
@@ -1963,7 +1957,6 @@
     <string name="cpr_aed_shock_delivered">AED: şok uygulandı</string>
     <string name="cpr_aed_no_shock">AED: şok önerilmedi</string>
     <string name="cpr_aed_resume_now">CPR sayacına dön</string>
-
     <string name="cpr_info_title">CPR Assist hakkında</string>
     <string name="cpr_info_scope_title">Bu akış kimler içindir?</string>
     <string name="cpr_info_scope_body">Bu sürüm; tepkisiz ve normal nefes almayan yetişkin veya ergen için 2025 temel yaşam desteği akışını izler. Çocuk, bebek, boğulma, travma ve diğer özel durumlarda farklı uygulamalar gerekebilir.</string>
@@ -1974,7 +1967,6 @@
     <string name="cpr_info_offline_title">İnternetsiz çalışır</string>
     <string name="cpr_info_offline_body">Metronom, sayaçlar, AED rehberi ve yazılı talimatlar tamamen çevrimdışıdır. Sesli yönlendirme cihazdaki sistem sesini kullanır; çevrimdışı ses yoksa görsel ritim ve metronom çalışmaya devam eder.</string>
     <string name="cpr_disclaimer_long">CPR Assist acil durum zamanlama yardımcısıdır; tıbbi tanı, sertifikalı CPR eğitimi veya profesyonel yardımın yerine geçmez. Acil servisi arayın, hoparlörü açın ve çağrı görevlisi ile AED’yi izleyin.</string>
-
     <string name="cpr_voice_start">Göğüs basısına şimdi başlayın. Göğsün ortasına güçlü ve hızlı basın. Ritmi izleyin.</string>
     <string name="cpr_voice_resume">Göğüs basısına şimdi devam edin.</string>
     <string name="cpr_voice_two_breaths">Eğitimliyseniz iki soluk verin. Göğsün yükselmesini izleyin.</string>

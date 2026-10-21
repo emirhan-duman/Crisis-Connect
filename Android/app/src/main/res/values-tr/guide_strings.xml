@@ -1,4 +1,4 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="guide_screen_intro_title">Acil Durum Rehberi</string>
     <string name="guide_screen_intro_subtitle">Kritik bilgiye hızla ulaş, panik anında kısa adımları uygula.</string>
@@ -6,7 +6,7 @@
     <string name="guide_screen_section_30_seconds">30 saniyede</string>
     <string name="guide_screen_section_step_by_step">Adım adım</string>
     <string name="guide_screen_section_dont">Yapma</string>
-    <string name="guide_screen_section_checklist">Checklist</string>
+    <string name="guide_screen_section_checklist">Kontrol listesi</string>
     <string name="guide_screen_expand_details">Detayları göster</string>
     <string name="guide_screen_collapse_details">Detayları gizle</string>
     <string name="guide_screen_action_start_checklist">Checklist\'i başlat</string>

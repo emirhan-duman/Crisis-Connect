@@ -323,7 +323,7 @@
 "English" = "İngilizce";
 "Turkish" = "Türkçe";
 "Japanese" = "Japonca";
-"Language changes apply instantly." = "Dil değişikliği anında uygulanır.";
+"Language changes apply instantly." = "Dil değişiklikleri anında uygulanır.";
 "Theme" = "Tema";
 "Light" = "Aydınlık";
 "Dark" = "Koyu";
@@ -461,14 +461,14 @@
 "Direction" = "İstikamet";
 "Accuracy" = "Hassasiyet";
 "Many sensors are not available in the Simulator. Use a real device for best results." = "Birçok sensör Simülatör'de kullanılamaz. En iyi sonuç için gerçek bir cihaz kullanın.";
-"Not available on this device" = "Bu cihazda kullanılamıyor.";
+"Not available on this device" = "Bu cihazda kullanılamıyor";
 
 /* Signal Scanner */
 "Bluetooth (BLE)" = "Bluetooth (BLE)";
 "Bluetooth" = "Bluetooth";
 "Stop Scan" = "Taramayı Durdur";
 "Start Scan" = "Taramayı Başlat";
-"Enable Bluetooth to scan" = "Tarama için Bluetooth'u etkinleştirin.";
+"Enable Bluetooth to scan" = "Tarama için Bluetooth'u etkinleştirin";
 "Scanning..." = "Taranıyor...";
 "No devices found" = "Cihaz bulunamadı";
 "BLE scanning requires a real device. Simulator is not supported." = "BLE taraması için gerçek bir cihaz gerekir. Simülatör desteklenmez.";
@@ -682,7 +682,7 @@
 "VIDEO_CALL_ENABLE_CAMERA" = "Kamerayı Aç";
 "VIDEO_CALL_DISABLE_CAMERA" = "Kamerayı Kapat";
 "VOICE_CALL_OPEN_CHAT" = "Sohbeti Aç";
-"VOICE_CALL_STATUS_ACTIVE" = "Yakındaki iOS kişisiyle şifreli sesli görüşme aktif.";
+"VOICE_CALL_STATUS_ACTIVE" = "Yakındaki kişiyle şifreli sesli görüşme aktif.";
 "VOICE_CALL_STATUS_DIALING" = "Yakındaki kişi aranıyor…";
 "VOICE_CALL_STATUS_CONNECTING" = "Yakındaki iOS kişisine bağlanılıyor…";
 "VOICE_CALL_STATUS_RINGING_OUTGOING" = "Yakındaki kişi çalıyor…";
@@ -696,7 +696,7 @@
 "VOICE_CALL_STATUS_UNAVAILABLE" = "Yakın sesli arama şu anda kullanılamıyor.";
 "VOICE_CALL_STATUS_WAITING_PEER" = "Diğer iOS kişinin de yakında aynı sohbeti açması bekleniyor.";
 "VOICE_CALL_NOTIFICATION_BODY" = "Yakından gelen sesli arama.";
-"VIDEO_CALL_STATUS_ACTIVE" = "Yakındaki iOS kişisiyle şifreli görüntülü görüşme aktif.";
+"VIDEO_CALL_STATUS_ACTIVE" = "Yakındaki kişiyle şifreli görüntülü görüşme aktif.";
 "VIDEO_CALL_STATUS_DIALING" = "Yakındaki görüntülü arama başlatılıyor…";
 "VIDEO_CALL_STATUS_CONNECTING" = "Yakındaki görüntülü aramaya bağlanılıyor…";
 "VIDEO_CALL_STATUS_RINGING_OUTGOING" = "Yakındaki kişi görüntülü arama için çalıyor…";
@@ -1438,7 +1438,7 @@
 /* Task-first survival guide redesign */
 "guide_redesign_broader_search" = "Filtreleri azaltıp daha genel bir anahtar kelime ile tekrar dene.";
 "guide_redesign_call_format" = "%@'i ara";
-"guide_redesign_checklist" = "Checklist";
+"guide_redesign_checklist" = "Kontrol listesi";
 "guide_redesign_choose_situation" = "Durumu seç";
 "guide_redesign_clear_search" = "Aramayı temizle";
 "guide_redesign_completed" = "Tamamlandı";
