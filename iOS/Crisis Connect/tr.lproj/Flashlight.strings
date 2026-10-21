@@ -9,7 +9,7 @@
 "FLASHLIGHT_MODE_NORMAL_DESCRIPTION" = "Ayarlanabilir şiddetle kesintisiz arka fener.";
 "FLASHLIGHT_MODE_SOS" = "SOS";
 "FLASHLIGHT_MODE_SOS_DESCRIPTION" = "Uluslararası Mors yardım desenini tekrarlar: üç kısa, üç uzun, üç kısa.";
-"FLASHLIGHT_MODE_STROBE" = "Strobe";
+"FLASHLIGHT_MODE_STROBE" = "Çakar";
 "FLASHLIGHT_MODE_STROBE_DESCRIPTION" = "Güvenlik için saniyede en fazla üç kez yanan dikkat ışığı.";
 "FLASHLIGHT_MODE_LOW_POWER" = "Düşük Güç";
 "FLASHLIGHT_MODE_LOW_POWER_DESCRIPTION" = "Pili korumak için düşük fener seviyesi kullanır.";
