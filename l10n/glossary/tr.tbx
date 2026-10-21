@@ -1,0 +1,134 @@
+<?xml version='1.0' encoding='utf-8'?>
+<martif type="TBX" xml:lang="en">
+  <martifHeader>
+    <fileDesc>
+      <sourceDesc>
+        <p>Crisis Connect community translation terminology</p>
+      </sourceDesc>
+    </fileDesc>
+  </martifHeader>
+  <text>
+    <body>
+      <termEntry id="cc-1">
+        <langSet xml:lang="en">
+          <tig>
+            <term>Crisis Sentinel Edge</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="tr">
+          <tig>
+            <term>Crisis Sentinel Edge</term>
+          </tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="cc-2">
+        <langSet xml:lang="en">
+          <tig>
+            <term>Bluetooth</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="tr">
+          <tig>
+            <term>Bluetooth</term>
+          </tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="cc-3">
+        <langSet xml:lang="en">
+          <tig>
+            <term>BLE</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="tr">
+          <tig>
+            <term>BLE</term>
+          </tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="cc-4">
+        <langSet xml:lang="en">
+          <tig>
+            <term>SOS</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="tr">
+          <tig>
+            <term>SOS</term>
+          </tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="cc-5">
+        <langSet xml:lang="en">
+          <tig>
+            <term>Settings</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="tr">
+          <tig>
+            <term>Ayarlar</term>
+          </tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="cc-6">
+        <langSet xml:lang="en">
+          <tig>
+            <term>Survival Guide</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="tr">
+          <tig>
+            <term>Afet Rehberi</term>
+          </tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="cc-7">
+        <langSet xml:lang="en">
+          <tig>
+            <term>Emergency</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="tr">
+          <tig>
+            <term>Acil Durum</term>
+          </tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="cc-8">
+        <langSet xml:lang="en">
+          <tig>
+            <term>Flashlight</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="tr">
+          <tig>
+            <term>El Feneri</term>
+          </tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="cc-9">
+        <langSet xml:lang="en">
+          <tig>
+            <term>Contact</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="tr">
+          <tig>
+            <term>Kişi</term>
+          </tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="cc-10">
+        <langSet xml:lang="en">
+          <tig>
+            <term>Offline</term>
+          </tig>
+        </langSet>
+        <langSet xml:lang="tr">
+          <tig>
+            <term>Çevrimdışı</term>
+          </tig>
+        </langSet>
+      </termEntry>
+    </body>
+  </text>
+</martif>

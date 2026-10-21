@@ -823,6 +823,8 @@ To contribute, sign in to Weblate, choose your language and an Android or iOS co
 
 Translations are kept alongside the source code in this repository and are covered by its [GNU Affero General Public License v3.0](./LICENSE). Maintainers review translation changes before including them in releases. Contributions for additional languages are welcome -- see [Contributing](#contributing).
 
+See [the localization maintenance guide](docs/LOCALIZATION.md) for the component map, widget resource format, terminology, and validation steps.
+
 ## Contributing
 
 We welcome contributions from developers, security researchers, translators, and anyone who cares about resilient communication.

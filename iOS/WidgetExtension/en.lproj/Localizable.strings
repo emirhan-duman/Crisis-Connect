@@ -1,0 +1,14 @@
+/* Widget translations. Managed with Hosted Weblate; preserve WIDGET_* keys. */
+
+/* The SOS exclamation mark. */
+"!" = "!";
+/* The SOS emoji. */
+"SOS" = "SOS";
+"WIDGET_DISASTERS_DESC" = "Latest earthquakes and disasters near you, on your home screen.";
+"WIDGET_DISASTERS_EMPTY" = "No disaster data yet. It will update automatically soon.";
+"WIDGET_DISASTERS_TITLE" = "Recent Disasters";
+"WIDGET_SOS_DESC" = "One tap opens the SOS countdown.";
+"WIDGET_SOS_LIVE_BODY" = "Broadcasting your location to nearby devices.";
+"WIDGET_SOS_LIVE_TITLE" = "SOS active";
+"WIDGET_SOS_SUBTITLE" = "Emergency";
+"WIDGET_SOS_TITLE" = "SOS – Emergency";
