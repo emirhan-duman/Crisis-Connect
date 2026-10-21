@@ -35,9 +35,10 @@ without changing its Swift localization lookups.
 
 Do not add another `Localizable.xcstrings` to the widget target alongside these
 files: both formats compile to the same localized resource table. Keep developer
-comments in the English `.strings` file. The duplicate app file named
-`Localizable 2.strings` is deliberately not a separate translation component;
-update the primary `Localizable.strings` table instead.
+comments in the English `.strings` file. The legacy app table named
+`Localizable 2.strings` has no explicit runtime table references and is not
+a separate translation component. Its contents differ from the primary table;
+do not copy it over `Localizable.strings` or treat it as an identical backup.
 
 ## Terminology and review
 
