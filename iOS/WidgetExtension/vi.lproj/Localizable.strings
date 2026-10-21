@@ -1,0 +1,14 @@
+/* Widget translations. Managed with Hosted Weblate; preserve WIDGET_* keys. */
+
+/* The SOS exclamation mark. */
+"!" = "!";
+/* The SOS emoji. */
+"SOS" = "SOS";
+"WIDGET_DISASTERS_DESC" = "Động đất và thảm họa mới nhất gần bạn, ngay trên màn hình chính.";
+"WIDGET_DISASTERS_EMPTY" = "Chưa có dữ liệu thảm họa. Sẽ tự động cập nhật sớm.";
+"WIDGET_DISASTERS_TITLE" = "Thảm họa gần đây";
+"WIDGET_SOS_DESC" = "Một chạm để mở đếm ngược SOS.";
+"WIDGET_SOS_LIVE_BODY" = "Đang phát vị trí của bạn tới các thiết bị gần đó.";
+"WIDGET_SOS_LIVE_TITLE" = "SOS đang hoạt động";
+"WIDGET_SOS_SUBTITLE" = "Khẩn cấp";
+"WIDGET_SOS_TITLE" = "SOS – Khẩn cấp";

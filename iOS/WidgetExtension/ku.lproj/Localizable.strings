@@ -1,0 +1,14 @@
+/* Widget translations. Managed with Hosted Weblate; preserve WIDGET_* keys. */
+
+/* The SOS exclamation mark. */
+"!" = "!";
+/* The SOS emoji. */
+"SOS" = "SOS";
+"WIDGET_DISASTERS_DESC" = "Erdhej û karesatên dawî yên nêzîkî te, li ser ekrana sereke.";
+"WIDGET_DISASTERS_EMPTY" = "Hîn daneya karesatê tune. Dê di demek kurt de bixweber were nûkirin.";
+"WIDGET_DISASTERS_TITLE" = "Karesatên Dawî";
+"WIDGET_SOS_DESC" = "Bi yek lêdanê jimartina paşve ya SOS vedibe.";
+"WIDGET_SOS_LIVE_BODY" = "Cihê te ji amûrên nêzîk re tê weşandin.";
+"WIDGET_SOS_LIVE_TITLE" = "SOS çalak e";
+"WIDGET_SOS_SUBTITLE" = "Rewşa awarte";
+"WIDGET_SOS_TITLE" = "SOS – Rewşa awarte";

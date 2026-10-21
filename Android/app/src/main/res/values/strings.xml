@@ -480,7 +480,7 @@
     <string name="gatt_mesh_connected_users_empty">No connected users right now</string>
     <string name="gatt_mesh_connected_users_this_device">This device</string>
     <string name="gatt_mesh_connected_users_self_format">%1$s (You)</string>
-    <string name="telsiz_title">Telsiz</string>
+    <string name="telsiz_title">Radio</string>
     <string name="telsiz_open">Telsiz (walkie-talkie)</string>
     <string name="telsiz_join">Join</string>
     <string name="telsiz_leave">Leave</string>
@@ -1295,7 +1295,7 @@
     <string name="conversation_preview_voice_message">Voice message</string>
     <string name="conversation_preview_photo_message">Photo</string>
     <string name="main_contact_preview_saved">Contact saved</string>
-    <string name="conversation_preview_sender_you_prefix">Sen:</string>
+    <string name="conversation_preview_sender_you_prefix">You:</string>
     <string name="conversation_preview_sender_contact_prefix">%1$s:</string>
     <string name="conversation_preview_reply_you_prefix">You replied: %1$s</string>
     <string name="conversation_preview_reply_prefix">Replied: %1$s</string>
@@ -1724,10 +1724,10 @@
     <string name="chat_reply_image_placeholder">Image</string>
     <string name="chat_reply_unknown_placeholder">Message</string>
     <string name="chat_reply_context_label">Replying to</string>
-    <string name="chat_reply_sender_you">Sen</string>
+    <string name="chat_reply_sender_you">You</string>
     <string name="chat_reply_message_not_found">Replied message not found</string>
     <string name="chat_action_reply">Reply</string>
-    <string name="chat_action_copy">Kopyala</string>
+    <string name="chat_action_copy">Copy</string>
     <string name="chat_message_copied">Message copied to clipboard</string>
     <string name="ble_peer_role_rescuer_label">Field Team</string>
     <string name="ble_peer_role_victim_label">Victim</string>

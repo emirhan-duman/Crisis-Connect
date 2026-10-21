@@ -1,0 +1,14 @@
+/* Widget translations. Managed with Hosted Weblate; preserve WIDGET_* keys. */
+
+/* The SOS exclamation mark. */
+"!" = "!";
+/* The SOS emoji. */
+"SOS" = "SOS";
+"WIDGET_DISASTERS_DESC" = "Последние землетрясения и бедствия рядом с вами — на главном экране.";
+"WIDGET_DISASTERS_EMPTY" = "Данных пока нет. Скоро обновится автоматически.";
+"WIDGET_DISASTERS_TITLE" = "Последние бедствия";
+"WIDGET_SOS_DESC" = "Одно касание открывает обратный отсчёт SOS.";
+"WIDGET_SOS_LIVE_BODY" = "Ваше местоположение передаётся ближайшим устройствам.";
+"WIDGET_SOS_LIVE_TITLE" = "SOS активен";
+"WIDGET_SOS_SUBTITLE" = "Экстренная помощь";
+"WIDGET_SOS_TITLE" = "SOS – Экстренная помощь";
