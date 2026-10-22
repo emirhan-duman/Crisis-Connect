@@ -106,15 +106,15 @@
 "CONTACT_BLUETOOTH_UNAUTHORIZED_MESSAGE" = "Allow Bluetooth access to verify nearby QR contacts.";
 "CONTACT_BLUETOOTH_UNSUPPORTED_MESSAGE" = "This device can't verify nearby QR contacts over Bluetooth.";
 "CONTACT_ONBOARDING_SEARCHING_TITLE" = "Searching nearby";
-"CONTACT_ONBOARDING_SEARCHING_MESSAGE" = "Looking for the contact broadcast from the other device.";
+"CONTACT_ONBOARDING_SEARCHING_MESSAGE" = "Keep the other device nearby with its QR code open.";
 "CONTACT_ONBOARDING_PAIRING_TITLE" = "Pairing securely";
-"CONTACT_ONBOARDING_PAIRING_MESSAGE" = "Checking the QR payload against the live Bluetooth handshake.";
+"CONTACT_ONBOARDING_PAIRING_MESSAGE" = "Verifying the other device to establish a secure connection.";
 "CONTACT_ONBOARDING_SAVING_TITLE" = "Saving contact";
-"CONTACT_ONBOARDING_SAVING_MESSAGE" = "Finalizing the secure contact record and chat session.";
+"CONTACT_ONBOARDING_SAVING_MESSAGE" = "Adding the contact and preparing your conversation.";
 "CONTACT_ONBOARDING_ALREADY_REGISTERED_TITLE" = "Already registered";
-"CONTACT_ONBOARDING_ALREADY_REGISTERED_MESSAGE" = "We refreshed the existing secure contact and kept prior chat history.";
+"CONTACT_ONBOARDING_ALREADY_REGISTERED_MESSAGE" = "Your existing contact was updated. Your chat history is kept.";
 "CONTACT_ONBOARDING_COMPLETED_TITLE" = "Contact ready";
-"CONTACT_ONBOARDING_COMPLETED_MESSAGE" = "Secure pairing is complete. You can message this contact offline.";
+"CONTACT_ONBOARDING_COMPLETED_MESSAGE" = "The contact is saved. Opening your conversation…";
 "CONTACT_CAMERA_TITLE" = "Camera access";
 "CONTACT_CAMERA_MESSAGE" = "Enable camera access to scan QR codes.";
 "Close" = "Close";
@@ -1491,3 +1491,69 @@
 "guide_redesign_subtitle_now" = "Choose the situation and see the first correct action in seconds.";
 "guide_redesign_subtitle_prepare" = "Complete your plans and offline checklists.";
 "guide_redesign_unknown_region" = "Unknown region";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Find your contacts online";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect reads names and phone numbers from your contacts to find people using the app. It sends the phone numbers to Crisis Connect servers hosted by Google Firebase in the United States for matching. Contact names stay on your device. Queried numbers are processed without being permanently stored; matches are kept on your device. While this screen is open, refreshing or returning to it may send the numbers again. Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Find nearby contacts";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect reads contact names and phone numbers on your device so you can choose someone to find nearby. The selected number is used for Bluetooth identity verification. This feature does not send your contacts to a server. Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "I agree";
+"CONTACTS_DISCLOSURE_DECLINE" = "Not now";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Contact access";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "Withdraw online matching consent";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Withdraw nearby contacts consent";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+
+/* Contact QR scanner */
+"QR_SCANNER_HEADING" = "Scan a contact";
+"QR_SCANNER_AUTO_HINT" = "Keep the QR inside the frame. It scans automatically.";
+"QR_SCANNER_READY" = "Camera ready";
+"QR_SCANNER_STARTING" = "Starting camera…";
+"QR_SCANNER_HELP" = "Scanning help";
+"QR_SCANNER_LIGHT_ON" = "Turn light on";
+"QR_SCANNER_LIGHT_OFF" = "Turn light off";
+"QR_SCANNER_LIGHT_ERROR" = "Could not change the flashlight. Try again.";
+"QR_SCANNER_PERMISSION_TITLE" = "Allow camera to scan";
+"QR_SCANNER_PERMISSION_DETAIL" = "Enable camera access in Settings to scan a Crisis Connect QR code and add a contact.";
+"QR_SCANNER_OPEN_SETTINGS" = "Open settings";
+"QR_SCANNER_UNAVAILABLE_TITLE" = "Camera unavailable";
+"QR_SCANNER_UNAVAILABLE_DETAIL" = "No camera is available on this device. Close the scanner and choose Connect Manually to continue.";
+"QR_SCANNER_PAUSED_TITLE" = "Camera paused";
+"QR_SCANNER_PAUSED_DETAIL" = "The camera is temporarily in use or unavailable. Scanning resumes when the camera is ready.";
+"QR_SCANNER_TIP_ALIGN" = "Keep the entire QR code inside the frame.";
+"QR_SCANNER_TIP_STILL" = "Hold your phone steady for a moment. Scanning starts automatically.";
+"QR_SCANNER_TIP_LIGHT" = "Move to better light if scanning fails. Use the flashlight when available.";
+
+"CONTACT_ONBOARDING_STEP_SEARCH" = "Search";
+
+"CONTACT_ONBOARDING_STEP_PAIR" = "Pair";
+
+"CONTACT_ONBOARDING_STEP_SAVE" = "Save";
+
+"CONTACT_ONBOARDING_STEP_DONE" = "Complete";
+
+"CONTACT_ONBOARDING_STEP_ACTIVE" = "In progress";
+
+"CONTACT_ONBOARDING_STEP_WAITING" = "Waiting";
+
+// Independent resilient and legacy sessions
+"AUTHORITY_SESSION" = "Conversation";
+"AUTHORITY_RESILIENT_SESSION" = "Resilient";
+"AUTHORITY_COMPATIBILITY_SESSION" = "Compatibility";
+"AUTHORITY_RESILIENT_NOTICE" = "Separate conversation for updated apps. Messages reach only verified devices that join this session; older apps use Compatibility.";
+"AUTHORITY_COMPATIBILITY_NOTICE" = "Separate conversation with older apps. It requires the original region; resilient-session messages are not forwarded here.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "Internet available";

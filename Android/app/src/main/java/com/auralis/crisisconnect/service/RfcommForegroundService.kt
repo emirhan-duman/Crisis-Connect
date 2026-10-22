@@ -513,16 +513,17 @@ class RfcommForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        cleanupStaleIncomingTransferCaches()
-        RfcommTelecomCoordinator.initialize(applicationContext)
         ensureCallNotificationChannel()
         ensureCallEventNotificationChannel()
+        // Promote before cache cleanup and Telecom setup; both can touch disk or block on system
+        // services, leaving startForegroundService() past Android's promotion deadline on slow devices.
+        startForegroundRobust(buildNotification())
+        cleanupStaleIncomingTransferCaches()
+        RfcommTelecomCoordinator.initialize(applicationContext)
         registerReceiver(
             bluetoothStateReceiver,
             IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
         )
-        val initialNotification = buildNotification()
-        startForegroundRobust(initialNotification)
         observeBleFallbackIncomingMessages()
         if (foregroundStarted.get()) {
             ensureListening("service onCreate")
@@ -3774,7 +3775,7 @@ class RfcommForegroundService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.ic_notification_status)
             .setContentTitle(localizedContext.getString(R.string.chat_service_notification_title))
             .setContentText(localizedContext.getString(R.string.chat_service_notification_text))
             .setContentIntent(pendingIntent)

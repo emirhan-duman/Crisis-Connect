@@ -4,6 +4,8 @@
 
 It combines Bluetooth-based communication, offline map support, role-aware rescue workflows, and Firebase-backed identity and telemetry services in a single multi-module codebase.
 
+Preview version: **1.2.0 Early Access · Beta 1** (phone build **69**, Wear OS build **70**).
+
 ## Highlights
 
 - Nearby messaging over BLE and GATT-based peer-to-peer / mesh flows
@@ -25,6 +27,8 @@ It combines Bluetooth-based communication, offline map support, role-aware rescu
 | --- | --- |
 | `app` | Main Android application: Compose UI, local storage, messaging, calls, media transfer, maps, tools, settings, and shared chat flows |
 | `feature_rescue` | Android dynamic feature module for rescue coordination, rescue mesh, scanning, and Crisis Link sync |
+| `wear` | Experimental Wear OS companion and independent messaging |
+| `watch-protocol` | Shared phone/watch command protocol |
 | `baselineprofile` | Baseline profile generator module for startup and scroll performance |
 | `functions` | Firebase Cloud Functions: role certificates, Play Integrity / App Attest verification, the encrypted messaging relay and prekey pool, VoIP push, SOS signal reporting, TURN credentials |
 | `dashboard` | Lightweight single-page summary surface for presenting the system at a high level |
@@ -67,7 +71,7 @@ Firebase is used for identity, authorization-adjacent metadata, rescue telemetry
 | --- | --- |
 | Android UI | Kotlin, Jetpack Compose, Material 3 |
 | Modules | `app` + `feature_rescue` dynamic feature |
-| Android SDK | `minSdk 24`, `compileSdk 36`, `targetSdk 36` |
+| Android SDK | `minSdk 24`, `compileSdk 37`, `targetSdk 37` |
 | Local storage | Room, SQLCipher, DataStore, encrypted preferences |
 | Connectivity | BLE, GATT, RFCOMM, foreground services |
 | Maps | MapLibre with offline region support |
@@ -79,7 +83,7 @@ Firebase is used for identity, authorization-adjacent metadata, rescue telemetry
 
 Before building locally, make sure the following are available:
 
-- Android Studio with Android SDK 36
+- Android Studio with Android SDK 37
 - JDK 21 for Gradle and LiteRT-LM bytecode compatibility
 - Node.js 22 if you will build or deploy Firebase Functions
 - A Firebase project if you want live authentication, Firestore, App Check, or certificate issuance

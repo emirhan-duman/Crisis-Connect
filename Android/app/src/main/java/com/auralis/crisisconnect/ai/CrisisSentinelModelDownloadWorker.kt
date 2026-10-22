@@ -28,6 +28,7 @@ class CrisisSentinelModelDownloadWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value) return@withContext Result.retry()
         val release = releaseFromInput() ?: return@withContext Result.failure()
         val storageLocation = CrisisSentinelModelDownloadUrlPolicy.storageLocation(release)
         if (storageLocation == null) {

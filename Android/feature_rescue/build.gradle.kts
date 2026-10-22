@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.auralis.crisisconnect.feature.rescue"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 24
@@ -14,6 +14,11 @@ android {
 
     buildTypes {
         getByName("debug")
+
+        create("watchTest") {
+            initWith(getByName("debug"))
+            matchingFallbacks += listOf("debug")
+        }
 
         create("internal") {
             initWith(getByName("debug"))

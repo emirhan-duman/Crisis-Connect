@@ -1452,3 +1452,30 @@
 "guide_redesign_subtitle_now" = "选择当前情况，几秒内查看首个正确行动。";
 "guide_redesign_subtitle_prepare" = "完成计划和离线检查清单。";
 "guide_redesign_unknown_region" = "未知地区";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "在线查找联系人";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect 会读取通讯录中的姓名和电话号码，以查找使用此应用的人。电话号码会发送至由 Google Firebase 在美国托管的 Crisis Connect 服务器进行匹配。联系人姓名保留在设备上。查询的号码仅作处理，不会永久存储；匹配结果保留在设备上。此页面打开期间，刷新或返回页面可能会再次发送号码。你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "查找附近的联系人";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect 会读取设备上的联系人姓名和电话号码，让你选择要在附近查找的人。所选号码用于通过蓝牙验证身份。此功能不会将你的通讯录发送至服务器。你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。";
+"CONTACTS_DISCLOSURE_ACCEPT" = "我同意";
+"CONTACTS_DISCLOSURE_DECLINE" = "暂不";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "通讯录访问";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "撤回在线匹配同意";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "撤回附近联系人访问同意";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "互联网可用";

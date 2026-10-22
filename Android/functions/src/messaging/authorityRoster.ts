@@ -1,5 +1,5 @@
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
-import { getFirestore } from "firebase-admin/firestore";
+import { getMessagingFirestore as getFirestore } from "./databaseTarget";
 import { requireUid, resolveCallerRoleKey } from "../certificates/callerRole";
 
 /**
@@ -80,7 +80,7 @@ export const listAuthorityRoster = onCall(
   async (request: CallableRequest<unknown>) => {
     try {
       const uid = requireUid(request);
-      const role = await resolveCallerRoleKey(request, uid);
+      const role = await resolveCallerRoleKey(request, uid, getFirestore());
       if (!ELIGIBLE_ROLES.has(role)) {
         throw new HttpsError("permission-denied", "Only agency members may list the authority roster.");
       }

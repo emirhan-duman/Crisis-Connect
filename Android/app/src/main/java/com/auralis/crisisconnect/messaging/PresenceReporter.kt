@@ -52,8 +52,10 @@ object PresenceReporter {
         if (heartbeatJob?.isActive == true) return
         heartbeatJob = scope.launch {
             while (isActive) {
-                syncAccountPreferenceOnce()
-                publish()
+                if (!com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value) {
+                    syncAccountPreferenceOnce()
+                    publish()
+                }
                 delay(HEARTBEAT_MS)
             }
         }
@@ -140,6 +142,7 @@ object PresenceReporter {
     }
 
     private suspend fun publish() {
+        if (com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value) return
         if (!isSharingEnabled()) return
         val uid = currentUid() ?: return
         runCatching {

@@ -67,10 +67,10 @@ final class PrivacySettingsViewModel: ObservableObject {
         self.shareDiagnostics = PrivacyPreferences.isShareDiagnosticsEnabled(userDefaults: userDefaults)
     }
 
+    @MainActor
     func openSystemSettings() {
 #if canImport(UIKit)
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
+        PlatformRuntime.openSystemSettings()
 #endif
     }
 }
@@ -129,7 +129,7 @@ enum PrivacyRemoteSync {
     static func syncProfileDetails(
         userDefaults: UserDefaults = .standard,
         auth: Auth = Auth.auth(),
-        firestore: Firestore = Firestore.firestore()
+        firestore: Firestore = ResilientApplicationStore.profiles()
     ) async {
         guard let user = auth.currentUser, !user.isAnonymous else { return }
         let resolvedUID = user.uid.trimmingCharacters(in: .whitespacesAndNewlines)

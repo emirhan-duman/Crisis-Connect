@@ -246,7 +246,12 @@ internal class RfcommCallNotificationDelegate(
         }
         return ActivityOptions.makeBasic()
             .setPendingIntentCreatorBackgroundActivityStartMode(
-                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                if (Build.VERSION.SDK_INT >= 36) {
+                    // Background incoming calls use the system full-screen notification path.
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
+                } else {
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                }
             )
             .toBundle()
     }

@@ -1616,7 +1616,7 @@
     <string name="add_from_contacts_empty">आपके संपर्कों में अभी तक कोई भी Crisis Connect पर नहीं है।</string>
     <string name="add_from_contacts_permission_needed">आपके जान-पहचान के लोगों को खोजने के लिए संपर्क अनुमति आवश्यक है।</string>
     <string name="add_from_contacts_sign_in_required">Crisis Connect पर संपर्क खोजने के लिए साइन इन करें।</string>
-    <string name="add_from_contacts_privacy_note">आपके नंबर हैश द्वारा मिलाए जाते हैं और सर्वर पर कभी संग्रहीत नहीं होते। केवल वे लोग दिखते हैं जिन्होंने खोजे जाने योग्य होना चुना।</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect ऐप का उपयोग करने वाले लोगों को खोजने के लिए आपके संपर्कों के नाम और फ़ोन नंबर पढ़ता है। मिलान के लिए फ़ोन नंबर अमेरिका में Google Firebase द्वारा होस्ट किए गए Crisis Connect सर्वर पर भेजे जाते हैं। नाम आपके डिवाइस पर रहते हैं। खोजे गए नंबर स्थायी रूप से सहेजे बिना संसाधित होते हैं; मिलान आपके डिवाइस पर रहते हैं। यह स्क्रीन खुली होने पर रीफ़्रेश करने या वापस आने से नंबर फिर भेजे जा सकते हैं। आपकी पसंद इस डिवाइस पर इस खाते के लिए याद रखी जाती है। आप सेटिंग में संपर्कों तक पहुँच के तहत सहमति वापस ले सकते हैं।</string>
     <string name="add_from_contacts_found_count">%1$d Crisis Connect पर</string>
     <string name="add_from_contacts_empty_hint">जैसे ही वे ऐप में अपना फ़ोन नंबर सत्यापित करेंगे, वे यहाँ दिखाई देंगे।</string>
     <string name="add_from_contacts_search_hint">नाम या नंबर खोजें</string>
@@ -1657,6 +1657,7 @@
     <string name="chat_share_location">स्थान साझा करें</string>
     <string name="chat_status_connected_bluetooth">ब्लूटूथ के माध्यम से कनेक्टेड</string>
     <string name="chat_status_connected_internet">इंटरनेट के माध्यम से कनेक्टेड</string>
+    <string name="chat_status_connected_satellite">सैटेलाइट के माध्यम से कनेक्टेड</string>
     <string name="internet_message_channel_name">इंटरनेट संदेश</string>
     <string name="internet_message_notification_title">नया संदेश</string>
     <string name="channel_message_notification_body">नया संदेश</string>
@@ -1773,4 +1774,20 @@
     <string name="profile_delete_account_error_verification">इस डिवाइस पर हटाने की पुष्टि नहीं हो सकी। अपना कनेक्शन जांचें और पुनः प्रयास करें।</string>
     <string name="profile_delete_account_error_signed_out">खाता हटाने के लिए साइन इन करना जरूरी है।</string>
     <string name="profile_delete_account_reauth_needed">आपकी सुरक्षा के लिए हटाने से पहले पुष्टि करनी होगी कि यह आप ही हैं। साइन आउट करें, दोबारा साइन इन करें और फिर से कोशिश करें।</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">संपर्कों को ऑनलाइन खोजें</string>
+    <string name="contacts_disclosure_body">Crisis Connect ऐप का उपयोग करने वाले लोगों को खोजने के लिए आपके संपर्कों के नाम और फ़ोन नंबर पढ़ता है। मिलान के लिए फ़ोन नंबर अमेरिका में Google Firebase द्वारा होस्ट किए गए Crisis Connect सर्वर पर भेजे जाते हैं। नाम आपके डिवाइस पर रहते हैं। खोजे गए नंबर स्थायी रूप से सहेजे बिना संसाधित होते हैं; मिलान आपके डिवाइस पर रहते हैं। यह स्क्रीन खुली होने पर रीफ़्रेश करने या वापस आने से नंबर फिर भेजे जा सकते हैं। आपकी पसंद इस डिवाइस पर इस खाते के लिए याद रखी जाती है। आप सेटिंग में संपर्कों तक पहुँच के तहत सहमति वापस ले सकते हैं।</string>
+    <string name="contacts_local_disclosure_title">आस-पास के संपर्क खोजें</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect आस-पास किसी व्यक्ति को खोजने के लिए केवल वह नाम और नंबर पढ़ता है जो आप सिस्टम के संपर्क चयनकर्ता से साझा करते हैं। चुना गया नंबर Bluetooth से पहचान सत्यापन के लिए इस्तेमाल होता है। यह सुविधा आपके संपर्क सर्वर पर नहीं भेजती। आपकी पसंद इस डिवाइस पर इस खाते के लिए याद रखी जाती है। आप सेटिंग में संपर्कों तक पहुँच के तहत सहमति वापस ले सकते हैं।</string>
+    <string name="contacts_disclosure_accept">मैं सहमत हूँ</string>
+    <string name="contacts_disclosure_decline">अभी नहीं</string>
+    <string name="contacts_consent_settings_title">संपर्कों तक पहुँच</string>
+    <string name="contacts_consent_settings_hint">आपकी पसंद इस डिवाइस पर इस खाते के लिए याद रखी जाती है। आप सेटिंग में संपर्कों तक पहुँच के तहत सहमति वापस ले सकते हैं।</string>
+    <string name="contacts_consent_revoke_online">ऑनलाइन मिलान की सहमति वापस लें</string>
+    <string name="contacts_consent_revoke_nearby">आस-पास के संपर्कों की सहमति वापस लें</string>
+    <string name="nearby_choose_contact">संपर्क चुनें</string>
+    <string name="nearby_contact_selection_failed">चुना गया नंबर पढ़ा नहीं जा सका। कृपया दूसरा संपर्क चुनें।</string>
+    <string name="chat_status_internet_available">इंटरनेट उपलब्ध है</string>
+    <string name="chat_status_satellite_available">सैटेलाइट कनेक्शन उपलब्ध है</string>
 </resources>

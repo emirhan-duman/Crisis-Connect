@@ -420,20 +420,8 @@ internal class WifiDirectAccelerator(
         return awareManager?.isAvailable == true
     }
 
-    private fun hasDirectPermissions(): Boolean {
-        val fineOrNearby = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                appContext,
-                Manifest.permission.NEARBY_WIFI_DEVICES
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            ContextCompat.checkSelfPermission(
-                appContext,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        }
-        return fineOrNearby
-    }
+    private fun hasDirectPermissions(): Boolean =
+        com.auralis.crisisconnect.util.LocalNetworkPermissions.hasWifiPermissions(appContext)
 
     private companion object {
         private const val TAG = "AuthorityMeshDirect"

@@ -32,6 +32,7 @@ final class InternetSendRetryQueue {
     private var backoff: TimeInterval = InternetSendRetryQueue.initialBackoff
     private var monitor: NWPathMonitor?
     private var started = false
+    private var followupReason: String?
 
     private init() {}
 
@@ -40,6 +41,11 @@ final class InternetSendRetryQueue {
         guard !started else { return }
         started = true
 
+        NotificationCenter.default.addObserver(
+            forName: .disasterTrafficChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.kick(reason: "traffic policy") }
+        }
         NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -59,12 +65,24 @@ final class InternetSendRetryQueue {
 
     /// Request a retry pass soon. Collapses concurrent kicks into one running pass.
     func kick(reason: String) {
+        if passTask != nil {
+            if followupReason == nil || ["traffic policy", "bt-ready"].contains(reason) { followupReason = reason }
+            return
+        }
+        if scheduledTask != nil, !["manual retry", "bt-ready", "traffic policy"].contains(reason) { return }
         scheduledTask?.cancel()
         scheduledTask = nil
         guard passTask == nil else { return }
         passTask = Task { [weak self] in
             await self?.runPass(reason: reason)
-            await MainActor.run { self?.passTask = nil }
+            await MainActor.run {
+                guard let self else { return }
+                self.passTask = nil
+                if let reason = self.followupReason {
+                    self.followupReason = nil
+                    self.kick(reason: reason)
+                }
+            }
         }
     }
 
@@ -125,14 +143,19 @@ final class InternetSendRetryQueue {
             backoff = Self.initialBackoff
             return
         }
-        guard InternetChatTransport.shared.isAvailable() else {
+        guard InternetChatTransport.shared.isAvailable(allowUltraConstrained: true) else {
             // Offline: connectivity trigger will re-kick; no busy backoff loop.
             return
         }
         MessagingDiagLog.log("send retry pass (\(reason)): \(remaining.count) queued")
+        let satelliteRetryMessages = (InternetChatTransport.shared.isOnUltraConstrainedPath() || DisasterTrafficController.shared.isSaving)
+            ? remaining.filter { $0.text.utf8.count <= 1_024 }
+            : remaining
+        guard !satelliteRetryMessages.isEmpty else { return }
 
         var anyFailure = false
-        for item in remaining {
+        for item in satelliteRetryMessages {
+            guard DisasterTrafficController.shared.allowsText(template: 0, text: item.text) else { continue }
             guard let contact = ContactStore.shared.contacts.first(where: { $0.id == item.sessionId }),
                   contact.supportsInternet else { continue }
             let ok = await InternetChatTransport.shared.sendText(
@@ -146,6 +169,8 @@ final class InternetSendRetryQueue {
                     sessionId: item.sessionId, transportMessageId: item.transportMessageId
                 )
             } else {
+                // A policy transition is a deferral, not a failed network attempt.
+                guard DisasterTrafficController.shared.allowsText(template: 0, text: item.text) else { continue }
                 anyFailure = true
                 let n = (attempts[item.transportMessageId] ?? 0) + 1
                 attempts[item.transportMessageId] = n
@@ -160,12 +185,13 @@ final class InternetSendRetryQueue {
         }
 
         if anyFailure {
-            let delay = backoff
+            let floor: TimeInterval = DisasterTrafficController.shared.isSaving ? 15 : Self.initialBackoff
+            let delay = max(floor, backoff) * Double.random(in: 0.8...1.2)
             backoff = min(backoff * 2, Self.maxBackoff)
             scheduledTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 guard !Task.isCancelled else { return }
-                await MainActor.run { self?.kick(reason: "backoff") }
+                await MainActor.run { self?.scheduledTask = nil; self?.kick(reason: "backoff") }
             }
         } else {
             backoff = Self.initialBackoff

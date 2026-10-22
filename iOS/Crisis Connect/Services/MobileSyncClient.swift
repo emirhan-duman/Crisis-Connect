@@ -120,6 +120,29 @@ enum MobileSyncClient {
         }
     }
 
+    /// Reports only the durable Crisis Link queue, never chat/SOS queues or field content.
+    static func reportQueueStatus(pendingCount: Int, oldestAt: Date?, lastSuccessAt: Date?, failed: Bool) async {
+        guard let url = endpointURL() else { return }
+        FirebaseRuntime.ensureConfigured()
+        guard let user = Auth.auth().currentUser, !user.isAnonymous,
+              let token = try? await user.getIDToken(), !token.isEmpty else { return }
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        var status: [String: Any] = ["scope": "crisis-link", "pendingCount": pendingCount, "reportedAt": now]
+        if let oldestAt { status["oldestAt"] = Int(oldestAt.timeIntervalSince1970 * 1000) }
+        if let lastSuccessAt { status["lastSuccessAt"] = Int(lastSuccessAt.timeIntervalSince1970 * 1000) }
+        if failed { status["errorCode"] = "delivery-failed" }
+        let body: [String: Any] = ["clientEventId": "ios-queue-\(now)", "source": "ios",
+            "deviceId": SecureLocalStore.shared.getOrCreateRescueDeviceId(), "queueOnly": true,
+            "events": [], "queueStatus": status]
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        var request = URLRequest(url: url, timeoutInterval: 15)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = data
+        _ = try? await URLSession.shared.data(for: request)
+    }
+
     /// The dashboard origin from Info.plist, https-only — a plaintext or malformed override must
     /// disable sync rather than send the profile somewhere insecure. Same default Android's
     /// enterprise-SSO base uses, so sync works out of the box.

@@ -1452,3 +1452,30 @@
 "guide_redesign_subtitle_now" = "Wähle die Situation und sieh in Sekunden die erste richtige Maßnahme.";
 "guide_redesign_subtitle_prepare" = "Vervollständige deine Pläne und Offline-Checklisten.";
 "guide_redesign_unknown_region" = "Unbekannte Region";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Kontakte online finden";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect liest Namen und Telefonnummern aus deinen Kontakten, um Personen zu finden, die die App nutzen. Die Telefonnummern werden zum Abgleich an Crisis Connect-Server gesendet, die Google Firebase in den USA betreibt. Kontaktnamen bleiben auf deinem Gerät. Abgefragte Nummern werden ohne dauerhafte Speicherung verarbeitet; Treffer bleiben auf deinem Gerät. Beim Aktualisieren oder Zurückkehren zu diesem geöffneten Bildschirm können die Nummern erneut gesendet werden. Deine Auswahl wird für dieses Konto auf diesem Gerät gespeichert. Du kannst deine Zustimmung in den Einstellungen unter Kontaktzugriff widerrufen.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Kontakte in der Nähe finden";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect liest Kontaktnamen und Telefonnummern auf deinem Gerät, damit du eine Person in der Nähe suchen kannst. Die ausgewählte Nummer dient zur Identitätsprüfung über Bluetooth. Diese Funktion sendet deine Kontakte nicht an einen Server. Deine Auswahl wird für dieses Konto auf diesem Gerät gespeichert. Du kannst deine Zustimmung in den Einstellungen unter Kontaktzugriff widerrufen.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "Ich stimme zu";
+"CONTACTS_DISCLOSURE_DECLINE" = "Jetzt nicht";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Kontaktzugriff";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Deine Auswahl wird für dieses Konto auf diesem Gerät gespeichert. Du kannst deine Zustimmung in den Einstellungen unter Kontaktzugriff widerrufen.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "Zustimmung zum Online-Abgleich widerrufen";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Zustimmung für Kontakte in der Nähe widerrufen";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "Internet verfügbar";

@@ -239,10 +239,6 @@ struct SOSChatSessionRow: View {
                             }
                             .layoutPriority(1)
 
-                            if let directStatus = directStatusState.status {
-                                InlineConnectionPill(status: directStatus)
-                                    .layoutPriority(2)
-                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -295,8 +291,13 @@ struct SOSChatSessionRow: View {
                                 .foregroundStyle(statusColor(for: outgoingPreviewStatus))
                                 .lineLimit(1)
                                 .fixedSize(horizontal: true, vertical: false)
+                                .accessibilityHint(Text("TRAFFIC_DELIVERY_EXPLANATION"))
                         }
                     }
+                }
+
+                if let directStatus = directStatusState.status {
+                    InlineConnectionPill(status: directStatus)
                 }
             }
         }
@@ -305,6 +306,7 @@ struct SOSChatSessionRow: View {
         .task(id: isDirectConversation) {
             directStatusState.setEnabled(isDirectConversation)
         }
+        .onDisappear { directStatusState.setEnabled(false) }
     }
 
     /// The coordinator's call when it belongs to this row's session and is still in flight.
@@ -711,6 +713,7 @@ struct SOSChatDetailView: View {
     @StateObject private var voiceComposer = ChatVoiceComposer()
     @StateObject private var locationCoordinator = ChatAttachmentLocationCoordinator()
     @ObservedObject private var typingBus = TypingIndicatorBus.shared
+    @ObservedObject private var traffic = DisasterTrafficController.shared
     // Observed so the toolbar call button re-enables the moment a prior call clears (otherwise the
     // .disabled state was read once and left the button greyed out).
     @ObservedObject private var internetCall = InternetCallManager.shared
@@ -851,7 +854,7 @@ struct SOSChatDetailView: View {
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(Color.appPrimary)
                     }
-                    .disabled(internetCall.call != nil)
+                    .disabled(internetCall.call != nil || traffic.saving)
                     .accessibilityLabel(Text(LocalizedStringKey("VOICE_CALL_ACTION")))
                 }
             }
@@ -1185,7 +1188,7 @@ struct SOSChatDetailView: View {
                                     // text bubbles by their transportMessageId). An attachment's bytes
                                     // aren't re-queued, so we never offer retry for one — matching
                                     // Android, and avoiding a bubble stuck forever at .pending.
-                                    if message.isLocal, message.status == .failed, message.kind == .text {
+                                    if message.isLocal, message.status == .failed, message.kind == .text, message.watchReplyResult == nil {
                                         Button(action: { retrySend(message) }) {
                                             Label(
                                                 LocalizedStringKey("SOS_CHAT_ACTION_RETRY_SEND"),
@@ -1282,6 +1285,13 @@ struct SOSChatDetailView: View {
     @ViewBuilder
     private func composerView(layout: ChatLayoutMetrics) -> some View {
         VStack(spacing: 10) {
+            if traffic.saving {
+                Text("CHAT_DISASTER_MODE_DETAIL")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("chat.automaticDataSaving")
+            }
             if let replyTargetMessage {
                 ChatComposerReplyBanner(
                     authorLabel: replyAuthorLabel(for: replyTargetMessage),
@@ -1338,7 +1348,7 @@ struct SOSChatDetailView: View {
                                 )
                         }
                         .buttonStyle(.plain)
-                        .disabled(isSendingImage || isSendingDocument || isSharingLocation)
+                        .disabled(isSendingImage || isSendingDocument || isSharingLocation || !canUseMediaInCurrentMode)
                     }
 
                     TextField(LocalizedStringKey("SOS_CHAT_SEND_PLACEHOLDER"), text: $draft)
@@ -1371,7 +1381,7 @@ struct SOSChatDetailView: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .disabled(!composerActionEnabled)
+                    .disabled(!composerActionEnabled || (!sendEnabled && !canUseMediaInCurrentMode))
                 }
             }
         }
@@ -1389,7 +1399,12 @@ struct SOSChatDetailView: View {
 
     /// True while the peer is actively typing (internet typing pulse, kept alive ~6s per pulse).
     private var isPeerTyping: Bool {
-        (typingBus.typing[sessionId] ?? .distantPast) > Date()
+        !traffic.saving && (typingBus.typing[sessionId] ?? .distantPast) > Date()
+    }
+
+    private var canUseMediaInCurrentMode: Bool {
+        !traffic.saving || sendMessageHandler != nil ||
+            contactBroadcastManager.isSessionConnected(sessionId) || p2pGattChat.isReady()
     }
 
     /// message.id → the day-start Date to render as a separator ABOVE it: the first message of each
@@ -1839,6 +1854,7 @@ struct SOSChatDetailView: View {
             sendMessage()
             return
         }
+        guard canUseMediaInCurrentMode else { return }
         voiceComposer.startRecording()
     }
 
@@ -2518,6 +2534,10 @@ struct SOSChatDetailView: View {
                     "(peerUid=\(contactRecord.peerUid != nil) peerKey=\(contactRecord.peerPublicKey != nil))"
             )
             return nil
+        }
+        if DisasterTrafficController.shared.isSaving {
+            InternetSendRetryQueue.shared.kick(reason: "queued compact text")
+            return true
         }
         MessagingDiagLog.log("send text: via internet to peer=\(contactRecord.peerUid?.prefix(8) ?? "?") id=\(transportMessageId)")
         let sessionId = self.sessionId

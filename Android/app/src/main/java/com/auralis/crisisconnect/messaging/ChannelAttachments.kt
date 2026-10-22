@@ -188,6 +188,10 @@ object ChannelAttachments {
             }
             val cipher = readCachedAuthorityMlsCiphertext(context, attachment.path)
                 ?: throw IllegalStateException("Authority MLS attachment ciphertext is unavailable.")
+            if (ResilientApplicationStore.isResilientConversation(context, attachment.path.split('/')[1])) {
+                ResilientMediaClient.uploadAttachment(attachment.path, cipher)
+                return@forEach
+            }
             val reference = FirebaseStorage.getInstance().reference.child(attachment.path)
             val digest = Base64.encodeToString(
                 MessageDigest.getInstance("SHA-256").digest(cipher),
@@ -322,10 +326,9 @@ object ChannelAttachments {
                 runCatching { cached.delete() }
             }
         }
-        val cipher = FirebaseStorage.getInstance().reference
-            .child(att.path)
-            .getBytes(MAX_ATTACHMENT_BYTES + 4096)
-            .await()
+        val cipher = if (ResilientApplicationStore.isResilientConversation(context, att.path.split('/')[1])) {
+            ResilientMediaClient.downloadAttachment(att.path)
+        } else FirebaseStorage.getInstance().reference.child(att.path).getBytes(MAX_ATTACHMENT_BYTES + 4096).await()
         val plain = decryptAttachment(key, aadString, att, cipher) ?: return@withContext null
         if (plain.size.toLong() != att.size) return@withContext null
         // Cache ciphertext atomically (temp + rename), never plaintext.

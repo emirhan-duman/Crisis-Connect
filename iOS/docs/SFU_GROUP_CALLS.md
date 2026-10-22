@@ -1,10 +1,10 @@
 # SFU Group Calls (Cloudflare Realtime + MLS-E2EE) — iOS Port Plan
 
-Status: **foundation + Rust MLS core + media core + per-frame MLS crypto DONE (crypto
-ABI-verified on simulator via `SfuFrameCryptoTests`); remaining: ring manager + authority-call
-UI, then two-device + web interop validation.**
-Feature gate: `SfuCallConfig.enabled = false` (Android's is dev-on already, but iOS stays off
-until the remaining pieces land and a three-way call is verified).
+Status: **foundation + Rust MLS core + media core + per-frame MLS crypto + ring manager +
+authority-call UI DONE (crypto ABI-verified on simulator via `SfuFrameCryptoTests`).**
+Feature gate: `SfuCallConfig.enabled = true`, matching Android. The media path fails closed when
+MLS or the WebRTC frame-crypto hooks are unavailable. Physical two-device + web three-way interop
+validation is still required before treating the path as release-verified.
 
 ## Architecture (shared with web + Android)
 
@@ -151,7 +151,8 @@ because the Rust source lives in a separate repo — mirrors Android's already-s
 binary" approach (its `liborange_mls_worker.so` is tracked in `app/src/main/jniLibs`), just via LFS
 because the iOS slices are far larger (~39 MB device + ~78 MB simulator vs 3.3 MB).
 
-## Remaining before flipping `SfuCallConfig.enabled`
+## Remaining release validation
 
 **Two-device + web three-way interop validation** (physical devices). Everything code-side is now
-in place; the gate flips only after a real device+web call is verified end-to-end.
+in place and the feature is enabled for Android parity, but the path is not release-verified until
+a real device+web call is verified end-to-end.

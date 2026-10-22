@@ -118,6 +118,7 @@ class GattSOSServerService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val binder = LocalBinder()
+    @Volatile private var watchRescueAddress: String? = null
 
     private var bluetoothManager: BluetoothManager? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
@@ -171,6 +172,13 @@ class GattSOSServerService : Service() {
     override fun onCreate() {
         super.onCreate()
         activeInstance = this
+        if (com.auralis.crisisconnect.watch.WatchTestHooks.enabled) {
+            if (com.auralis.crisisconnect.watch.WatchTestHooks.delegate?.productionRecovery() == true && !startForegroundSafely()) {
+                stopSelf(); return
+            }
+            _isRunning.value = true
+            return
+        }
         clearStartupFailureMessage()
         bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         bluetoothAdapter = bluetoothManager?.adapter
@@ -201,18 +209,28 @@ class GattSOSServerService : Service() {
     /**
      * Everything that announces a human is in danger. Fired ONLY from the SOS button path, once.
      *
-     * This used to run unconditionally in onCreate, so anything that started the service — including
-     * merely opening a BLE chat — reported to the agency dashboard and auto-messaged the user's
-     * contacts. The code itself is unchanged and un-gated: it is the same block, just reached only
-     * from a real declaration. Nothing here is skipped or made conditional, because a suppressed real
-     * SOS is far worse than an accidental one.
+     * Opening a BLE chat must not announce an emergency. Production effects run only after an
+     * explicit declaration. The separate emulator-only watchTest APK updates the same SOS state
+     * but returns before all external effects; normal builds always execute the production path.
      */
-    private fun declareEmergency() {
+    private fun declareEmergency(resumeId: String? = null) {
         if (_isDeclared.value) {
             return
         }
+        if (!_isRunning.value) return
+        val test = com.auralis.crisisconnect.watch.WatchTestHooks
+        val startedAt = if (test.enabled && test.delegate?.productionRecovery() != true) test.delegate?.restoredEmergencyTimestamp() ?: System.currentTimeMillis() else {
+            // Persist before any external effect. Reading history never declares an emergency.
+            val store = com.auralis.crisisconnect.watch.WatchRecoveryStore.get(applicationContext)
+            if (resumeId != null) store.resume(resumeId) else store.begin(System.currentTimeMillis())
+        }
+        _startTimestampMillis.value = startedAt
         _isDeclared.value = true
-        _startTimestampMillis.value = System.currentTimeMillis()
+        // Only the separate emulator-only watchTest APK suppresses emergency side effects.
+        if (test.enabled) {
+            test.delegate?.sosStateChanged(_startTimestampMillis.value)
+            return
+        }
         // Swap the low-key hosting notification for the promoted "SOS active" one
         // (Android 16 Live Update chip; plain ongoing notification on older OSes).
         runCatching { startForeground(NOTIFICATION_ID, createNotification()) }
@@ -220,7 +238,7 @@ class GattSOSServerService : Service() {
         // The advert went out in hosting mode; re-issue it so rescuers see a victim.
         runCatching { restartAdvertisingForDeclaration() }
             .onFailure { Log.w(TAG, "Unable to re-advertise after SOS declaration", it) }
-        Analytics.sosActivated()
+        if (resumeId == null) Analytics.sosActivated()
         runCatching {
             GattMeshForegroundService.requestSosModeReconcile(applicationContext)
         }.onFailure { throwable ->
@@ -231,7 +249,8 @@ class GattSOSServerService : Service() {
             SosCloudReporter.onSosStarted(
                 context = applicationContext,
                 locationProvider = { resolveVictimLocationSnapshot() },
-                batteryProvider = { currentBatteryPercent() }
+                batteryProvider = { currentBatteryPercent() },
+                resuming = resumeId != null
             )
         }.onFailure { throwable ->
             Log.w(TAG, "Unable to start SOS internet uplink", throwable)
@@ -240,8 +259,9 @@ class GattSOSServerService : Service() {
         runCatching {
             SosContactNotifier.onSosStarted(
                 context = applicationContext,
-                locationProvider = { resolveVictimLocationSnapshot() }
-            )
+                locationProvider = { resolveVictimLocationSnapshot() },
+                resuming = resumeId != null
+            ) // Resume updates saved alert bubbles, never repeats initial alerts.
         }.onFailure { throwable ->
             Log.w(TAG, "Unable to start SOS contact notifier", throwable)
         }
@@ -250,6 +270,7 @@ class GattSOSServerService : Service() {
     @SuppressLint("MissingPermission")
     private fun restartAdvertisingForDeclaration() {
         val advertiser = advertiser ?: return
+        _isAdvertising.value = false
         runCatching { advertiser.stopAdvertising(advertiseCallback) }
         startAdvertising()
     }
@@ -278,27 +299,34 @@ class GattSOSServerService : Service() {
         // on a later one (SOS pressed while a chat already had the server up). Both must work, and
         // declareEmergency() is idempotent so a repeated start can never double-report.
         if (intent?.getBooleanExtra(EXTRA_USER_DECLARED, false) == true) {
-            declareEmergency()
+            runCatching { declareEmergency(intent.getStringExtra(EXTRA_RESUME_SESSION_ID)) }
+                .onFailure { publishStartupFailure(getString(R.string.sos_recovery_failed), it) }
         }
-        return START_STICKY
+        return if (com.auralis.crisisconnect.watch.WatchTestHooks.enabled) START_NOT_STICKY else START_STICKY
     }
 
     @SuppressLint("MissingPermission")
     override fun onDestroy() {
         super.onDestroy()
         _isRunning.value = false
+        _isAdvertising.value = false
         _isDeclared.value = false
         _startTimestampMillis.value = null
+        if (com.auralis.crisisconnect.watch.WatchTestHooks.enabled) {
+            if (activeInstance === this) activeInstance = null
+            serviceScope.cancel()
+            return
+        }
         runCatching {
             P2pCallController.shared(applicationContext).unregisterExtraLink(victimCallLink)
         }
-        // Stop the uplink heartbeat before tearing anything else down so its providers can no
-        // longer touch this dying instance; the resolved report goes out on the reporter's scope.
-        runCatching { SosCloudReporter.onSosStopped(applicationContext) }
+        // Lifecycle teardown pauses work. Only explicit stopBroadcast resolves an SOS;
+        // service death must not announce an all-clear or erase the saved session.
+        runCatching { SosCloudReporter.pause() }
             .onFailure { throwable ->
                 Log.w(TAG, "Unable to stop SOS internet uplink", throwable)
             }
-        runCatching { SosContactNotifier.onSosStopped(applicationContext) }
+        runCatching { SosContactNotifier.pause() }
             .onFailure { throwable ->
                 Log.w(TAG, "Unable to stop SOS contact notifier", throwable)
             }
@@ -400,6 +428,7 @@ class GattSOSServerService : Service() {
                     ackStates.remove(normalizedAddress)
                     chatOutPayloads.remove(normalizedAddress)
                     verifiedClients.remove(normalizedAddress)
+                    if (watchRescueAddress == normalizedAddress) watchRescueAddress = null
                     sessionCodesByAddress.remove(normalizedAddress)
                     clientConfigValues.entries.removeIf { it.key.first == normalizedAddress }
                     mtuByAddress.remove(normalizedAddress)
@@ -1150,6 +1179,7 @@ class GattSOSServerService : Service() {
                     receiver.reset()
                     authSessionNonceByAddress.remove(normalizedAddress)
                     verifiedClients.add(normalizedAddress)
+                    watchRescueAddress = normalizedAddress
                     val sessionCode = ensurePeerPresence(normalizedAddress)
                     sessionCodesByAddress[normalizedAddress] = sessionCode
                     sendAck(device, HANDSHAKE_ACK_PAYLOAD)
@@ -3281,10 +3311,12 @@ class GattSOSServerService : Service() {
 
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+            _isAdvertising.value = true
             Log.i(TAG, "Advertising success.")
         }
 
         override fun onStartFailure(errorCode: Int) {
+            _isAdvertising.value = false
             Log.e(TAG, "Advertising failed with error code: $errorCode")
             publishStartupFailure(resolveAdvertisingFailureMessage(errorCode))
             stopSelf()
@@ -3425,6 +3457,8 @@ class GattSOSServerService : Service() {
          * the legacy BLE chat characteristics, so a chat session brings it up too. Consumers that
          * mean "is the shared server available" (chat readiness, mesh) want this one.
          */
+        private val _isAdvertising = MutableStateFlow(false)
+        val isAdvertising: StateFlow<Boolean> = _isAdvertising.asStateFlow()
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning
 
@@ -3440,6 +3474,7 @@ class GattSOSServerService : Service() {
 
         /** Set only on the SOS-button path; its absence is what keeps a chat bring-up silent. */
         const val EXTRA_USER_DECLARED = "extra_user_declared_emergency"
+        const val EXTRA_RESUME_SESSION_ID = "extra_resume_sos_session"
 
         private val _startTimestampMillis = MutableStateFlow<Long?>(null)
         val startTimestampMillis: StateFlow<Long?> = _startTimestampMillis
@@ -3448,6 +3483,20 @@ class GattSOSServerService : Service() {
         val startFailureMessage: StateFlow<String?> = _startFailureMessage.asStateFlow()
         @Volatile
         private var activeInstance: GattSOSServerService? = null
+
+        fun watchRescuePeer(): Contact? {
+            val service = activeInstance ?: return null
+            val address = service.watchRescueAddress ?: return null
+            if (!service.isChatReady(address)) return null
+            return BlePeerStore.peers.value[address]?.takeIf { it.verified }
+        }
+
+        fun sendWatchReply(session: String, id: String, text: String): Boolean {
+            val service = activeInstance ?: return false
+            val peer = watchRescuePeer()?.takeIf { it.sessionCode == session } ?: return false
+            val payload = BleChatEnvelope.encodeChat(id, text, System.currentTimeMillis(), 30_000, 1, "ble_gatt")
+            return service.sendChatMessage(peer.address, payload)
+        }
 
         fun clearStartupFailureMessage() {
             _startFailureMessage.value = null
@@ -3480,9 +3529,20 @@ class GattSOSServerService : Service() {
         }
 
         fun stopBroadcast(context: Context) {
+            if (com.auralis.crisisconnect.watch.WatchTestHooks.enabled && com.auralis.crisisconnect.watch.WatchTestHooks.delegate?.productionRecovery() != true) {
+                com.auralis.crisisconnect.watch.WatchTestHooks.delegate?.sosStateChanged(null)
+            } else {
+                // Commit the end before teardown, even when the service no longer exists.
+                com.auralis.crisisconnect.watch.WatchRecoveryStore.get(context).finish()
+            }
             _isRunning.value = false
+            _isAdvertising.value = false
             _isDeclared.value = false
             _startTimestampMillis.value = null
+            if (!com.auralis.crisisconnect.watch.WatchTestHooks.enabled) {
+                SosCloudReporter.onSosStopped(context)
+                SosContactNotifier.onSosStopped(context)
+            }
             val appContext = context.applicationContext
             val intent = Intent(appContext, GattSOSServerService::class.java)
             appContext.stopService(intent)

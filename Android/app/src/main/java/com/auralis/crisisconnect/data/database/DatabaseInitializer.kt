@@ -16,7 +16,7 @@ import kotlinx.coroutines.withContext
 
 class DatabaseInitializer(
     private val auth: FirebaseAuth = FirebaseUtils.auth,
-    private val db: FirebaseFirestore = FirebaseUtils.db
+    private val db: FirebaseFirestore = com.auralis.crisisconnect.messaging.ResilientApplicationStore.profiles()
 ) {
     fun initializeDatabase(context: Context) {
         LocalKeyStorage.getOrCreateAesKey(context)

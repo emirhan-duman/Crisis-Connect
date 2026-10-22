@@ -590,8 +590,8 @@
     <string name="qr_scan_status_saving">Pairing complete, saving contact…</string>
     <string name="qr_scan_status_saved">Contact saved</string>
     <string name="qr_scan_status_already_registered">Contact already saved</string>
-    <string name="qr_scan_status_title_searching">Searching device</string>
-    <string name="qr_scan_status_title_pairing">Pairing device</string>
+    <string name="qr_scan_status_title_searching">Searching nearby</string>
+    <string name="qr_scan_status_title_pairing">Pairing securely</string>
     <string name="qr_scan_status_title_saving">Saving contact</string>
     <string name="qr_scan_status_title_saved">Contact ready</string>
     <string name="qr_scan_status_title_already_registered">Contact already saved</string>
@@ -602,10 +602,10 @@
     <string name="qr_scan_status_badge_already_registered">Existing contact</string>
     <string name="qr_scan_status_badge_error">Action needed</string>
     <string name="qr_scan_status_detail_scanned">The code was captured successfully. Enter a contact name to continue.</string>
-    <string name="qr_scan_status_detail_searching">The scan is confirmed. Nearby Bluetooth sessions are being checked now.</string>
-    <string name="qr_scan_status_detail_pairing">The other device responded. Creating a trusted Bluetooth link.</string>
-    <string name="qr_scan_status_detail_saving">Connection is complete. The contact card is being written securely.</string>
-    <string name="qr_scan_status_detail_saved">The person is now in your contacts list. You can start chatting immediately.</string>
+    <string name="qr_scan_status_detail_searching">Keep the other device nearby with its QR code open.</string>
+    <string name="qr_scan_status_detail_pairing">Verifying the other device to establish a secure connection.</string>
+    <string name="qr_scan_status_detail_saving">Adding the contact and preparing your conversation.</string>
+    <string name="qr_scan_status_detail_saved">The contact is saved. Opening your conversation…</string>
     <string name="qr_scan_status_detail_already_registered">This person is already saved, so a duplicate entry was not created.</string>
     <string name="qr_scan_status_detail_error">The QR was read, but the next step could not be completed.</string>
     <string name="qr_scan_status_hint_hold_steady">Keep the phone steady while the process finishes.</string>
@@ -642,7 +642,7 @@
     <string name="add_from_contacts_empty">No one in your contacts is on Crisis Connect yet.</string>
     <string name="add_from_contacts_permission_needed">Contacts permission is required to find people you know.</string>
     <string name="add_from_contacts_sign_in_required">Sign in to find contacts on Crisis Connect.</string>
-    <string name="add_from_contacts_privacy_note">Your numbers are matched by hash and never stored on the server. Only people who chose to be discoverable appear.</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect reads names and phone numbers from your contacts to find people using the app. It sends the phone numbers to Crisis Connect servers hosted by Google Firebase in the United States for matching. Contact names stay on your device. Queried numbers are processed without being permanently stored; matches are kept on your device. While this screen is open, refreshing or returning to it may send the numbers again. Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.</string>
     <string name="add_from_contacts_found_count">%1$d on Crisis Connect</string>
     <string name="add_from_contacts_empty_hint">They\'ll show up here once they verify their phone number in the app.</string>
     <string name="add_from_contacts_search_hint">Search name or number</string>
@@ -1237,6 +1237,7 @@
     <string name="chat_status_connected">Connected</string>
     <string name="chat_status_connected_bluetooth">Connected via Bluetooth</string>
     <string name="chat_status_connected_internet">Connected via internet</string>
+    <string name="chat_status_connected_satellite">Connected via satellite</string>
     <string name="internet_message_channel_name">Internet messages</string>
     <string name="internet_message_notification_title">New message</string>
     <string name="channel_message_notification_body">New message</string>
@@ -2028,4 +2029,47 @@
     <string name="dossier_file_unreadable">The selected file could not be read securely.</string>
     <string name="dossier_error_title">Secure dossier</string>
     <string name="dossier_error_generic">The secure dossier operation could not be completed.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">Find your contacts online</string>
+    <string name="contacts_disclosure_body">Crisis Connect reads names and phone numbers from your contacts to find people using the app. It sends the phone numbers to Crisis Connect servers hosted by Google Firebase in the United States for matching. Contact names stay on your device. Queried numbers are processed without being permanently stored; matches are kept on your device. While this screen is open, refreshing or returning to it may send the numbers again. Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.</string>
+    <string name="contacts_local_disclosure_title">Find nearby contacts</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect reads only the name and phone number you share through the system contact picker to find someone nearby. The selected number is used for Bluetooth identity verification. This feature does not send your contacts to a server. Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.</string>
+    <string name="contacts_disclosure_accept">I agree</string>
+    <string name="contacts_disclosure_decline">Not now</string>
+    <string name="contacts_consent_settings_title">Contact access</string>
+    <string name="contacts_consent_settings_hint">Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.</string>
+    <string name="contacts_consent_revoke_online">Withdraw online matching consent</string>
+    <string name="contacts_consent_revoke_nearby">Withdraw nearby contacts consent</string>
+    <string name="nearby_choose_contact">Choose a contact</string>
+    <string name="nearby_contact_selection_failed">Could not read the selected phone number. Please choose another contact.</string>
+
+    <!-- Mobile UI: task-based grouping and connection hierarchy. -->
+    <string name="tools_section_quick">Quick access</string>
+    <string name="tools_section_guidance">Guidance &amp; coordination</string>
+    <string name="tools_section_navigate">Navigation</string>
+    <string name="tools_section_detect">Detection</string>
+    <string name="tools_section_awareness">Awareness</string>
+    <string name="tools_section_other">Other tools</string>
+    <string name="new_chat_nearby_title">Connect nearby</string>
+    <string name="new_chat_nearby_description">Scan the other person’s QR code to start a conversation.</string>
+    <string name="new_chat_other_ways">Other ways to connect</string>
+    <string name="new_chat_share_qr_description">Let the other person scan your code to connect.</string>
+    <string name="new_chat_qr_preparing">Preparing QR…</string>
+    <string name="new_chat_qr_ready">Ready to scan</string>
+    <string name="qr_scan_step_search">Search</string>
+    <string name="qr_scan_step_pair">Pair</string>
+    <string name="qr_scan_step_save">Save</string>
+    <string name="qr_scan_step_done">Complete</string>
+    <string name="qr_scan_step_active">In progress</string>
+    <string name="qr_scan_step_waiting">Waiting</string>
+    <string name="qr_pairing_notification_title">Connecting to contact</string>
+    <string name="qr_pairing_notification_message">Pairing continues when you leave this screen.</string>
+    <string name="authority_session">Conversation</string>
+    <string name="authority_resilient_session">Resilient</string>
+    <string name="authority_compatibility_session">Compatibility</string>
+    <string name="authority_resilient_notice">Separate conversation for updated apps. Messages reach only verified devices that join this session; older apps use Compatibility.</string>
+    <string name="authority_compatibility_notice">Separate conversation with older apps. It requires the original region; resilient-session messages are not forwarded here.</string>
+    <string name="chat_status_internet_available">Internet available</string>
+    <string name="chat_status_satellite_available">Satellite link available</string>
 </resources>

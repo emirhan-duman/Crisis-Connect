@@ -1,6 +1,9 @@
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import * as logger from "firebase-functions/logger";
-import { getFirestore } from "firebase-admin/firestore";
+import { DocumentReference } from "firebase-admin/firestore";
+import { getMessagingFirestore as getFirestore } from "./databaseTarget";
+import { currentMessagingDatabaseId, MULTIREGION_MESSAGING_DATABASE } from "./databaseTarget";
+import { copyLegacyMessageToHa, haFirestore } from "./highAvailabilityStore";
 import { ApnsConfig, getMessaging, MulticastMessage } from "firebase-admin/messaging";
 import type { RelayEnvelope } from "./envelope";
 import {
@@ -10,6 +13,8 @@ import {
   apnsTeamId,
 } from "./apnsVoip";
 import { isPushAllowed } from "./pushPreference";
+import { constrainedAndroidDeliveryOptions } from "./constrainedDeliveryPolicy";
+import { deferCompactDelivery, isAttachmentChunk } from "./compactDeliveryPolicy";
 
 const IOS_BUNDLE_ID = "com.auralis.crisisconnect";
 
@@ -39,6 +44,14 @@ function dataSize(data: Record<string, string>): number {
   return total;
 }
 
+/** Never recreate a ciphertext document that the recipient already acknowledged. */
+export async function updateDeliveryState(ref: DocumentReference, fields: Record<string, unknown>): Promise<void> {
+  try { await ref.update(fields); }
+  catch (error) {
+    if ((error as { code?: number }).code !== 5) throw error; // NOT_FOUND is an ACK race, not a delivery failure.
+  }
+}
+
 export const onMessageCreated = onDocumentCreated(
   {
     document: "messages/{messageId}",
@@ -55,18 +68,49 @@ export const onMessageCreated = onDocumentCreated(
     if (!snap) return;
     const msg = snap.data() as Partial<RelayEnvelope> | undefined;
     if (!msg || typeof msg.recipientUid !== "string") return;
+    let recipientIsHa = false;
+    if (process.env.HA_COMPATIBILITY_ENABLED === "true" && typeof msg.senderUid === "string") {
+      const accounts = await haFirestore().getAll(haFirestore().doc(`messagingAccounts/${msg.senderUid}`),
+        haFirestore().doc(`messagingAccounts/${msg.recipientUid}`));
+      if (accounts.some(account => account.get("state") === "deleted")) { await snap.ref.delete(); return; }
+      recipientIsHa = accounts[1].get("protocol") === 4 && accounts[1].get("state") === "active";
+    }
+    if (process.env.HA_COMPATIBILITY_ENABLED === "true" && currentMessagingDatabaseId() !== MULTIREGION_MESSAGING_DATABASE &&
+        recipientIsHa) {
+      await copyLegacyMessageToHa(snap.id, snap.data());
+      return;
+    }
 
     const db = getFirestore();
     const tokensSnap = await db
       .collection(`messagingTokens/${msg.recipientUid}/tokens`)
       .get();
     if (tokensSnap.empty) {
-      await snap.ref.set({ delivered: false, noTokens: true }, { merge: true });
+      await updateDeliveryState(snap.ref, { delivered: false, noTokens: true });
       return;
     }
-    const tokenDocs = tokensSnap.docs.filter(
-      (d) => typeof d.data().token === "string"
-    );
+    const registeredDocs = tokensSnap.docs.filter(d => typeof d.data().token === "string");
+    const installationIds = [...new Set(registeredDocs.map(d => d.data())
+      .filter(d => d.trafficPolicyVersion === 1 && typeof d.installationId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(d.installationId))
+      .map(d => d.installationId as string))];
+    const savingInstallations = new Set<string>();
+    if (installationIds.length) {
+      try {
+        const profiles = await db.getAll(...installationIds.map(id => db.doc(`messagingTraffic/${msg.recipientUid}/installations/${id}`)));
+        for (const profile of profiles) if (Number(profile.get("savingUntil") ?? 0) > Date.now()) savingInstallations.add(profile.id);
+      } catch (error) {
+        // Fail open: an optional policy lookup must never disrupt legacy delivery.
+        logger.warn("Traffic policy lookup unavailable; preserving normal delivery", error);
+      }
+    }
+    const tokenSaving = (doc: typeof registeredDocs[number]) => doc.data().trafficPolicyVersion === 1 && savingInstallations.has(doc.data().installationId);
+    const tokenDocs = registeredDocs.filter(d => !tokenSaving(d) ||
+      (!deferCompactDelivery(true, Number(msg.ttlMs ?? 0), (msg as Record<string, unknown>).callRing === true) &&
+        !isAttachmentChunk(String(msg.messageId ?? event.params.messageId))));
+    if (tokenDocs.length === 0) {
+      await updateDeliveryState(snap.ref, { delivered: false, deferredByTrafficPolicy: true });
+      return;
+    }
 
     // A call OFFER carries a top-level `callRing` marker (routing metadata only — the offer
     // itself stays E2E-encrypted). iOS registers its PushKit token under platform "ios-voip";
@@ -105,25 +149,15 @@ export const onMessageCreated = onDocumentCreated(
     // call must ring even for someone who switched message notifications off. Recorded as
     // undelivered rather than silently dropped, so the sender's state stays truthful.
     if (!isCallRing && !(await isPushAllowed(msg.recipientUid))) {
-      await snap.ref.set(
-        { delivered: false, pushSuppressedByPreference: true },
-        { merge: true }
-      );
+      await updateDeliveryState(snap.ref, { delivered: false, pushSuppressedByPreference: true });
       return;
     }
 
     // VoIP (PushKit) tokens are NOT valid FCM/APNs alert tokens — never fan the data push to them.
-    const fcmTokenDocs = tokenDocs.filter(
+    const baseFcmTokenDocs = tokenDocs.filter(
       (d) => d.data().platform !== "ios-voip"
     );
-    const tokens = fcmTokenDocs.map((d) => d.data().token as string);
-    if (tokens.length === 0) {
-      await snap.ref.set(
-        { delivered: false, voipOnly: isCallRing },
-        { merge: true }
-      );
-      return;
-    }
+
 
     const highPriority = msg.priority === "high";
 
@@ -146,6 +180,19 @@ export const onMessageCreated = onDocumentCreated(
     };
 
     const useInline = dataSize(inlineData) <= FCM_DATA_BUDGET_BYTES;
+    const fcmTokenDocs = baseFcmTokenDocs.filter(d => !deferCompactDelivery(tokenSaving(d), Number(msg.ttlMs ?? 0), false, useInline, highPriority));
+    if (fcmTokenDocs.length === 0) {
+      await updateDeliveryState(snap.ref, { delivered: false, deferredByTrafficPolicy: baseFcmTokenDocs.length > 0, voipOnly: isCallRing });
+      return;
+    }
+    // Encrypted short text fits in a small inline wake-up; keep it deliverable on constrained
+    // satellite paths. Large messages fall back to a Firestore fetch and remain terrestrial-only.
+    const satelliteDeliveryOptions = constrainedAndroidDeliveryOptions(
+      isCallRing,
+      useInline,
+      dataSize(inlineData),
+      highPriority
+    );
     const data: Record<string, string> = useInline
       ? inlineData
       : {
@@ -192,15 +239,18 @@ export const onMessageCreated = onDocumentCreated(
       message: MulticastMessage;
     }[] = [];
 
-    if (androidTokenDocs.length > 0) {
+    for (const saving of [false, true]) {
+      const androidDocs = androidTokenDocs.filter(d => tokenSaving(d) === saving);
+      if (androidDocs.length === 0) continue;
       groups.push({
-        docs: androidTokenDocs,
+        docs: androidDocs,
         message: {
-          tokens: androidTokenDocs.map((d) => d.data().token as string),
+          tokens: androidDocs.map((d) => d.data().token as string),
           data,
           android: {
-            priority: "high",
+            priority: saving && !highPriority ? "normal" : "high",
             ttl: ttlSeconds * 1000,
+            ...satelliteDeliveryOptions,
           },
           apns: {
             headers: {
@@ -301,9 +351,8 @@ export const onMessageCreated = onDocumentCreated(
       await Promise.allSettled(cleanups);
     }
 
-    await snap.ref.set(
-      { delivered: successCount > 0, deliveredCount: successCount },
-      { merge: true }
-    );
+    // Preserve legacy fields; success means PUSH ACCEPTANCE, never a device storage receipt.
+    await updateDeliveryState(snap.ref, { delivered: successCount > 0, deliveredCount: successCount,
+      pushAccepted: successCount > 0, pushAcceptedCount: successCount, pushAcceptedAtMs: Date.now() });
   }
 );

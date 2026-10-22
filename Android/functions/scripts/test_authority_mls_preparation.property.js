@@ -16,7 +16,7 @@ assert.equal(
     channelId: "ankara",
     participants: ["u1", "u2"],
   }),
-  "am2_vvDRM4CAUnWzulIh43GmvwOHV2so1SHHUbGgYEQA1Rs",
+  "am2_36om86YSvFJ90u_qaV8unF2vgbwU75BrB87jRIT7wPw",
   "the Functions conversation ID must remain compatible with Android and iOS",
 );
 

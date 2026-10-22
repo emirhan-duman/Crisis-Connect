@@ -1452,3 +1452,30 @@
 "guide_redesign_subtitle_now" = "Rewşê hilbijêre û di çend saniyeyan de gava yekem a rast bibîne.";
 "guide_redesign_subtitle_prepare" = "Plan û lîsteyên kontrolê yên bêînternet temam bike.";
 "guide_redesign_unknown_region" = "Herêma nenas";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Kesên di rehbera xwe de li ser înternetê bibîne";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect nav û hejmarên telefonê yên rehbera te dixwîne da kesên ku sepanê bi kar tînin bibîne. Ji bo lihevanînê hejmaran dişîne serverên Crisis Connect ku li Dewletên Yekbûyî ji aliyê Google Firebase ve tên mazûvankirin. Nav li ser cîhaza te dimînin. Hejmarên lêgerînê bê tomarkirina daîmî tên xebitandin; encam li ser cîhaza te dimînin. Dema ev ekran vekirî ye, nûkirin an vegera wê dikare hejmaran dîsa bişîne. Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Kesên nêzîk bibîne";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect nav û hejmarên telefonê li ser cîhaza te dixwîne da tu kesekî ku li nêzîkê lê digerî hilbijêrî. Hejmara hilbijartî ji bo piştrastkirina nasnameyê bi Bluetooth tê bikaranîn. Ev taybetmendî rehbera te naşîne serverê. Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "Dipejirînim";
+"CONTACTS_DISCLOSURE_DECLINE" = "Ne niha";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Gihîştina rehberê";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "Pejirandina lihevanîna înternetê rake";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Pejirandina kesên nêzîk rake";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "Înternet berdest e";

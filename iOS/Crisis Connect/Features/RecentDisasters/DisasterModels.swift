@@ -21,6 +21,7 @@ enum DisasterErrorType {
     case offline
     case timeout
     case noData
+    case deferred
 }
 
 /// Source identifiers, kept as constants so priority ordering and labels stay

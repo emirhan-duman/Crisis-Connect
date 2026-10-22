@@ -1452,3 +1452,30 @@
 "guide_redesign_subtitle_now" = "পরিস্থিতি বেছে নিয়ে কয়েক সেকেন্ডে প্রথম সঠিক পদক্ষেপ দেখুন।";
 "guide_redesign_subtitle_prepare" = "আপনার পরিকল্পনা ও অফলাইন চেকলিস্ট সম্পূর্ণ করুন।";
 "guide_redesign_unknown_region" = "অজানা অঞ্চল";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "অনলাইনে পরিচিতদের খুঁজুন";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect অ্যাপ ব্যবহারকারীদের খুঁজতে আপনার পরিচিতিদের নাম ও ফোন নম্বর পড়ে। মেলানোর জন্য নম্বরগুলো যুক্তরাষ্ট্রে Google Firebase-এ হোস্ট করা Crisis Connect সার্ভারে পাঠায়। নাম আপনার ডিভাইসে থাকে। অনুসন্ধানের নম্বর স্থায়ীভাবে সংরক্ষণ না করে প্রক্রিয়া করা হয়; মিলে যাওয়া ফল ডিভাইসে থাকে। এই স্ক্রিন খোলা থাকা অবস্থায় রিফ্রেশ করলে বা ফিরে এলে নম্বর আবার পাঠানো হতে পারে। এই ডিভাইসে এই অ্যাকাউন্টের জন্য আপনার পছন্দ মনে রাখা হয়। সেটিংসের পরিচিতিতে অ্যাক্সেস অংশ থেকে সম্মতি প্রত্যাহার করতে পারেন।";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "কাছাকাছি পরিচিতদের খুঁজুন";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect ডিভাইসে পরিচিতিদের নাম ও ফোন নম্বর পড়ে যাতে কাছাকাছি কাকে খুঁজবেন তা বেছে নিতে পারেন। নির্বাচিত নম্বর Bluetooth-এর মাধ্যমে পরিচয় যাচাই করতে ব্যবহৃত হয়। এই সুবিধা আপনার পরিচিতিগুলো সার্ভারে পাঠায় না। এই ডিভাইসে এই অ্যাকাউন্টের জন্য আপনার পছন্দ মনে রাখা হয়। সেটিংসের পরিচিতিতে অ্যাক্সেস অংশ থেকে সম্মতি প্রত্যাহার করতে পারেন।";
+"CONTACTS_DISCLOSURE_ACCEPT" = "আমি সম্মত";
+"CONTACTS_DISCLOSURE_DECLINE" = "এখন নয়";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "পরিচিতিতে অ্যাক্সেস";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "এই ডিভাইসে এই অ্যাকাউন্টের জন্য আপনার পছন্দ মনে রাখা হয়। সেটিংসের পরিচিতিতে অ্যাক্সেস অংশ থেকে সম্মতি প্রত্যাহার করতে পারেন।";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "অনলাইন মিলানের সম্মতি প্রত্যাহার";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "কাছাকাছি পরিচিতির সম্মতি প্রত্যাহার";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "ইন্টারনেট উপলব্ধ";

@@ -42,7 +42,7 @@ final class RecentDisastersViewModel: ObservableObject {
     @Published var hasRegionalTab = false
     @Published var regionalTabLabel = ""
 
-    private let repository = DisasterRepository()
+    private let repository = DisasterRepository(allowsAutomaticRefresh: { DisasterTrafficController.shared.permits(.feedRefresh) }, delegate: TrafficSessionDelegate.shared)
     private let countryLocator = CountryLocator()
 
     private var allEvents: [DisasterEvent] = []
@@ -89,7 +89,7 @@ final class RecentDisastersViewModel: ObservableObject {
         isLoading = false
         isRefreshing = false
         isStale = result.isStale
-        error = result.events.isEmpty ? (result.error ?? .noData) : nil
+        error = result.error == .deferred ? .deferred : (result.events.isEmpty ? (result.error ?? .noData) : nil)
         lastUpdatedMillis = result.lastUpdatedMillis
         hasAnyEvents = !result.events.isEmpty
         primarySource = result.primarySource

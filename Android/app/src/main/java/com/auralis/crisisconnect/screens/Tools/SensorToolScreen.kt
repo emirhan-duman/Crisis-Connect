@@ -290,6 +290,9 @@ private fun rememberGpsSnapshot(hasLocationPermission: Boolean, refreshToken: In
                     )
                 }
             }
+
+            @Suppress("DEPRECATION")
+            override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) = Unit
         }
 
         val registered = runCatching {

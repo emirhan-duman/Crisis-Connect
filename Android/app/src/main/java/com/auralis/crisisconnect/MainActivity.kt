@@ -142,10 +142,18 @@ import java.security.SecureRandom
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import com.auralis.crisisconnect.feature.rescueAuthChanges
+import com.auralis.crisisconnect.security.FirebaseRoleHelper
+import com.auralis.crisisconnect.security.securityDataStore
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
@@ -168,6 +176,13 @@ class MainActivity : ComponentActivity() {
             onRescueFeatureInstalled()
         }
     }
+
+    private var automaticRescueAttemptUid: String? = null
+
+    private val rescuePreparationConfirmationLauncher =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
+            // Play reports the result through the install session listener.
+        }
 
     private val criticalPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -225,6 +240,7 @@ class MainActivity : ComponentActivity() {
         handleSsoDeepLink(intent)
         rescueFeatureManager.registerListener(rescueFeatureInstallListener)
         FirebaseApp.initializeApp(this)
+        observeRescueFeaturePreparation()
         lifecycleScope.launch {
             settingsDataStore.data.map { prefs ->
                 prefs[booleanPreferencesKey("rescue_show_in_navbar")] ?: false
@@ -1094,11 +1110,59 @@ class MainActivity : ComponentActivity() {
         if (rfcommServiceStarted) {
             return
         }
-        ContextCompat.startForegroundService(
-            this,
-            Intent(this, com.auralis.crisisconnect.service.RfcommForegroundService::class.java)
-        )
-        rfcommServiceStarted = true
+        runCatching {
+            ContextCompat.startForegroundService(
+                this,
+                Intent(this, com.auralis.crisisconnect.service.RfcommForegroundService::class.java)
+            )
+        }.onSuccess {
+            rfcommServiceStarted = true
+        }.onFailure { throwable ->
+            // Android 12+ can reject an FGS start if the activity loses foreground eligibility
+            // between the permission flow and this call. Keep the UI alive and allow a later retry.
+            android.util.Log.w(TAG, "Unable to start RFCOMM foreground service", throwable)
+        }
+    }
+
+    /** Covers every sign-in method, including signing in without returning to the home screen. */
+    private fun observeRescueFeaturePreparation() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                launch {
+                    combine(rescueAuthChanges(), applicationContext.securityDataStore.data) { uid, _ -> uid }
+                        .collectLatest { userId ->
+                            val auth = FirebaseAuth.getInstance()
+                            if (userId == null || auth.currentUser?.isAnonymous == true) {
+                                automaticRescueAttemptUid = null
+                                return@collectLatest
+                            }
+                            val cachedAccess = hasStoredRescueFeatureAccess()
+                            val hasAccess = cachedAccess || FirebaseRoleHelper.fetchRescueRole() is
+                                FirebaseRoleHelper.RescueRoleResult.Authorized
+                            if (!hasAccess || auth.currentUser?.uid != userId) return@collectLatest
+                            val shouldRequest = automaticRescueAttemptUid != userId
+                            val detach = rescueFeatureManager.installIfNeeded(
+                                confirmationLauncher = rescuePreparationConfirmationLauncher,
+                                requestIfMissing = shouldRequest,
+                                onRequestStarted = { automaticRescueAttemptUid = userId },
+                                onInstalled = { onRescueFeatureInstalled() },
+                                onError = { Log.w(TAG, "Automatic rescue preparation failed; manual retry remains available") }
+                            )
+                            try {
+                                awaitCancellation()
+                            } finally {
+                                detach()
+                            }
+                        }
+                }
+                launch {
+                    // Certificate provisioning may finish AFTER the module download on first login.
+                    applicationContext.securityDataStore.data.collect {
+                        if (rescueFeatureManager.isInstalled()) onRescueFeatureInstalled()
+                    }
+                }
+            }
+        }
     }
 
     private fun bootstrapCrisisLinkServiceIfEnabled() {
@@ -1232,6 +1296,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        com.auralis.crisisconnect.screens.QR.QrPairingCoordinator.get(this).resumePending(this)
         // Re-apply on warm start so the status/navigation bar icons stay in sync
         // with the active theme even if the system reset them while we were
         // backgrounded (e.g. another app changed the bar appearance).
@@ -1251,6 +1316,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun onRescueFeatureInstalled() {
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        bootstrapAuthorityMeshServiceIfEnabled()
         bootstrapCrisisLinkServiceIfEnabled()
         bootstrapMeshServiceIfAlwaysOn()
     }

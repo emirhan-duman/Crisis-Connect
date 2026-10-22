@@ -2,6 +2,10 @@ import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import * as crypto from "crypto";
 import { requireUid, resolveCallerRoleKey } from "../certificates/callerRole";
+import {
+  normalizeAgencyPanelId,
+  resolveAgencyMessagingPanelId,
+} from "./agencyMembership";
 
 /**
  * Per-agency shared symmetric key for the dashboard's agency-internal E2E messaging.
@@ -19,14 +23,6 @@ const GROUP_KEY_BYTES = 32;
 const DEFAULT_KEY_ID = "agency-v1";
 const ELIGIBLE_ROLES = new Set(["admin", "authority", "fieldteam"]);
 
-function normalizeSlug(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  // Lower-case so a caller's stored agencySlug ("AFAD") matches the panel id ("afad") the client
-  // sends, and so all members of an agency derive the same key doc regardless of casing.
-  const trimmed = value.trim().toLowerCase().replace(/\//g, "-");
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 function readFlag(value: unknown): boolean {
   return value === true || value === 1
     || (typeof value === "string" && ["true", "1", "yes", "on", "enabled"].includes(value.trim().toLowerCase()));
@@ -43,14 +39,14 @@ export const issueAgencyMessagingKey = onCall(
     }
 
     const data = (request.data ?? {}) as Record<string, unknown>;
-    const requestedSlug = normalizeSlug(data.agencySlug);
+    const requestedSlug = normalizeAgencyPanelId(data.agencySlug);
     if (!requestedSlug) {
       throw new HttpsError("invalid-argument", "agencySlug is required.");
     }
 
     const db = getFirestore();
     const userDoc = (await db.doc(`users/${uid}`).get()).data() ?? {};
-    const callerSlug = normalizeSlug(userDoc.agencySlug) ?? normalizeSlug(userDoc.agencyKey);
+    const callerSlug = resolveAgencyMessagingPanelId(userDoc);
     const isPlatformAdmin = readFlag(userDoc.platformAdmin)
       || readFlag(userDoc.globalDashboardAccess)
       || readFlag(userDoc.superAdmin);

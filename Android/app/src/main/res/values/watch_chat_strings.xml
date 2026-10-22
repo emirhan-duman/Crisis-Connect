@@ -1,0 +1,5 @@
+<resources>
+    <string name="watch_reply_chat_handoff">Watch · Handed to connection; delivery unconfirmed</string>
+    <string name="watch_reply_chat_uncertain">Watch · Not confirmed; no automatic resend</string>
+    <string name="watch_reply_chat_failed">Watch · Could not send</string>
+</resources>

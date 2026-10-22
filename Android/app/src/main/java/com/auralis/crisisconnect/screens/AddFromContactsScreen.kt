@@ -1,11 +1,15 @@
 package com.auralis.crisisconnect.screens
 
 import android.Manifest
+import android.app.Activity
 import android.app.Application
+import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +37,7 @@ import androidx.compose.material.icons.filled.PersonSearch
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,6 +52,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -78,6 +85,7 @@ import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.Contact
 import com.auralis.crisisconnect.data.getContacts
 import com.auralis.crisisconnect.data.saveContact
+import com.auralis.crisisconnect.messaging.ContactAccessConsent
 import com.auralis.crisisconnect.messaging.ContactDirectoryCache
 import com.auralis.crisisconnect.messaging.DeviceContactsReader
 import com.auralis.crisisconnect.messaging.DiscoveredContact
@@ -86,13 +94,13 @@ import com.auralis.crisisconnect.messaging.InternetMessagingClient
 import android.widget.Toast
 import com.auralis.crisisconnect.InAppReviewManager
 import com.auralis.crisisconnect.getSavedUserName
-import com.auralis.crisisconnect.messaging.DeviceContact
 import com.auralis.crisisconnect.nearby.NearbyContactScanner
 import com.auralis.crisisconnect.nearby.NearbyDiscoveryPreferences
 import com.auralis.crisisconnect.nearby.NearbyPairingClient
 import com.auralis.crisisconnect.nearby.NearbyPairingSupport
 import kotlinx.coroutines.flow.first
 import com.auralis.crisisconnect.ui.components.ContactAvatar
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -114,7 +122,28 @@ private const val MIN_REFRESH_INTERVAL_MS = 60_000L
 
 class AddFromContactsViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application
-    private val client = InternetMessagingClient()
+    private val client by lazy { InternetMessagingClient() }
+
+    private val consent = ContactAccessConsent(application)
+    private var lastConsentToken: String? = consent.token(true)
+    var hasDiscoveryConsent by mutableStateOf(consent.isGranted(online = true))
+        private set
+
+    fun acceptDiscoveryDisclosure() {
+        consent.accept(online = true)
+        refreshConsent()
+    }
+
+    fun refreshConsent() {
+        val token = consent.token(online = true)
+        hasDiscoveryConsent = token != null
+        if (token == null || token != lastConsentToken) {
+            _state.value = UiState.Idle
+            cacheRestored = false
+            lastScanAtMs = 0L
+        }
+        lastConsentToken = token
+    }
 
     data class MatchItem(
         val displayName: String,
@@ -154,6 +183,11 @@ class AddFromContactsViewModel(application: Application) : AndroidViewModel(appl
      * Pass [force] for an explicit user-initiated refresh, which skips the interval gate.
      */
     fun load(force: Boolean = false) {
+        // Also protects toolbar refresh/retry/resume, independently of the disclosure UI.
+        refreshConsent()
+        val consentToken = consent.token(online = true) ?: return
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.READ_CONTACTS) !=
+            PackageManager.PERMISSION_GRANTED) return
         val uid = client.currentUid()
         if (uid == null) {
             _state.value = UiState.NotSignedIn
@@ -162,64 +196,17 @@ class AddFromContactsViewModel(application: Application) : AndroidViewModel(appl
         if (loadInFlight) return
         loadInFlight = true
         viewModelScope.launch {
-            if (!cacheRestored) {
-                cacheRestored = true
-                val cached = withContext(Dispatchers.IO) { ContactDirectoryCache.read(appContext, uid) }
-                if (cached != null && _state.value !is UiState.Loaded) {
-                    lastScanAtMs = cached.scannedAtMs
-                    _state.value = UiState.Loaded(
-                        cached.entries.map {
-                            MatchItem(
-                                displayName = it.displayName,
-                                phone = it.phone,
-                                uid = it.uid,
-                                publicKey = it.publicKey,
-                                photoUrl = it.photoUrl,
-                                isChild = it.isChild
-                            )
-                        }
-                    )
-                }
-            }
-            val refreshingBehindResults = _state.value is UiState.Loaded
-            val sinceLastScan = System.currentTimeMillis() - lastScanAtMs
-            if (!force && refreshingBehindResults && sinceLastScan in 0 until MIN_REFRESH_INTERVAL_MS) {
-                loadInFlight = false
-                return@launch
-            }
-            if (refreshingBehindResults) _refreshing.value = true else _state.value = UiState.Loading
-            val result = runCatching {
-                val contacts = withContext(Dispatchers.IO) { DeviceContactsReader.read(appContext) }
-                val nameByPhone = contacts.associate { it.e164 to it.displayName }
-                val batches = contacts.map { it.e164 }.chunked(CONTACT_LOOKUP_BATCH)
-                val matches = ArrayList<DiscoveredContact>()
-                batches.forEachIndexed { index, batch ->
-                    if (index > 0) delay(CONTACT_LOOKUP_BATCH_SPACING_MS)
-                    matches += client.findContacts(batch)
-                }
-                matches.distinctBy { it.uid }
-                    .map {
-                        MatchItem(
-                            displayName = nameByPhone[it.phone] ?: it.phone,
-                            phone = it.phone,
-                            uid = it.uid,
-                            publicKey = it.publicKeyBase64,
-                            photoUrl = it.photoUrl,
-                            isChild = it.isChild
-                        )
-                    }
-                    .sortedBy { it.displayName.lowercase() }
-            }
-            result.fold(
-                onSuccess = { matches ->
-                    lastScanAtMs = System.currentTimeMillis()
-                    _state.value = UiState.Loaded(matches)
-                    withContext(Dispatchers.IO) {
-                        ContactDirectoryCache.write(
-                            context = appContext,
-                            uid = uid,
-                            entries = matches.map {
-                                ContactDirectoryCache.Entry(
+            try {
+                if (!consent.isCurrent(true, consentToken)) return@launch
+                if (!cacheRestored) {
+                    cacheRestored = true
+                    val cached = withContext(Dispatchers.IO) { ContactDirectoryCache.read(appContext, uid) }
+                    if (!consent.isCurrent(true, consentToken)) return@launch
+                    if (cached != null && _state.value !is UiState.Loaded) {
+                        lastScanAtMs = cached.scannedAtMs
+                        _state.value = UiState.Loaded(
+                            cached.entries.map {
+                                MatchItem(
                                     displayName = it.displayName,
                                     phone = it.phone,
                                     uid = it.uid,
@@ -227,21 +214,82 @@ class AddFromContactsViewModel(application: Application) : AndroidViewModel(appl
                                     photoUrl = it.photoUrl,
                                     isChild = it.isChild
                                 )
-                            },
-                            scannedAtMs = lastScanAtMs
-                        )
-                    }
-                },
-                onFailure = {
-                    if (!refreshingBehindResults) {
-                        _state.value = UiState.Error(
-                            it.localizedMessage ?: appContext.getString(R.string.unknown_error)
+                            }
                         )
                     }
                 }
-            )
-            _refreshing.value = false
-            loadInFlight = false
+                val refreshingBehindResults = _state.value is UiState.Loaded
+                val sinceLastScan = System.currentTimeMillis() - lastScanAtMs
+                if (!force && refreshingBehindResults && sinceLastScan in 0 until MIN_REFRESH_INTERVAL_MS) {
+                    loadInFlight = false
+                    return@launch
+                }
+                if (refreshingBehindResults) _refreshing.value = true else _state.value = UiState.Loading
+                val result = runCatching {
+                    val contacts = withContext(Dispatchers.IO) {
+                        check(consent.isCurrent(true, consentToken))
+                        DeviceContactsReader.read(appContext)
+                    }
+                    check(consent.isCurrent(true, consentToken))
+                    val nameByPhone = contacts.associate { it.e164 to it.displayName }
+                    val batches = contacts.map { it.e164 }.chunked(CONTACT_LOOKUP_BATCH)
+                    val matches = ArrayList<DiscoveredContact>()
+                    batches.forEachIndexed { index, batch ->
+                        if (index > 0) delay(CONTACT_LOOKUP_BATCH_SPACING_MS)
+                        check(consent.isCurrent(true, consentToken))
+                        matches += client.findContacts(batch)
+                    }
+                    matches.distinctBy { it.uid }
+                        .map {
+                            MatchItem(
+                                displayName = nameByPhone[it.phone] ?: it.phone,
+                                phone = it.phone,
+                                uid = it.uid,
+                                publicKey = it.publicKeyBase64,
+                                photoUrl = it.photoUrl,
+                                isChild = it.isChild
+                            )
+                        }
+                        .sortedBy { it.displayName.lowercase() }
+                }
+                if (!consent.isCurrent(true, consentToken)) return@launch
+                result.fold(
+                    onSuccess = { matches ->
+                        lastScanAtMs = System.currentTimeMillis()
+                        _state.value = UiState.Loaded(matches)
+                        withContext(Dispatchers.IO) {
+                            if (!consent.isCurrent(true, consentToken)) return@withContext
+                            ContactDirectoryCache.write(
+                                context = appContext,
+                                uid = uid,
+                                entries = matches.map {
+                                    ContactDirectoryCache.Entry(
+                                        displayName = it.displayName,
+                                        phone = it.phone,
+                                        uid = it.uid,
+                                        publicKey = it.publicKey,
+                                        photoUrl = it.photoUrl,
+                                        isChild = it.isChild
+                                    )
+                                },
+                                scannedAtMs = lastScanAtMs
+                            )
+                        }
+                    },
+                    onFailure = {
+                        if (it is CancellationException) throw it
+                        if (!refreshingBehindResults) {
+                            _state.value = UiState.Error(
+                                it.localizedMessage ?: appContext.getString(R.string.unknown_error)
+                            )
+                        }
+                    }
+                )
+            } finally {
+                _refreshing.value = false
+                loadInFlight = false
+                refreshConsent()
+            }
         }
     }
 
@@ -308,7 +356,10 @@ fun AddFromContactsScreen(navController: NavController) {
                     // Cached results are shown instantly and only auto-rescanned once a minute;
                     // this is the way to ask for an answer right now.
                     if (selectedTab == 0) {
-                        IconButton(onClick = { viewModel.load(force = true) }) {
+                        IconButton(
+                            enabled = viewModel.hasDiscoveryConsent,
+                            onClick = { viewModel.load(force = true) }
+                        ) {
                             Icon(
                                 Icons.Filled.Refresh,
                                 contentDescription = stringResource(R.string.add_from_contacts_refresh)
@@ -352,6 +403,15 @@ private fun InternetContactsTab(navController: NavController) {
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
+    if (!viewModel.hasDiscoveryConsent) {
+        ContactsDisclosure(
+            online = true,
+            onAccept = viewModel::acceptDiscoveryDisclosure,
+            onDecline = { navController.popBackStack() }
+        )
+        return
+    }
+
     var hasPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) ==
@@ -374,6 +434,8 @@ private fun InternetContactsTab(navController: NavController) {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshConsent()
+                if (!viewModel.hasDiscoveryConsent) return@LifecycleEventObserver
                 hasPermission = ContextCompat.checkSelfPermission(
                     context, Manifest.permission.READ_CONTACTS
                 ) == PackageManager.PERMISSION_GRANTED
@@ -396,7 +458,6 @@ private fun InternetContactsTab(navController: NavController) {
         Box(modifier = Modifier.fillMaxWidth().height(4.dp)) {
             if (refreshing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
-        PrivacyBanner()
         Box(modifier = Modifier.fillMaxSize()) {
             when (val s = state) {
                 is AddFromContactsViewModel.UiState.Loading ->
@@ -521,9 +582,31 @@ private fun InternetContactsTab(navController: NavController) {
 private fun NearbyContactsTab(navController: NavController) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Local contact access must never opt the user into internet matching.
+    val consent = remember { ContactAccessConsent(context) }
+    var hasLocalConsent by remember { mutableStateOf(consent.isGranted(online = false)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) hasLocalConsent = consent.isGranted(false)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    if (!hasLocalConsent) {
+        ContactsDisclosure(
+            online = false,
+            onAccept = {
+                consent.accept(online = false)
+                hasLocalConsent = consent.isGranted(false)
+            },
+            onDecline = { navController.popBackStack() }
+        )
+        return
+    }
     val devices by NearbyContactScanner.devices.collectAsStateWithLifecycle()
     var pairing by remember { mutableStateOf(false) }
-    var contacts by remember { mutableStateOf<List<DeviceContact>>(emptyList()) }
+    var readingSelection by remember { mutableStateOf(false) }
 
     var hasScanPermission by remember {
         mutableStateOf(
@@ -535,15 +618,6 @@ private fun NearbyContactsTab(navController: NavController) {
     val scanPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> hasScanPermission = granted }
-    var hasContactsPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) ==
-                PackageManager.PERMISSION_GRANTED
-        )
-    }
-    val contactsPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted -> hasContactsPermission = granted }
     LaunchedEffect(Unit) {
         if (!hasScanPermission) scanPermissionLauncher.launch(Manifest.permission.BLUETOOTH_SCAN)
     }
@@ -551,38 +625,68 @@ private fun NearbyContactsTab(navController: NavController) {
     // while opted in; this tab drives the targeted search (pick who you're looking for → SPAKE2).
     val enabled by NearbyDiscoveryPreferences.isEnabled(context).collectAsStateWithLifecycle(initialValue = false)
 
-    LaunchedEffect(enabled, hasContactsPermission) {
-        contacts = if (enabled && hasContactsPermission) {
-            withContext(Dispatchers.IO) {
-                runCatching { DeviceContactsReader.read(context) }.getOrDefault(emptyList())
-            }
-        } else emptyList()
-    }
-
     // Search a specific number by running SPAKE2 against each nearby device; only the real person
     // (same number → same password) completes. No number is broadcast; wrong devices learn nothing.
     fun search(phone: String, name: String) {
-        if (pairing) return
+        if (pairing || !consent.isGranted(false) || !enabled || !hasScanPermission) return
+        val consentToken = consent.token(false) ?: return
         pairing = true
         scope.launch {
-            var paired: NearbyPairingClient.Result.Paired? = null
-            for (address in NearbyContactScanner.currentAddresses()) {
-                val result = NearbyPairingClient.pair(
-                    context = context,
-                    bluetoothAddress = address,
-                    candidatePhone = phone,
-                    candidateName = name
-                )
-                if (result is NearbyPairingClient.Result.Paired) { paired = result; break }
-            }
-            pairing = false
-            val found = paired
-            if (found != null) {
-                navController.navigate(
-                    "chat/${Uri.encode(found.sessionCode)}?displayName=${Uri.encode(found.displayName)}"
-                )
-            } else {
+            try {
+                var paired: NearbyPairingClient.Result.Paired? = null
+                for (address in NearbyContactScanner.currentAddresses()) {
+                    if (!consent.isCurrent(false, consentToken)) return@launch
+                    val result = NearbyPairingClient.pair(
+                        context = context,
+                        bluetoothAddress = address,
+                        candidatePhone = phone,
+                        candidateName = name
+                    )
+                    if (result is NearbyPairingClient.Result.Paired) { paired = result; break }
+                }
+                if (!consent.isCurrent(false, consentToken)) return@launch
+                val found = paired
+                if (found != null) {
+                    navController.navigate(
+                        "chat/${Uri.encode(found.sessionCode)}?displayName=${Uri.encode(found.displayName)}"
+                    )
+                } else {
+                    Toast.makeText(context, R.string.nearby_pair_not_found, Toast.LENGTH_SHORT).show()
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
                 Toast.makeText(context, R.string.nearby_pair_not_found, Toast.LENGTH_SHORT).show()
+            } finally {
+                pairing = false
+            }
+        }
+    }
+
+    // Request only one phone number, with no broad READ_CONTACTS permission.
+    var selectionConsentToken by remember { mutableStateOf<String?>(null) }
+    val contactPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val token = selectionConsentToken
+        selectionConsentToken = null
+        val uri = result.data?.data
+        if (result.resultCode == Activity.RESULT_OK && uri != null && token != null && consent.isCurrent(false, token)) {
+            scope.launch {
+                readingSelection = true
+                try {
+                    val selected = withContext(Dispatchers.IO) {
+                        if (!consent.isCurrent(false, token)) return@withContext null
+                        try {
+                            DeviceContactsReader.readSelected(context, uri)
+                        } catch (error: Exception) {
+                            if (error is CancellationException) throw error
+                            null
+                        }
+                    }
+                    if (!consent.isCurrent(false, token)) return@launch
+                    if (selected != null) search(selected.e164, selected.displayName)
+                    else Toast.makeText(context, R.string.nearby_contact_selection_failed, Toast.LENGTH_SHORT).show()
+                } finally {
+                    readingSelection = false
+                }
             }
         }
     }
@@ -605,56 +709,67 @@ private fun NearbyContactsTab(navController: NavController) {
 
                 pairing -> LoadingState(stringResource(R.string.nearby_pairing_in_progress))
 
-                !hasContactsPermission -> EmptyState(
-                    icon = Icons.Filled.PersonSearch,
-                    title = stringResource(R.string.nearby_contacts_permission_needed),
-                    actionLabel = stringResource(R.string.grant_permission),
-                    onAction = { contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS) }
-                )
+                readingSelection -> LoadingState(stringResource(R.string.nearby_choose_contact))
 
-                else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    item { SectionHeader(text = stringResource(R.string.nearby_devices_count, devices.size)) }
-                    item { SectionHeader(text = stringResource(R.string.nearby_pick_contact)) }
-                    items(contacts, key = { it.e164 }) { contact ->
-                        ContactMatchRow(
-                            displayName = contact.displayName,
-                            phone = contact.e164,
-                            stableKey = contact.e164,
-                            photoUrl = "",
-                            onClick = { search(contact.e164, contact.displayName) }
-                        )
-                    }
+                else -> Column(modifier = Modifier.fillMaxSize()) {
+                    SectionHeader(text = stringResource(R.string.nearby_devices_count, devices.size))
+                    EmptyState(
+                        icon = Icons.Filled.PersonSearch,
+                        title = stringResource(R.string.nearby_pick_contact),
+                        actionLabel = stringResource(R.string.nearby_choose_contact),
+                        onAction = {
+                            selectionConsentToken = consent.token(false)
+                            try {
+                                contactPicker.launch(DeviceContactsReader.phonePickerIntent())
+                            } catch (_: ActivityNotFoundException) {
+                                selectionConsentToken = null
+                                Toast.makeText(context, R.string.nearby_contact_selection_failed, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
                 }
             }
         }
     }
 }
 
+/** Dismissal, Back and the negative action all leave without granting consent. */
 @Composable
-private fun PrivacyBanner() {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
-    ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Lock,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.size(20.dp)
-            )
+internal fun ContactsDisclosure(online: Boolean, onAccept: () -> Unit, onDecline: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDecline,
+        icon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+        title = {
+            Text(stringResource(if (online) R.string.contacts_disclosure_title else R.string.contacts_local_disclosure_title))
+        },
+        text = {
             Text(
-                text = stringResource(R.string.add_from_contacts_privacy_note),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer
+                stringResource(if (online) R.string.contacts_disclosure_body else R.string.contacts_local_disclosure_body),
+                modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())
             )
+        },
+        confirmButton = {
+            TextButton(onClick = onAccept) { Text(stringResource(R.string.contacts_disclosure_accept)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDecline) { Text(stringResource(R.string.contacts_disclosure_decline)) }
+        }
+    )
+}
+
+@Composable
+internal fun ContactConsentSettings() {
+    val context = LocalContext.current
+    val consent = remember { ContactAccessConsent(context) }
+    var online by remember { mutableStateOf(consent.isGranted(true)) }
+    var nearby by remember { mutableStateOf(consent.isGranted(false)) }
+    Column(modifier = Modifier.padding(16.dp)) {
+        Text(stringResource(R.string.contacts_consent_settings_hint), style = MaterialTheme.typography.bodyMedium)
+        TextButton(enabled = online, onClick = { consent.revoke(true); online = false }) {
+            Text(stringResource(R.string.contacts_consent_revoke_online))
+        }
+        TextButton(enabled = nearby, onClick = { consent.revoke(false); nearby = false }) {
+            Text(stringResource(R.string.contacts_consent_revoke_nearby))
         }
     }
 }

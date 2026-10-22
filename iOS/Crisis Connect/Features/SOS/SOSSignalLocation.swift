@@ -185,6 +185,10 @@ final class SOSSignalLocationCoordinator: NSObject, CLLocationManagerDelegate {
 
     private override init() {
         super.init()
+        #if DEBUG && targetEnvironment(simulator)
+        // The isolated watch test must not request location even during delegate initialization.
+        if WatchE2ETestMode.enabled { return }
+        #endif
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = kCLDistanceFilterNone
@@ -289,6 +293,7 @@ final class SOSSignalLocationCoordinator: NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
+        MessagingRegionHint.observe(location)
         latestLocation = location
         let payload = gpsPayload(from: location, providerOverride: "ios-corelocation")
         onBroadcastLocationChange?(payload)

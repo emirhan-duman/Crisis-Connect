@@ -19,9 +19,8 @@ struct AuthorityMlsTrustAssessment: Sendable {
 }
 
 enum AuthorityMlsTrust {
-    /// Only an already-approved, byte-for-byte matching pin may pass without a new user decision.
-    static func approvalCarriesForward(existingApproved: Bool, exactDeviceSetMatch: Bool) -> Bool {
-        existingApproved && exactDeviceSetMatch
+    static func automaticTrustEligible(deviceCount: Int, commitments: [String]) -> Bool {
+        deviceCount > 0 && commitments.count == deviceCount && Set(commitments).count == deviceCount
     }
 
     static func deviceCommitment(_ record: AuthorityMlsDirectoryRecord) -> String {
@@ -71,12 +70,11 @@ enum AuthorityMlsTrust {
     }
 }
 
-/// Approval pins live in a locked-device Keychain item. An authenticated directory row proves only
-/// which account session wrote it, not that an already-trusted endpoint authorized the device.
-/// First and changed sets therefore remain fail-closed until the exact safety number is approved.
+/// Pins complete device sets from the centrally provisioned authority directory. Valid rotations
+/// are accepted automatically; malformed, incomplete and cross-account records still fail closed.
 struct AuthorityMlsTrustStore: Sendable {
-    // v2 invalidates pins created by the former automatic-approval implementation.
-    private static let service = "com.crisisconnect.authority-mls-device-pins-v2"
+    // v3 makes the authenticated authority directory the device-set trust source.
+    private static let service = "com.crisisconnect.authority-mls-device-pins-v3"
 
     func assess(
         conversationId: String,
@@ -87,7 +85,10 @@ struct AuthorityMlsTrustStore: Sendable {
             throw AuthorityMlsTrustError.invalidDeviceSet
         }
         let commitments = devices.map(AuthorityMlsTrust.deviceCommitment).sorted(by: compareUtf8)
-        guard !devices.isEmpty, Set(commitments).count == devices.count else {
+        guard AuthorityMlsTrust.automaticTrustEligible(
+            deviceCount: devices.count,
+            commitments: commitments
+        ) else {
             return AuthorityMlsTrustAssessment(
                 uid: uid,
                 verdict: .missing,
@@ -104,41 +105,38 @@ struct AuthorityMlsTrustStore: Sendable {
             try save(PinRecord(
                 fingerprint: fingerprint,
                 deviceCommitments: commitments,
-                approved: false,
+                approved: true,
                 verifiedAt: Date().timeIntervalSince1970
             ), key: key)
             return AuthorityMlsTrustAssessment(
                 uid: uid,
                 verdict: .first,
-                approved: false,
+                approved: true,
                 fingerprint: fingerprint,
                 safetyNumber: safetyNumber,
                 deviceCommitments: commitments
             )
         }
         let matches = existing.fingerprint == fingerprint && existing.deviceCommitments == commitments
-        if !matches {
+        if !matches || !existing.approved {
             try save(PinRecord(
                 fingerprint: fingerprint,
                 deviceCommitments: commitments,
-                approved: false,
+                approved: true,
                 verifiedAt: Date().timeIntervalSince1970
             ), key: key)
         }
         return AuthorityMlsTrustAssessment(
             uid: uid,
             verdict: matches ? .match : .changed,
-            approved: AuthorityMlsTrust.approvalCarriesForward(
-                existingApproved: existing.approved,
-                exactDeviceSetMatch: matches
-            ),
+            approved: true,
             fingerprint: fingerprint,
             safetyNumber: safetyNumber,
             deviceCommitments: commitments
         )
     }
 
-    /// Calls fail closed unless the exact current device set was approved previously.
+    /// Calls use the same complete authenticated directory as AuthorityChat.
     func verifyExisting(
         conversationId: String,
         uid: String,

@@ -39,8 +39,8 @@ private struct P2pPendingHandshake {
 }
 
 private struct P2pPendingShareCompletion {
-    let session: P2pPublishedSession
-    let pending: P2pPendingHandshake
+    let contactId: UUID
+    let serverNonce: String
 }
 
 private struct P2pIncomingEnvelope {
@@ -169,6 +169,8 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
 
     private let queue = BlePeripheralHostCoordinator.shared.queue
     private let queueKey = DispatchSpecificKey<Void>()
+    private var shareStopWork: DispatchWorkItem?
+    private var didCheckShareRecovery = false
     private var shareSession: P2pPublishedSession?
     private var deviceResponses: [UUID: Data] = [:]
     private var pendingHandshakes: [UUID: P2pPendingHandshake] = [:]
@@ -240,7 +242,8 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         shareId: String,
         sessionCode: String,
         displayName: String?,
-        aesKeyBase64: String
+        aesKeyBase64: String,
+        recoveryDeadline: Date? = nil
     ) {
         let normalizedShareId = P2pBleProtocol.normalizeShareId(shareId)
         let trimmedSessionCode = sessionCode.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -276,22 +279,87 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
 
         queue.async { [weak self] in
             guard let self else { return }
+            // A freshly created QR wins over an old restore queued during app startup.
+            if recoveryDeadline != nil, self.shareSession != nil { return }
+            self.didCheckShareRecovery = true
+            do {
+                try ContactShareRecovery.write(ContactShareCheckpoint(shareId: normalizedShareId,
+                    sessionCode: trimmedSessionCode, displayName: displayName, aesKeyBase64: trimmedKey,
+                    account: Auth.auth().currentUser?.uid ?? "", expiresAt: recoveryDeadline ?? Date().addingTimeInterval(300)))
+            } catch { return }
+            self.shareStopWork?.cancel()
+            self.shareStopWork = nil
             self.shareSession = nextSession
             self.refreshHostingIfNeeded()
+            if let deadline = recoveryDeadline {
+                let nonce = nextSession.serverNonce
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, self.shareSession?.serverNonce == nonce else { return }
+                    self.shareStopWork = nil
+                    try? ContactShareRecovery.clear()
+                    self.shareSession = nil
+                    self.refreshHostingIfNeeded()
+                }
+                self.shareStopWork = work
+                self.queue.asyncAfter(deadline: .now() + max(0, min(30, deadline.timeIntervalSinceNow)), execute: work)
+            }
         }
     }
 
-    func stopSharing() {
+    func resumePendingShare() {
+        queue.async { [weak self] in
+            guard let self, !self.didCheckShareRecovery, self.shareSession == nil else { return }
+            do {
+                guard let saved = try ContactShareRecovery.read() else { self.didCheckShareRecovery = true; return }
+                guard saved.canResume(sessionCode: SecureLocalStore.shared.getOrCreateP2pSessionCode(),
+                    account: Auth.auth().currentUser?.uid ?? "", now: Date()) else {
+                    try ContactShareRecovery.clear(); self.didCheckShareRecovery = true; return
+                }
+                self.didCheckShareRecovery = true
+                self.startSharing(shareId: saved.shareId, sessionCode: saved.sessionCode,
+                    displayName: saved.displayName, aesKeyBase64: saved.aesKeyBase64,
+                    recoveryDeadline: min(saved.expiresAt, Date().addingTimeInterval(30)))
+            } catch { /* Retry on the next foreground if protected storage is unavailable. */ }
+        }
+    }
+
+    func stopSharing(after delay: TimeInterval = 0) {
         queue.async { [weak self] in
             guard let self else { return }
-            self.shareSession = nil
-            self.refreshHostingIfNeeded()
+            self.shareStopWork?.cancel()
+            self.shareStopWork = nil
+            self.didCheckShareRecovery = true
+            guard delay > 0, let nonce = self.shareSession?.serverNonce else {
+                try? ContactShareRecovery.clear()
+                self.shareSession = nil
+                self.refreshHostingIfNeeded()
+                return
+            }
+            if var saved = try? ContactShareRecovery.read() {
+                saved.expiresAt = min(saved.expiresAt, Date().addingTimeInterval(min(delay, 12)))
+                try? ContactShareRecovery.write(saved)
+            }
+            // A navigation pop must not tear down the host halfway through the scanner's
+            // 12-second verification window. Explicit stop remains immediate.
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.shareSession?.serverNonce == nonce else { return }
+                self.shareStopWork = nil
+                try? ContactShareRecovery.clear()
+                self.shareSession = nil
+                self.refreshHostingIfNeeded()
+            }
+            self.shareStopWork = work
+            self.queue.asyncAfter(deadline: .now() + min(delay, 12), execute: work)
         }
     }
 
     func stop() {
         queue.async { [weak self] in
             guard let self else { return }
+            self.shareStopWork?.cancel()
+            self.shareStopWork = nil
+            self.didCheckShareRecovery = true
+            try? ContactShareRecovery.clear()
             self.shareSession = nil
             self.resetHostedTransportState()
             DispatchQueue.main.async {
@@ -1092,6 +1160,12 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             return
         }
 
+        // The scanner must not receive success until the reciprocal contact is durable. This
+        // closes the old 250ms window where a force-quit lost only the displaying side's record.
+        guard let record = persistAuthenticatedPeer(session: session, centralId: central.identifier, pending: pending) else {
+            setErrorResponse(for: central.identifier, code: "save_failed", message: "Could not save peer")
+            return
+        }
         pendingHandshakes.removeValue(forKey: central.identifier)
         setDeviceResponse(
             for: central.identifier,
@@ -1103,10 +1177,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
                 "serverDeviceId": session.deviceId
             ]
         )
-        pendingShareCompletions[central.identifier] = P2pPendingShareCompletion(
-            session: session,
-            pending: pending
-        )
+        pendingShareCompletions[central.identifier] = P2pPendingShareCompletion(contactId: record.id, serverNonce: session.serverNonce)
     }
 
     private func handleMessageChunk(_ value: Data, from central: CBCentral) -> CBATTError.Code {
@@ -1971,7 +2042,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         session: P2pPublishedSession,
         centralId: UUID,
         pending: P2pPendingHandshake
-    ) {
+    ) -> ContactRecord? {
         let address = centralId.uuidString.uppercased()
 
         // Self-identity guard — the mirror of the Android host-side one. Two failures, two answers:
@@ -1994,7 +2065,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             || (!incomingSessionCode.isEmpty
                 && incomingSessionCode.caseInsensitiveCompare(localSessionCode) == .orderedSame) {
             MessagingDiagLog.log("pairing rejected: the peer identity is this device")
-            return
+            return nil
         }
         let localUid = (Auth.auth().currentUser?.uid ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2007,6 +2078,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             fallbackSessionCode: pending.clientSessionCode,
             fallbackAddress: address
         )
+        ContactStore.shared.prepareForHostPairing()
         let record = ContactStore.shared.upsertBleContact(
             name: pending.clientName ?? pending.clientSessionCode,
             sessionCode: peerSessionCode,
@@ -2027,6 +2099,8 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             analyticsSource: "ble_gatt_peer",
             analyticsReceived: true
         )
+        do { try ContactStore.shared.flushPairingFromHost() }
+        catch { return nil }
         bindCentral(centralId, to: record)
         DispatchQueue.main.async {
             SOSChatStore.shared.ensureSession(
@@ -2042,14 +2116,8 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
                 isVerified: true,
                 avatarBase64: pending.clientAvatarBase64
             )
-            NotificationCenter.default.post(
-                name: .p2pShareDidAddContact,
-                object: nil,
-                userInfo: [
-                    "contactId": record.id
-                ]
-            )
         }
+        return record
     }
 
     private func finalizeShareCompletionIfNeeded(for centralId: UUID, deliveredPayload: Data) {
@@ -2061,11 +2129,12 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         // Keep the QR-share GATT service alive briefly after returning the final
         // ATT read response so the central can finish processing `server_finish`.
         queue.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
-            self?.persistAuthenticatedPeer(
-                session: completion.session,
-                centralId: centralId,
-                pending: completion.pending
-            )
+            guard self?.shareSession?.serverNonce == completion.serverNonce else { return }
+            try? ContactShareRecovery.clear()
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .p2pShareDidAddContact, object: nil,
+                    userInfo: ["contactId": completion.contactId])
+            }
         }
     }
 

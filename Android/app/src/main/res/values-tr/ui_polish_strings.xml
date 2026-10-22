@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="messages_empty_title">Henüz sohbet yok</string>
+    <string name="messages_empty_body">QR kod, Bluetooth veya rehberin üzerinden bir kişiyle bağlantı kur.</string>
+    <string name="tools_summary_crisis_sentinel">Afet ve ilk yardım için çevrimdışı destek</string>
+    <string name="tools_summary_breadcrumb">Rotanı kaydet, başlangıca geri dön</string>
+    <string name="tools_summary_metal_detector">Cihazınla yakındaki metalleri algıla</string>
+</resources>

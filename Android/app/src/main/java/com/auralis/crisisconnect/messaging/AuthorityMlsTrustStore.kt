@@ -20,9 +20,8 @@ data class AuthorityMlsTrustAssessment(
 )
 
 /**
- * Keeps an authenticated local approval pin for each account's complete MLS device set. Firestore
- * proves only which account session wrote a directory row; first and changed sets therefore remain
- * fail-closed until the user verifies and approves the exact safety number.
+ * Pins complete device sets from the centrally provisioned authority directory. Valid rotations
+ * are accepted automatically; malformed, incomplete and cross-account records still fail closed.
  */
 class AuthorityMlsTrustStore(context: Context) {
     private val appContext = context.applicationContext
@@ -34,7 +33,7 @@ class AuthorityMlsTrustStore(context: Context) {
     ): AuthorityMlsTrustAssessment {
         require(devices.all { it.uid == uid }) { "Authority MLS directory was grouped incorrectly." }
         val commitments = devices.map(AuthorityMlsTrust::deviceCommitment).distinct().sorted()
-        if (devices.isEmpty() || commitments.size != devices.size) {
+        if (!AuthorityMlsTrust.automaticTrustEligible(devices.size, commitments)) {
             return AuthorityMlsTrustAssessment(uid, AuthorityMlsTrustVerdict.MISSING, false, "", "", commitments)
         }
         val fingerprint = AuthorityMlsTrust.deviceSetFingerprint(commitments)
@@ -42,31 +41,31 @@ class AuthorityMlsTrustStore(context: Context) {
         val key = recordKey(conversationId, uid)
         val existing = loadPin(key)
         if (existing == null) {
-            save(key, PinRecord(fingerprint, commitments, false, System.currentTimeMillis()))
+            save(key, PinRecord(fingerprint, commitments, true, System.currentTimeMillis()))
             return AuthorityMlsTrustAssessment(
                 uid,
                 AuthorityMlsTrustVerdict.FIRST,
-                false,
+                true,
                 fingerprint,
                 safetyNumber,
                 commitments,
             )
         }
         val match = existing.fingerprint == fingerprint && existing.deviceCommitments == commitments
-        if (!match) {
-            save(key, PinRecord(fingerprint, commitments, false, System.currentTimeMillis()))
+        if (!match || !existing.approved) {
+            save(key, PinRecord(fingerprint, commitments, true, System.currentTimeMillis()))
         }
         return AuthorityMlsTrustAssessment(
             uid,
             if (match) AuthorityMlsTrustVerdict.MATCH else AuthorityMlsTrustVerdict.CHANGED,
-            AuthorityMlsTrust.approvalCarriesForward(existing.approved, match),
+            true,
             fingerprint,
             safetyNumber,
             commitments,
         )
     }
 
-    /** Calls fail closed unless the exact current device set was approved previously. */
+    /** Calls use the same complete authenticated directory as AuthorityChat. */
     fun verifyExisting(
         conversationId: String,
         uid: String,
@@ -151,16 +150,15 @@ class AuthorityMlsTrustStore(context: Context) {
     }
 
     companion object {
-        // v2 invalidates pins created by the former automatic-approval implementation.
-        private const val STORAGE_CONTEXT = "authority-mls-device-pins:v2"
+        // v3 makes the authenticated authority directory the device-set trust source.
+        private const val STORAGE_CONTEXT = "authority-mls-device-pins:v3"
         private val storageLock = Any()
     }
 }
 
 object AuthorityMlsTrust {
-    /** Only an already-approved, byte-for-byte matching pin may pass without a new user decision. */
-    fun approvalCarriesForward(existingApproved: Boolean, exactDeviceSetMatch: Boolean): Boolean =
-        existingApproved && exactDeviceSetMatch
+    fun automaticTrustEligible(deviceCount: Int, commitments: List<String>): Boolean =
+        deviceCount > 0 && commitments.size == deviceCount && commitments.distinct().size == deviceCount
 
     fun deviceCommitment(record: AuthorityMlsDirectoryRecord): String {
         val digest = MessageDigest.getInstance("SHA-256")

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="messages_empty_title">No conversations yet</string>
+    <string name="messages_empty_body">Connect with someone by QR code, Bluetooth or your contacts.</string>
+    <string name="tools_summary_crisis_sentinel">Offline guidance for disasters and first aid</string>
+    <string name="tools_summary_breadcrumb">Record a route and find your way back</string>
+    <string name="tools_summary_metal_detector">Detect nearby metal with your device</string>
+</resources>
