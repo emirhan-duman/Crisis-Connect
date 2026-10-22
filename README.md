@@ -990,6 +990,18 @@ BrowserStack supports Crisis Connect through its Open Source Program with sponso
 
 BrowserStack's required README verification statement: **This project is tested with BrowserStack.**
 
+<p>
+  <a href="https://hosted.weblate.org/engage/crisis-connect/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/supporters/weblate-dark.svg" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/supporters/weblate-light.svg" />
+      <img src="docs/supporters/weblate-light.svg" alt="Hosted Weblate" width="150" />
+    </picture>
+  </a>
+</p>
+
+Hosted Weblate supports Crisis Connect with free translation hosting through its Libre plan for open-source projects, helping the community translate and review the Android and iOS apps.
+
 ## License
 
 This project is licensed under the [GNU Affero General Public License v3.0](./LICENSE).
