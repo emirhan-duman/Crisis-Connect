@@ -1002,6 +1002,18 @@ BrowserStack's required README verification statement: **This project is tested 
 
 Hosted Weblate supports Crisis Connect with free translation hosting through its Libre plan for open-source projects, helping the community translate and review the Android and iOS apps.
 
+<p>
+  <a href="https://betterqa.co/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/supporters/betterqa-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/supporters/betterqa.svg" />
+      <img src="docs/supporters/betterqa.svg" alt="BetterQA" width="150" />
+    </picture>
+  </a>
+</p>
+
+BetterQA supports Crisis Connect with a complimentary security assessment of the Android and iOS apps, including automated scanning, engineer validation of findings, remediation guidance, and one retest. The assessment has been agreed; results are pending.
+
 ## License
 
 This project is licensed under the [GNU Affero General Public License v3.0](./LICENSE).
