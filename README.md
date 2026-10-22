@@ -1004,7 +1004,11 @@ Hosted Weblate supports Crisis Connect with free translation hosting through its
 
 <p>
   <a href="https://betterqa.co/">
-    <img src="docs/supporters/betterqa.svg" alt="BetterQA" width="150" />
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/supporters/betterqa-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/supporters/betterqa.svg" />
+      <img src="docs/supporters/betterqa.svg" alt="BetterQA" width="150" />
+    </picture>
   </a>
 </p>
 
