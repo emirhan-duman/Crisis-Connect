@@ -778,12 +778,27 @@ struct SOSChatDetailView: View {
         _voiceCallController = StateObject(wrappedValue: ChatPeerVoiceCallController(sessionId: sessionId))
     }
 
+    @State private var signalPeerUpgradeRequired = false
+    private func refreshSecurityMigrationState() async {
+        guard let peer = contactRecord?.peerUid else { signalPeerUpgradeRequired = false; return }
+        signalPeerUpgradeRequired = await Task.detached { SignalSessionGate.shared.peerUpgradeRequired(peer) }.value
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let layout = ChatLayoutMetrics(availableWidth: proxy.size.width)
 
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
+                    if contactRecord?.offlineRepairRequired == true || signalPeerUpgradeRequired {
+                        Text(signalPeerUpgradeRequired ? "PEER_SECURITY_UPGRADE_REQUIRED" : "OFFLINE_PAIRING_UPGRADE_REQUIRED")
+                            .font(.footnote)
+                            .foregroundStyle(Color.appTextSecondary)
+                            .padding(.horizontal)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.appSurface)
+                    }
                     if shouldShowCompactCallPanel {
                         callPanelView(layout: layout)
                     }
@@ -806,6 +821,11 @@ struct SOSChatDetailView: View {
                     )
                 }
             }
+        }
+        .task(id: contactRecord?.peerUid) { await refreshSecurityMigrationState() }
+        .onReceive(NotificationCenter.default.publisher(for: .signalProtocolMigrationStateChanged)) { notification in
+            guard notification.userInfo?["peerUid"] as? String == contactRecord?.peerUid else { return }
+            Task { await refreshSecurityMigrationState() }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)

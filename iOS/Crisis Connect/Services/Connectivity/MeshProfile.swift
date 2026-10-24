@@ -20,7 +20,12 @@ struct MeshProfile {
     let messageInCharacteristicUUID: CBUUID
     let messageOutCharacteristicUUID: CBUUID
     /// AES-GCM payload key id carried in the packet envelope (decryption rejects mismatches).
-    let payloadKeyId: String
+    private let configuredPayloadKeyId: String
+    var payloadKeyId: String {
+        id == "authority"
+            ? "authority-v2-\(Int64(Date().timeIntervalSince1970 * 1000) / AuthorityMeshKeyLease.periodMillis)"
+            : configuredPayloadKeyId
+    }
 
     /// Public, open mesh — identical UUIDs/keyId to the original `GattMeshProtocol`.
     static let publicMesh = MeshProfile(
@@ -28,7 +33,7 @@ struct MeshProfile {
         serviceUUID: GattMeshProtocol.serviceUUID,
         messageInCharacteristicUUID: GattMeshProtocol.messageInCharacteristicUUID,
         messageOutCharacteristicUUID: GattMeshProtocol.messageOutCharacteristicUUID,
-        payloadKeyId: "public-v1"
+        configuredPayloadKeyId: "public-v1"
     )
 
     /// Authority-only mesh — separate UUID (Crisis Connect 0xCCxx range) + provisioned group key.
@@ -37,6 +42,6 @@ struct MeshProfile {
         serviceUUID: CBUUID(string: "0000CCA1-0000-1000-8000-00805F9B34FB"),
         messageInCharacteristicUUID: CBUUID(string: "0000CCA2-0000-1000-8000-00805F9B34FB"),
         messageOutCharacteristicUUID: CBUUID(string: "0000CCA3-0000-1000-8000-00805F9B34FB"),
-        payloadKeyId: "authority-v1"
+        configuredPayloadKeyId: "authority-v2"
     )
 }

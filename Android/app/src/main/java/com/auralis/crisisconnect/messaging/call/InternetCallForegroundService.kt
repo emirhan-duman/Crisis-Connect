@@ -232,7 +232,7 @@ class InternetCallForegroundService : Service() {
                 }
                 if (foregroundActive && canPostNotifications()) {
                     runCatching {
-                        NotificationManagerCompat.from(this).notify(FOREGROUND_ID, buildNotification(null))
+                        postCallNotification(FOREGROUND_ID, buildNotification(null))
                     }
                 }
                 return
@@ -256,7 +256,7 @@ class InternetCallForegroundService : Service() {
         }
         if (foregroundActive && canPostNotifications()) {
             runCatching {
-                NotificationManagerCompat.from(this).notify(FOREGROUND_ID, buildNotification(call))
+                postCallNotification(FOREGROUND_ID, buildNotification(call))
             }
         }
     }
@@ -490,8 +490,16 @@ class InternetCallForegroundService : Service() {
             val name = sfu.peerName.ifBlank { getString(R.string.internet_call_unknown_peer) }
             buildRingNotification(name, callPerson(name, resolveAvatar(sfu.peerUid, name)))
         }
-        if (canPostNotifications()) {
-            runCatching { NotificationManagerCompat.from(this).notify(RING_NOTIFICATION_ID, notification) }
+        runCatching { postCallNotification(RING_NOTIFICATION_ID, notification) }
+    }
+
+    private fun postCallNotification(id: Int, notification: Notification) {
+        try {
+            // Self-managed call notifications may be exempt from POST_NOTIFICATIONS.
+            // Let Android apply that rule and handle a permission revocation safely.
+            NotificationManagerCompat.from(this).notify(id, notification)
+        } catch (_: SecurityException) {
+            // Permission can be revoked mid-call. Keep the existing call and audio alive.
         }
     }
 

@@ -65,7 +65,7 @@ fun RescueFeatureRedirectScreen(
 
         val hasAccess = withContext(Dispatchers.IO) {
             SecurityRepository(context.applicationContext)
-                .getUsableStoredCertificateRole(allowExpired = true)
+                .getUsableStoredCertificateRole(allowExpired = false)
                 ?.trim()
                 ?.lowercase(Locale.US) in RESCUE_FEATURE_ROLES
         }

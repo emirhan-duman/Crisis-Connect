@@ -42,7 +42,7 @@ struct NearbyPairingApprovalHost: View {
                     }
                 }
             } message: {
-                Text("NEARBY_PAIRING_REQUEST_TEXT")
+                Text("NEARBY_PAIRING_IDENTITY_WARNING")
             }
     }
 }

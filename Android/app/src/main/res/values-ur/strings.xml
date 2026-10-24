@@ -661,7 +661,6 @@ Android: %3$s</string>
     <string name="nearby_match_notification_text">بلوٹوتھ کے ذریعے جڑنے کے لیے ٹیپ کریں</string>
     <string name="nearby_pairing_channel_name">قریبی جوڑنے کی درخواستیں</string>
     <string name="nearby_pairing_request_title">%1$s قریب جڑنا چاہتا ہے</string>
-    <string name="nearby_pairing_request_text">بلوٹوتھ کے ذریعے چیٹ کرنے کے لیے قبول کریں۔</string>
     <string name="nearby_pairing_accept">قبول کریں</string>
     <string name="nearby_pairing_decline">مسترد کریں</string>
     <string name="manual_connect_button">آلے کے ساتھ جوڑیں</string>
@@ -1344,7 +1343,6 @@ Android: %3$s</string>
     <string name="notification_photo_message_body">تصویری پیغام</string>
     <string name="chat_encryption_setup_title">اس چیٹ کو محفوظ بنائیں</string>
     <string name="chat_encryption_setup_instruction">مشترکہ خفیہ کاری کلید درآمد کرنے کے لیے دوسرے آلے کی نئی چیٹ اسکرین پر دکھایا گیا QR کوڈ اسکین کریں۔</string>
-    <string name="chat_encryption_setup_session_mismatch">یہ QR ایک مختلف چیٹ سیشن سے تعلق رکھتا ہے۔</string>
     <string name="chat_encryption_setup_invalid_qr">غیر تعاون یافتہ QR فارمیٹ۔</string>
     <string name="chat_encryption_setup_handshake_in_progress">خفیہ کاری کلید کی تصدیق ہو رہی ہے…</string>
     <string name="chat_encryption_setup_handshake_failed">خفیہ کاری کلید کی تصدیق نہیں ہو سکی۔ دوبارہ کوشش کریں۔</string>

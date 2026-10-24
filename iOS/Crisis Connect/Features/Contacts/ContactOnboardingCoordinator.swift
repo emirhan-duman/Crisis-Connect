@@ -152,6 +152,10 @@ final class ContactOnboardingCoordinator: ObservableObject {
             self.verifier.cancel()
             self.fail(title: "CONTACT_SCAN_NOT_FOUND_TITLE", message: "CONTACT_SCAN_NOT_FOUND_MESSAGE")
         }
+        guard payload.supportsSecureOfflinePairing else {
+            complete(.failed(.notFound), payload: payload, id: id)
+            return
+        }
         if let verified {
             complete(.verified(verified), payload: payload, id: id)
             return
@@ -349,13 +353,13 @@ private final class LiveContactOnboardingPersistence: ContactOnboardingPersistin
             id: record.id,
             displayName: record.name,
             role: .unknown,
-            isVerified: true
+            isVerified: record.isVerified
         )
         SOSChatStore.shared.updateIdentity(
             id: record.id,
             displayName: record.name,
             role: .unknown,
-            isVerified: true,
+            isVerified: record.isVerified,
             avatarBase64: result.avatarBase64
         )
 
@@ -386,6 +390,7 @@ private final class LiveContactOnboardingPersistence: ContactOnboardingPersistin
             name: resolvedName,
             sessionCode: canonicalSessionCode,
             aesKeyBase64: key,
+            offlineKeyVersion: 1,
             isVerified: false,
             remoteSessionCode: remoteSessionCode.nilIfEmpty,
             remotePlatform: ContactRemotePlatform.normalize(payload.platform),

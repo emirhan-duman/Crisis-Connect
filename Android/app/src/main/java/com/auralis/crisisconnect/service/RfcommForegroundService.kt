@@ -1548,9 +1548,11 @@ class RfcommForegroundService : Service() {
         if (messageUuid.isBlank()) {
             return
         }
-        val thread = connectedThreads[sessionCode] ?: return
-        val payload = "ACK|$messageUuid\n"
-        thread.write(payload.toByteArray(Charsets.UTF_8))
+        serviceScope.launch {
+            val contact = getContact(applicationContext, sessionCode) ?: return@launch
+            val payload = SecureRfcommReceipt.seal(contact.aesKey, SecureRfcommReceipt.Kind.READ, messageUuid) ?: return@launch
+            connectedThreads[sessionCode]?.write(payload.toByteArray(Charsets.UTF_8))
+        }
     }
 
     private fun sendPeerName(sessionCode: String) {

@@ -51,16 +51,16 @@
 
 ---
 
-## 1.2.0 Early Access
+## 1.2.1 Early Access
 
-The next mobile release is **1.2.0 Early Access · Beta 1**, tracked as
-[`v1.2.0-beta.1`](https://github.com/emirhan-duman/Crisis-Connect/releases/tag/v1.2.0-beta.1).
+The current review preview is **1.2.1 Early Access · Beta 2**, tracked as
+[`v1.2.1-beta.2`](https://github.com/emirhan-duman/Crisis-Connect/releases/tag/v1.2.1-beta.2).
 It is a GitHub **pre-release**; `v1.1.9` remains the latest stable GitHub release.
 
-This preview includes the latest mobile messaging, contact-pairing and SOS recovery work,
-constrained-network traffic policies, and experimental Apple Watch / Wear OS support.
-Phone app versions are Android **1.2.0 (69)** and iOS **1.2.0 (38)**; Wear OS uses build **70**.
-See the [early-access notes](docs/releases/1.2.0-beta.1.md) for distribution, validation and limitations.
+This preview adds security hardening for identity, pairing, offline messaging and key management,
+plus a CallKit audio correction. Independent review and retesting remain in progress.
+Phone app versions are Android **1.2.1 (70)** and iOS **1.2.1 (39)**; Wear OS uses build **71**.
+See the [review-preview notes](docs/releases/1.2.1-beta.2.md) for distribution, validation and limitations.
 
 ## Table of Contents
 

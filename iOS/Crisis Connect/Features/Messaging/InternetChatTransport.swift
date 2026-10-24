@@ -51,6 +51,7 @@ final class InternetChatTransport: @unchecked Sendable {
     // MTU-independent half of bidirectional QR pairing. Payload {"rsc":<scanner sessionCode>,
     // "name":<scanner name>}; senderUid + key on the envelope ARE the identity. Byte-parity w/ Android.
     static let identityAnnounceTemplate = 208
+    static let signalIdentityBindingTemplate = 209
     private static let defaultTtlMs = 24 * 60 * 60 * 1000
     private static let typingSignalTtlMs = 15 * 1000
     private static let callSignalTtlMs = 60 * 1000
@@ -135,7 +136,8 @@ final class InternetChatTransport: @unchecked Sendable {
         // Stamped on the wire doc (not the ciphertext): set only for a call OFFER so the backend
         // fires an iOS PushKit VoIP ring for a force-quit recipient.
         callRing: Bool = false,
-        allowUltraConstrainedPath: Bool = false
+        allowUltraConstrainedPath: Bool = false,
+        forceIdentityBinding: Bool = false
     ) async throws {
         let traffic = DisasterTrafficController.shared
         guard !traffic.isSaving || (content.attachment == nil && traffic.allowsText(template: content.templateCode, text: content.text)) else {
@@ -149,8 +151,22 @@ final class InternetChatTransport: @unchecked Sendable {
         }
         try await traffic.awaitSendSlot(emergency: content.templateCode == Self.sosAlertTemplate)
         let wirePriority = content.templateCode == Self.sosAlertTemplate ? "high" : priority
+        if !forceIdentityBinding {
+            guard !SignalSessionGate.shared.identityChangePending(route.peerUid) else { throw SignalTransportError.identityChanged }
+            if forceEstablish { _ = try? await sendSignalIdentityBinding(route: route, requestReply: true) }
+        }
+        if !forceIdentityBinding && SignalSessionGate.shared.peerUpgradeRequired(route.peerUid) {
+            throw SignalTransportError.peerUpgradeRequired
+        }
         let envelope: RelayableInternetEnvelope
-        if await SignalSessionGate.shared.ensureOutbound(route.peerUid, forceEstablish: forceEstablish) {
+        var signalReady = false
+        if !forceIdentityBinding { signalReady = await SignalSessionGate.shared.ensureOutbound(route.peerUid, forceEstablish: forceEstablish) }
+        if !forceIdentityBinding && !SignalMigrationPolicy.permitsApplication(isSignal: signalReady,
+            hasAuthenticatedBinding: SignalSessionGate.shared.hasIdentityBinding(route.peerUid),
+            identityChanged: SignalSessionGate.shared.identityChangePending(route.peerUid)) {
+            throw SignalTransportError.noSession(route.peerUid)
+        }
+        if signalReady {
             let wire = try SignalSessionGate.shared.encrypt(route.peerUid, content: content)
             envelope = OutgoingSignalInternetEnvelope(
                 messageId: messageId,
@@ -382,8 +398,10 @@ final class InternetChatTransport: @unchecked Sendable {
     /// it to the right contact. Durable so a briefly-offline peer still heals.
     @discardableResult
     func sendIdentityAnnounce(contact: ContactRecord, mySessionCode: String, myName: String?) async -> Bool {
-        guard let route = route(for: contact) else { return false }
-        var payloadObj: [String: Any] = ["rsc": mySessionCode]
+        guard let route = route(for: contact), let key = ContactStore.shared.aesKey(for: contact),
+              let myKey = try? MessagingIdentity.shared.publicKeyBase64() else { return false }
+        var payloadObj: [String: Any] = ["rsc": mySessionCode,
+            "binding": ContactIdentityBinding.sign(key: key, uid: route.myUid, sessionCode: mySessionCode, publicKey: myKey)]
         if let myName, !myName.isEmpty { payloadObj["name"] = myName }
         // Carry our OWN v2 messaging public key in the authenticated payload so the peer heals
         // WITHOUT a directory lookup of our uid — the lookup lags right after a fresh install and a
@@ -409,6 +427,27 @@ final class InternetChatTransport: @unchecked Sendable {
             MessagingDiagLog.log("identity announce send failed: \(String(describing: error))")
             return false
         }
+    }
+
+    func sendSignalIdentityBinding(contact: ContactRecord, requestReply: Bool) async throws -> Bool {
+        guard let route = route(for: contact) else { return false }
+        return try await sendSignalIdentityBinding(route: route, requestReply: requestReply)
+    }
+
+    private func sendSignalIdentityBinding(route: PeerRoute, requestReply: Bool) async throws -> Bool {
+        guard let p256 = route.peerKeyB64 else { return false }
+        let bound = SignalSessionGate.shared.hasIdentityBinding(route.peerUid)
+        var cohort = false
+        if requestReply && !bound { cohort = await client.supportsSignalIdentityBinding(peerUid: route.peerUid) }
+        guard SignalMigrationPolicy.permitsBindingControl(requestReply: requestReply, alreadyBound: bound, cohortEnabled: cohort) else { return false }
+        if requestReply && !SignalSessionGate.shared.claimBindingAnnouncement(peer: route.peerUid, p256: p256) { return false }
+        if !bound && !SignalSessionGate.shared.markPeerUpgradeRequired(route.peerUid) { return false }
+        let payload = try JSONSerialization.data(withJSONObject: ["signal": SignalSessionGate.shared.localIdentityBase64(), "reply": requestReply])
+        try await sealAndRelay(route: route,
+            content: InternetMessageContent(templateCode: Self.signalIdentityBindingTemplate, text: String(decoding: payload, as: UTF8.self)),
+            messageId: UUID().uuidString, createdAtMs: Int(Date().timeIntervalSince1970 * 1000),
+            priority: "normal", ttlMs: Self.defaultTtlMs, forceIdentityBinding: true)
+        return true
     }
 
     /// Sends an E2E delivery/read receipt ({"ids":[...]}, templateCode 204/205), byte-compatible

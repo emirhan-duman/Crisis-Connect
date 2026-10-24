@@ -396,7 +396,7 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
     fun refreshRoleAccess() {
         viewModelScope.launch(exceptionHandler) {
             val role = withContext(Dispatchers.IO) {
-                securityRepository.getUsableStoredCertificateRole(allowExpired = true)
+                securityRepository.getUsableStoredCertificateRole(allowExpired = false)
             }?.lowercase(Locale.US)
             val modes = availableModesForRole(role)
             // The FirebaseAuth check is deliberately independent of the certificate: a stored

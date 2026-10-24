@@ -658,7 +658,6 @@
     <string name="nearby_match_notification_text">Нажмите, чтобы подключиться по Bluetooth</string>
     <string name="nearby_pairing_channel_name">Запросы на сопряжение поблизости</string>
     <string name="nearby_pairing_request_title">%1$s хочет подключиться поблизости</string>
-    <string name="nearby_pairing_request_text">Примите, чтобы общаться по Bluetooth.</string>
     <string name="nearby_pairing_accept">Принять</string>
     <string name="nearby_pairing_decline">Отклонить</string>
     <string name="manual_connect_button">Выполнить сопряжение с устройством</string>
@@ -1341,7 +1340,6 @@
     <string name="notification_photo_message_body">Фото-сообщение</string>
     <string name="chat_encryption_setup_title">Защитить этот чат</string>
     <string name="chat_encryption_setup_instruction">Отсканируйте QR-код, показанный на экране «Новый чат» другого устройства, чтобы импортировать общий ключ шифрования.</string>
-    <string name="chat_encryption_setup_session_mismatch">Этот QR принадлежит другому сеансу чата.</string>
     <string name="chat_encryption_setup_invalid_qr">Неподдерживаемый формат QR.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Проверка ключа шифрования…</string>
     <string name="chat_encryption_setup_handshake_failed">Не удалось проверить ключ шифрования. Повторите попытку.</string>

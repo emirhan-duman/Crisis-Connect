@@ -336,6 +336,8 @@ fun ChatScreen(
         }
     }
     val timelineListOffset = 1
+    val offlineRepairRequired by viewModel.offlineRepairRequired.collectAsStateWithLifecycle()
+    val peerSecurityUpgradeRequired by viewModel.peerSecurityUpgradeRequired.collectAsStateWithLifecycle()
     val contactName by viewModel.contactName.collectAsStateWithLifecycle()
     val displayName = remember(contactName, preferredDisplayName, sessionCode) {
         resolveChatDisplayName(
@@ -1336,6 +1338,11 @@ fun ChatScreen(
                         contentType = "system_notice"
                     ) {
                         ChatEncryptionNoticeCard()
+                        if (offlineRepairRequired || peerSecurityUpgradeRequired) {
+                            Text(text = stringResource(if (peerSecurityUpgradeRequired) R.string.peer_security_upgrade_required else R.string.offline_pairing_upgrade_required),
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 8.dp))
+                        }
                     }
                     itemsIndexed(
                         timelineItems,

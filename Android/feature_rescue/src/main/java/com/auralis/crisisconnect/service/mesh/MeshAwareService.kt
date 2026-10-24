@@ -343,7 +343,7 @@ class MeshAwareService : Service() {
         val authorizedPeers = peerStateByKey.values.filter { peer ->
             peer.isAuthorized && peer.sessionKey != null
         }
-        if (authorizedPeers.isEmpty() && interopConnectedPeerCount() == 0) {
+        if (authorizedPeers.isEmpty()) {
             return false
         }
 
@@ -355,11 +355,10 @@ class MeshAwareService : Service() {
                 sentAny = true
             }
         }
-        val interopSentAny = sendInteropChatMessage(normalized)
         if (sentAny) {
             rememberMessageId(messageId)
         }
-        return sentAny || interopSentAny
+        return sentAny
     }
 
     private fun applyMeshEnabled(enable: Boolean) {
@@ -412,7 +411,7 @@ class MeshAwareService : Service() {
         }
 
         val localRole = withContext(Dispatchers.IO) {
-            securityRepository.getUsableStoredCertificateRole(allowExpired = true)
+            securityRepository.getUsableStoredCertificateRole(allowExpired = false)
         }
         if (localRole !in MESH_CONTROL_ROLES) {
             stateFlow.update {
@@ -897,7 +896,7 @@ class MeshAwareService : Service() {
         if (!hasMeshPermissions()) {
             return
         }
-        if (!peerState.pairingEstablished) {
+        if (!peerState.isAuthorized || peerState.sessionKey == null || !peerState.pairingEstablished) {
             return
         }
 
@@ -999,7 +998,6 @@ class MeshAwareService : Service() {
                     interopConnectingKeys.remove(peerKey)
                 }
                 syncConnectedPeerCount()
-                sendInteropPeerInfo(connection)
                 readInteropSocketLoop(connection, reader)
             } catch (throwable: Throwable) {
                 Log.w(LOG_TAG, "Unable to open interop socket for peer=$peerKey", throwable)
@@ -1017,7 +1015,7 @@ class MeshAwareService : Service() {
 
     private fun readInteropSocketLoop(connection: InteropConnection, reader: BufferedReader) {
         while (true) {
-            val line = runCatching { reader.readLine() }.getOrNull() ?: break
+            val line = runCatching { readBoundedInteropLine(reader) }.getOrNull() ?: break
             val payload = line.trim()
             if (payload.isEmpty()) {
                 continue
@@ -1026,80 +1024,24 @@ class MeshAwareService : Service() {
         }
     }
 
+    private fun readBoundedInteropLine(reader: BufferedReader): String? {
+        val line = StringBuilder()
+        while (line.length <= 65_536) {
+            val c = reader.read()
+            if (c == -1) return if (line.isEmpty()) null else line.toString()
+            if (c == 10) return line.toString()
+            line.append(c.toChar())
+        }
+        throw java.io.IOException("Mesh frame exceeds limit")
+    }
+
     private fun handleInteropPayload(connection: InteropConnection, payload: String) {
-        val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
-        when (json.optString("kind")) {
-            "peer_info" -> {
-                val remoteName = json.optString("name").trim().ifBlank { null }
-                if (remoteName != null) {
-                    connection.peerName = remoteName
-                    peerStateByKey[connection.peerKey]?.labelHint = remoteName
-                }
-            }
-
-            "chat" -> {
-                val text = json.optString("text").trim()
-                if (text.isNotEmpty()) {
-                    val sender = connection.peerName
-                        ?: peerStateByKey[connection.peerKey]?.labelHint
-                        ?: unknownDeviceLabel()
-                    MeshChatStore.appendRemoteMessage(
-                        id = UUID.randomUUID().toString(),
-                        text = text,
-                        senderLabel = sender,
-                        timestampMillis = System.currentTimeMillis()
-                    )
-                    sendInteropPacket(
-                        connection,
-                        JSONObject().apply { put("kind", "delivered_receipt") }
-                    )
-                }
-            }
-
-            "read_receipt", "delivered_receipt" -> {
-                // Keep wire compatibility with iOS protocol.
-            }
-        }
-    }
-
-    private fun sendInteropPeerInfo(connection: InteropConnection) {
-        sendInteropPacket(
-            connection,
-            JSONObject().apply {
-                put("kind", "peer_info")
-                put("name", selfLabel)
-                put("role", "rescue")
-                put("broadcastId", selfNodeId)
-            }
-        )
-    }
-
-    private fun sendInteropChatMessage(text: String): Boolean {
-        val message = text.trim()
-        if (message.isEmpty()) {
-            return false
-        }
-        val connections = synchronized(interopLock) {
-            interopConnectionsByKey.values.toList()
-        }
-        if (connections.isEmpty()) {
-            return false
-        }
-        var sentAny = false
-        connections.forEach { connection ->
-            if (
-                sendInteropPacket(
-                    connection,
-                    JSONObject().apply {
-                        put("kind", "chat")
-                        put("text", message)
-                    }
-                )
-            ) {
-                sentAny = true
-            }
-        }
-        return sentAny
+        val peer = peerStateByKey[connection.peerKey] ?: return
+        if (!peer.isAuthorized || peer.sessionKey == null) return
+        // The socket is only an accelerator for the same authenticated, encrypted mesh protocol.
+        // Legacy kind=chat/peer_info packets are deliberately not accepted.
+        val parsed = parseMessage(payload) ?: return
+        if (parsed.type == MESSAGE_TYPE_CHAT) handleChatMessage(peer, parsed)
     }
 
     private fun sendInteropPacket(connection: InteropConnection, packet: JSONObject): Boolean {
@@ -1150,7 +1092,9 @@ class MeshAwareService : Service() {
     }
 
     private fun interopConnectedPeerCount(): Int {
-        return synchronized(interopLock) { interopConnectionsByKey.size }
+        return synchronized(interopLock) {
+            interopConnectionsByKey.keys.count { peerStateByKey[it]?.isAuthorized == true }
+        }
     }
 
     private fun handleIncomingMessage(peerHandle: PeerHandle, message: ByteArray) {
@@ -1315,6 +1259,7 @@ class MeshAwareService : Service() {
                 peerState.expectedAuthNonce = parsed.nonce
                 peerState.nodeId = parsed.nodeId
                 peerState.sessionKey = sessionKey
+                maybeStartInteropConnection(peerState)
                 syncConnectedPeerCount()
                 sendAuthOk(peerState, parsed.nonce)
             }
@@ -1391,6 +1336,7 @@ class MeshAwareService : Service() {
                 peerState.expectedAuthNonce = null
                 peerState.nodeId = parsed.nodeId
                 peerState.sessionKey = sessionKey
+                maybeStartInteropConnection(peerState)
                 peerState.labelHint = resolvePeerLabelFromPayload(parsed) ?: resolvePeerLabelFromProof(proofJson)
                 syncConnectedPeerCount()
                 Log.d(LOG_TAG, "Authenticated peer ${peerState.key} as authorized")
@@ -1660,7 +1606,7 @@ class MeshAwareService : Service() {
     }
 
     private fun totalConnectedPeerCount(): Int {
-        return authorizedPeerCount() + interopConnectedPeerCount()
+        return authorizedPeerCount()
     }
 
     private fun sendHello(peerState: PeerState) {
@@ -1731,6 +1677,12 @@ class MeshAwareService : Service() {
     }
 
     private fun sendMessageToPeer(peerHandle: PeerHandle, payload: JSONObject, peerKey: String): Boolean {
+        val connection = synchronized(interopLock) { interopConnectionsByKey[peerKey] }
+        val peer = peerStateByKey[peerKey]
+        if (connection != null && peer?.isAuthorized == true && peer.sessionKey != null &&
+            payload.optString(MESSAGE_FIELD_TYPE) == MESSAGE_TYPE_CHAT && sendInteropPacket(connection, payload)) {
+            return true
+        }
         val payloadText = payload.toString()
         val payloadSize = payloadText.toByteArray(UTF_8).size
         if (payloadSize <= MAX_AWARE_MESSAGE_PAYLOAD_BYTES) {
@@ -2025,7 +1977,7 @@ class MeshAwareService : Service() {
             return runCatching {
                 runBlocking(Dispatchers.IO) {
                     val role = SecurityRepository(appContext)
-                        .getUsableStoredCertificateRole(allowExpired = true)
+                        .getUsableStoredCertificateRole(allowExpired = false)
                         ?.trim()
                         ?.lowercase(Locale.US)
                     role in MESH_CONTROL_ROLES

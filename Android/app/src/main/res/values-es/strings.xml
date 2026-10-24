@@ -841,7 +841,6 @@
     <string name="notification_photo_message_body">Mensaje con foto</string>
     <string name="chat_encryption_setup_title">Asegure este chat</string>
     <string name="chat_encryption_setup_instruction">Escanee el código QR que se muestra en la pantalla Nuevo chat del otro dispositivo para importar la clave de cifrado compartida.</string>
-    <string name="chat_encryption_setup_session_mismatch">Este QR pertenece a una sesión de chat diferente.</string>
     <string name="chat_encryption_setup_invalid_qr">Formato QR no compatible.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Verificando clave de cifrado...</string>
     <string name="chat_encryption_setup_handshake_failed">No se pudo verificar la clave de cifrado. Intentar otra vez.</string>
@@ -1645,7 +1644,6 @@
     <string name="nearby_match_notification_text">Toca para conectar por Bluetooth</string>
     <string name="nearby_pairing_channel_name">Solicitudes de emparejamiento cercano</string>
     <string name="nearby_pairing_request_title">%1$s quiere conectarse cerca</string>
-    <string name="nearby_pairing_request_text">Acepta para chatear por Bluetooth.</string>
     <string name="nearby_pairing_accept">Aceptar</string>
     <string name="nearby_pairing_decline">Rechazar</string>
     <string name="safety_number_title">Verificación de seguridad</string>

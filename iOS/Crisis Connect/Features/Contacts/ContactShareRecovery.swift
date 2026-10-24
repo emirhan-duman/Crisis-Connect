@@ -19,7 +19,7 @@ struct ContactShareCheckpoint: Codable {
 enum ContactShareRecovery {
     private static var url: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CrisisConnect/pending-contact-share.enc")
+            .appendingPathComponent("CrisisConnect/pending-contact-share-v2.enc")
     }
     static func read() throws -> ContactShareCheckpoint? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }

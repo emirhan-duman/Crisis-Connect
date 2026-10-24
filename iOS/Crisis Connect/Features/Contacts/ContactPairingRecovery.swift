@@ -28,7 +28,7 @@ final class EncryptedContactPairingJournal: ContactPairingJournaling {
     private let url: URL
     init(url: URL? = nil) {
         self.url = url ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CrisisConnect/pending-contact-pairing.enc")
+            .appendingPathComponent("CrisisConnect/pending-contact-pairing-v3.enc")
     }
     func read() throws -> ContactPairingCheckpoint? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }

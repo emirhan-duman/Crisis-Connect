@@ -49,4 +49,22 @@ final class NearbySpakePairingTests: XCTestCase {
         let pending = try responder.responseMessage(status: NearbySpakePairing.statusPending)
         XCTAssertThrowsError(try initiator.onMessage4(pending))
     }
+
+    func testInvalidCurvePointsAreRejectedWithoutCrashing() {
+        let w = NearbySpakePairing.deriveW("+905551112233")
+        for point in [Data(repeating: 0, count: 65), Data([4]) + Data(repeating: 0, count: 64),
+                      Data([4]) + Data(repeating: 255, count: 64)] {
+            XCTAssertThrowsError(try Spake2P256.keyA(w: w, x: BigUInt(hex: "1"), pB: point))
+            XCTAssertThrowsError(try Spake2P256.keyB(w: w, y: BigUInt(hex: "1"), pA: point))
+        }
+    }
+
+    func testValidPointThatCancelsPasswordMaskIsRejected() {
+        let w = BigUInt(hex: "1")
+        let responder = NearbySpakePairing.Responder(w: w, me: alice)
+        let cancellingShare = Spake2P256.shareA(w: w, x: .zero)
+        XCTAssertThrowsError(try responder.onMessage1(Data([1]) + cancellingShare))
+        let cancellingReply = Spake2P256.shareB(w: w, y: .zero)
+        XCTAssertThrowsError(try Spake2P256.keyA(w: w, x: BigUInt(hex: "1"), pB: cancellingReply))
+    }
 }

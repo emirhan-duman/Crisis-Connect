@@ -672,7 +672,6 @@
     <string name="nearby_match_notification_text">Tap to connect over Bluetooth</string>
     <string name="nearby_pairing_channel_name">Nearby pairing requests</string>
     <string name="nearby_pairing_request_title">%1$s wants to connect nearby</string>
-    <string name="nearby_pairing_request_text">Accept to chat over Bluetooth.</string>
     <string name="nearby_pairing_accept">Accept</string>
     <string name="nearby_pairing_decline">Decline</string>
     <string name="manual_connect_button">Pair with device</string>
@@ -1380,7 +1379,6 @@
     <string name="notification_photo_message_body">Photo message</string>
     <string name="chat_encryption_setup_title">Secure this chat</string>
     <string name="chat_encryption_setup_instruction">Scan the QR code shown on the other device’s New Chat screen to import the shared encryption key.</string>
-    <string name="chat_encryption_setup_session_mismatch">This QR belongs to a different chat session.</string>
     <string name="chat_encryption_setup_invalid_qr">Unsupported QR format.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Verifying encryption key…</string>
     <string name="chat_encryption_setup_handshake_failed">Could not verify the encryption key. Try again.</string>

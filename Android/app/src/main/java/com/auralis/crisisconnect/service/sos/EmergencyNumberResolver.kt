@@ -1,23 +1,13 @@
 package com.auralis.crisisconnect.service.sos
 
-import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
 import android.telephony.TelephonyManager
-import androidx.core.content.ContextCompat
 import java.util.Locale
 
 /**
- * Resolves the emergency number for the device's current region.
- *
- * Preferred source is the platform's own aggregated list (SIM + network + modem + Android's
- * emergency-number database via [TelephonyManager.getEmergencyNumberList]) — but that API needs
- * READ_PHONE_STATE, which this app does not prompt for, so it only kicks in if the permission was
- * ever granted. The everyday path is permission-free: telephony country ISO (network first — it
- * follows the roamed country — then SIM, then locale) against a curated table, defaulting to 112,
- * which GSM networks accept nearly everywhere.
+ * Resolves the regional number without requesting phone-state access: network country first
+ * (including roaming), then SIM country, then locale, using the existing curated country table.
+ * The platform emergency-number list needs READ_PHONE_STATE, which this app does not declare.
  */
 object EmergencyNumberResolver {
 
@@ -48,28 +38,7 @@ object EmergencyNumberResolver {
 
     fun resolveWithRegion(context: Context): RegionalEmergencyNumber {
         val iso = detectCountryIso(context)
-        fromPlatformList(context)?.let { return RegionalEmergencyNumber(it, iso) }
         return RegionalEmergencyNumber(COUNTRY_EMERGENCY_NUMBERS[iso] ?: DEFAULT_EMERGENCY_NUMBER, iso)
-    }
-
-    /** Platform-aggregated emergency numbers; only usable when READ_PHONE_STATE happens to be granted. */
-    @SuppressLint("MissingPermission") // Guarded immediately below and caught for permission races.
-    private fun fromPlatformList(context: Context): String? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
-        val granted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.READ_PHONE_STATE
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) return null
-        return runCatching {
-            val telephony = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-            telephony?.emergencyNumberList
-                ?.values
-                ?.asSequence()
-                ?.flatten()
-                ?.map { it.number.trim() }
-                ?.firstOrNull { it.isNotEmpty() }
-        }.getOrNull()
     }
 
     private fun detectCountryIso(context: Context): String? {

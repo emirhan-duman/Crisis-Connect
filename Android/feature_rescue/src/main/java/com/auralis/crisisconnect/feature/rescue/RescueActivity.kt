@@ -92,7 +92,7 @@ class RescueActivity : ComponentActivity() {
         }
         lifecycleScope.launch(Dispatchers.IO) {
             val role = SecurityRepository(applicationContext)
-                .getUsableStoredCertificateRole(allowExpired = true)
+                .getUsableStoredCertificateRole(allowExpired = false)
                 ?.trim()
                 ?.lowercase(Locale.US)
             NavbarSettingsCache.hasRescueAccess = role == "admin" || role == "fieldteam"
@@ -108,7 +108,7 @@ class RescueActivity : ComponentActivity() {
             LaunchedEffect(Unit) {
                 val hasAccess = withContext(Dispatchers.IO) {
                     SecurityRepository(applicationContext)
-                        .getUsableStoredCertificateRole(allowExpired = true)
+                        .getUsableStoredCertificateRole(allowExpired = false)
                         ?.trim()
                         ?.lowercase(Locale.US) in setOf("admin", "fieldteam")
                 }

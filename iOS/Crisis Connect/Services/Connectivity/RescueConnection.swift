@@ -295,8 +295,8 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
     }
 
     func sendReadReceipt(transportMessageIds: [String]) -> Bool {
-        guard let characteristic = secureAckCharacteristic else { return false }
-        let payload = BleChatEnvelope.encodeReadAck(messageIds: transportMessageIds)
+        guard let characteristic = secureAckCharacteristic, let key = sessionKey,
+              let payload = SecureBleReceipt.seal(key: key, payload: BleChatEnvelope.encodeReadAck(messageIds: transportMessageIds)) else { return false }
         enqueueWrite(payload, to: characteristic) { _ in }
         return true
     }
@@ -641,7 +641,9 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
         if value == peerInfoAckValue {
             return
         }
-        if let ack = BleChatEnvelope.decodeAck(value) {
+        guard let key = sessionKey, let authenticated = SecureBleReceipt.open(key: key, wire: value),
+              let ack = BleChatEnvelope.decodeAck(authenticated) else { return }
+        do {
             DispatchQueue.main.async {
                 switch ack.type {
                 case .delivered:
@@ -659,15 +661,6 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
                 }
             }
             return
-        }
-        if value == deliveredAckValue {
-            DispatchQueue.main.async {
-                SOSChatStore.shared.markDelivered(sessionId: self.sessionId)
-            }
-        } else if value == readAckValue {
-            DispatchQueue.main.async {
-                SOSChatStore.shared.markRead(sessionId: self.sessionId)
-            }
         }
     }
 
@@ -972,6 +965,7 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
             return parsed.hasContent ? parsed : nil
         }
         return PeerIdentity(
+            broadcastId: (json["broadcastId"] as? String).flatMap { RadioPrivacyIdentity.validBroadcastId($0) },
             name: name,
             role: role,
             avatarBase64: avatarBase64,
@@ -1009,6 +1003,7 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
     }
 
     private func applyPeerIdentity(_ identity: PeerIdentity) {
+        if let canonicalId = identity.broadcastId { handleBroadcastId(Data(canonicalId.utf8)) }
         let peerName = identity.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !peerName.isEmpty {
             onPeerName?(peerName)
@@ -1041,6 +1036,11 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
 
     private func sendAck(_ payload: Data) {
         guard let characteristic = secureAckCharacteristic else { return }
+        var payload = payload
+        if BleChatEnvelope.decodeAck(payload) != nil {
+            guard let key = sessionKey, let encrypted = SecureBleReceipt.seal(key: key, payload: payload) else { return }
+            payload = encrypted
+        }
         enqueueWrite(payload, to: characteristic) { _ in }
     }
 
@@ -1438,6 +1438,7 @@ final class RescueConnection: NSObject, CBPeripheralDelegate {
 }
 
 private struct PeerIdentity {
+    let broadcastId: String?
     let name: String
     let role: String
     let avatarBase64: String?

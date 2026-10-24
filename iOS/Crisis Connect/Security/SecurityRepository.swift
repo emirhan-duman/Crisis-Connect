@@ -200,6 +200,8 @@ final class SecurityRepository {
     }
 
     func clearStoredCertificate() {
+        AuthorityMeshKeyStore.clearGroupKey()
+        DispatchQueue.main.async { AdvancedSettingsStore.shared.authorityMeshEnabled = false }
         KeychainStore.delete(Keys.certificate)
         KeychainStore.delete(Keys.publicKey)
         KeychainStore.delete(Keys.certificateOwnerUID)

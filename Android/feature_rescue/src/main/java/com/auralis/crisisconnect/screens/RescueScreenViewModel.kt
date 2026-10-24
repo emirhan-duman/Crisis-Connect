@@ -965,7 +965,7 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
 
     private suspend fun storedRescueRole(): String? {
         return withContext(Dispatchers.IO) {
-            securityRepository.getUsableStoredCertificateRole(allowExpired = true)
+            securityRepository.getUsableStoredCertificateRole(allowExpired = false)
         }?.trim()?.lowercase(Locale.US)
     }
 

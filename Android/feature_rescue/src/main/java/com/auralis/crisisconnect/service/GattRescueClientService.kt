@@ -1496,7 +1496,7 @@ class GattRescueClientService : Service() {
     private fun hasRescueAccess(): Boolean {
         return runCatching {
             runBlocking(Dispatchers.IO) {
-                SecurityRepository(applicationContext).hasUsableStoredCertificate(allowExpired = true)
+                SecurityRepository(applicationContext).hasUsableStoredCertificate(allowExpired = false)
             }
         }.getOrDefault(false)
     }

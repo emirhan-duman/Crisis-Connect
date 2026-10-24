@@ -773,11 +773,6 @@ fun ChatEncryptionSetupScreen(navController: NavController, sessionCode: String)
         }
     }
     val scanner = remember { BarcodeScanning.getClient() }
-    val expectedSessionCode = remember(sessionCode) {
-        val trimmed = sessionCode.trim()
-        runCatching { Uri.decode(trimmed) }.getOrDefault(trimmed)
-    }
-
     fun restartAnalyzer() {
         if (!hasCameraPermission) {
             return
@@ -814,21 +809,10 @@ fun ChatEncryptionSetupScreen(navController: NavController, sessionCode: String)
                     restartAnalyzer()
                     return@MlKitAnalyzer
                 }
-                val decodedSession = runCatching { Uri.decode(normalizedSession) }
-                    .getOrDefault(normalizedSession)
-                if (!decodedSession.equals(expectedSessionCode, ignoreCase = true)) {
-                    val message = context.getString(R.string.chat_encryption_setup_session_mismatch)
-                    bottomMessage = message
-                    bottomLoading = false
-                    handshakeInProgress = false
-                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                    restartAnalyzer()
-                    return@MlKitAnalyzer
-                }
                 bottomMessage = context.getString(R.string.chat_encryption_setup_handshake_in_progress)
                 bottomLoading = true
                 handshakeResult = null
-                chatViewModel.performEncryptionSetup(normalizedKey) { result ->
+                chatViewModel.performEncryptionSetup(raw) { result ->
                     handshakeResult = result
                     when (result) {
                         EncryptionSetupResult.Success -> {
@@ -1011,72 +995,8 @@ fun ChatEncryptionSetupScreen(navController: NavController, sessionCode: String)
     }
 }
 
-private fun parseHandshake(raw: String): Pair<String, String>? {
-    val trimmed = raw.trim()
-    if (trimmed.isEmpty()) {
-        return null
-    }
-
-    if (trimmed.startsWith("dcs://", ignoreCase = true)) {
-        val content = trimmed.substringAfter("://", trimmed)
-        val decoded = decodeUriContent(content)
-        return parseJsonHandshake(decoded)
-    }
-
-    if (trimmed.startsWith("{")) {
-        return parseJsonHandshake(trimmed)
-    }
-
-    val parts = trimmed.split('|')
-    return when (parts.size) {
-        3 -> {
-            val session = parts[1].trim()
-            val key = parts[2].trim()
-            if (session.isEmpty() || key.isEmpty()) {
-                null
-            } else {
-                session to key
-            }
-        }
-
-        2 -> {
-            val session = parts[0].trim()
-            val key = parts[1].trim()
-            if (session.isEmpty() || key.isEmpty()) {
-                null
-            } else {
-                session to key
-            }
-        }
-
-        else -> null
-    }
-}
-
-private fun decodeUriContent(raw: String): String {
-    val fromAndroidUri = runCatching { Uri.decode(raw) }.getOrNull()
-    if (!fromAndroidUri.isNullOrBlank()) {
-        return fromAndroidUri
-    }
-    return runCatching {
-        URLDecoder.decode(raw, Charsets.UTF_8.name())
-    }.getOrElse { raw }
-}
-
-private fun parseJsonHandshake(raw: String): Pair<String, String>? {
-    val code = extractJsonStringField(raw, "code") ?: return null
-    val key = extractJsonStringField(raw, "key") ?: return null
-    return code to key
-}
-
-private fun extractJsonStringField(rawJson: String, fieldName: String): String? {
-    val regex = Regex("""["']$fieldName["']\s*:\s*["']([^"']+)["']""")
-    return regex.find(rawJson)
-        ?.groupValues
-        ?.getOrNull(1)
-        ?.trim()
-        ?.takeIf { it.isNotEmpty() }
-}
+private fun parseHandshake(raw: String): Pair<String, String>? =
+    parseSecurePairingQr(raw)?.let { it.sessionCode to it.aesKey }
 
 @Composable
 private fun QrScannerOverlay(

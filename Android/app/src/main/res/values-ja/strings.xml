@@ -840,7 +840,6 @@
     <string name="notification_photo_message_body">写真メッセージ</string>
     <string name="chat_encryption_setup_title">このチャットを保護</string>
     <string name="chat_encryption_setup_instruction">他のデバイスの新規チャット画面に表示されているQRコードをスキャンして、共有暗号化キーをインポートします。</string>
-    <string name="chat_encryption_setup_session_mismatch">このQRは別のチャットセッションに属しています。</string>
     <string name="chat_encryption_setup_invalid_qr">サポートされていないQR形式です。</string>
     <string name="chat_encryption_setup_handshake_in_progress">暗号化キーを検証中…</string>
     <string name="chat_encryption_setup_handshake_failed">暗号化キーを検証できませんでした。再試行してください。</string>
@@ -1644,7 +1643,6 @@
     <string name="nearby_match_notification_text">タップして Bluetooth で接続</string>
     <string name="nearby_pairing_channel_name">近くのペアリング要求</string>
     <string name="nearby_pairing_request_title">%1$s が近くで接続したがっています</string>
-    <string name="nearby_pairing_request_text">Bluetooth でチャットするには応答してください。</string>
     <string name="nearby_pairing_accept">応答</string>
     <string name="nearby_pairing_decline">拒否</string>
     <string name="safety_number_title">セキュリティ確認</string>

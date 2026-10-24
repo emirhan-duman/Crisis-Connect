@@ -1,0 +1,6 @@
+<resources>
+    <string name="safety_number_repair_required">Bu kişinin güvenli kimliği değişti. Mesaj gönderimi durduruldu. Kimliği doğrulayıp yeniden eşleştirmek için birlikte yeni bir QR kod tarayın.</string>
+    <string name="nearby_pairing_identity_warning">Bu kişi telefon numaranı biliyor. Adı ve kimliği doğrulanmadı. Yalnızca yerel bir bağlantı kurulur; hesap kimliği veya kayıtlı bir kişiyle yeniden eşleşmek için yeni bir QR kod kullan.</string>
+    <string name="offline_pairing_upgrade_required">Bluetooth eşleştirmesi güvenlik için güncellendi. Karşı tarafın uygulamayı güncelleyip yeni QR kod oluşturmasını iste ve yeniden tara. Sohbet geçmişin korunur.</string>
+    <string name="peer_security_upgrade_required">Bu görüşmeyi güvenle doğrulamak için iki uygulamayı da güncelleyin. Mesajlar kuyrukta korunur; daha zayıf şifrelemeye geçilmez.</string>
+</resources>

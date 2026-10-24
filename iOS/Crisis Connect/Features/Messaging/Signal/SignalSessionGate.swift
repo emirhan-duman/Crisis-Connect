@@ -17,6 +17,9 @@ import Foundation
 import LibSignalClient
 
 enum SignalTransportError: Error {
+    case unboundIdentity
+    case identityChanged
+    case peerUpgradeRequired
     case unknownCtype(String)
     case noSession(String)
 }
@@ -36,6 +39,65 @@ final class SignalSessionGate {
     private let store: SignalProtocolFileStore?
     private let client = InternetMessagingClient()
 
+    private func bindingScope(_ peerUid: String) -> (String, String)? {
+        guard let owner = client.currentUid, !owner.isEmpty,
+              let key = ContactStore.shared.contactForPeerUid(peerUid)?.peerPublicKey, !key.isEmpty else { return nil }
+        return (owner, key)
+    }
+    private func expectedIdentity(_ peerUid: String) -> String? {
+        guard let (owner, key) = bindingScope(peerUid) else { return nil }
+        return SignalPeerBinding.read(owner: owner, peer: peerUid, p256: key)
+    }
+    func hasIdentityBinding(_ peerUid: String) -> Bool { expectedIdentity(peerUid) != nil }
+    func identityChangePending(_ peerUid: String) -> Bool {
+        guard let (owner, key) = bindingScope(peerUid) else { return false }
+        return SignalPeerBinding.changed(owner: owner, peer: peerUid, p256: key)
+    }
+    func peerUpgradeRequired(_ peerUid: String) -> Bool {
+        Self.cryptoLock.lock(); defer { Self.cryptoLock.unlock() }
+        guard !hasIdentityBinding(peerUid), let (owner, key) = bindingScope(peerUid) else { return false }
+        if SignalPeerBinding.migrationPending(owner: owner, peer: peerUid, p256: key) { return true }
+        return (try? store?.loadSession(for: address(peerUid), context: NullContext()))?.hasCurrentState == true
+    }
+    private func notifyMigrationState(_ peerUid: String) {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .signalProtocolMigrationStateChanged, object: nil, userInfo: ["peerUid": peerUid])
+        }
+    }
+    @discardableResult func markPeerUpgradeRequired(_ peerUid: String) -> Bool {
+        guard let (owner, key) = bindingScope(peerUid),
+              SignalPeerBinding.markMigrationPending(owner: owner, peer: peerUid, p256: key) else { return false }
+        notifyMigrationState(peerUid)
+        return true
+    }
+
+    func localIdentityBase64() throws -> String {
+        try SignalIdentity.shared.identityKeyPair().identityKey.serialize().base64EncodedString()
+    }
+    func claimBindingAnnouncement(peer: String, p256: String) -> Bool {
+        guard let owner = client.currentUid else { return false }
+        return SignalPeerBinding.claimAnnouncement(owner: owner, peer: peer, p256: p256, now: Date().timeIntervalSince1970)
+    }
+    func acceptBinding(peerUid: String, p256: String, signal: String) throws -> Bool {
+        Self.cryptoLock.lock(); defer { Self.cryptoLock.unlock() }
+        guard let store, let (owner, pinned) = bindingScope(peerUid), pinned == p256 else { return false }
+        let bytes = try Self.b64(signal)
+        _ = try IdentityKey(bytes: bytes)
+        let previous = expectedIdentity(peerUid)
+        guard SignalPeerBinding.accept(owner: owner, peer: peerUid, p256: pinned, signal: signal) else {
+            ContactStore.shared.markSignalIdentityChanged(peerUid: peerUid)
+            return false
+        }
+        if previous == nil { try store.forgetPeer(peerUid) }
+        notifyMigrationState(peerUid)
+        return true
+    }
+    func forgetPeer(_ peerUid: String, p256: String) throws {
+        Self.cryptoLock.lock(); defer { Self.cryptoLock.unlock() }
+        try store?.forgetPeer(peerUid)
+        if let owner = client.currentUid { SignalPeerBinding.reset(owner: owner, peer: peerUid, p256: p256) }
+    }
+
     private init() {
         store = try? SignalProtocolFileStore()
     }
@@ -49,7 +111,9 @@ final class SignalSessionGate {
         guard let store, !peerUid.isEmpty else { return false }
         Self.cryptoLock.lock(); defer { Self.cryptoLock.unlock() }
         guard let record = try? store.loadSession(for: address(peerUid), context: NullContext()) else { return false }
-        return record.hasCurrentState
+        guard let expected = expectedIdentity(peerUid),
+              let remote = try? store.identity(for: address(peerUid), context: NullContext()) else { return false }
+        return record.hasCurrentState && remote.serialize().base64EncodedString() == expected
     }
 
     /// Ensure we can send v3 to `peerUid`. `forceEstablish` true (durable messages) fetches a
@@ -57,6 +121,8 @@ final class SignalSessionGate {
     /// only ever uses an already-established session.
     func ensureOutbound(_ peerUid: String, forceEstablish: Bool) async -> Bool {
         guard store != nil, !peerUid.isEmpty else { return false }
+        if identityChangePending(peerUid) { return false }
+        guard expectedIdentity(peerUid) != nil else { return false }
         if hasV3Session(peerUid) { return true }
         guard forceEstablish, !isNegativeProbeFresh(peerUid) else { return false }
 
@@ -87,6 +153,7 @@ final class SignalSessionGate {
         // Re-check under the lock: a concurrent sender may have established while we fetched the
         // bundle; re-processing it would reset the ratchet and reuse message counters.
         if hasV3Session(peerUid) { return }
+        guard wire.identityKeyBase64 == expectedIdentity(peerUid) else { throw SignalTransportError.unboundIdentity }
 
         let identity = try IdentityKey(bytes: Self.b64(wire.identityKeyBase64))
         let signedPreKey = try PublicKey(Self.b64(wire.signedPreKeyBase64))
@@ -134,6 +201,7 @@ final class SignalSessionGate {
     func encrypt(_ peerUid: String, content: InternetMessageContent) throws -> (ctype: String, ciphertextBase64: String) {
         guard let store else { throw SignalTransportError.noSession(peerUid) }
         Self.cryptoLock.lock(); defer { Self.cryptoLock.unlock() }
+        guard hasV3Session(peerUid), !identityChangePending(peerUid) else { throw SignalTransportError.identityChanged }
         let message = try signalEncrypt(
             message: InternetE2eEnvelope.encodeContent(content),
             for: address(peerUid),
@@ -153,11 +221,17 @@ final class SignalSessionGate {
             throw SignalTransportError.unknownCtype("bad base64")
         }
         Self.cryptoLock.lock(); defer { Self.cryptoLock.unlock() }
+        guard let expected = expectedIdentity(peerUid), !identityChangePending(peerUid) else {
+            markPeerUpgradeRequired(peerUid)
+            throw SignalTransportError.unboundIdentity
+        }
         let plaintext: Data
         switch ctypeLabel {
         case "prekey":
+            let message = try PreKeySignalMessage(bytes: ciphertext)
+            guard message.identityKey.serialize().base64EncodedString() == expected else { throw SignalTransportError.identityChanged }
             plaintext = try signalDecryptPreKey(
-                message: try PreKeySignalMessage(bytes: ciphertext),
+                message: message,
                 from: address(peerUid),
                 sessionStore: store,
                 identityStore: store,
@@ -167,6 +241,7 @@ final class SignalSessionGate {
                 context: NullContext()
             )
         case "signal":
+            guard hasV3Session(peerUid) else { throw SignalTransportError.unboundIdentity }
             plaintext = try signalDecrypt(
                 message: try SignalMessage(bytes: ciphertext),
                 from: address(peerUid),

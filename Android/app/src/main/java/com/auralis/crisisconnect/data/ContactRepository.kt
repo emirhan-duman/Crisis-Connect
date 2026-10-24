@@ -69,8 +69,11 @@ data class Contact(
     // A hidden transport-only contact auto-created for an authority (kurum) channel peer so the
     // citizen dual-mode pipeline can carry that chat offline over Bluetooth. Never shown in the
     // home list or pickers; deliberately-added contacts never get this flag.
-    val isAuthorityBridge: Boolean = false
+    val isAuthorityBridge: Boolean = false,
+    val offlineKeyVersion: Int = 2
 ) {
+    val offlineRepairRequired: Boolean get() = offlineKeyVersion < 2
+
     /** True when this contact can be reached over the E2E internet transport. */
     val supportsInternet: Boolean
         get() = peerUid.isNotBlank() && peerPublicKey.isNotBlank()
@@ -174,7 +177,8 @@ fun saveContact(
         remoteDeviceId = contact.remoteDeviceId.trim(),
         verifiedIdentityKey = normalizeVerifiedIdentityKey(contact.verifiedIdentityKey)
     )
-    val existing = contactDao(appContext).getContactBySessionCode(normalizedContact.sessionCode)?.toContact()
+    val existingRow = contactDao(appContext).getContactBySessionCode(normalizedContact.sessionCode)
+    val existing = existingRow?.toContact()
     val mergedContact = mergeVerifiedTrust(
         incoming = normalizedContact,
         existing = existing
@@ -188,7 +192,7 @@ fun saveContact(
             merged
         }
     }
-    contactDao(appContext).saveContact(mergedContact.toEntity())
+    contactDao(appContext).saveContact(preserveLegacyOfflineStorage(mergedContact.toEntity(), existingRow))
     if (analyticsSource != null && existing == null && !mergedContact.isAuthorityBridge) {
         if (analyticsReceived) {
             Analytics.contactReceived(via = analyticsSource, transport = normalizedTransport)
@@ -212,6 +216,7 @@ fun markContactVerified(
         return false
     }
     val existing = getContact(context, normalized) ?: return false
+    if (existing.offlineRepairRequired) return false
     val trustKey = normalizeVerifiedIdentityKey(
         verifiedIdentityKey ?: existing.remoteDeviceId
     )
@@ -245,6 +250,9 @@ fun acknowledgePeerKeyChange(context: Context, sessionCode: String): Boolean {
     if (!existing.peerKeyChanged) {
         return true
     }
+    val owner = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+    if (owner != null && com.auralis.crisisconnect.messaging.signal.SignalPeerBinding(context)
+            .changed(owner, existing.peerUid, existing.peerPublicKey)) return false
     saveContact(context, existing.copy(peerKeyChanged = false))
     return true
 }
@@ -289,11 +297,10 @@ suspend fun saveBleContactAndMigrateLegacySession(
     var isNewContact = false
     db.withTransaction {
         val dao = db.contactDao()
-        val existingTarget = dao.getContactBySessionCode(normalizedTarget.sessionCode)?.toContact()
-        val sourceContacts = legacySessions
-            .mapNotNull { legacyCode ->
-                dao.getContactBySessionCode(legacyCode)?.toContact()
-            }
+        val existingTargetRow = dao.getContactBySessionCode(normalizedTarget.sessionCode)
+        val existingTarget = existingTargetRow?.toContact()
+        val sourceRows = legacySessions.mapNotNull { dao.getContactBySessionCode(it) }
+        val sourceContacts = sourceRows.map { it.toContact() }
             .filterNot { source ->
                 source.sessionCode.equals(normalizedTarget.sessionCode, ignoreCase = true)
             }
@@ -305,7 +312,11 @@ suspend fun saveBleContactAndMigrateLegacySession(
             existingTarget = existingTarget,
             sourceContacts = sourceContacts
         )
-        dao.saveContact(finalizedContact.toEntity())
+        val persisted = preserveLegacyOfflineStorage(finalizedContact.toEntity(),
+            existingTargetRow?.takeIf { it.offlineKeyVersion < 2 }
+                ?: sourceRows.firstOrNull { it.offlineKeyVersion < 2 })
+        dao.saveContact(persisted)
+        finalizedContact = persisted.toContact()
         sourceContacts
             .map { source -> source.sessionCode }
             .distinct()
@@ -333,6 +344,15 @@ suspend fun saveBleContactAndMigrateLegacySession(
     }
     if (requiresLockedHighRange(finalizedContact)) {
         P2pGattServerService.ensureHosting(appContext)
+    }
+    if (analyticsSource == "qr" && finalizedContact.peerUid.isNotBlank()) {
+        val owner = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        if (owner != null && com.auralis.crisisconnect.messaging.signal.SignalPeerBinding(appContext)
+                .changed(owner, finalizedContact.peerUid, finalizedContact.peerPublicKey)) {
+            com.auralis.crisisconnect.messaging.signal.SignalSessionGate.create(appContext)
+                .forgetPeer(finalizedContact.peerUid, finalizedContact.peerPublicKey)
+            acknowledgePeerKeyChange(appContext, finalizedContact.sessionCode)
+        }
     }
     return finalizedContact
 }
@@ -836,6 +856,9 @@ private fun requiresLockedHighRange(contact: Contact): Boolean {
 
 fun deleteContact(context: Context, sessionCode: String) {
     val appContext = context.applicationContext
+    getContact(appContext, sessionCode)?.takeIf { it.peerUid.isNotBlank() }?.let {
+        com.auralis.crisisconnect.messaging.signal.SignalSessionGate.create(appContext).forgetPeer(it.peerUid, it.peerPublicKey)
+    }
     contactDao(appContext).deleteBySessionCode(sessionCode)
     CoroutineScope(Dispatchers.IO).launch {
         if (!hasAnyBleGattContacts(appContext)) {

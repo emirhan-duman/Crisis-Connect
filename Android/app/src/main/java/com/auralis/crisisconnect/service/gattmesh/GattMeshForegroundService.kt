@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.service.gattmesh
 
+import com.auralis.crisisconnect.service.RadioPrivacyIdentity
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.NotificationManager
@@ -246,6 +247,7 @@ open class GattMeshForegroundService : Service() {
     // audio connection (active scanning time-shares the radio and causes audio dropouts).
     @Volatile private var telsizScanHold = false
     private var cleanupJob: Job? = null
+    private var lastAuthorityKeyRenewalMillis = 0L
     private var startupTimeoutJob: Job? = null
     private var postAddServiceRecoveryJob: Job? = null
     private var localGattServerStartupFallbackJob: Job? = null
@@ -267,8 +269,9 @@ open class GattMeshForegroundService : Service() {
     private var activeLocalServerCallbackGeneration = 0L
     private var classicDiscoveryReceiverRegistered = false
     private var localSenderLabel: String = LEGACY_DEFAULT_SENDER_LABEL
-    private var localInitiatorSalt: Int = DEFAULT_INITIATOR_SALT
-    private var localInitiatorRank: Int = DEFAULT_INITIATOR_SALT
+    private val localInitiatorSalt: Int get() = RadioPrivacyIdentity.current.seed
+    private val localInitiatorRank: Int get() = RadioPrivacyIdentity.current.rank(Build.VERSION.SDK_INT <= Build.VERSION_CODES.O_MR1)
+    private var advertisedPrivacyEpoch: Long = -1
     private var lastLoggedConnectedCount = -1
     private var lastLoggedReadyCount = -1
     private var lastLoggedDiscoveredCount = -1
@@ -290,8 +293,24 @@ open class GattMeshForegroundService : Service() {
     private val messageOriginRoleProofVerifier by lazy(LazyThreadSafetyMode.NONE) {
         RoleProofVerifier(maxClockSkewMillis = MAX_ORIGIN_PROOF_AGE_MS)
     }
-    private val meshPayloadKey: ByteArray by lazy(LazyThreadSafetyMode.NONE) {
-        profile.derivePayloadKey(this) ?: ByteArray(32) { index -> (index + 1).toByte() }
+    private val meshPayloadKey: ByteArray
+        get() = profile.derivePayloadKey(this) ?: error("Authority mesh key lease unavailable or expired")
+    private val securePtt by lazy {
+        com.auralis.crisisconnect.service.gattmesh.ptt.SecureMeshPtt(
+            groupKey = { if (profile.id == MeshProfiles.AUTHORITY.id) profile.derivePayloadKey(this) else null },
+            createProof = { nonce -> runCatching {
+                kotlinx.coroutines.runBlocking(Dispatchers.IO) { roleProofCreator.createProof(sessionNonce = nonce) }
+                    .toJson().toString().toByteArray(UTF_8)
+            }.getOrNull() },
+            verifyProof = { bytes, nonce -> runCatching {
+                val proof = RoleProofPayload.fromJson(bytes.toString(UTF_8))
+                require(roleProofVerifier.verifyProofPayload(proof, nonce) is RoleProofVerificationResult.Success)
+                val cert = RoleCertificate.fromStorageBytes(Base64.decode(proof.certificate, Base64.NO_WRAP)) ?: error("certificate")
+                require(resolveVerifiedRole(proof) in setOf("admin", "fieldteam"))
+                com.auralis.crisisconnect.service.gattmesh.ptt.SecureMeshPtt.VerifiedRole(
+                    cert.agency, minOf(cert.expiresAtMillis, proof.timestamp + 60_000L))
+            }.getOrNull() }
+        )
     }
 
     private val classicDiscoveryReceiver = object : BroadcastReceiver() {
@@ -962,8 +981,6 @@ open class GattMeshForegroundService : Service() {
                 localTelsizAgency = runCatching { securityRepository.getUsableStoredCertificateAgency() }
                     .getOrNull()?.takeIf { it.isNotBlank() }
             }
-            localInitiatorSalt = resolveLocalInitiatorSalt()
-            localInitiatorRank = deriveLocalInitiatorRank(localInitiatorSalt)
             startMeshRuntime()
         }
     }
@@ -1271,10 +1288,14 @@ open class GattMeshForegroundService : Service() {
     }
 
     private fun sendReceipt(type: ReceiptType, messageIds: Collection<String>): Boolean {
+        // Public broadcasts have no authenticated recipient identity; never claim delivery from an unsigned ACK.
+        if (profile.id != MeshProfiles.AUTHORITY.id) return false
         val normalizedIds = normalizeMessageIds(messageIds)
         if (normalizedIds.isEmpty()) {
             return false
         }
+        var allSent = true
+        for (batch in normalizedIds.chunked(4)) {
         val packet = MeshPacket(
             id = UUID.randomUUID().toString(),
             senderLabel = localSenderLabel,
@@ -1282,18 +1303,20 @@ open class GattMeshForegroundService : Service() {
             message = RECEIPT_PLACEHOLDER_MESSAGE,
             type = MeshPacketType.RECEIPT,
             receiptType = type,
-            receiptMessageIds = normalizedIds,
+            receiptMessageIds = batch,
             hop = 0,
             protocol = PACKET_PROTOCOL_VALUE_V2
         )
         val sent = sendOrQueuePacket(packet, queueWhenFailed = false) == DispatchOutcome.SENT
+        allSent = allSent && sent
         if (sent) {
             Log.d(
                 TAG,
                 "Sent receipt type=${type.name} ids=${normalizedIds.take(3)} count=${normalizedIds.size}"
             )
         }
-        return sent
+        }
+        return allSent
     }
 
     private fun requestPeerVerification(address: String) {
@@ -3661,6 +3684,7 @@ open class GattMeshForegroundService : Service() {
             .build()
 
         return runCatching {
+            advertisedPrivacyEpoch = RadioPrivacyIdentity.current.epoch
             localAdvertiser.startAdvertising(settings, advertiseData, scanResponse, advertiseCallback)
             true
         }.onFailure {
@@ -3722,8 +3746,7 @@ open class GattMeshForegroundService : Service() {
         val hasMeshService = serviceUuids?.any { it.uuid == profile.serviceUuid } == true
         val hasSosService = serviceUuids?.any { it.uuid == GattSOSServerService.CRISIS_SERVICE_UUID } == true
         val address = normalizeAddress(device.address)
-        val localAddress = getLocalAdapterAddressOrNull()
-        if (address.isBlank() || address == localAddress) {
+        if (address.isBlank()) {
             return
         }
 
@@ -3791,10 +3814,6 @@ open class GattMeshForegroundService : Service() {
         queuedPayloadHandoverAllowed: Boolean = false
     ): Boolean {
         val now = System.currentTimeMillis()
-        val localAddress = getLocalAdapterAddressOrNull()
-        val hasValidLocalAddress = !localAddress.isNullOrBlank() &&
-            localAddress != INVALID_MAC_ADDRESS &&
-            localAddress != peerAddress
         return synchronized(lock) {
             if (isClientSendRecoveryBlockedLocked(peerAddress, now)) {
                 return@synchronized false
@@ -3816,19 +3835,15 @@ open class GattMeshForegroundService : Service() {
             }
             val firstSeenAt = firstDiscoveredPeers[peerAddress] ?: now
             val peerInitiatorRank = discoveredPeerInitiatorRanks[peerAddress]
-            val preferredInitiator = when {
-                peerInitiatorRank != null -> Integer.compareUnsigned(
-                    localInitiatorRank,
-                    peerInitiatorRank
-                ) < 0
-
-                hasValidLocalAddress -> localAddress < peerAddress
-                else -> false
-            }
+            // Public apps cannot read their hardware MAC. Use the advertised rotating rank;
+            // peers without a rank retain the existing delayed/jittered fallback below.
+            val preferredInitiator = peerInitiatorRank != null && Integer.compareUnsigned(
+                localInitiatorRank, peerInitiatorRank
+            ) < 0
             val allowInboundFallbackConnect = hasInboundConnection &&
                 !inboundNotifyEnabled &&
                 now - inboundConnectedAt >= INBOUND_NOTIFY_GRACE_MS
-            val hasTieBreaker = peerInitiatorRank != null || hasValidLocalAddress
+            val hasTieBreaker = peerInitiatorRank != null
             if (hasInboundConnection && !allowInboundFallbackConnect) {
                 return@synchronized false
             }
@@ -5045,9 +5060,16 @@ open class GattMeshForegroundService : Service() {
     }
 
     private fun processDecodedPacket(packet: MeshPacket, sourceAddress: String): Boolean {
+        // Authenticate authority chat before metadata, persistence, receipts or relay side effects.
+        if (profile.admission is AdmissionPolicy.RequireVerifiedRole && packet.type == MeshPacketType.CHAT &&
+            (!packet.encrypted || !packet.isReadable || packet.keyId != profile.payloadKeyId)
+        ) {
+            return false
+        }
         // Telsiz (PTT) frames bypass the chat pipeline (rate budget / timestamp gating would throttle
         // live audio). handlePttPacket does its own lightweight dedup + hop-limited relay for multi-hop.
         if (isPttPacketType(packet.type)) {
+            if (!packet.encrypted || packet.securePttWire == null || packet.keyId != profile.payloadKeyId) return false
             handlePttPacket(packet, sourceAddress)
             return true
         }
@@ -5897,6 +5919,8 @@ open class GattMeshForegroundService : Service() {
         excludeAddress: String?,
         onAddressSent: ((String) -> Unit)? = null
     ): Boolean {
+        if (profile.id == MeshProfiles.AUTHORITY.id &&
+            (profile.derivePayloadKey(this) == null || (packet.encrypted && packet.keyId != profile.payloadKeyId))) return false
         val readyClientAddresses = synchronized(lock) {
             clientPeers.values.filter { it.ready && it.connected && it.gatt != null && it.messageIn != null }
                 .map { it.address }
@@ -7437,6 +7461,7 @@ open class GattMeshForegroundService : Service() {
     }
 
     private fun decodePacket(payload: ByteArray): MeshPacket? {
+        if (com.auralis.crisisconnect.service.gattmesh.ptt.SecureMeshPtt.isFrame(payload)) return decodeSecurePtt(payload)
         val text = payload.toString(UTF_8).trim()
         if (text.isEmpty() || text.length > MAX_PACKET_TEXT_LENGTH) {
             return null
@@ -7450,6 +7475,7 @@ open class GattMeshForegroundService : Service() {
             val hop = json.optInt(PACKET_FIELD_HOP, 0)
             val protocol = json.optString(PACKET_FIELD_PROTOCOL).trim()
             val packetType = parsePacketType(json.optString(PACKET_FIELD_TYPE).trim(), protocol)
+            if (isPttPacketType(packetType) || packetType == MeshPacketType.RECEIPT) return null
             val originProofJson = json.optString(PACKET_FIELD_ORIGIN_PROOF).trim()
                 .takeIf { it.isNotEmpty() && it.length <= MAX_ORIGIN_PROOF_JSON_LENGTH }
             val originSignatureBase64 = json.optString(PACKET_FIELD_ORIGIN_SIGNATURE).trim()
@@ -7760,7 +7786,67 @@ open class GattMeshForegroundService : Service() {
     }
 
     private fun encodePacket(packet: MeshPacket): ByteArray {
+        if (isPttPacketType(packet.type) || packet.type == MeshPacketType.RECEIPT) {
+            check(profile.id == MeshProfiles.AUTHORITY.id)
+            packet.securePttWire?.let {
+                return com.auralis.crisisconnect.service.gattmesh.ptt.SecureMeshPtt.relayed(it, packet.hop) ?: error("invalid hop")
+            }
+            val kind = when (packet.type) {
+                MeshPacketType.PTT_JOIN -> 1
+                MeshPacketType.PTT_LEAVE -> 2
+                MeshPacketType.PTT_FLOOR_CLAIM -> 3
+                MeshPacketType.PTT_FLOOR_RELEASE -> 4
+                MeshPacketType.PTT_AUDIO -> 5
+                MeshPacketType.RECEIPT -> 6
+                else -> error("invalid PTT kind")
+            }
+            val body = if (kind == 6) {
+                JSONObject().put("kind", packet.receiptType.wireValue).put("ids", org.json.JSONArray(packet.receiptMessageIds))
+                    .toString().toByteArray(UTF_8)
+            } else if (kind == 5) {
+                require(packet.blobIndex >= 0)
+                java.nio.ByteBuffer.allocate(4).putInt(packet.blobIndex).array() +
+                    Base64.decode(packet.blobDataBase64 ?: error("missing audio"), Base64.NO_WRAP)
+            } else {
+                val claim = packet.message.toLongOrNull() ?: 0L
+                require(claim in 0..0xffffffffL)
+                java.nio.ByteBuffer.allocate(8).putLong(claim).array()
+            }
+            return securePtt.encode(kind, packet.senderLabel, body) ?: error("PTT credentials unavailable")
+        }
         return packetToJson(packet).toString().toByteArray(UTF_8)
+    }
+
+    private fun decodeSecurePtt(payload: ByteArray): MeshPacket? {
+        if (profile.id != MeshProfiles.AUTHORITY.id) return null
+        val frame = securePtt.decode(payload) ?: return null
+        val types = listOf(MeshPacketType.PTT_JOIN, MeshPacketType.PTT_LEAVE, MeshPacketType.PTT_FLOOR_CLAIM,
+            MeshPacketType.PTT_FLOOR_RELEASE, MeshPacketType.PTT_AUDIO, MeshPacketType.RECEIPT)
+        var claim = 0L; var seq = -1; var audio: String? = null
+        var receiptType = ReceiptType.DELIVERED
+        var receiptIds = emptyList<String>()
+        if (frame.kind == 6) {
+            val json = runCatching { JSONObject(frame.body.toString(UTF_8)) }.getOrNull() ?: return null
+            receiptType = parseReceiptType(json.optString("kind")) ?: return null
+            val ids = json.optJSONArray("ids") ?: return null
+            if (ids.length() !in 1..4) return null
+            receiptIds = (0 until ids.length()).map { ids.optString(it) }
+            if (receiptIds.any { !it.matches(Regex("[A-Za-z0-9-]{8,128}")) }) return null
+        } else if (frame.kind == 5) {
+            if (frame.body.size <= 4) return null
+            seq = java.nio.ByteBuffer.wrap(frame.body).int
+            if (seq < 0) return null
+            audio = Base64.encodeToString(frame.body.copyOfRange(4, frame.body.size), Base64.NO_WRAP)
+        } else {
+            if (frame.body.size != 8) return null
+            claim = java.nio.ByteBuffer.wrap(frame.body).long
+            if (claim !in 0..0xffffffffL) return null
+        }
+        return MeshPacket(id = "ptt-${frame.origin}-${frame.sequence}", senderLabel = frame.label,
+            timestampMillis = frame.timestamp, message = claim.toString(), type = types[frame.kind - 1],
+            hop = frame.hop, protocol = "cpt2", encrypted = true, keyId = profile.payloadKeyId,
+            receiptType = receiptType, receiptMessageIds = receiptIds,
+            blobId = frame.origin, blobIndex = seq, blobDataBase64 = audio, blobKind = frame.agency, securePttWire = payload)
     }
 
     private fun packetToJson(packet: MeshPacket): JSONObject {
@@ -8337,7 +8423,20 @@ open class GattMeshForegroundService : Service() {
             while (true) {
                 delay(CLEANUP_INTERVAL_MS)
                 stopClassicDiscoveryIfRunning(reason = "cleanup")
+                if (!usesExternalGattServer && localGattServerStartupCompleted && advertisedPrivacyEpoch != RadioPrivacyIdentity.current.epoch && advertiser != null) {
+                    try {
+                        advertiser?.stopAdvertising(advertiseCallback)
+                    } catch (error: SecurityException) {
+                        Log.w(TAG, "Advertising permission changed during privacy rotation", error)
+                    }
+                    startAdvertising()
+                }
                 val now = System.currentTimeMillis()
+                if (profile.id == MeshProfiles.AUTHORITY.id && profile.derivePayloadKey(this@GattMeshForegroundService) == null &&
+                    now - lastAuthorityKeyRenewalMillis >= 60_000L) {
+                    lastAuthorityKeyRenewalMillis = now
+                    serviceScope.launch(Dispatchers.IO) { securityRepository.ensureAuthorityMeshGroupKey() }
+                }
                 val retryCandidates = LinkedHashMap<String, BluetoothDevice>()
                 val fallbackBypassCandidates = LinkedHashSet<String>()
                 val staleServerAddresses = LinkedHashSet<String>()
@@ -8689,43 +8788,12 @@ open class GattMeshForegroundService : Service() {
         }
     }
 
-    @SuppressLint("HardwareIds")
-    private fun resolveLocalInitiatorSalt(): Int {
-        val macSalt = getLocalAdapterAddressOrNull()
-            ?.takeIf { it.isNotBlank() && it != INVALID_MAC_ADDRESS }
-            ?.hashCode()
-        if (macSalt != null) {
-            return macSalt
-        }
-        val androidIdSalt = runCatching {
-            Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
-        }.getOrNull()
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?.hashCode()
-        return androidIdSalt ?: packageName.hashCode()
-    }
-
     private fun sanitizeSenderLabel(raw: String): String {
         return GattMeshTextSanitizer.sanitize(
             raw = raw,
             maxLength = MAX_SENDER_LABEL_LENGTH,
             collapseWhitespace = true
         )
-    }
-
-    @SuppressLint("HardwareIds", "MissingPermission") // Permission is checked and races are caught.
-    private fun getLocalAdapterAddressOrNull(): String? {
-        if (!hasBluetoothConnectPermission()) {
-            return null
-        }
-        val address = try {
-            bluetoothAdapter?.address
-        } catch (securityException: SecurityException) {
-            Log.w(TAG, "Reading local adapter address blocked by permission", securityException)
-            null
-        }
-        return address?.let(::normalizeAddress)
     }
 
     private fun sanitizeMessage(raw: String): String {
@@ -9145,7 +9213,6 @@ open class GattMeshForegroundService : Service() {
         private const val PERSISTED_QUEUE_VERSION = 1
         private const val PERSISTED_QUEUE_FILE_NAME = "gatt_mesh_pending_outbound_queue.json"
         private const val GATT_MESH_NOTIFICATIONS_ENABLED_PREF = "advanced_gatt_mesh_notifications_enabled"
-        private const val INVALID_MAC_ADDRESS = "02:00:00:00:00:00"
         private const val DEFAULT_INITIATOR_SALT = 0x6F4B5D5E
         private val GATT_MESH_NOTIFICATIONS_ENABLED_KEY =
             booleanPreferencesKey(GATT_MESH_NOTIFICATIONS_ENABLED_PREF)
@@ -9176,20 +9243,7 @@ open class GattMeshForegroundService : Service() {
             context: Context,
             adapter: BluetoothAdapter?
         ): ByteArray {
-            val macSalt = runCatching { adapter?.address }
-                .getOrNull()
-                ?.trim()
-                ?.uppercase(Locale.US)
-                ?.takeIf { it.isNotBlank() && it != INVALID_MAC_ADDRESS }
-                ?.hashCode()
-            val seed = macSalt ?: runCatching {
-                Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-            }.getOrNull()
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-                ?.hashCode()
-                ?: context.packageName.hashCode()
-            val rank = seed xor (seed ushr 16) xor DEFAULT_INITIATOR_SALT
+            val rank = RadioPrivacyIdentity.current.rank(Build.VERSION.SDK_INT <= Build.VERSION_CODES.O_MR1)
             return byteArrayOf(
                 (rank ushr 24).toByte(),
                 (rank ushr 16).toByte(),

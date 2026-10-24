@@ -2,6 +2,7 @@ package com.auralis.crisisconnect.messaging
 
 import android.content.Context
 import android.util.Log
+import org.json.JSONObject
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.Contact
 import com.auralis.crisisconnect.core.chat.ActiveChatTracker
@@ -155,10 +156,6 @@ internal suspend fun receiveInternetMessage(
     val gate = com.auralis.crisisconnect.messaging.signal.SignalSessionGate.create(context)
     // Anti-downgrade pin: once a v3 session exists with this peer, a v1 message from them is a
     // stripped-v3 downgrade attempt — drop it fail-closed (no ack).
-    if (payload is IncomingCiphertext.V1 && gate.hasV3Session(sender)) {
-        Log.w(RECEIVE_TAG, "Dropping v1 message: downgrade from an established v3 session with $sender")
-        return null
-    }
 
     // Claim the id BEFORE touching the ratchet so the racing FCM/listener copy skips decryption
     // entirely (a v3 message key is one-time — a second decrypt of it throws DuplicateMessage).
@@ -213,6 +210,25 @@ internal suspend fun receiveInternetMessage(
         messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
         return null
     }
+    if (content.templateCode == InternetChatTransport.SIGNAL_IDENTITY_BINDING_TEMPLATE) {
+        // This control must be authenticated by the pinned P256 identity, never by an unbound ratchet.
+        val json = runCatching { JSONObject(content.text) }.getOrNull()
+        val accepted = payload is IncomingCiphertext.V1 && contact != null &&
+            contact.peerPublicKey == senderPublicKeyB64 && runCatching {
+                gate.acceptBinding(sender, senderPublicKeyB64, json?.optString("signal").orEmpty())
+            }.getOrDefault(false)
+        if (accepted && json?.optBoolean("reply", false) == true) {
+            runCatching { InternetChatTransport(context, messagingClient).sendSignalIdentityBinding(contact!!, requestReply = false) }
+        }
+        messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
+        return null
+    }
+    if (!com.auralis.crisisconnect.messaging.signal.SignalMigrationPolicy.permitsApplication(
+            payload is IncomingCiphertext.V2, gate.hasIdentityBinding(sender), gate.identityChangePending(sender))) {
+        InternetMessageDedup.release(messageId)
+        return null
+    }
+
     // Delivery/read receipts reference OUR local bubbles; apply them to the existing thread and
     // stop. Handled BEFORE the thread auto-creation below so a receipt never creates a contact.
     if (content.templateCode == InternetChatTransport.DELIVERY_RECEIPT_TEMPLATE ||
@@ -250,7 +266,9 @@ internal suspend fun receiveInternetMessage(
             getContactByRemoteSessionCode(context, it) ?: getContact(context, it)
         }?.takeIf { it.peerUid.isBlank() }
         var healed = false
-        if (effectiveKey.isNotBlank() && target != null) {
+        if (effectiveKey.isNotBlank() && target != null && ContactIdentityBinding.verify(
+                announceJson?.optString("binding").orEmpty(), target.aesKey, sender, announcedCode, effectiveKey
+            )) {
             // Heal FIRST, ack LAST: the announce is fire-once and a v3 copy can't be re-decrypted on
             // replay, so it must land now. Absorb any internet-only duplicate a preceding plain
             // message auto-created for this uid, so the user is never left with two threads.

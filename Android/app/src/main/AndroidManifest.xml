@@ -252,11 +252,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <!-- Enterprise SSO deep link returned by the web custom-OIDC flow. -->
-            <intent-filter>
+            <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="crisisconnect" android:host="sso" />
+                <data android:scheme="https" android:host="crisisconnect.network" android:path="/api/auth/sso/v2/app-callback" />
             </intent-filter>
         </activity>
     </application>

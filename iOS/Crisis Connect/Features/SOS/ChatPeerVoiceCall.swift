@@ -67,14 +67,23 @@ private struct ChatPeerVoiceInviteContext: Codable {
     let calleeSessionCode: String
     let callerDisplayName: String
     let callKind: ChatPeerCallKind
+    let issuedAtMillis: Int64
+    let nonce: String
+    let authentication: String
+
+    var authenticationFields: [String] {
+        [String(version), callId, callerSessionCode, calleeSessionCode, callerDisplayName,
+         callKind.rawValue, String(issuedAtMillis), nonce]
+    }
 
     init(
-        version: Int = 2,
+        version: Int = 3,
         callId: String,
         callerSessionCode: String,
         calleeSessionCode: String,
         callerDisplayName: String,
-        callKind: ChatPeerCallKind
+        callKind: ChatPeerCallKind,
+        key: SymmetricKey
     ) {
         self.version = version
         self.callId = callId
@@ -82,6 +91,11 @@ private struct ChatPeerVoiceInviteContext: Codable {
         self.calleeSessionCode = calleeSessionCode
         self.callerDisplayName = callerDisplayName
         self.callKind = callKind
+        self.issuedAtMillis = Int64(Date().timeIntervalSince1970 * 1000)
+        self.nonce = UUID().uuidString
+        self.authentication = ChatPeerCallSecurity.proof(key: key,
+            fields: [String(version), callId, callerSessionCode, calleeSessionCode, callerDisplayName,
+                     callKind.rawValue, String(issuedAtMillis), nonce])
     }
 }
 
@@ -150,7 +164,7 @@ struct ChatPeerVoiceIncomingPresentation: Identifiable, Equatable {
 }
 
 private struct ChatPeerVoiceDiscoveredPeer {
-    let sessionCode: String
+    let sessionCodes: Set<String>
     let displayName: String?
 }
 
@@ -183,6 +197,8 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
     private var callsByUUID: [UUID: ChatPeerVoiceSystemCallRecord] = [:]
     private var callUUIDByCallId: [String: UUID] = [:]
     private var callUUIDBySessionId: [UUID: UUID] = [:]
+    private var pendingIncomingSessions: Set<UUID> = []
+    private var pendingAnswers: Set<UUID> = []
 
     private override init() {
         super.init()
@@ -200,7 +216,15 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
     }
 
     func requestAnswerIfNeeded(sessionId: UUID) -> Bool {
-        guard let callUUID = syncQueue.sync(execute: { callUUIDBySessionId[sessionId] }) else {
+        let request = syncQueue.sync { () -> (UUID?, Bool) in
+            if pendingIncomingSessions.contains(sessionId) {
+                pendingAnswers.insert(sessionId)
+                return (nil, true)
+            }
+            return (callUUIDBySessionId[sessionId], false)
+        }
+        if request.1 { return true }
+        guard let callUUID = request.0 else {
             return false
         }
 
@@ -268,6 +292,7 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
         update.supportsUngrouping = false
 
         SharedCallProvider.shared.makeActive(self)
+        syncQueue.sync { _ = pendingIncomingSessions.insert(sessionId) }
         provider.reportNewIncomingCall(with: callUUID, update: update) { [weak self] error in
             guard let self else {
                 completion(false)
@@ -281,16 +306,24 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
                     callId: callId,
                     callKind: callKind
                 )
-                self.syncQueue.sync {
+                let answerQueued = self.syncQueue.sync {
                     self.callsByUUID[callUUID] = record
                     self.callUUIDByCallId[callId] = callUUID
                     self.callUUIDBySessionId[sessionId] = callUUID
+                    self.pendingIncomingSessions.remove(sessionId)
+                    return self.pendingAnswers.remove(sessionId) != nil
                 }
                 completion(true)
+                if answerQueued { _ = self.requestAnswerIfNeeded(sessionId: sessionId) }
                 return
             }
 
+            let answerQueued = self.syncQueue.sync {
+                self.pendingIncomingSessions.remove(sessionId)
+                return self.pendingAnswers.remove(sessionId) != nil
+            }
             completion(false)
+            if answerQueued { self.coordinator?.performAnswerCall(sessionId: sessionId) }
         }
     }
 
@@ -369,6 +402,8 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
             callsByUUID.removeAll()
             callUUIDByCallId.removeAll()
             callUUIDBySessionId.removeAll()
+            pendingIncomingSessions.removeAll()
+            pendingAnswers.removeAll()
         }
     }
 
@@ -378,13 +413,25 @@ private final class ChatPeerVoiceSystemCallBridge: NSObject, CXProviderDelegate 
             return
         }
         coordinator?.requestOpenSession(record.sessionId)
+        do { try configureCallAudioSession() }
+        catch { action.fail(); return }
         coordinator?.performAnswerCall(sessionId: record.sessionId)
         action.fulfill()
     }
 
     func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        do { try configureCallAudioSession() }
+        catch { action.fail(); return }
         provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: Date())
         action.fulfill()
+    }
+
+    private func configureCallAudioSession() throws {
+        let audio = AVAudioSession.sharedInstance()
+        try audio.setCategory(.playAndRecord, mode: .voiceChat,
+            options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker])
+        try audio.setPreferredSampleRate(16_000)
+        try audio.setPreferredIOBufferDuration(0.02)
     }
 
     func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
@@ -464,6 +511,7 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
     private var eligibleContactsBySessionId: [UUID: ContactRecord] = [:]
     private var eligibleContactsByRemoteSessionCode: [String: ContactRecord] = [:]
     private var discoveredPeers: [MCPeerID: ChatPeerVoiceDiscoveredPeer] = [:]
+    private var discoveryRotationWorkItem: DispatchWorkItem?
 
     private var peerID: MCPeerID?
     private var browser: MCNearbyServiceBrowser?
@@ -476,6 +524,9 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
     private var callContact: ContactRecord?
     private var callDisplayName = ""
     private var callId: String?
+    private var mediaTxKey: SymmetricKey?
+    private var mediaRxKey: SymmetricKey?
+    private var usedInviteNonces: [String: Int64] = [:]
     private var callKind: ChatPeerCallKind?
     private var callDirection: ChatPeerVoiceCallDirection?
     private var callPhase: ChatPeerVoiceCallPhase = .idle
@@ -658,7 +709,7 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
                 self.scheduleUnansweredTimeout(for: callId)
                 self.rebuildSession()
 
-                if let matchedPeer = self.discoveredPeers.first(where: { $0.value.sessionCode == targetSessionCode })?.key {
+                if let matchedPeer = self.discoveredPeers.first(where: { $0.value.sessionCodes.contains(targetSessionCode) })?.key {
                     self.invite(peer: matchedPeer, targetSessionCode: targetSessionCode, callId: callId, callKind: kind)
                 }
             }
@@ -1030,6 +1081,9 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         )
 
         transportQueue.async {
+            let priorKeys = self.eligibleContactsBySessionId.values.map { $0.aesKeyBase64 }.sorted()
+            let nextKeys = bySessionId.values.map { $0.aesKeyBase64 }.sorted()
+            if priorKeys != nextKeys, self.browser != nil { self.schedulePrivateDiscoveryRotation(after: 0) }
             self.eligibleContactsBySessionId = bySessionId
             self.eligibleContactsByRemoteSessionCode = byRemoteSessionCode
             if let sessionId = self.callSessionId {
@@ -1115,10 +1169,8 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
             guard self.browser == nil, self.advertiser == nil else { return }
 
             let peer = self.ensurePeerID()
-            let discoveryInfo = [
-                "sc": self.localSessionCode,
-                "n": self.localDisplayName.prefix(32).description
-            ]
+            let discoveryInfo = ChatPeerCallSecurity.discoveryInfo(keys: self.eligibleContactsBySessionId.values.compactMap { ContactStore.shared.aesKey(for: $0) })
+            self.schedulePrivateDiscoveryRotation(after: 15 * 60)
             let browser = MCNearbyServiceBrowser(peer: peer, serviceType: ChatPeerVoiceCallConstants.serviceType)
             let advertiser = MCNearbyServiceAdvertiser(
                 peer: peer,
@@ -1139,6 +1191,8 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
     private func stopServices() {
         guard !AppStoreScreenshotSupport.isAnySceneEnabled else { return }
         transportQueue.async {
+            self.discoveryRotationWorkItem?.cancel()
+            self.discoveryRotationWorkItem = nil
             self.pendingTerminalReset?.cancel()
             self.pendingTerminalReset = nil
             self.pendingScreenshotActivationWorkItem?.cancel()
@@ -1165,11 +1219,33 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         }
     }
 
+    private func schedulePrivateDiscoveryRotation(after delay: TimeInterval) {
+        discoveryRotationWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard self.callId == nil else { self.schedulePrivateDiscoveryRotation(after: 60); return }
+            self.browser?.stopBrowsingForPeers()
+            self.browser?.delegate = nil
+            self.browser = nil
+            self.advertiser?.stopAdvertisingPeer()
+            self.advertiser?.delegate = nil
+            self.advertiser = nil
+            self.session?.disconnect()
+            self.session?.delegate = nil
+            self.session = nil
+            self.peerID = nil
+            self.discoveredPeers.removeAll()
+            self.startServicesIfNeeded()
+        }
+        discoveryRotationWorkItem = work
+        transportQueue.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
     private func ensurePeerID() -> MCPeerID {
         if let peerID {
             return peerID
         }
-        let nextPeerID = MCPeerID(displayName: "cc-\(localSessionCode)")
+        let nextPeerID = MCPeerID(displayName: "cc-" + UUID().uuidString)
         peerID = nextPeerID
         return nextPeerID
     }
@@ -1225,14 +1301,18 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
     }
 
     private func invite(peer: MCPeerID, targetSessionCode: String, callId: String, callKind: ChatPeerCallKind) {
-        guard let session else { return }
+        guard let session, let contact = callContact,
+              let key = ContactStore.shared.aesKey(for: contact) else { return }
         let context = ChatPeerVoiceInviteContext(
             callId: callId,
             callerSessionCode: localSessionCode,
             calleeSessionCode: targetSessionCode,
             callerDisplayName: localDisplayName,
-            callKind: callKind
+            callKind: callKind,
+            key: key
         )
+        mediaTxKey = ChatPeerCallSecurity.mediaKey(contactKey: key, callId: callId, nonce: context.nonce, direction: "a2b")
+        mediaRxKey = ChatPeerCallSecurity.mediaKey(contactKey: key, callId: callId, nonce: context.nonce, direction: "b2a")
         let payload: Data
         do {
             payload = try encoder.encode(context)
@@ -1317,7 +1397,7 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         contextData: Data?,
         invitationHandler: @escaping (Bool, MCSession?) -> Void
     ) {
-        guard let contextData else {
+        guard let contextData, contextData.count <= 4096 else {
             invitationHandler(false, nil)
             return
         }
@@ -1329,13 +1409,23 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
             invitationHandler(false, nil)
             return
         }
-        guard invite.calleeSessionCode == localSessionCode,
-              let contact = eligibleContactsByRemoteSessionCode[invite.callerSessionCode] else {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        guard invite.version == 3, invite.issuedAtMillis >= now - 60_000, invite.issuedAtMillis <= now + 10_000,
+              UUID(uuidString: invite.callId) != nil, UUID(uuidString: invite.nonce) != nil,
+              invite.calleeSessionCode == localSessionCode,
+              let contact = eligibleContactsByRemoteSessionCode[invite.callerSessionCode],
+              let key = ContactStore.shared.aesKey(for: contact),
+              ChatPeerCallSecurity.verify(proof: invite.authentication, key: key, fields: invite.authenticationFields) else {
             invitationHandler(false, nil)
             return
         }
 
         transportQueue.async {
+            self.usedInviteNonces = self.usedInviteNonces.filter { $0.value >= now - 60_000 }
+            guard self.usedInviteNonces[invite.nonce] == nil, self.usedInviteNonces.count < 256 else {
+                invitationHandler(false, nil)
+                return
+            }
             if self.callId != nil {
                 invitationHandler(false, nil)
                 return
@@ -1343,6 +1433,9 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
 
             self.startServicesIfNeeded()
             self.rebuildSession()
+            self.usedInviteNonces[invite.nonce] = now
+            self.mediaTxKey = ChatPeerCallSecurity.mediaKey(contactKey: key, callId: invite.callId, nonce: invite.nonce, direction: "b2a")
+            self.mediaRxKey = ChatPeerCallSecurity.mediaKey(contactKey: key, callId: invite.callId, nonce: invite.nonce, direction: "a2b")
             self.activePeer = peerID
             self.invitedPeer = nil
             self.pendingIncomingInvite = ChatPeerVoicePendingInvite(
@@ -1464,7 +1557,9 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         withUnsafeBytes(of: &bigEndianSequence) { bytes in
             data.append(contentsOf: bytes)
         }
-        data.append(payload)
+        guard let mediaTxKey,
+              let sealed = try? AES.GCM.seal(payload, using: mediaTxKey, authenticating: data).combined else { return }
+        data.append(sealed)
 
         do {
             try session.send(data, toPeers: [peer], with: mode)
@@ -1475,7 +1570,10 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
 
     private func handleReceivedData(_ data: Data, from peer: MCPeerID) {
         guard (activePeer == nil || activePeer == peer || invitedPeer == peer),
-              let envelope = Self.parseEnvelope(data) else {
+              let envelope = Self.parseEnvelope(data), let mediaRxKey,
+              let box = try? AES.GCM.SealedBox(combined: envelope.payload),
+              let payload = try? AES.GCM.open(box, using: mediaRxKey,
+                  authenticating: data.prefix(data.count - envelope.payload.count)) else {
             return
         }
 
@@ -1483,7 +1581,7 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
         case .control:
             let control: ChatPeerVoiceControlMessage
             do {
-                control = try decoder.decode(ChatPeerVoiceControlMessage.self, from: envelope.payload)
+                control = try decoder.decode(ChatPeerVoiceControlMessage.self, from: payload)
             } catch {
                 NSLog("[ChatPeerVoice] Failed to decode control message from peer %@: %@",
                       peer.displayName, String(describing: error))
@@ -1492,10 +1590,10 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
             handleControl(control, from: peer)
         case .audio:
             guard shouldAcceptIncomingAudio(sequence: envelope.sequence) else { return }
-            audioPipeline.enqueueIncomingOpusPacket(envelope.payload)
+            audioPipeline.enqueueIncomingOpusPacket(payload)
         case .video:
             guard shouldAcceptIncomingVideo(sequence: envelope.sequence) else { return }
-            handleIncomingVideoFrame(envelope.payload)
+            handleIncomingVideoFrame(payload)
         }
     }
 
@@ -1830,6 +1928,8 @@ final class ChatPeerVoiceCallCoordinator: NSObject, ObservableObject {
     }
 
     private func resetRuntimeState(keepTerminalSnapshot: Bool = false) {
+        mediaTxKey = nil
+        mediaRxKey = nil
         pendingScreenshotActivationWorkItem?.cancel()
         pendingScreenshotActivationWorkItem = nil
         cancelUnansweredTimeout()
@@ -2249,18 +2349,15 @@ extension ChatPeerVoiceCallCoordinator: MCNearbyServiceBrowserDelegate {
         foundPeer peerID: MCPeerID,
         withDiscoveryInfo info: [String : String]?
     ) {
-        guard let sessionCode = info?["sc"]?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
-              !sessionCode.isEmpty else {
-            return
-        }
+        guard let info else { return }
         transportQueue.async {
-            self.discoveredPeers[peerID] = ChatPeerVoiceDiscoveredPeer(
-                sessionCode: sessionCode,
-                displayName: {
-                    let trimmed = info?["n"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    return trimmed.isEmpty ? nil : trimmed
-                }()
-            )
+            let sessionCodes = Set(self.eligibleContactsBySessionId.values.compactMap { contact -> String? in
+                guard let key = ContactStore.shared.aesKey(for: contact),
+                      ChatPeerCallSecurity.matchesDiscovery(info, key: key) else { return nil }
+                return Self.targetSessionCode(for: contact)
+            })
+            guard !sessionCodes.isEmpty else { return }
+            self.discoveredPeers[peerID] = ChatPeerVoiceDiscoveredPeer(sessionCodes: sessionCodes, displayName: nil)
 
             guard self.pendingOutgoingCall,
                   let contact = self.callContact,
@@ -2269,7 +2366,7 @@ extension ChatPeerVoiceCallCoordinator: MCNearbyServiceBrowserDelegate {
                 return
             }
             guard case .dialing = self.callPhase else { return }
-            if sessionCode == targetSessionCode, let callId = self.callId {
+            if sessionCodes.contains(targetSessionCode), let callId = self.callId {
                 self.invite(peer: peerID, targetSessionCode: targetSessionCode, callId: callId, callKind: self.callKind ?? .audio)
             }
         }
@@ -2839,6 +2936,7 @@ private final class ChatPeerVoiceAudioPipeline {
     private var engineConfigured = false
     private var isSpeakerEnabled = true
     private var notificationObservers: [NSObjectProtocol] = []
+    private var isStarted = false
 
     init() {
         notificationObservers = [
@@ -2873,6 +2971,7 @@ private final class ChatPeerVoiceAudioPipeline {
     }
 
     func start() throws {
+        isStarted = true
         try configureAudioSession()
         try configureEngineIfNeeded()
         if !engine.isRunning {
@@ -2885,6 +2984,8 @@ private final class ChatPeerVoiceAudioPipeline {
     }
 
     func stop() {
+        guard isStarted else { return }
+        isStarted = false
         processingQueue.sync {
             self.pendingCaptureSamples.removeAll(keepingCapacity: false)
             self.nextSequence = 0
@@ -2930,6 +3031,7 @@ private final class ChatPeerVoiceAudioPipeline {
     }
 
     private func applyOutputRoute() {
+        guard isStarted else { return }
         let audioSession = AVAudioSession.sharedInstance()
         do {
             try audioSession.overrideOutputAudioPort(isSpeakerEnabled ? .speaker : .none)
@@ -3130,6 +3232,7 @@ private final class ChatPeerVoiceAudioPipeline {
     }
 
     private func handleInterruption(_ notification: Notification) {
+        guard isStarted else { return }
         guard let typeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
             return
@@ -3156,6 +3259,7 @@ private final class ChatPeerVoiceAudioPipeline {
     }
 
     private func restartAfterMediaServicesReset() {
+        guard isStarted else { return }
         do {
             try configureAudioSession()
             try configureEngineIfNeeded()
@@ -3379,6 +3483,7 @@ private final class ChatPeerVoiceScreenshotKeepAlivePlayer: NSObject, AVAudioPla
         // which queue called us (we're typically called from transportQueue, but in
         // screenshot mode session activation also happens here, so consistency matters).
         DispatchQueue.main.async {
+            guard self.audioPlayer != nil else { return }
             self.audioPlayer?.stop()
             self.audioPlayer = nil
             let session = AVAudioSession.sharedInstance()

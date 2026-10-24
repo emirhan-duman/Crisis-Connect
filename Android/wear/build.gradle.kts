@@ -23,8 +23,8 @@ android {
         applicationId = "com.auralis.crisisconnect"
         minSdk = 30
         targetSdk = 37
-        versionCode = 70
-        versionName = "1.2.0"
+        versionCode = 71
+        versionName = "1.2.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("main").java.srcDir("../watch-protocol/src/main/java")

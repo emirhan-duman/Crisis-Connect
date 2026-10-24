@@ -44,7 +44,6 @@ import com.auralis.crisisconnect.data.normalizeRemotePlatform
 import com.auralis.crisisconnect.data.acknowledgePeerKeyChange
 import com.auralis.crisisconnect.data.observeContact
 import com.auralis.crisisconnect.data.observeMessages
-import com.auralis.crisisconnect.data.updateContactAesKey
 import com.auralis.crisisconnect.data.updateContactName
 import com.auralis.crisisconnect.data.updateLocalMessageDeliveryState
 import com.auralis.crisisconnect.data.upsertLocalTextMessage
@@ -177,6 +176,12 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     // True when the peer's published identity key changed from what we last stored (TOFU warning).
     private val _peerKeyChanged = MutableStateFlow(false)
     val peerKeyChanged: StateFlow<Boolean> = _peerKeyChanged.asStateFlow()
+    private val _peerSecurityUpgradeRequired = MutableStateFlow(false)
+    val peerSecurityUpgradeRequired: StateFlow<Boolean> = _peerSecurityUpgradeRequired.asStateFlow()
+    private val _offlineRepairRequired = MutableStateFlow(false)
+    val offlineRepairRequired: StateFlow<Boolean> = _offlineRepairRequired.asStateFlow()
+    private val _signalRePairRequired = MutableStateFlow(false)
+    val signalRePairRequired: StateFlow<Boolean> = _signalRePairRequired.asStateFlow()
 
     private val _contactAddressState = MutableStateFlow<String?>(null)
     val contactAddressState: StateFlow<String?> = _contactAddressState.asStateFlow()
@@ -396,8 +401,7 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     init {
         viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
-            val key = LocalKeyStorage.getOrCreateAesKey(context)
-            _sessionAesKey.value = key
+            _sessionAesKey.value = com.auralis.crisisconnect.data.database.KeyGeneratorUtil.generateAesKeyBase64()
         }
         viewModelScope.launch(exceptionHandler) {
             P2pCallController.shared(context).calls.collect { calls ->
@@ -566,6 +570,15 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
                 _contactPhotoUrl.value = contact?.peerPhotoUrl?.takeIf { it.isNotBlank() }
                 updateSafetyNumber(contact)
                 _peerKeyChanged.value = contact?.peerKeyChanged == true
+                _signalRePairRequired.value = contact?.peerKeyChanged == true && withContext(Dispatchers.IO) {
+                    val owner = FirebaseAuth.getInstance().currentUser?.uid
+                    owner != null && com.auralis.crisisconnect.messaging.signal.SignalPeerBinding(context)
+                        .changed(owner, contact.peerUid, contact.peerPublicKey)
+                }
+                _offlineRepairRequired.value = contact?.offlineRepairRequired == true
+                _peerSecurityUpgradeRequired.value = contact?.peerUid?.takeIf { it.isNotBlank() }?.let { peer ->
+                    withContext(Dispatchers.IO) { SignalSessionGate.create(context).peerUpgradeRequired(peer) }
+                } == true
                 activeContact = contact
                 attachPresenceListener(contact)
                 maybeAutoLinkBluetooth(contact, sessionCode)
@@ -630,45 +643,40 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun performEncryptionSetup(aesKey: String, onResult: (EncryptionSetupResult) -> Unit) {
+    fun performEncryptionSetup(rawQrText: String, onResult: (EncryptionSetupResult) -> Unit) {
         val code = sessionCode
         if (code.isNullOrBlank()) {
             mainHandler.post { onResult(EncryptionSetupResult.MissingSession) }
             return
         }
-        val trimmedKey = aesKey.trim()
-        if (trimmedKey.isEmpty()) {
+        val data = com.auralis.crisisconnect.screens.QR.parseSecurePairingQr(rawQrText)
+        val contact = activeContact
+        val matches = data != null && contact != null &&
+            (listOf(code, contact.remoteSessionCode).any { it.isNotBlank() && it.equals(data.sessionCode, ignoreCase = true) } ||
+                (contact.peerUid.isNotBlank() && contact.peerUid == data.peerUid && contact.peerPublicKey == data.peerPublicKey))
+        if (!matches) {
             mainHandler.post { onResult(EncryptionSetupResult.InvalidKey) }
             return
         }
-        if (isPreferredP2pGattContact()) {
-            viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
-                updateContactAesKey(context, code, trimmedKey)
-                activeContact = activeContact?.copy(aesKey = trimmedKey)
-                p2pGattChatManager.updateContact(activeContact)
-                mainHandler.post { onResult(EncryptionSetupResult.Success) }
-            }
-            return
-        }
-        val operation: (RfcommForegroundService) -> Unit = { srv ->
-            srv.performHandshake(code, trimmedKey) { success ->
-                if (success) {
-                    viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
-                        updateContactAesKey(context, code, trimmedKey)
-                        mainHandler.post { onResult(EncryptionSetupResult.Success) }
-                    }
-                } else {
-                    mainHandler.post { onResult(EncryptionSetupResult.HandshakeFailed) }
+        // Every setup entry point must perform the same V2 radio verification. A scanned key
+        // alone, even from this contact's old QR, is never proof of a fresh offline pairing.
+        com.auralis.crisisconnect.screens.QR.connectUsingQr(
+            requestContext = context, rawQrText = rawQrText, operationScope = viewModelScope,
+            onResult = { result ->
+                val savedSession = when (result) {
+                    is com.auralis.crisisconnect.screens.QR.QrConnectResult.Saved -> result.sessionCode
+                    is com.auralis.crisisconnect.screens.QR.QrConnectResult.AlreadyRegistered -> result.sessionCode
+                    else -> null
+                }
+                viewModelScope.launch(Dispatchers.IO + exceptionHandler) {
+                    val saved = savedSession?.let { com.auralis.crisisconnect.data.getContact(context, it) }
+                    val outcome = if (saved != null && !saved.offlineRepairRequired && saved.aesKey.isNotBlank()) {
+                        EncryptionSetupResult.Success
+                    } else EncryptionSetupResult.HandshakeFailed
+                    mainHandler.post { onResult(outcome) }
                 }
             }
-        }
-        val currentService = service
-        if (currentService == null) {
-            pendingOperations.add(operation)
-            ensureServiceBound()
-        } else {
-            operation(currentService)
-        }
+        )
     }
 
     fun sendMessage(text: String, onResult: (Boolean) -> Unit) {
@@ -2267,11 +2275,11 @@ class ChatScreenViewModel(application: Application) : AndroidViewModel(applicati
     /** User re-confirmed the peer after a key change — clear the TOFU warning. */
     fun acknowledgePeerKeyChange() {
         val code = sessionCode ?: return
-        _peerKeyChanged.value = false
         viewModelScope.launch(exceptionHandler) {
-            withContext(Dispatchers.IO) {
+            val acknowledged = withContext(Dispatchers.IO) {
                 acknowledgePeerKeyChange(context, code)
             }
+            if (acknowledged) _peerKeyChanged.value = false
         }
     }
 

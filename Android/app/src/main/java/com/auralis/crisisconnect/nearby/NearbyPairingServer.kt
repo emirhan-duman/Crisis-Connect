@@ -55,7 +55,9 @@ object NearbyPairingServer : GattSOSServerService.SharedGattDelegate {
 
     private class Session(val responder: NearbySpakePairing.Responder) {
         @Volatile var peer: NearbySpakePairing.NearbyIdentity? = null
+        val createdAt = android.os.SystemClock.elapsedRealtime()
     }
+    private val admission = NearbyPairingAdmission()
 
     private var appContext: Context? = null
     @Volatile private var ownDisplayName: String = ""
@@ -191,10 +193,15 @@ object NearbyPairingServer : GattSOSServerService.SharedGattDelegate {
     ): Int? {
         if (characteristic.uuid != NearbySpakePairing.REQUEST_UUID) return null
         val bytes = value ?: return BluetoothGatt.GATT_FAILURE
+        if (preparedWrite || offset != 0 || bytes.size > 8192) return BluetoothGatt.GATT_FAILURE
         val address = device.address
+        val now = android.os.SystemClock.elapsedRealtime()
+        sessions.entries.removeAll { now - it.value.createdAt >= 60_000L }
+        responseByDevice.keys.retainAll(sessions.keys)
         val existing = sessions[address]
 
         if (existing == null) {
+            if (sessions.size >= 8 || !admission.admit(address, now)) return BluetoothGatt.GATT_FAILURE
             // First write = SPAKE2 message 1. We answer with message 2 (pB, cB).
             val ownPhone = NearbyPairingSupport.ownPhoneE164()
             if (ownPhone == null) {
@@ -225,16 +232,8 @@ object NearbyPairingServer : GattSOSServerService.SharedGattDelegate {
                 return BluetoothGatt.GATT_SUCCESS
             }
             existing.peer = peer
-            // A connector whose handshake identity matches a contact we ALREADY saved is just
-            // bootstrapping the offline BT route for that existing contact — the user made the
-            // trust decision when they added them, so accept without interrupting. Anyone unknown
-            // (or a known uid presenting a DIFFERENT key) still gets the explicit Accept/Decline
-            // notification — the anti-harvesting guard is unchanged for strangers.
-            if (isAlreadySavedContact(peer)) {
-                Log.i(TAG, "auto-accepting pairing: connector matches an already-saved contact")
-                accept(address)
-                return BluetoothGatt.GATT_SUCCESS
-            }
+            // UID and public key are public assertions, not proof of private-key ownership.
+            // Every phone-number pairing requires a fresh, explicit local trust decision.
             responseByDevice[address] = existing.responder.responseMessage(NearbySpakePairing.STATUS_PENDING)
             postApprovalNotification(address, peer.displayName)
             return BluetoothGatt.GATT_SUCCESS
@@ -262,34 +261,25 @@ object NearbyPairingServer : GattSOSServerService.SharedGattDelegate {
         }
     }
 
-    /**
-     * True when [peer]'s SPAKE2-exchanged identity (uid AND identity key, both required) matches a
-     * contact we already hold — i.e. this pairing only adds a Bluetooth route to a trust decision
-     * the user already made by saving them.
-     */
-    private fun isAlreadySavedContact(peer: NearbySpakePairing.NearbyIdentity): Boolean {
-        val ctx = appContext ?: return false
-        if (peer.uid.isBlank() || peer.publicKeyBase64.isBlank()) return false
-        val stored = runCatching { getContactByPeerUid(ctx, peer.uid) }.getOrNull() ?: return false
-        return stored.peerPublicKey.trim() == peer.publicKeyBase64.trim()
-    }
-
     /** User tapped "Accept": reveal our identity, save the contact (internet + offline BT capable). */
     fun accept(address: String) {
         val session = sessions[address] ?: return
         val peer = session.peer ?: return
         val ctx = appContext
-        responseByDevice[address] = session.responder.responseMessage(NearbySpakePairing.STATUS_OK)
         if (ctx != null) {
             scope.launch {
-                runCatching {
+                val saved = runCatching {
                     NearbyPairingSupport.savePairedContact(
                         context = ctx,
                         peer = peer,
                         contactKey = session.responder.contactKey(),
                         bluetoothAddress = address
                     )
-                }.onFailure { Log.w(TAG, "Failed to save paired contact", it) }
+                }.onFailure { Log.w(TAG, "Failed to save paired contact", it) }.isSuccess
+                if (sessions[address] === session) {
+                    responseByDevice[address] = session.responder.responseMessage(
+                        if (saved) NearbySpakePairing.STATUS_OK else NearbySpakePairing.STATUS_REJECT)
+                }
             }
             runCatching { NotificationManagerCompat.from(ctx).cancel(address.hashCode()) }
         }
@@ -321,7 +311,8 @@ object NearbyPairingServer : GattSOSServerService.SharedGattDelegate {
         val notification = NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(ctx.getString(R.string.nearby_pairing_request_title, name))
-            .setContentText(ctx.getString(R.string.nearby_pairing_request_text))
+            .setContentText(ctx.getString(R.string.nearby_pairing_identity_warning))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(ctx.getString(R.string.nearby_pairing_identity_warning)))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setAutoCancel(true)
             .addAction(

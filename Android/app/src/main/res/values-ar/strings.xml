@@ -660,7 +660,6 @@
     <string name="nearby_match_notification_text">اضغط للاتصال عبر البلوتوث</string>
     <string name="nearby_pairing_channel_name">طلبات الاقتران القريبة</string>
     <string name="nearby_pairing_request_title">%1$s يريد الاتصال بالقرب</string>
-    <string name="nearby_pairing_request_text">اقبل للدردشة عبر البلوتوث.</string>
     <string name="nearby_pairing_accept">قبول</string>
     <string name="nearby_pairing_decline">رفض</string>
     <string name="manual_connect_button">الاقتران بالجهاز</string>
@@ -1347,7 +1346,6 @@
     <string name="notification_photo_message_body">رسالة صورة</string>
     <string name="chat_encryption_setup_title">أمّن هذه الدردشة</string>
     <string name="chat_encryption_setup_instruction">امسح رمز QR المعروض على شاشة المحادثة الجديدة في الجهاز الآخر لاستيراد مفتاح التشفير المُشارَك.</string>
-    <string name="chat_encryption_setup_session_mismatch">ينتمي رمز QR هذا إلى جلسة دردشة مختلفة.</string>
     <string name="chat_encryption_setup_invalid_qr">تنسيق QR غير مدعوم.</string>
     <string name="chat_encryption_setup_handshake_in_progress">جارٍ التحقق من مفتاح التشفير…</string>
     <string name="chat_encryption_setup_handshake_failed">تعذّر التحقق من مفتاح التشفير. حاول مرة أخرى.</string>

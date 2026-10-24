@@ -8,7 +8,7 @@ import org.json.JSONObject
 internal class EncryptedQrPairingJournal(context: Context) : QrPairingJournal {
     private val store = QrRecoveryPreferences.get(context)
     override fun read(): QrPairingCheckpoint? {
-        val text = store.getStringStrict("pending", "")
+        val text = store.getStringStrict("pending_v3", "")
         if (text.isEmpty()) return null
         val json = JSONObject(text)
         return QrPairingCheckpoint(json.getString("raw"), json.optString("name").takeIf(String::isNotEmpty),
@@ -19,10 +19,10 @@ internal class EncryptedQrPairingJournal(context: Context) : QrPairingJournal {
         val json = JSONObject().put("raw", checkpoint.raw).put("name", checkpoint.name ?: "")
             .put("owner", checkpoint.owner).put("createdAt", checkpoint.createdAt)
             .put("recoveries", checkpoint.recoveries).put("savedSession", checkpoint.savedSession ?: "")
-        check(store.putStringCommitted("pending", json.toString())) { "Pairing checkpoint unavailable" }
+        check(store.putStringCommitted("pending_v3", json.toString())) { "Pairing checkpoint unavailable" }
     }
     override fun clear() {
-        check(store.putStringCommitted("pending", null)) { "Pairing checkpoint unavailable" }
+        check(store.putStringCommitted("pending_v3", null)) { "Pairing checkpoint unavailable" }
     }
 }
 

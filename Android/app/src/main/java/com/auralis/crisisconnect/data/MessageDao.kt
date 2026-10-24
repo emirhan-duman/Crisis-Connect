@@ -213,18 +213,18 @@ interface MessageDao {
 
     @Query(
         "UPDATE messages SET deliveryStatus = 'DELIVERED' " +
-            "WHERE isLocal = 1 AND messageUuid IN (:messageUuids) " +
+            "WHERE isLocal = 1 AND sessionCode = :sessionCode AND messageUuid IN (:messageUuids) " +
             "AND (deliveryStatus IS NULL OR deliveryStatus NOT IN ('READ', 'FAILED') " +
             "OR (deliveryStatus = 'FAILED' AND outboundRoute = 'watch_reply'))"
     )
-    suspend fun markLocalMessagesDelivered(messageUuids: List<String>)
+    suspend fun markLocalMessagesDelivered(sessionCode: String, messageUuids: List<String>)
 
     @Query(
         "UPDATE messages SET deliveryStatus = 'READ', isRead = 1 " +
-            "WHERE isLocal = 1 AND messageUuid IN (:messageUuids) " +
+            "WHERE isLocal = 1 AND sessionCode = :sessionCode AND messageUuid IN (:messageUuids) " +
             "AND (deliveryStatus IS NULL OR deliveryStatus != 'FAILED' OR outboundRoute = 'watch_reply')"
     )
-    suspend fun markLocalMessagesRead(messageUuids: List<String>)
+    suspend fun markLocalMessagesRead(sessionCode: String, messageUuids: List<String>)
 
     @Query(
         "UPDATE messages SET " +

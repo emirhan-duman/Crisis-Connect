@@ -143,7 +143,8 @@ object BlePeerIdentityUtils {
                 batteryPercent = battery,
                 avatarBase64 = avatar,
                 location = location,
-                medical = medical
+                medical = medical,
+                broadcastId = json.optString("broadcastId").takeIf { it.matches(Regex("(?i)CC-[0-9A-F]{24}")) }
             )
         }.getOrNull()
     }
@@ -154,10 +155,12 @@ object BlePeerIdentityUtils {
         batteryPercent: Int? = null,
         avatarBase64: String? = null,
         location: PeerLocationSnapshot? = null,
-        medical: PeerMedicalInfo? = null
+        medical: PeerMedicalInfo? = null,
+        broadcastId: String? = null
     ): String {
         return JSONObject().apply {
             put("kind", PEER_INFO_KIND)
+            broadcastId?.takeIf { it.matches(Regex("(?i)CC-[0-9A-F]{24}")) }?.let { put("broadcastId", it) }
             put("name", name)
             put("role", role)
             if (batteryPercent != null && batteryPercent in 0..100) {
@@ -818,6 +821,7 @@ object BlePeerIdentityUtils {
     }
 
     data class PeerIdentity(
+        val broadcastId: String? = null,
         val name: String,
         val role: String,
         val batteryPercent: Int? = null,

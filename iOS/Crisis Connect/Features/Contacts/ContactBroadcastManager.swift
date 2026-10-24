@@ -176,6 +176,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
     private var pendingHandshakes: [UUID: P2pPendingHandshake] = [:]
     private var pendingShareCompletions: [UUID: P2pPendingShareCompletion] = [:]
     private var messageReceivers: [UUID: BleChunkReceiver] = [:]
+    private var controlReceivers: [UUID: P2pPrivacyWire.ControlReceiver] = [:]
     private var controlCharacteristic: CBMutableCharacteristic?
     private var messageOutCharacteristic: CBMutableCharacteristic?
     private var subscribedMessageOutCentrals: [UUID: CBCentral] = [:]
@@ -259,7 +260,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         let serverNonce = P2pBleProtocol.randomNonceBase64()
         let deviceId = localDeviceId()
         let avatarBase64 = localAvatarPayload()
-        let bootstrapPayload = Self.makeShareBootstrapPayload(
+        let plainBootstrap = Self.makeShareBootstrapPayload(
             shareId: normalizedShareId,
             sessionCode: trimmedSessionCode,
             displayName: displayName,
@@ -267,6 +268,8 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             deviceId: deviceId,
             avatarBase64: avatarBase64
         )
+        guard let key = P2pBleProtocol.decodeBase64(trimmedKey),
+              let bootstrapPayload = P2pPrivacyWire.seal(plainBootstrap, key: key, purpose: .bootstrap) else { return }
         let nextSession = P2pPublishedSession(
             shareId: normalizedShareId,
             sessionCode: trimmedSessionCode,
@@ -800,13 +803,6 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
         guard characteristic.uuid == P2pBleProtocol.messageOutCharacteristicUUID else { return }
         subscribedMessageOutCentrals[central.identifier] = central
-        if let record = ContactStore.shared.contactForBleAddress(central.identifier.uuidString.uppercased()) {
-            bindCentral(central.identifier, to: record)
-        } else if let foregroundSessionId {
-            bindCentral(central.identifier, to: foregroundSessionId)
-        } else {
-            publishConnectedSessions()
-        }
         flushQueuedMessageOutValues(for: central.identifier, peripheral: peripheral)
     }
 
@@ -868,6 +864,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         pendingHandshakes.removeAll()
         pendingShareCompletions.removeAll()
         messageReceivers.removeAll()
+        controlReceivers.removeAll()
         controlCharacteristic = nil
         messageOutCharacteristic = nil
         subscribedMessageOutCentrals.removeAll()
@@ -890,6 +887,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         pendingHandshakes.removeAll()
         pendingShareCompletions.removeAll()
         messageReceivers.removeAll()
+        controlReceivers.removeAll()
         controlCharacteristic = nil
         messageOutCharacteristic = nil
         subscribedMessageOutCentrals.removeAll()
@@ -951,18 +949,14 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         if let shareSession {
             return P2pBleProtocol.buildIdentityValue(shareId: shareSession.shareId)
         }
-        return P2pBleProtocol.buildDeviceIdentityValue(deviceId: localDeviceId())
+        return P2pPrivacyWire.privateIdentity
     }
 
     private func currentBootstrapPayload() -> Data {
         if let shareSession {
             return shareSession.bootstrapPayload
         }
-        return Self.makeHostBootstrapPayload(
-            deviceId: localDeviceId(),
-            displayName: localDisplayName(),
-            avatarBase64: localAvatarPayload()
-        )
+        return Data(#"{"mode":"host","privacyVersion":2}"#.utf8)
     }
 
     private func handleControlWrite(_ value: Data, from central: CBCentral) -> CBATTError.Code {
@@ -970,7 +964,16 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             setErrorResponse(for: central.identifier, code: "share_inactive", message: "QR share session is not active")
             return .success
         }
-        guard let frame = try? JSONSerialization.jsonObject(with: value) as? [String: Any],
+        controlReceivers = controlReceivers.filter { !$0.value.isExpired }
+        if controlReceivers[central.identifier] == nil {
+            guard controlReceivers.count < 8 else { return .insufficientResources }
+            controlReceivers[central.identifier] = P2pPrivacyWire.ControlReceiver()
+        }
+        guard let wire = controlReceivers[central.identifier]?.receive(value) else { return .success }
+        controlReceivers.removeValue(forKey: central.identifier)
+        guard let key = P2pBleProtocol.decodeBase64(shareSession.aesKeyBase64),
+              let plaintext = P2pPrivacyWire.open(wire, key: key, purpose: .control) else { return .insufficientAuthentication }
+        guard let frame = try? JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
               let type = (frame["type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) else {
             setErrorResponse(for: central.identifier, code: "invalid_json", message: "Malformed control payload")
             return .success
@@ -1209,10 +1212,12 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
     }
 
     private func handleIncomingEnvelope(_ envelope: P2pIncomingEnvelope, from central: CBCentral) {
-        guard let record = ContactStore.shared.contactForRemoteDeviceId(envelope.fromDeviceId),
-              let key = ContactStore.shared.aesKey(for: record) else {
-            return
+        let matches = ContactStore.shared.pairedKeyCandidates().filter { record in
+            guard let key = ContactStore.shared.aesKey(for: record) else { return false }
+            return P2pPrivacyWire.matches(envelope.fromDeviceId, key: key, packet: envelope.encryptedPacket)
         }
+        guard matches.count == 1, let record = matches.first,
+              let key = ContactStore.shared.aesKey(for: record) else { return }
 
         guard let plaintext = decryptChatPayload(
             envelope.encryptedPacket,
@@ -1225,6 +1230,11 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         let address = central.identifier.uuidString.uppercased()
         ContactStore.shared.updateBleAddress(sessionId: record.id, address: address)
         bindCentral(central.identifier, to: record)
+
+        if payload.kind == "privacy_ping", let nonce = payload.messageId, UUID(uuidString: nonce) != nil {
+            sendChatEvent(kind: "privacy_pong", messageId: nonce, to: central, record: record)
+            return
+        }
 
         // Voice-call signaling from a central peer. Route it BEFORE the chat-kind switch —
         // these kinds used to fall into `default: break`, silently eating every incoming
@@ -1457,7 +1467,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
 
         let outerPayload: [String: Any] = [
             "type": P2pBleProtocol.typeChatEnvelope,
-            "fromDeviceId": localDeviceId(),
+            "fromDeviceId": P2pPrivacyWire.alias(key: key, packet: encryptedPacket),
             "payload": encryptedPacket.base64EncodedString()
         ]
         guard let outerData = try? JSONSerialization.data(withJSONObject: outerPayload, options: []),
@@ -1540,7 +1550,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         }
         let outerPayload: [String: Any] = [
             "type": P2pBleProtocol.typeChatEnvelope,
-            "fromDeviceId": localDeviceId(),
+            "fromDeviceId": P2pPrivacyWire.alias(key: key, packet: encryptedPacket),
             "payload": encryptedPacket.base64EncodedString()
         ]
         guard let outerData = try? JSONSerialization.data(withJSONObject: outerPayload, options: []),
@@ -2033,8 +2043,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         for record: ContactRecord,
         envelopeDeviceId: String? = nil
     ) -> String? {
-        envelopeDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            ?? record.verifiedIdentityKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        record.verifiedIdentityKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             ?? record.remoteDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
@@ -2121,7 +2130,10 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
     }
 
     private func finalizeShareCompletionIfNeeded(for centralId: UUID, deliveredPayload: Data) {
-        guard isServerFinishPayload(deliveredPayload),
+        guard let session = shareSession,
+              let key = P2pBleProtocol.decodeBase64(session.aesKeyBase64),
+              let plaintext = P2pPrivacyWire.open(deliveredPayload, key: key, purpose: .control),
+              isServerFinishPayload(plaintext),
               let completion = pendingShareCompletions.removeValue(forKey: centralId) else {
             return
         }
@@ -2165,7 +2177,10 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
     private func setDeviceResponse(for identifier: UUID, payload: [String: Any?]) {
         let compact = payload.compactMapValues { $0 }
         guard let data = try? JSONSerialization.data(withJSONObject: compact, options: []) else { return }
-        deviceResponses[identifier] = data
+        guard let session = shareSession,
+              let key = P2pBleProtocol.decodeBase64(session.aesKeyBase64),
+              let wire = P2pPrivacyWire.seal(data, key: key, purpose: .control) else { return }
+        deviceResponses[identifier] = wire
     }
 
     private func setErrorResponse(for identifier: UUID, code: String, message: String) {
@@ -2268,22 +2283,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         return (try? JSONSerialization.data(withJSONObject: compact, options: [])) ?? Data()
     }
 
-    private static func makeHostBootstrapPayload(
-        deviceId: String,
-        displayName: String,
-        avatarBase64: String?
-    ) -> Data {
-        let payload: [String: Any?] = [
-            "mode": "host",
-            "platform": "ios",
-            "protocolVersion": P2pBleProtocol.protocolVersion,
-            "serverDeviceId": deviceId,
-            "name": displayName.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
-            "avatarB64": avatarBase64?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        ]
-        let compact = payload.compactMapValues { $0 }
-        return (try? JSONSerialization.data(withJSONObject: compact, options: [])) ?? Data()
-    }
+
 }
 
 private extension Data {

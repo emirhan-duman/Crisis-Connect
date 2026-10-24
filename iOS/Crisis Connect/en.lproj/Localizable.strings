@@ -1557,3 +1557,11 @@
 "AUTHORITY_RESILIENT_NOTICE" = "Separate conversation for updated apps. Messages reach only verified devices that join this session; older apps use Compatibility.";
 "AUTHORITY_COMPATIBILITY_NOTICE" = "Separate conversation with older apps. It requires the original region; resilient-session messages are not forwarded here.";
 "CHAT_STATUS_INTERNET_AVAILABLE" = "Internet available";
+
+"SAFETY_NUMBER_REPAIR_REQUIRED" = "This contact’s secure identity changed. Sending is blocked. Scan a fresh QR code together to verify and pair this contact again.";
+
+"NEARBY_PAIRING_IDENTITY_WARNING" = "This person knows your phone number. Their name and identity have not been verified. This creates a local connection only; use a fresh QR code to bind an account or pair an existing contact again.";
+
+"OFFLINE_PAIRING_UPGRADE_REQUIRED" = "Bluetooth pairing was upgraded for security. Ask this contact to update the app and generate a new QR code, then scan it again. Your conversation history is retained.";
+
+"PEER_SECURITY_UPGRADE_REQUIRED" = "Update both apps to securely verify this conversation. Messages remain queued; no weaker encryption is selected.";

@@ -37,13 +37,10 @@ object NearbyAutoLink {
     private const val DISCOVER_WINDOW_MS = 12_000L
     private const val POLL_MS = 1_200L
 
-    /** True when [contact] is an internet contact that could still gain an automatic Bluetooth link. */
+    /** Existing identities require trusted QR re-pairing; knowing a number is insufficient. */
+    @Suppress("UNUSED_PARAMETER")
     fun isEligible(contact: Contact?): Boolean {
-        if (contact == null) return false
-        return contact.supportsInternet &&
-            contact.peerPhone.isNotBlank() &&
-            contact.aesKey.isBlank() &&
-            contact.address.isBlank()
+        return false
     }
 
     /**

@@ -108,7 +108,7 @@ fun AppBottomBar(
     androidx.compose.runtime.LaunchedEffect(context) {
         val hasAccess = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val role = com.auralis.crisisconnect.security.SecurityRepository(context.applicationContext)
-                .getUsableStoredCertificateRole(allowExpired = true)
+                .getUsableStoredCertificateRole(allowExpired = false)
                 ?.trim()
                 ?.lowercase(java.util.Locale.US)
             role == "admin" || role == "fieldteam"

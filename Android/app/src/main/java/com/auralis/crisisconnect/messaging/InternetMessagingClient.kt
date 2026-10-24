@@ -50,6 +50,7 @@ class InternetMessagingClient(
     private val firestore = firestore ?: if (functions == null && MessagingDatabaseTarget.HIGH_AVAILABILITY_ENABLED)
         FirebaseFirestore.getInstance(MessagingDatabaseTarget.DATABASE_ID) else FirebaseFirestore.getInstance()
     private val functions = functions ?: FirebaseFunctions.getInstance(REGION)
+    private val securityCapabilities = mutableMapOf<String, Pair<Long, Boolean>>()
     val usesRegionalDelivery: Boolean get() = regionalCalls != null
     private suspend fun callRegional(operation: String, payload: Map<String, Any>): Any? {
         val uid = currentUid() ?: error("Not signed in.")
@@ -58,6 +59,25 @@ class InternetMessagingClient(
     private suspend fun callRouted(operation: String, payload: Map<String, Any> = emptyMap()): Any? =
         if (regionalCalls != null) callRegional(operation, payload)
         else functions.getHttpsCallable(operation).call(payload).await().data
+    suspend fun supportsSignalIdentityBinding(peerUid: String): Boolean {
+        val owner = currentUid() ?: return false
+        val scope = "$owner|$peerUid"
+        val now = android.os.SystemClock.elapsedRealtime()
+        synchronized(securityCapabilities) {
+            securityCapabilities[scope]?.takeIf { now - it.first in 0..60_000L }?.let { return it.second }
+        }
+        val supported = runCatching {
+            val data = functions.getHttpsCallable("getMessagingSecurityCapabilitiesV2")
+                .call(mapOf("targetUid" to peerUid)).await().data as? Map<*, *>
+            currentUid() == owner && (data?.get("protocolVersion") as? Number)?.toDouble() == 2.0 && data["signalIdentityBinding"] == true
+        }.getOrDefault(false)
+        synchronized(securityCapabilities) {
+            if (securityCapabilities.size >= 128) securityCapabilities.clear()
+            securityCapabilities[scope] = now to supported
+        }
+        return supported
+    }
+
     fun currentUid(): String? = auth.currentUser?.uid
     internal val messageStore: FirebaseFirestore get() = firestore
 

@@ -841,7 +841,6 @@
     <string name="notification_photo_message_body">फोटो संदेश</string>
     <string name="chat_encryption_setup_title">इस चैट को सुरक्षित करें</string>
     <string name="chat_encryption_setup_instruction">साझा एन्क्रिप्शन कुंजी को आयात करने के लिए अन्य डिवाइस की नई चैट स्क्रीन पर दिखाए गए QR कोड को स्कैन करें।</string>
-    <string name="chat_encryption_setup_session_mismatch">यह QR एक अलग चैट सत्र से संबंधित है।</string>
     <string name="chat_encryption_setup_invalid_qr">असमर्थित QR प्रारूप.</string>
     <string name="chat_encryption_setup_handshake_in_progress">एन्क्रिप्शन कुंजी सत्यापित हो रही है…</string>
     <string name="chat_encryption_setup_handshake_failed">एन्क्रिप्शन कुंजी सत्यापित नहीं कर सका. पुनः प्रयास करें।</string>
@@ -1645,7 +1644,6 @@
     <string name="nearby_match_notification_text">ब्लूटूथ पर कनेक्ट करने के लिए टैप करें</string>
     <string name="nearby_pairing_channel_name">आस-पास युग्मन अनुरोध</string>
     <string name="nearby_pairing_request_title">%1$s आस-पास कनेक्ट करना चाहता है</string>
-    <string name="nearby_pairing_request_text">ब्लूटूथ पर चैट करने के लिए स्वीकारें।</string>
     <string name="nearby_pairing_accept">स्वीकारें</string>
     <string name="nearby_pairing_decline">अस्वीकारें</string>
     <string name="safety_number_title">सुरक्षा सत्यापन</string>

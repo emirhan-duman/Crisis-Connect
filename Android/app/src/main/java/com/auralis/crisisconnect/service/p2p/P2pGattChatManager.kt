@@ -38,7 +38,6 @@ import com.auralis.crisisconnect.data.saveRemoteAudioMessage
 import com.auralis.crisisconnect.data.saveRemoteImageMessage
 import com.auralis.crisisconnect.data.saveRemoteMessage
 import com.auralis.crisisconnect.data.MessageDeliveryStatus
-import com.auralis.crisisconnect.data.updateContactAesKey
 import com.auralis.crisisconnect.data.updateContactBleRuntimeMetadata
 import com.auralis.crisisconnect.data.updateLocalMessageDeliveryState
 import com.auralis.crisisconnect.data.voiceMessageFile
@@ -225,6 +224,7 @@ class P2pGattChatManager(
 
     @Volatile
     private var validatedIdentity = false
+    private var privacyChallenge: P2pPrivacyWire.Challenge? = null
 
     @Volatile
     private var authenticatedName: String? = null
@@ -318,6 +318,7 @@ class P2pGattChatManager(
         disconnectGatt(clearDevice = true)
         outputReceiver.reset()
         validatedIdentity = false
+        privacyChallenge = null
         authenticatedName = null
         pendingWrite?.cancel()
         pendingWrite = null
@@ -408,7 +409,7 @@ class P2pGattChatManager(
             ?: return null
         val outer = JSONObject().apply {
             put("type", P2pBleProtocol.TYPE_CHAT_ENVELOPE)
-            put("fromDeviceId", LocalKeyStorage.getOrCreateP2pDeviceId(appContext))
+            put("fromDeviceId", P2pPrivacyWire.alias(keyBytes, encrypted))
             put("payload", Base64.encodeToString(encrypted, Base64.NO_WRAP))
         }.toString().toByteArray(StandardCharsets.UTF_8)
         return runCatching { P2pBleProtocol.wrapTransportPacket(outer) }.getOrNull()
@@ -947,6 +948,7 @@ class P2pGattChatManager(
         activeDevice = device
         pendingConnectAddress = address
         validatedIdentity = false
+        privacyChallenge = null
         authenticatedName = null
         outputReceiver.reset()
         rejectedAddresses.remove(address)
@@ -1006,6 +1008,7 @@ class P2pGattChatManager(
         messageOutCharacteristic = null
         negotiatedMtu = P2P_CHAT_DEFAULT_ATT_MTU
         validatedIdentity = false
+        privacyChallenge = null
         authenticatedName = null
         outputReceiver.reset()
         incomingVoiceTransfers.clear()
@@ -1129,18 +1132,18 @@ class P2pGattChatManager(
         val encrypted = runCatching { AesCipherHelper.encrypt(keyBytes, inner) }.getOrNull() ?: return null
         val outer = JSONObject().apply {
             put("type", P2pBleProtocol.TYPE_CHAT_ENVELOPE)
-            put("fromDeviceId", LocalKeyStorage.getOrCreateP2pDeviceId(appContext))
+            put("fromDeviceId", P2pPrivacyWire.alias(keyBytes, encrypted))
             put("payload", Base64.encodeToString(encrypted, Base64.NO_WRAP))
         }.toString().toByteArray(StandardCharsets.UTF_8)
         return runCatching { P2pBleProtocol.wrapTransportPacket(outer) }.getOrNull()
     }
 
-    private suspend fun writePacket(packet: ByteArray): Boolean {
+    private suspend fun writePacket(packet: ByteArray, authenticationOnly: Boolean = false): Boolean {
         val contact = currentContact
         if (!shouldUseBleGatt(contact)) {
             return false
         }
-        if (!isReady()) {
+        if (!isReady() && !authenticationOnly) {
             beginScanIfPossible()
             return false
         }
@@ -1212,74 +1215,14 @@ class P2pGattChatManager(
 
     private fun handleIdentityValue(gatt: BluetoothGatt, value: ByteArray) {
         clearPhaseTimeout()
-        val identity = value.toString(StandardCharsets.UTF_8).trim()
-        val lower = identity.lowercase(Locale.US)
-        val address = normalizeAddress(gatt.device.address)
-        when {
-            lower.startsWith("device:") -> {
-                val remoteDeviceId = identity.removePrefix("device:").trim()
-                if (!identityMatches(deviceId = remoteDeviceId, shareId = null)) {
-                    activeDevice?.address?.let { rejectedAddresses += normalizeAddress(it) }
-                    scheduleReconnect()
-                    return
-                }
-                enableMessageNotifications(gatt)
-            }
-
-            lower.startsWith("share:") -> {
-                val shareId = identity.removePrefix("share:").trim()
-                if (!identityMatches(deviceId = null, shareId = shareId)) {
-                    activeDevice?.address?.let { rejectedAddresses += normalizeAddress(it) }
-                    scheduleReconnect()
-                    return
-                }
-                val bootstrap = bootstrapCharacteristic
-                if (bootstrap == null) {
-                    scheduleReconnect()
-                    return
-                }
-                setStatus(P2pGattChatStatus.Discovering)
-                if (!readCharacteristicSafely(gatt, bootstrap)) {
-                    Log.w(TAG, "Unable to start P2P chat bootstrap read on $address")
-                    scheduleReconnect()
-                    return
-                }
-                armPhaseTimeout(phase = "bootstrap read", address = address)
-            }
-
-            else -> {
-                val bootstrap = bootstrapCharacteristic
-                if (bootstrap == null) {
-                    scheduleReconnect()
-                    return
-                }
-                setStatus(P2pGattChatStatus.Discovering)
-                if (!readCharacteristicSafely(gatt, bootstrap)) {
-                    Log.w(TAG, "Unable to start P2P chat bootstrap fallback read on $address")
-                    scheduleReconnect()
-                    return
-                }
-                armPhaseTimeout(phase = "bootstrap read", address = address)
-            }
-        }
+        val identity = value.toString(StandardCharsets.UTF_8)
+        if (value.contentEquals(P2pPrivacyWire.privateIdentity) || identity.startsWith("share:", ignoreCase = true)) {
+            enableMessageNotifications(gatt)
+        } else scheduleReconnect()
     }
 
     private fun handleBootstrapValue(gatt: BluetoothGatt, value: ByteArray) {
-        clearPhaseTimeout()
-        val identity = parseBootstrapIdentity(value) ?: run {
-            scheduleReconnect()
-            return
-        }
-        if (!identityMatches(deviceId = identity.deviceId, shareId = identity.shareId)) {
-            activeDevice?.address?.let { rejectedAddresses += normalizeAddress(it) }
-            scheduleReconnect()
-            return
-        }
-        authenticatedName = identity.displayName
-        scope.launch {
-            persistRuntimeMetadata(identity.displayName)
-        }
-        enableMessageNotifications(gatt)
+        scheduleReconnect()
     }
 
     private fun enableMessageNotifications(gatt: BluetoothGatt) {
@@ -1320,9 +1263,14 @@ class P2pGattChatManager(
                 return@launch
             }
             clearPhaseTimeout()
-            validatedIdentity = true
-            setStatus(P2pGattChatStatus.Ready)
-            persistRuntimeMetadata(authenticatedName)
+            val challenge = P2pPrivacyWire.Challenge()
+            val nonce = challenge.nonce
+            privacyChallenge = challenge
+            val packet = currentContact?.let { buildRawEnvelopePacket(it, JSONObject().apply { put("kind", "privacy_ping"); put("messageId", nonce) }) }
+            if (packet == null || !writePacket(packet, authenticationOnly = true)) {
+                scheduleReconnect(); return@launch
+            }
+            armPhaseTimeout(phase = "private identity proof", address = address)
         }
     }
 
@@ -1397,12 +1345,8 @@ class P2pGattChatManager(
         }
         val envelope = parseEnvelope(envelopeBytes) ?: return
         val contact = currentContact ?: return
-        if (contact.remoteDeviceId.isNotBlank() &&
-            !contact.remoteDeviceId.equals(envelope.fromDeviceId, ignoreCase = true)
-        ) {
-            return
-        }
-        val keyBytes = P2pBleProtocol.decodeBase64(contact.aesKey)?.takeIf { it.isNotEmpty() } ?: return
+        val keyBytes = P2pBleProtocol.decodeBase64(contact.aesKey)?.takeIf { it.size == 32 } ?: return
+        if (!P2pPrivacyWire.matches(envelope.fromDeviceId, keyBytes, envelope.encryptedPacket)) return
         val payloadBytes = decryptChatPayload(
             keyBytes = keyBytes,
             encryptedPacket = envelope.encryptedPacket
@@ -1412,6 +1356,17 @@ class P2pGattChatManager(
             return
         }
         val payload = parsePayload(payloadBytes) ?: return
+        if (payload.kind == "privacy_pong") {
+            val challenge = privacyChallenge ?: return
+            if (!challenge.accept(payload.messageId)) return
+            privacyChallenge = null
+            clearPhaseTimeout()
+            validatedIdentity = true
+            setStatus(P2pGattChatStatus.Ready)
+            scope.launch { persistRuntimeMetadata(authenticatedName) }
+            return
+        }
+        if (!validatedIdentity) return
         if (P2pCallProtocol.isCallSignalKind(payload.kind)) {
             val rawPayload = runCatching {
                 JSONObject(payloadBytes.toString(StandardCharsets.UTF_8))
@@ -1423,21 +1378,8 @@ class P2pGattChatManager(
             persistRuntimeMetadata(payload.senderName ?: authenticatedName)
             when (payload.kind) {
                 P2pBleProtocol.CHAT_KIND_DECRYPT_FAIL -> {
-                    val messageId = payload.messageId?.trim().takeIf { !it.isNullOrBlank() }
-                    Log.w(TAG, "Remote peer failed to decrypt message ${messageId ?: "(unknown)"} — clearing AES key for plaintext fallback")
-                    updateContactAesKey(appContext, contact.sessionCode, "")
-                    if (messageId != null) {
-                        updateLocalMessageDeliveryState(
-                            context = appContext,
-                            uuid = messageId,
-                            deliveryStatus = MessageDeliveryStatus.QUEUED,
-                            retryCount = 0,
-                            nextRetryAtMillis = null,
-                            lastAttemptAtMillis = null,
-                            lastError = null,
-                            outboundRoute = null
-                        )
-                    }
+                    // Remote diagnostics cannot erase keys or authorize plaintext retransmission.
+                    Log.w(TAG, "Peer reported a decryption failure; retaining the paired key")
                 }
 
                 P2pBleProtocol.CHAT_KIND_DELIVERED -> {

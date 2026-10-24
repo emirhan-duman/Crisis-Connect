@@ -314,8 +314,11 @@ data class QrData(
     val peerUid: String? = null,
     val peerPublicKey: String? = null,
     // Whether the QR owner's device was in child profile mode when the QR was rendered.
-    val peerIsChild: Boolean = false
-)
+    val peerIsChild: Boolean = false,
+    val offlineProtocolVersion: Int = 1
+) {
+    val supportsSecureOfflinePairing: Boolean get() = offlineProtocolVersion == 2
+}
 
 private fun candidateDiscoveryNames(data: QrData, overrideName: String? = null): List<String> {
     return buildList {
@@ -716,6 +719,7 @@ private fun parseQrJsonPayload(json: String): QrData? {
                 obj,
                 listOf("peerPublicKey", "peerPubKey", "publicKey", "idKey", "identityKey")
             ),
+            offlineProtocolVersion = if (obj.opt("offlineProtocolVersion") == 2) 2 else 1,
             peerIsChild = readJsonBooleanField(
                 obj,
                 listOf("isChild", "childProfile", "child_profile")
@@ -765,6 +769,13 @@ internal fun normalizeQrFailureCodeAfterHandshakeAttempt(
     } else {
         code
     }
+}
+
+/** Shared strict admission for alternate encryption-setup entry points. */
+internal fun parseSecurePairingQr(raw: String): QrData? {
+    val text = raw.trim()
+    val json = if (text.startsWith("dcs://", ignoreCase = true)) decodeUriPayload(text.substring(6)) else text
+    return parseQrJsonPayload(json)?.takeIf { it.supportsSecureOfflinePairing }
 }
 
 fun parseQrPayload(raw: String): QrData {
@@ -1014,7 +1025,8 @@ private fun saveInternetContactFromQr(
         }
         Contact(
             name = name ?: context.getString(R.string.qr_contact_fallback_name),
-            aesKey = data.aesKey,
+            aesKey = "",
+            offlineKeyVersion = 1,
             sessionCode = conversationId,
             peerUid = peerUid,
             peerPublicKey = peerKey,
@@ -1095,7 +1107,7 @@ fun connectUsingQr(
     operationScope.launch {
         // A process may die after Room committed the contact but before publishing success.
         // Resolve by the scanned identity/key, never by display name, before any new handshake.
-        if (isRecovery) {
+        if (isRecovery && data.supportsSecureOfflinePairing) {
             val saved = withContext(Dispatchers.IO) {
                 val candidates = listOfNotNull(
                     recoveringSession?.let { getContact(context, it) },
@@ -1157,6 +1169,11 @@ fun connectUsingQr(
                 saveContact(context, withInternet)
             }
             announceOurIdentity(context, withInternet.sessionCode)
+        }
+
+        if (!data.supportsSecureOfflinePairing) {
+            finishFailure(DeviceError.HANDSHAKE_FAILED)
+            return@launch
         }
 
         val adapter = BluetoothAdapter.getDefaultAdapter()

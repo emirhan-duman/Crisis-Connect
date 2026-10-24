@@ -12,6 +12,8 @@ struct ContactQRPayload: Codable {
     private static let schemePrefix = "dcs://"
 
     let v: Int
+    let offlineProtocolVersion: Int
+    var supportsSecureOfflinePairing: Bool { offlineProtocolVersion == 2 }
     let code: String
     let key: String
     let platform: String
@@ -26,6 +28,7 @@ struct ContactQRPayload: Codable {
 
     init(
         v: Int = currentVersion,
+        offlineProtocolVersion: Int = 2,
         code: String,
         key: String,
         platform: String,
@@ -37,6 +40,7 @@ struct ContactQRPayload: Codable {
         peerPublicKey: String? = nil
     ) {
         self.v = v
+        self.offlineProtocolVersion = offlineProtocolVersion
         self.code = code
         self.key = key
         self.platform = platform
@@ -50,6 +54,7 @@ struct ContactQRPayload: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case v
+        case offlineProtocolVersion
         case code
         case key
         case platform
@@ -85,6 +90,7 @@ struct ContactQRPayload: Codable {
 
         self.init(
             v: version,
+            offlineProtocolVersion: try container.decodeIfPresent(Int.self, forKey: .offlineProtocolVersion) ?? 1,
             code: code,
             key: key,
             platform: platform,
@@ -100,6 +106,7 @@ struct ContactQRPayload: Codable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(v, forKey: .v)
+        try container.encode(offlineProtocolVersion, forKey: .offlineProtocolVersion)
         try container.encode(code, forKey: .code)
         try container.encode(key, forKey: .key)
         try container.encode(platform, forKey: .platform)

@@ -27,11 +27,8 @@ class KeystoreBackedPreferences(
 
     fun getString(key: String, defaultValue: String? = null): String? {
         val encoded = prefs.getString(key, null) ?: return defaultValue
-        val decoded = decode(encoded) ?: run {
-            prefs.edit().remove(key).apply()
-            return defaultValue
-        }
-        return decoded
+        // Inaccessible is not absent: regenerating a key here can strand the database forever.
+        return decode(encoded) ?: error("Encrypted preference temporarily unavailable")
     }
     /** Journals must preserve unreadable data during transient Keystore failures. */
     fun getStringStrict(key: String, defaultValue: String): String {
@@ -44,8 +41,8 @@ class KeystoreBackedPreferences(
             prefs.edit().remove(key).apply()
             return
         }
-        val encoded = encode(value) ?: return
-        prefs.edit().putString(key, encoded).apply()
+        val encoded = encode(value) ?: error("Encrypted preference temporarily unavailable")
+        check(prefs.edit().putString(key, encoded).commit()) { "Encrypted preference write failed" }
     }
 
     /** Synchronous durability boundary for tiny security receipts that must survive process death. */

@@ -55,7 +55,8 @@ class InternetChatTransport(
         // Stamped on the wire doc (not the ciphertext) so the backend can fire an iOS PushKit
         // VoIP ring for this message — set only for a call OFFER.
         callRing: Boolean = false,
-        allowSatellite: Boolean = false
+        allowSatellite: Boolean = false,
+        forceIdentityBinding: Boolean = false
         // The Signal gate hits libsignal's blocking Room store — hop off the caller's dispatcher
         // here so every send entry point (some launch on Main) is safe.
     ) = withContext(Dispatchers.IO) {
@@ -68,12 +69,21 @@ class InternetChatTransport(
         }
         val myUid = client.currentUid() ?: throw IllegalStateException("Not signed in.")
         val peerUid = contact.peerUid.trim()
+        if (!forceIdentityBinding && forceEstablish) {
+            runCatching { sendSignalIdentityBinding(contact, requestReply = true) }
+        }
+        check(forceIdentityBinding || !gate.peerUpgradeRequired(peerUid)) { "PEER_SECURITY_UPGRADE_REQUIRED" }
         val conversationId = InternetConversation.pairId(myUid, peerUid)
         DisasterTrafficController.awaitSendSlot(content.templateCode == SOS_ALERT_TEMPLATE)
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val wirePriority = if (content.templateCode == SOS_ALERT_TEMPLATE) PRIORITY_HIGH else priority
+        val signalReady = !forceIdentityBinding && peerUid.isNotBlank() && gate.ensureOutbound(peerUid, forceEstablish)
+        check(forceIdentityBinding || com.auralis.crisisconnect.messaging.signal.SignalMigrationPolicy.permitsApplication(
+            signalReady, gate.hasIdentityBinding(peerUid), gate.identityChangePending(peerUid))) {
+            "Authenticated Signal session temporarily unavailable"
+        }
         val envelope: RelayableEnvelope =
-            if (peerUid.isNotBlank() && gate.ensureOutbound(peerUid, forceEstablish)) {
+            if (signalReady) {
                 val wire = gate.encrypt(peerUid, content)
                 OutgoingSignalEnvelope(
                     messageId = messageId,
@@ -400,15 +410,16 @@ class InternetChatTransport(
      * can match this to the right contact. Durable 24h TTL so a briefly-offline peer still heals.
      */
     suspend fun sendIdentityAnnounce(contact: Contact, mySessionCode: String, myName: String?): Boolean {
-        if (client.currentUid() == null) return false
+        val myUid = client.currentUid() ?: return false
         if (!contact.supportsInternet) return false
         return runCatching {
             // Carry our OWN v2 messaging public key in the (authenticated, E2E) payload so the peer
             // heals its contact WITHOUT a directory lookup of our uid — the lookup can lag right after
             // a fresh install, and a v3 announce leaves the receiver's senderKey empty otherwise.
-            val myPublicKey = runCatching { MessagingIdentity(context).publicKeyBase64() }.getOrNull()
+            val myPublicKey = MessagingIdentity(context).publicKeyBase64()
             val payload = org.json.JSONObject()
                 .put("rsc", mySessionCode)
+                .put("binding", ContactIdentityBinding.sign(contact.aesKey, myUid, mySessionCode, myPublicKey))
                 .apply {
                     myName?.takeIf { it.isNotBlank() }?.let { put("name", it) }
                     myPublicKey?.takeIf { it.isNotBlank() }?.let { put("pk", it) }
@@ -427,6 +438,20 @@ class InternetChatTransport(
             Log.w(TAG, "Identity announce send failed", it)
             false
         }
+    }
+
+    suspend fun sendSignalIdentityBinding(contact: Contact, requestReply: Boolean): Boolean {
+        if (!contact.supportsInternet) return false
+        val bound = gate.hasIdentityBinding(contact.peerUid)
+        val cohort = if (requestReply && !bound) client.supportsSignalIdentityBinding(contact.peerUid) else false
+        if (!com.auralis.crisisconnect.messaging.signal.SignalMigrationPolicy.permitsBindingControl(requestReply, bound, cohort)) return false
+        if (requestReply && !gate.claimBindingAnnouncement(contact.peerUid, contact.peerPublicKey)) return false
+        if (!bound && !gate.markPeerUpgradeRequired(contact.peerUid)) return false
+        val payload = JSONObject().put("signal", gate.localIdentityBase64()).put("reply", requestReply).toString()
+        sealAndRelay(contact, MessageContent(templateCode = SIGNAL_IDENTITY_BINDING_TEMPLATE, text = payload),
+            UUID.randomUUID().toString(), System.currentTimeMillis(), PRIORITY_NORMAL, DEFAULT_TTL_MS,
+            forceIdentityBinding = true)
+        return true
     }
 
     /** Answers a parent request ([PARENT_RESPONSE_TEMPLATE]) with accept/decline. */
@@ -488,6 +513,7 @@ class InternetChatTransport(
     }
 
     companion object {
+        const val SIGNAL_IDENTITY_BINDING_TEMPLATE = 209
         private const val TAG = "InternetChatTransport"
         private const val TEMPLATE_FREE_TEXT = 0
         // Reserved templateCode marking a message as a WebRTC call signal (never a chat message).

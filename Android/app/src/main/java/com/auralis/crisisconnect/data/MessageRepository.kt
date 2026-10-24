@@ -257,7 +257,7 @@ suspend fun markLocalMessagesDelivered(
         return
     }
     withContext(Dispatchers.IO) {
-        messageDao(context).markLocalMessagesDelivered(messageUuids.toList())
+        messageDao(context).markLocalMessagesDelivered(sessionCode, messageUuids.toList())
     }
 }
 
@@ -276,11 +276,11 @@ suspend fun markLocalMessagesDeliveredWithRecipient(
     }
     withContext(Dispatchers.IO) {
         val dao = messageDao(context)
-        dao.markLocalMessagesDelivered(normalizedUuids)
+        dao.markLocalMessagesDelivered(sessionCode, normalizedUuids)
         val normalizedRecipient = normalizeTrackedRecipient(recipientLabel) ?: return@withContext
         normalizedUuids.forEach { messageUuid ->
             val existing = dao.getMessageByUuid(messageUuid) ?: return@forEach
-            if (!existing.isLocal) {
+            if (!existing.isLocal || existing.sessionCode != sessionCode) {
                 return@forEach
             }
             val deliveredTo = decodeTrackedRecipients(existing.deliveredToRecipients)
@@ -307,7 +307,7 @@ suspend fun markLocalMessagesRead(
         return
     }
     withContext(Dispatchers.IO) {
-        messageDao(context).markLocalMessagesRead(messageUuids.toList())
+        messageDao(context).markLocalMessagesRead(sessionCode, messageUuids.toList())
     }
 }
 
@@ -326,11 +326,11 @@ suspend fun markLocalMessagesReadWithRecipient(
     }
     withContext(Dispatchers.IO) {
         val dao = messageDao(context)
-        dao.markLocalMessagesRead(normalizedUuids)
+        dao.markLocalMessagesRead(sessionCode, normalizedUuids)
         val normalizedRecipient = normalizeTrackedRecipient(recipientLabel) ?: return@withContext
         normalizedUuids.forEach { messageUuid ->
             val existing = dao.getMessageByUuid(messageUuid) ?: return@forEach
-            if (!existing.isLocal) {
+            if (!existing.isLocal || existing.sessionCode != sessionCode) {
                 return@forEach
             }
             val deliveredTo = decodeTrackedRecipients(existing.deliveredToRecipients)

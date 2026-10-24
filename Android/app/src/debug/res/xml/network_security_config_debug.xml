@@ -1,15 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Internal-build-only exception for the Android Emulator's host gateway. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <domain>10.0.2.2</domain>
-        <domain>127.0.0.1</domain>
-    </domain-config>
     <debug-overrides>
         <trust-anchors>
             <certificates src="system" />

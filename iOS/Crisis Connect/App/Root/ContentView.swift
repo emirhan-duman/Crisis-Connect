@@ -12,6 +12,7 @@ import UIKit
 import CoreImage.CIFilterBuiltins
 import Combine
 import FirebaseAuth
+import CryptoKit
 
 private enum PresentedChatDestination: Identifiable {
     case session(UUID)
@@ -1298,7 +1299,7 @@ private struct NewContactView: View {
     }
 
     private var localAesKey: String {
-        SecureLocalStore.shared.getOrCreateAesKeyBase64()
+        SymmetricKey(size: .bits256).withUnsafeBytes { Data($0).base64EncodedString() }
     }
 
     private var localDisplayName: String {
@@ -1400,7 +1401,7 @@ private struct NewContactView: View {
         let targetDisplayName = displayName
         DispatchQueue.global(qos: .userInitiated).async {
             let sessionCode = SecureLocalStore.shared.getOrCreateP2pSessionCode()
-            let aesKey = SecureLocalStore.shared.getOrCreateAesKeyBase64()
+            let aesKey = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0).base64EncodedString() }
             let qrCodeValue = makeQrCodeValue(
                 displayName: targetDisplayName,
                 shareId: shareId,

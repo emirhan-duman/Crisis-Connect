@@ -250,7 +250,7 @@ class MainActivity : ComponentActivity() {
         }
         lifecycleScope.launch(Dispatchers.IO) {
             val role = SecurityRepository(applicationContext)
-                .getUsableStoredCertificateRole(allowExpired = true)
+                .getUsableStoredCertificateRole(allowExpired = false)
                 ?.trim()
                 ?.lowercase(Locale.US)
             NavbarSettingsCache.hasRescueAccess = role == "admin" || role == "fieldteam"
@@ -1227,7 +1227,7 @@ class MainActivity : ComponentActivity() {
     private suspend fun hasStoredRescueFeatureAccess(): Boolean {
         return withContext(Dispatchers.IO) {
             SecurityRepository(applicationContext)
-                .getUsableStoredCertificateRole(allowExpired = true)
+                .getUsableStoredCertificateRole(allowExpired = false)
                 ?.trim()
                 ?.lowercase(Locale.US) in RESCUE_FEATURE_ROLES
         }
@@ -1283,15 +1283,13 @@ class MainActivity : ComponentActivity() {
     /** Catches the `crisisconnect://sso/callback` deep link returned by the web enterprise-SSO flow. */
     private fun handleSsoDeepLink(intent: Intent?) {
         val data = intent?.data ?: return
-        if (data.scheme != "crisisconnect" || data.host != "sso") {
+        if (data.scheme != "https" || data.host != "crisisconnect.network" ||
+            data.path != "/api/auth/sso/v2/app-callback" || data.port !in listOf(-1, 443) || data.userInfo != null) {
             return
         }
         val code = data.getQueryParameter("code")
-        val error = data.getQueryParameter("error")
-        when {
-            !code.isNullOrBlank() -> EnterpriseSsoBridge.emit(EnterpriseSsoBridge.Result.Code(code))
-            else -> EnterpriseSsoBridge.emit(EnterpriseSsoBridge.Result.Error(error))
-        }
+        if (data.getQueryParameters("state").size != 1 || data.getQueryParameters("code").size > 1) return
+        EnterpriseSsoBridge.handleCallback(applicationContext, code, data.getQueryParameter("state"))
     }
 
     override fun onResume() {

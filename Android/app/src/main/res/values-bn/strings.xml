@@ -656,7 +656,6 @@
     <string name="nearby_match_notification_text">ব্লুটুথের মাধ্যমে সংযোগ করতে ট্যাপ করুন</string>
     <string name="nearby_pairing_channel_name">কাছাকাছি জোড়া লাগানোর অনুরোধ</string>
     <string name="nearby_pairing_request_title">%1$s কাছাকাছি সংযোগ করতে চায়</string>
-    <string name="nearby_pairing_request_text">ব্লুটুথে চ্যাট করতে গ্রহণ করুন।</string>
     <string name="nearby_pairing_accept">গ্রহণ করুন</string>
     <string name="nearby_pairing_decline">প্রত্যাখ্যান করুন</string>
     <string name="manual_connect_button">ডিভাইসের সাথে জোড়া লাগান</string>
@@ -1317,7 +1316,6 @@
     <string name="notification_photo_message_body">ফটো বার্তা</string>
     <string name="chat_encryption_setup_title">এই চ্যাট নিরাপদ করুন</string>
     <string name="chat_encryption_setup_instruction">শেয়ার করা এনক্রিপশন কী আমদানি করতে অন্য ডিভাইসের নতুন চ্যাট স্ক্রিনে দেখানো QR কোড স্ক্যান করুন।</string>
-    <string name="chat_encryption_setup_session_mismatch">এই QR একটি ভিন্ন চ্যাট সেশনের।</string>
     <string name="chat_encryption_setup_invalid_qr">অসমর্থিত QR বিন্যাস।</string>
     <string name="chat_encryption_setup_handshake_in_progress">এনক্রিপশন কী যাচাই করা হচ্ছে…</string>
     <string name="chat_encryption_setup_handshake_failed">এনক্রিপশন কী যাচাই করা যায়নি। আবার চেষ্টা করুন।</string>

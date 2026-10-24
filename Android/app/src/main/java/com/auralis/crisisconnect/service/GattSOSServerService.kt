@@ -153,9 +153,8 @@ class GattSOSServerService : Service() {
     private val rescueBroadcastId: String by lazy {
         LocalKeyStorage.getOrCreateRescueDeviceId(applicationContext)
     }
-    private val rescueBroadcastServiceData: ByteArray by lazy {
-        LocalKeyStorage.getRescueDeviceIdBytes(applicationContext)
-    }
+    private val rescueBroadcastServiceData: ByteArray get() = RadioPrivacyIdentity.current.serviceData
+    private var advertisedPrivacyEpoch: Long = -1
 
     private val crisisServiceUuid: UUID = CRISIS_SERVICE_UUID
     private val idCharacteristicUuid: UUID = UUIDGenerator.fromAssignedNumber(CHAR_ID_ASSIGNED_NUMBER)
@@ -198,6 +197,12 @@ class GattSOSServerService : Service() {
         }
         if (!startAdvertising()) {
             return
+        }
+        serviceScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(15_000L)
+                if (advertisedPrivacyEpoch != RadioPrivacyIdentity.current.epoch) restartAdvertisingForDeclaration()
+            }
         }
         // Hosting only. onCreate cannot see the start Intent, so it cannot know whether this is a
         // real emergency or a chat session bringing the shared server up — and it must not guess.
@@ -1042,6 +1047,7 @@ class GattSOSServerService : Service() {
             .build()
 
         try {
+            advertisedPrivacyEpoch = RadioPrivacyIdentity.current.epoch
             advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
             Log.d(TAG, "SOS Advertising started.")
         } catch (securityException: SecurityException) {
@@ -1066,24 +1072,7 @@ class GattSOSServerService : Service() {
 
     @SuppressLint("HardwareIds", "MissingPermission") // Permission is checked and races are caught.
     private fun resolveMeshInitiatorRankForAdvertising(): Int {
-        val macSalt = if (hasBluetoothConnectPermission()) {
-            runCatching { bluetoothAdapter?.address }
-                .getOrNull()
-                ?.trim()
-                ?.uppercase(Locale.US)
-                ?.takeIf { it.isNotBlank() && it != INVALID_MAC_ADDRESS }
-                ?.hashCode()
-        } else {
-            null
-        }
-        val seed = macSalt ?: runCatching {
-            Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
-        }.getOrNull()
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?.hashCode()
-            ?: packageName.hashCode()
-        return seed xor (seed ushr 16) xor DEFAULT_INITIATOR_SALT
+        return RadioPrivacyIdentity.current.rank(Build.VERSION.SDK_INT <= Build.VERSION_CODES.O_MR1)
     }
 
     private fun encodeMeshInitiatorRank(rank: Int): ByteArray {
@@ -1096,7 +1085,7 @@ class GattSOSServerService : Service() {
     }
 
     private fun buildBroadcastIdPayload(): String {
-        return "ccid:$rescueBroadcastId"
+        return "ccid:${RadioPrivacyIdentity.current.broadcastId}"
     }
 
     private fun createClientConfigDescriptor(): BluetoothGattDescriptor {
@@ -1115,7 +1104,14 @@ class GattSOSServerService : Service() {
         }
         val normalizedAddress = device.address.uppercase(Locale.US)
         Log.d(TAG, "[$normalizedAddress] Auth challenge write received bytes=${value.size}")
+        // Verification belongs to one ECDH transcript, never to a reusable BLE connection.
+        verifiedClients.remove(normalizedAddress)
+        if (watchRescueAddress == normalizedAddress) watchRescueAddress = null
+        sessionKeys.remove(normalizedAddress)
+        serverPublicKeys.remove(normalizedAddress)
+        authSessionNonceByAddress.remove(normalizedAddress)
         ackStates.remove(normalizedAddress)
+        chatOutPayloads.remove(normalizedAddress)
         secureInReceivers[normalizedAddress]?.reset()
         secureChatReceivers[normalizedAddress]?.reset()
         return try {
@@ -2377,7 +2373,10 @@ class GattSOSServerService : Service() {
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
             ?: BleSessionResolver.sessionCodeForAddress(normalizedAddress)
-        val ack = BleChatEnvelope.decodeAck(value)
+        if (!verifiedClients.contains(normalizedAddress)) return BluetoothGatt.GATT_FAILURE
+        val key = sessionKeys[normalizedAddress] ?: return BluetoothGatt.GATT_FAILURE
+        val authenticated = SecureBleReceipt.open(key, value) ?: return BluetoothGatt.GATT_FAILURE
+        val ack = BleChatEnvelope.decodeAck(authenticated)
         if (ack == null) {
             return BluetoothGatt.GATT_SUCCESS
         }
@@ -2692,7 +2691,8 @@ class GattSOSServerService : Service() {
             batteryPercent = batteryPct,
             avatarBase64 = avatarPayload,
             location = victimLocation,
-            medical = medicalInfo
+            medical = medicalInfo,
+            broadcastId = rescueBroadcastId
         )
         val sent = notifyChat(normalizedAddress, payload)
         if (!sent) {
@@ -2924,9 +2924,13 @@ class GattSOSServerService : Service() {
 
     private fun sendAck(device: BluetoothDevice, payload: ByteArray) {
         val normalizedAddress = device.address.uppercase(Locale.US)
-        ackStates[normalizedAddress] = payload
+        val wire = if (BleChatEnvelope.decodeAck(payload) != null) {
+            val key = sessionKeys[normalizedAddress] ?: return
+            SecureBleReceipt.seal(key, payload) ?: return
+        } else payload
+        ackStates[normalizedAddress] = wire
         gattServer?.getService(crisisServiceUuid)?.getCharacteristic(secureAckCharacteristicUuid)?.let { characteristic ->
-            characteristic.value = payload
+            characteristic.value = wire
             notifyIfEnabled(device, characteristic)
         }
     }

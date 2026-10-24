@@ -65,6 +65,7 @@ final class ProfileViewModel: ObservableObject {
     // Firebase requires the OAuth provider to stay alive for the whole web sign-in flow.
     private var pendingOAuthProvider: OAuthProvider?
     private var ssoWebAuthSession: ASWebAuthenticationSession?
+    private var ssoPendingState: String?
     private let ssoPresentationProvider = SsoPresentationContextProvider()
     private var saveTask: Task<Void, Never>?
     private var profile: Profile?
@@ -321,6 +322,18 @@ final class ProfileViewModel: ObservableObject {
         // there — exactly like the web sign-in — and the web resolves the tenant + redirects to the
         // IdP. The callback returns a one-time code on the crisisconnect:// deep link.
         let base = Self.crisisConnectWebURL
+        func randomToken() -> String {
+            SymmetricKey(size: .bits256).withUnsafeBytes { Data($0).base64EncodedString() }
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
+        }
+        let state = randomToken()
+        let verifier = randomToken()
+        let startedAt = Date()
+        let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        ssoPendingState = state
         clearAuthError()
         isAuthLoading = true
 
@@ -332,6 +345,10 @@ final class ProfileViewModel: ObservableObject {
         components?.queryItems = [
             URLQueryItem(name: "client", value: "mobile"),
             URLQueryItem(name: "locale", value: localeCode),
+            URLQueryItem(name: "mobileProtocol", value: "2"),
+            URLQueryItem(name: "mobilePlatform", value: "ios"),
+            URLQueryItem(name: "mobileState", value: state),
+            URLQueryItem(name: "mobileChallenge", value: challenge),
         ]
         guard let startURL = components?.url else {
             isAuthLoading = false
@@ -345,6 +362,8 @@ final class ProfileViewModel: ObservableObject {
             // The session completion may fire off the main thread; @Published mutations need main.
             DispatchQueue.main.async {
                 guard let self else { return }
+                guard self.ssoPendingState == state else { return }
+                self.ssoPendingState = nil
                 if let error = error as? ASWebAuthenticationSessionError,
                    error.code == .canceledLogin {
                     self.isAuthLoading = false
@@ -355,7 +374,12 @@ final class ProfileViewModel: ObservableObject {
                     return
                 }
                 guard let callbackURL,
-                      let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems else {
+                      callbackURL.scheme == "crisisconnect", callbackURL.host == "sso", callbackURL.path == "/v2/callback",
+                      startedAt.timeIntervalSinceNow >= -600,
+                      let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems,
+                      items.filter({ $0.name == "state" }).count == 1,
+                      items.first(where: { $0.name == "state" })?.value == state,
+                      items.filter({ $0.name == "code" }).count <= 1 else {
                     self.isAuthLoading = false
                     return
                 }
@@ -371,7 +395,7 @@ final class ProfileViewModel: ObservableObject {
                     self.isAuthLoading = false
                     return
                 }
-                self.exchangeSsoCode(code, base: base)
+                self.exchangeSsoCode(code, base: base, state: state, verifier: verifier)
             }
         }
         session.presentationContextProvider = ssoPresentationProvider
@@ -380,14 +404,14 @@ final class ProfileViewModel: ObservableObject {
         session.start()
     }
 
-    private func exchangeSsoCode(_ code: String, base: URL) {
+    private func exchangeSsoCode(_ code: String, base: URL, state: String, verifier: String) {
         Task { [weak self] in
             guard let self else { return }
             do {
-                var request = URLRequest(url: base.appendingPathComponent("/api/auth/sso/mobile-token"))
+                var request = URLRequest(url: base.appendingPathComponent("/api/auth/sso/v2/mobile-token"))
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONSerialization.data(withJSONObject: ["code": code])
+                request.httpBody = try JSONSerialization.data(withJSONObject: ["code": code, "state": state, "verifier": verifier])
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200,
                       let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],

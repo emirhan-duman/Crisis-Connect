@@ -656,7 +656,6 @@
     <string name="nearby_match_notification_text">Ketuk untuk terhubung melalui Bluetooth</string>
     <string name="nearby_pairing_channel_name">Permintaan pemasangan terdekat</string>
     <string name="nearby_pairing_request_title">%1$s ingin terhubung di dekat</string>
-    <string name="nearby_pairing_request_text">Terima untuk mengobrol melalui Bluetooth.</string>
     <string name="nearby_pairing_accept">Terima</string>
     <string name="nearby_pairing_decline">Tolak</string>
     <string name="manual_connect_button">Pasangkan dengan perangkat</string>
@@ -1348,7 +1347,6 @@
     <string name="notification_photo_message_body">Pesan foto</string>
     <string name="chat_encryption_setup_title">Amankan obrolan ini</string>
     <string name="chat_encryption_setup_instruction">Pindai kode QR yang ditampilkan di layar Obrolan Baru perangkat lain untuk mengimpor kunci enkripsi bersama.</string>
-    <string name="chat_encryption_setup_session_mismatch">QR ini milik sesi obrolan yang berbeda.</string>
     <string name="chat_encryption_setup_invalid_qr">Format QR tidak didukung.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Memverifikasi kunci enkripsi…</string>
     <string name="chat_encryption_setup_handshake_failed">Tidak dapat memverifikasi kunci enkripsi. Coba lagi.</string>

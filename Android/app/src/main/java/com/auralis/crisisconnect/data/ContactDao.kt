@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -13,7 +14,14 @@ interface ContactDao {
     fun getContacts(): List<ContactEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    fun saveContact(contact: ContactEntity)
+    fun insertContactRow(contact: ContactEntity)
+
+    @Transaction
+    fun saveContact(contact: ContactEntity) {
+        // Re-read inside the write transaction so a delayed legacy metadata update cannot
+        // restore a quarantined key after a concurrent QR upgrade has committed.
+        insertContactRow(preserveLegacyOfflineStorage(contact, getContactBySessionCode(contact.sessionCode)))
+    }
 
     @Query("SELECT * FROM contacts WHERE sessionCode = :sessionCode LIMIT 1")
     fun getContactBySessionCode(sessionCode: String): ContactEntity?
@@ -45,7 +53,7 @@ interface ContactDao {
     @Query("UPDATE contacts SET address = :address WHERE sessionCode = :sessionCode")
     fun updateContactAddress(sessionCode: String, address: String)
 
-    @Query("UPDATE contacts SET aesKey = :aesKey WHERE sessionCode = :sessionCode")
+    @Query("UPDATE contacts SET aesKey = :aesKey WHERE sessionCode = :sessionCode AND offlineKeyVersion >= 2")
     fun updateContactAesKey(sessionCode: String, aesKey: String)
 
     @Query("UPDATE contacts SET name = :name WHERE sessionCode = :sessionCode")

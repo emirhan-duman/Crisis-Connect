@@ -2,41 +2,41 @@ package com.auralis.crisisconnect.security
 
 import android.content.Context
 import android.util.Base64
+import com.google.firebase.auth.FirebaseAuth
+import org.json.JSONObject
+import java.lang.ref.WeakReference
 
-/**
- * Stores the authority-only mesh group key in app-private encrypted preferences.
- *
- * The key is intentionally not auto-generated here. Authority mesh should stay disabled until a
- * backend/provisioning flow writes a valid 256-bit group key for an authorized device.
- */
+/** Only a current, account-bound 72-hour lease may supply authority traffic keys. */
 object AuthorityMeshKeyStore {
-    fun loadGroupKey(context: Context): ByteArray? {
-        val encoded = prefs(context).getString(KEY_GROUP_KEY, null)?.trim() ?: return null
-        val decoded = runCatching {
-            Base64.decode(encoded.replace("\n", ""), Base64.NO_WRAP or Base64.NO_PADDING)
-        }.getOrNull() ?: return null
-        return decoded.takeIf { it.size == GROUP_KEY_BYTES }
-    }
+    @Volatile private var cached: AuthorityMeshKeyLease? = null
+    @Volatile private var cachedContext: WeakReference<Context>? = null
+    @Synchronized fun loadGroupKey(context: Context): ByteArray? = runCatching {
+        val owner = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+        val lease = cached.takeIf { cachedContext?.get() === context.applicationContext } ?: run {
+            val encoded = prefs(context).getString(KEY_LEASE) ?: return null
+            val json = JSONObject(encoded)
+            AuthorityMeshKeyLease(json.getString("keyId"), json.getString("keyBase64"), json.getString("ownerUid"),
+                json.getLong("notBeforeMs"), json.getLong("expiresAtMs")).also {
+                cached = it; cachedContext = WeakReference(context.applicationContext)
+            }
+        }
+        if (!lease.isCurrent(System.currentTimeMillis(), owner)) return null
+        Base64.decode(lease.keyBase64, Base64.NO_WRAP).takeIf { it.size == 32 }
+    }.getOrNull()
 
-    fun saveGroupKey(context: Context, keyBytes: ByteArray) {
-        require(keyBytes.size == GROUP_KEY_BYTES) { "Authority mesh group key must be 32 bytes." }
-        prefs(context).putString(KEY_GROUP_KEY, Base64.encodeToString(keyBytes, Base64.NO_WRAP))
+    @Synchronized fun saveGroupKey(context: Context, lease: AuthorityMeshKeyLease) {
+        require(lease.isCurrent(System.currentTimeMillis(), FirebaseAuth.getInstance().currentUser?.uid.orEmpty()))
+        require(Base64.decode(lease.keyBase64, Base64.NO_WRAP).size == 32)
+        val encoded = JSONObject().put("keyId", lease.keyId).put("keyBase64", lease.keyBase64)
+            .put("ownerUid", lease.ownerUid).put("notBeforeMs", lease.notBeforeMs).put("expiresAtMs", lease.expiresAtMs)
+        prefs(context).putString(KEY_LEASE, encoded.toString())
+        cached = lease; cachedContext = WeakReference(context.applicationContext)
     }
-
-    fun clearGroupKey(context: Context) {
-        prefs(context).remove(KEY_GROUP_KEY)
+    @Synchronized fun clearGroupKey(context: Context) {
+        cached = null; cachedContext = null
+        prefs(context).remove(KEY_LEASE, "authority_mesh_group_key_v1")
     }
-
-    private fun prefs(context: Context): KeystoreBackedPreferences {
-        return KeystoreBackedPreferences(
-            context = context.applicationContext,
-            prefName = PREF_NAME,
-            keyAlias = KEY_ALIAS
-        )
-    }
-
-    private const val PREF_NAME = "authority_mesh_keys"
-    private const val KEY_ALIAS = "cc_authority_mesh_key_store"
-    private const val KEY_GROUP_KEY = "authority_mesh_group_key_v1"
-    private const val GROUP_KEY_BYTES = 32
+    private fun prefs(context: Context) = KeystoreBackedPreferences(context.applicationContext,
+        "authority_mesh_keys", "cc_authority_mesh_key_store")
+    private const val KEY_LEASE = "authority_mesh_group_key_lease_v2"
 }

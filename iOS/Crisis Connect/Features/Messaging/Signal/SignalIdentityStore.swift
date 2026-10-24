@@ -119,6 +119,7 @@ final class SignalIdentity {
 }
 
 enum SignalStoreError: Error {
+    case identityChanged
     case corruptIdentity
     case keychain(OSStatus)
     case missingRecord(String)
@@ -163,6 +164,14 @@ final class SignalProtocolFileStore: IdentityKeyStore, PreKeyStore, SignedPreKey
         "\(address.name).\(address.deviceId)"
     }
 
+    func forgetPeer(_ peer: String) throws {
+        let key = "\(peer).1"
+        for dir in ["sessions", "identities"] {
+            let path = url(dir, key)
+            if FileManager.default.fileExists(atPath: path.path) { try FileManager.default.removeItem(at: path) }
+        }
+    }
+
     // MARK: - IdentityKeyStore
 
     func identityKeyPair(context: StoreContext) throws -> IdentityKeyPair {
@@ -177,13 +186,9 @@ final class SignalProtocolFileStore: IdentityKeyStore, PreKeyStore, SignedPreKey
         let key = addressKey(address)
         let previous = read("identities", key)
         let next = identity.serialize()
+        guard previous == nil || previous == next else { throw SignalStoreError.identityChanged }
         try write("identities", key, next)
-        if previous == nil || previous == next {
-            return .newOrUnchanged
-        }
-        // Content-free breadcrumb: the peer's safety number just changed (reinstall/reset).
-        NSLog("SignalIdentityStore: identity re-pinned for %@ (peer reinstalled or reset)", key)
-        return .replacedExisting
+        return .newOrUnchanged
     }
 
     func isTrustedIdentity(
@@ -192,15 +197,9 @@ final class SignalProtocolFileStore: IdentityKeyStore, PreKeyStore, SignedPreKey
         direction: Direction,
         context: StoreContext
     ) throws -> Bool {
-        // TOFU with non-blocking re-pin, same policy as Android (2026-07-14): a CHANGED key means
-        // the peer reinstalled/reset. Accept it — libsignal follows up with saveIdentity, which
-        // re-pins and logs. Refusing dropped the peer's re-handshake (UntrustedIdentityError)
-        // forever: an unrecoverable two-way deadlock, since neither side has a recovery path once
-        // the old session is stale. The change stays visible as a changed safety number in the UI.
-        if let stored = read("identities", addressKey(address)), stored != identity.serialize() {
-            NSLog("SignalIdentityStore: identity CHANGED for %@ — accepting for re-pin", addressKey(address))
-        }
-        return true
+        // SignalSessionGate authenticates first use; replacement requires trusted re-pairing.
+        guard let stored = read("identities", addressKey(address)) else { return true }
+        return stored == identity.serialize()
     }
 
     func identity(for address: ProtocolAddress, context: StoreContext) throws -> IdentityKey? {

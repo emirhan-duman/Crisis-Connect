@@ -144,6 +144,20 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
         return trimmed.isEmpty ? nil : trimmed
     }
     private let roleProofVerifier = RoleProofVerifier()
+    private lazy var securePtt = SecureMeshPtt(groupKey: { AuthorityMeshKeyStore.loadGroupKey() },
+        createProof: { [weak self] nonce in
+            guard let proof = self?.buildRoleProofPayloadLocked(sessionNonce: nonce, allowExpired: false) else { return nil }
+            return try? proof.jsonData()
+        }, verifyProof: { bytes, nonce in
+            guard let proof = try? RoleProofPayload.fromJSON(bytes),
+                  let verified = try? RoleProofVerifier(maxExpiredCertificateGraceMillis: 0).verifyProofPayload(
+                    proof: proof, expectedSessionNonce: nonce),
+                  let role = GattMeshProtocol.resolveVerifiedRole(verified), ["admin", "fieldteam"].contains(role),
+                  let certBytes = Data(base64Encoded: verified.certificate),
+                  let cert = RoleCertificate.fromStorageBytes(certBytes) else { return nil }
+            return SecureMeshPtt.VerifiedRole(agency: cert.agency,
+                expiresAt: min(cert.expiresAtMillis, verified.timestamp + 60_000))
+        })
     private let messageOriginRoleProofVerifier = RoleProofVerifier(
         maxClockSkewMillis: GattMeshProtocol.maxOriginProofAgeMillis,
         maxExpiredCertificateGraceMillis: 0
@@ -158,6 +172,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     private let persistedPendingQueueURL: URL
 
     private var cleanupWork: DispatchWorkItem?
+    private var lastAuthorityKeyRenewal = Date.distantPast
     private var pendingOutboundFlushWork: DispatchWorkItem?
     private var centralRecoveryWork: DispatchWorkItem?
     private var central: CBCentralManager?
@@ -1161,16 +1176,22 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     }
 
     private func sendReceiptLocked(type: GattMeshReceiptType, messageIds: [String]) {
-        guard let receiptPacket = GattMeshProtocol.makeReceiptPacket(type: type, messageIds: messageIds) else {
-            return
+        // An open public broadcast cannot establish an authenticated recipient acknowledgement.
+        guard profile.id == MeshProfile.authority.id else { return }
+        for start in stride(from: 0, to: messageIds.count, by: 4) {
+            let ids = Array(messageIds[start..<min(start + 4, messageIds.count)])
+            guard let receiptPacket = GattMeshProtocol.makeReceiptPacket(type: type, messageIds: ids) else { continue }
+            _ = rememberMessageIdLocked(receiptPacket.id, timestampMillis: receiptPacket.timestampMillis)
+            _ = relayPacketLocked(packet: receiptPacket, excludeRouteKey: nil)
         }
-        _ = rememberMessageIdLocked(receiptPacket.id, timestampMillis: receiptPacket.timestampMillis)
-        _ = relayPacketLocked(packet: receiptPacket, excludeRouteKey: nil)
     }
 
     @discardableResult
     private func relayPacketLocked(packet: GattMeshPacket, excludeRouteKey: String?) -> Bool {
-        guard let transportPacket = GattMeshProtocol.transportPacket(for: packet) else {
+        if profile.id == MeshProfile.authority.id {
+            guard AuthorityMeshKeyStore.hasGroupKey(), !packet.encrypted || packet.keyId == profile.payloadKeyId else { return false }
+        }
+        guard let transportPacket = transportPacketLocked(for: packet) else {
             return false
         }
 
@@ -1318,7 +1339,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     ) {
         guard
             let payload = GattMeshProtocol.unwrapTransportPacket(transportPacket),
-            let packet = GattMeshProtocol.decodePacket(from: payload, profile: profile)
+            let packet = decodeMeshPacketLocked(payload)
         else {
             return
         }
@@ -1581,12 +1602,90 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             cipherBase64: packet.cipherBase64,
             originProofJSON: packet.originProofJSON,
             originSignatureBase64: packet.originSignatureBase64,
-            isReadable: packet.isReadable
+            isReadable: packet.isReadable,
+            securePttWire: packet.securePttWire
         )
         _ = relayPacketLocked(packet: relayedPacket, excludeRouteKey: sourceRouteKey)
     }
 
     // MARK: - Telsiz (push-to-talk)
+
+    private func pttKind(_ type: GattMeshPacketType) -> UInt8? {
+        switch type {
+        case .receipt: return 6
+        case .pttJoin: return 1
+        case .pttLeave: return 2
+        case .pttFloorClaim: return 3
+        case .pttFloorRelease: return 4
+        case .pttAudio: return 5
+        default: return nil
+        }
+    }
+
+    private func transportPacketLocked(for packet: GattMeshPacket) -> Data? {
+        guard let kind = pttKind(packet.type) else { return GattMeshProtocol.transportPacket(for: packet) }
+        guard profile.id == MeshProfile.authority.id else { return nil }
+        let wire: Data?
+        if let existing = packet.securePttWire {
+            wire = SecureMeshPtt.relayed(existing, hop: packet.hop)
+        } else {
+            var body = Data()
+            if kind == 6 {
+                guard let type = packet.receiptType else { return nil }
+                guard let json = try? JSONSerialization.data(withJSONObject: ["kind": type.rawValue, "ids": packet.receiptMessageIds]) else { return nil }
+                body = json
+            } else if kind == 5 {
+                guard let seq = packet.blobIndex, seq >= 0, seq <= Int(Int32.max),
+                      let raw = packet.blobDataBase64, let audio = Data(base64Encoded: raw) else { return nil }
+                var number = UInt32(seq).bigEndian
+                withUnsafeBytes(of: &number) { body.append(contentsOf: $0) }; body.append(audio)
+            } else {
+                let claim = Int64(packet.message) ?? 0
+                guard claim >= 0, claim <= Int64(UInt32.max) else { return nil }
+                var number = UInt64(claim).bigEndian
+                withUnsafeBytes(of: &number) { body.append(contentsOf: $0) }
+            }
+            wire = securePtt.encode(kind: kind, label: packet.senderLabel, body: body)
+        }
+        guard let wire, wire.count <= GattMeshProtocol.maxPacketBytes else { return nil }
+        return BleAesGcm.wrapTransportPacket(wire)
+    }
+
+    private func decodeMeshPacketLocked(_ payload: Data) -> GattMeshPacket? {
+        guard SecureMeshPtt.isFrame(payload) else {
+            guard let packet = GattMeshProtocol.decodePacket(from: payload, profile: profile), packet.type != .receipt else { return nil }
+            return packet
+        }
+        guard profile.id == MeshProfile.authority.id, let frame = securePtt.decode(payload) else { return nil }
+        let types: [GattMeshPacketType] = [.pttJoin, .pttLeave, .pttFloorClaim, .pttFloorRelease, .pttAudio, .receipt]
+        var claim: UInt64 = 0
+        var seq: Int? = nil
+        var audio: String? = nil
+        var receiptType: GattMeshReceiptType? = nil
+        var receiptIds: [String] = []
+        if frame.kind == 6 {
+            guard let json = try? JSONSerialization.jsonObject(with: frame.body) as? [String: Any],
+                  let kind = json["kind"] as? String, let type = GattMeshReceiptType(rawValue: kind),
+                  let ids = json["ids"] as? [String], !ids.isEmpty, ids.count <= 4,
+                  ids.allSatisfy({ $0.range(of: "^[A-Za-z0-9-]{8,128}$", options: .regularExpression) != nil }) else { return nil }
+            receiptType = type; receiptIds = ids
+        } else if frame.kind == 5 {
+            guard frame.body.count > 4 else { return nil }
+            let value = frame.body.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+            guard value <= UInt32(Int32.max) else { return nil }
+            seq = Int(value); audio = Data(frame.body.dropFirst(4)).base64EncodedString()
+        } else {
+            guard frame.body.count == 8 else { return nil }
+            claim = frame.body.reduce(0) { ($0 << 8) | UInt64($1) }
+            guard claim <= UInt64(UInt32.max) else { return nil }
+        }
+        return GattMeshPacket(id: "ptt-\(frame.origin)-\(frame.sequence)", senderLabel: frame.label,
+            timestampMillis: frame.timestamp, message: String(claim), type: types[Int(frame.kind) - 1],
+            receiptType: receiptType, receiptMessageIds: receiptIds, authNonce: nil, authProofJSON: nil,
+            hop: frame.hop, protocol: "cpt2", encrypted: true, keyId: profile.payloadKeyId,
+            ivBase64: nil, cipherBase64: nil, originProofJSON: nil, originSignatureBase64: nil, isReadable: true,
+            blobId: frame.origin, blobIndex: seq, blobDataBase64: audio, blobKind: frame.agency, securePttWire: payload)
+    }
 
     /// Hop limit for relayed telsiz packets (matches Android `MAX_PTT_HOPS`).
     private static let maxPttHops = 3
@@ -1698,7 +1797,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     /// queue, ACK waits, retries, or pacing. Frames that don't fit one ATT write are dropped (the
     /// receiver's jitter buffer conceals loss). Unlike `relayPacketLocked` (the reliable chat path).
     private func sendPttFastLocked(packet: GattMeshPacket, excludeRouteKey: String?) {
-        guard let transportPacket = GattMeshProtocol.transportPacket(for: packet) else {
+        guard let transportPacket = transportPacketLocked(for: packet) else {
             NSLog("Telsiz TX: transportPacket encode FAILED")
             return
         }
@@ -1832,7 +1931,8 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             blobId: packet.blobId,
             blobIndex: packet.blobIndex,
             blobDataBase64: packet.blobDataBase64,
-            blobKind: packet.blobKind
+            blobKind: packet.blobKind,
+            securePttWire: packet.securePttWire
         )
         sendPttFastLocked(packet: relayed, excludeRouteKey: sourceRouteKey)
     }
@@ -1976,7 +2076,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
             packet: basePacket,
             compactProofJSON: proofJSON,
             originSignatureBase64: originSignature
-        ), GattMeshProtocol.transportPacket(for: authenticatedPacket) != nil else {
+        ), transportPacketLocked(for: authenticatedPacket) != nil else {
             return basePacket
         }
         return authenticatedPacket
@@ -2094,11 +2194,6 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
         if didChange {
             publishStateLocked()
         }
-        backfillVerifiedDirectPeerMessagesLocked(
-            sourceRouteKey: sourceRouteKey,
-            verifiedRole: verifiedRole,
-            verifiedAtMillis: verifiedAtMillis
-        )
     }
 
     private func verifyMessageOriginLocked(packet: GattMeshPacket) -> GattMeshPeerVerificationState? {
@@ -2138,7 +2233,8 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
         if hasEmbeddedOriginProof || packet.hop != 0 {
             return nil
         }
-        return peerVerificationByRouteKey[sourceRouteKey]
+        // A route challenge can be relayed. Only a signature over this message earns a badge.
+        return nil
     }
 
     private func backfillVerifiedDirectPeerMessagesLocked(
@@ -2159,7 +2255,7 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
 
     @discardableResult
     private func sendDirectPacketLocked(packet: GattMeshPacket, routeKey: String) -> Bool {
-        guard let transportPacket = GattMeshProtocol.transportPacket(for: packet) else {
+        guard let transportPacket = transportPacketLocked(for: packet) else {
             return false
         }
 
@@ -2253,6 +2349,11 @@ final class GattMeshManager: NSObject, ObservableObject, CBCentralManagerDelegat
     }
 
     private func cleanupStaleStateLocked() {
+        if profile.id == MeshProfile.authority.id, !AuthorityMeshKeyStore.hasGroupKey(),
+           Date().timeIntervalSince(lastAuthorityKeyRenewal) >= 60 {
+            lastAuthorityKeyRenewal = Date()
+            Task { _ = await AuthorityMeshGroupKeyProvisioner.ensureGroupKey() }
+        }
         let staleThreshold = Date().addingTimeInterval(-discoveryStaleInterval)
         discoveredPeers = discoveredPeers.filter { key, peer in
             if let outbound = outboundPeers[key], outbound.isConnected || outbound.isConnecting {

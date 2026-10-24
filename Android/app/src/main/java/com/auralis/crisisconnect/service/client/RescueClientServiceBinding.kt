@@ -77,7 +77,7 @@ class RescueClientServiceBinding(context: Context) {
     private fun hasRescueAccess(): Boolean {
         return runCatching {
             runBlocking(Dispatchers.IO) {
-                SecurityRepository(appContext).hasUsableStoredCertificate(allowExpired = true)
+                SecurityRepository(appContext).hasUsableStoredCertificate(allowExpired = false)
             }
         }.getOrDefault(false)
     }

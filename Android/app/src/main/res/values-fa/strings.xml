@@ -637,7 +637,6 @@
     <string name="nearby_match_notification_text">برای اتصال از طریق بلوتوث ضربه بزنید</string>
     <string name="nearby_pairing_channel_name">درخواست‌های جفت شدن نزدیک</string>
     <string name="nearby_pairing_request_title">%1$s می‌خواهد در نزدیکی متصل شود</string>
-    <string name="nearby_pairing_request_text">برای چت از طریق بلوتوث بپذیرید.</string>
     <string name="nearby_pairing_accept">پذیرش</string>
     <string name="nearby_pairing_decline">رد</string>
     <string name="manual_connect_button">جفت شدن با دستگاه</string>
@@ -1328,7 +1327,6 @@
     <string name="notification_photo_message_body">پیام تصویری</string>
     <string name="chat_encryption_setup_title">این چت را امن کنید</string>
     <string name="chat_encryption_setup_instruction">برای وارد کردن کلید رمزگذاری مشترک، کد QR نمایش‌داده‌شده در صفحه چت جدید دستگاه دیگر را اسکن کنید.</string>
-    <string name="chat_encryption_setup_session_mismatch">این QR متعلق به یک جلسه چت دیگر است.</string>
     <string name="chat_encryption_setup_invalid_qr">قالب QR پشتیبانی‌نشده.</string>
     <string name="chat_encryption_setup_handshake_in_progress">در حال تأیید کلید رمزگذاری…</string>
     <string name="chat_encryption_setup_handshake_failed">کلید رمزگذاری تأیید نشد. دوباره تلاش کنید.</string>

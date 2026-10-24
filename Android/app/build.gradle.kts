@@ -121,8 +121,8 @@ android {
         buildConfigField("boolean", "WATCH_TEST", "false")
         minSdk = 24
         targetSdk = 37
-        versionCode = 69
-        versionName = "1.2.0"
+        versionCode = 70
+        versionName = "1.2.1"
         ndk {
             // SQLCipher ships x86_64, but keeping only ARM here produced an installable
             // test/universal APK whose database crashed immediately on the x86_64 virtual
@@ -240,9 +240,8 @@ android {
                 "true"
             )
             matchingFallbacks += listOf("debug", "release")
-            if (hasReleaseSigning) {
-                signingConfig = signingConfigs.getByName("release")
-            }
+            // Debuggable builds must never carry the production signing identity.
+            signingConfig = signingConfigs.getByName("debug")
         }
 
         release {
@@ -338,12 +337,6 @@ android {
 if (!hasReleaseSigning && isReleaseTaskRequested) {
     throw GradleException(
         "Release signing is not configured. Set keystore.properties or ANDROID_KEYSTORE_* env vars."
-    )
-}
-
-if (!hasReleaseSigning && isInternalTaskRequested) {
-    throw GradleException(
-        "Internal signing is not configured. Set keystore.properties or ANDROID_KEYSTORE_* env vars."
     )
 }
 

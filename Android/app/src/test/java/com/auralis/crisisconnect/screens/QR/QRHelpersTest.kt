@@ -6,6 +6,13 @@ import org.junit.Test
 
 class QRHelpersTest {
 
+    @Test fun legacyQrNeverQualifiesAsFreshOfflinePairing() {
+        val old = QrData(sessionCode = "OLD123", aesKey = "old-device-key", platform = "android")
+        org.junit.Assert.assertFalse(old.supportsSecureOfflinePairing)
+        org.junit.Assert.assertTrue(old.copy(offlineProtocolVersion = 2).supportsSecureOfflinePairing)
+        org.junit.Assert.assertFalse(old.copy(offlineProtocolVersion = 3).supportsSecureOfflinePairing)
+    }
+
     @Test
     fun deviceNotFoundAfterHandshakeAttemptBecomesHandshakeFailed() {
         assertEquals(

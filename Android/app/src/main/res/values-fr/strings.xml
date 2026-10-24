@@ -651,7 +651,6 @@
     <string name="nearby_match_notification_text">Appuyez pour vous connecter par Bluetooth</string>
     <string name="nearby_pairing_channel_name">Demandes d\'appairage à proximité</string>
     <string name="nearby_pairing_request_title">%1$s souhaite se connecter à proximité</string>
-    <string name="nearby_pairing_request_text">Acceptez pour discuter par Bluetooth.</string>
     <string name="nearby_pairing_accept">Accepter</string>
     <string name="nearby_pairing_decline">Refuser</string>
     <string name="manual_connect_button">Appairer avec l\'appareil</string>
@@ -1338,7 +1337,6 @@
     <string name="notification_photo_message_body">Message photo</string>
     <string name="chat_encryption_setup_title">Sécuriser cette discussion</string>
     <string name="chat_encryption_setup_instruction">Scannez le code QR affiché sur l\'écran Nouvelle discussion de l\'autre appareil pour importer la clé de chiffrement partagée.</string>
-    <string name="chat_encryption_setup_session_mismatch">Ce QR appartient à une session de discussion différente.</string>
     <string name="chat_encryption_setup_invalid_qr">Format de QR non pris en charge.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Vérification de la clé de chiffrement…</string>
     <string name="chat_encryption_setup_handshake_failed">Impossible de vérifier la clé de chiffrement. Réessayez.</string>

@@ -660,7 +660,6 @@ Android：%3$s</string>
     <string name="nearby_match_notification_text">点击以通过蓝牙连接</string>
     <string name="nearby_pairing_channel_name">附近配对请求</string>
     <string name="nearby_pairing_request_title">%1$s 想在附近连接</string>
-    <string name="nearby_pairing_request_text">接受以通过蓝牙聊天。</string>
     <string name="nearby_pairing_accept">接受</string>
     <string name="nearby_pairing_decline">拒绝</string>
     <string name="manual_connect_button">与设备配对</string>
@@ -1356,7 +1355,6 @@ Android：%3$s</string>
     <string name="notification_photo_message_body">照片消息</string>
     <string name="chat_encryption_setup_title">保护此聊天</string>
     <string name="chat_encryption_setup_instruction">扫描对方设备新建聊天屏幕上显示的二维码，以导入共享的加密密钥。</string>
-    <string name="chat_encryption_setup_session_mismatch">此二维码属于不同的聊天会话。</string>
     <string name="chat_encryption_setup_invalid_qr">不支持的二维码格式。</string>
     <string name="chat_encryption_setup_handshake_in_progress">正在验证加密密钥…</string>
     <string name="chat_encryption_setup_handshake_failed">无法验证加密密钥。请重试。</string>

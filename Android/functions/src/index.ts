@@ -7,6 +7,8 @@ export { issueRoleCertificate } from "./certificates/issuance";
 export { revokeRoleCertificate } from "./certificates/revocation";
 export { listCertificates, validateCertificate } from "./certificates/listing";
 export { issueAuthorityMeshKey } from "./certificates/authorityMeshKey";
+export { issueAuthorityMeshKeyV2 } from "./certificates/authorityMeshKeyV2";
+export { getMessagingSecurityCapabilitiesV2 } from "./certificates/securityProtocolCapabilities";
 export {
   getCrisisSentinelModelDownloadUrl,
   getCrisisSentinelModelManifest,

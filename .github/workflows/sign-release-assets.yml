@@ -7,13 +7,24 @@ on:
         description: Existing release tag whose APK/AAB assets will be signed
         required: true
         type: string
+      variant:
+        description: Android dependency configuration matching the published assets
+        required: false
+        default: release
+        type: choice
+        options:
+          - release
+          - internal
 
 permissions:
   contents: read
 
 jobs:
   sign-release-assets:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      (github.ref == 'refs/heads/codex/security-1.2.1-beta.2' &&
+       inputs.tag == 'v1.2.1-beta.2' && inputs.variant == 'internal')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -68,6 +79,7 @@ jobs:
         id: sbom
         env:
           RELEASE_TAG: ${{ inputs.tag }}
+          SBOM_VARIANT: ${{ inputs.variant }}
         run: |
           version="${RELEASE_TAG#v}"
           sbom="release-assets/crisis-connect-${version}.cyclonedx.json"
@@ -76,6 +88,7 @@ jobs:
           cp Android/app/google-services.json.example Android/app/google-services.json
           ./Android/gradlew -p Android cyclonedxBom \
             -PreleaseVersion="$version" \
+            -PsbomBuildType="$SBOM_VARIANT" \
             --no-daemon
           cp Android/build/reports/cyclonedx/bom.json "$sbom"
 
@@ -103,7 +116,7 @@ jobs:
           SBOM_PATH: ${{ steps.sbom.outputs.path }}
           CHECKSUMS_PATH: ${{ steps.sbom.outputs.checksums }}
           ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
-          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/sign-release-assets.yml@refs/heads/main
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/sign-release-assets.yml@${{ github.ref }}
         run: |
           version="${RELEASE_TAG#v}"
           stable_attestation="release-assets/crisis-connect-${version}.sbom.intoto.jsonl"

@@ -669,7 +669,6 @@
     <string name="nearby_match_notification_text">Bluetooth ile bağlanmak için dokun</string>
     <string name="nearby_pairing_channel_name">Yakında bağlanma istekleri</string>
     <string name="nearby_pairing_request_title">%1$s yakından bağlanmak istiyor</string>
-    <string name="nearby_pairing_request_text">Bluetooth ile sohbet için kabul et.</string>
     <string name="nearby_pairing_accept">Kabul et</string>
     <string name="nearby_pairing_decline">Reddet</string>
     <string name="manual_connect_button">Cihazı eşle</string>
@@ -1375,7 +1374,6 @@
     <string name="notification_photo_message_body">Fotoğraf mesajı</string>
     <string name="chat_encryption_setup_title">Bu sohbeti güvene al</string>
     <string name="chat_encryption_setup_instruction">Paylaşılan şifreleme anahtarını içe aktarmak için diğer cihazın Yeni Sohbet ekranında gösterilen QR kodunu tara.</string>
-    <string name="chat_encryption_setup_session_mismatch">Bu QR farklı bir sohbet oturumuna ait.</string>
     <string name="chat_encryption_setup_invalid_qr">Desteklenmeyen QR biçimi.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Şifreleme anahtarı doğrulanıyor…</string>
     <string name="chat_encryption_setup_handshake_failed">Şifreleme anahtarı doğrulanamadı. Tekrar deneyin.</string>

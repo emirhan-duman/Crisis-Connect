@@ -48,14 +48,23 @@ class SecurityRepository(private val context: Context) {
             return@withContext true
         }
         runCatching {
-            val result = functions.getHttpsCallable("issueAuthorityMeshKey")
-                .call(emptyMap<String, Any>())
+            val owner = FirebaseAuth.getInstance().currentUser?.uid?.takeIf { it.isNotBlank() }
+                ?: return@runCatching false
+            val proof = RoleProofCreator(context, this@SecurityRepository, allowExpiredCertificate = false)
+                .createProof(sessionNonce = "cc-authority-mesh-key-v2")
+            val json = proof.toJson()
+            val request = json.keys().asSequence().associateWith { json.get(it) }
+            val result = functions.getHttpsCallable("issueAuthorityMeshKeyV2")
+                .call(request)
                 .awaitResult()
             val data = result.data as? Map<*, *>
             val keyBase64 = (data?.get("keyBase64") as? String)?.trim()?.replace("\n", "")
             val bytes = keyBase64?.let { Base64.decode(it, Base64.NO_WRAP or Base64.NO_PADDING) }
             if (bytes != null && bytes.size == 32) {
-                AuthorityMeshKeyStore.saveGroupKey(context, bytes)
+                AuthorityMeshKeyStore.saveGroupKey(context, AuthorityMeshKeyLease(
+                    data?.get("keyId") as? String ?: return@runCatching false, keyBase64, owner,
+                    (data["notBeforeMs"] as? Number)?.toLong() ?: return@runCatching false,
+                    (data["expiresAtMs"] as? Number)?.toLong() ?: return@runCatching false))
                 true
             } else {
                 false
@@ -326,6 +335,7 @@ class SecurityRepository(private val context: Context) {
     }
 
     suspend fun clearStoredCertificate() {
+        AuthorityMeshKeyStore.clearGroupKey(context)
         context.securityDataStore.edit { prefs ->
             prefs.remove(CERTIFICATE_KEY)
             prefs.remove(PUBLIC_KEY_KEY)

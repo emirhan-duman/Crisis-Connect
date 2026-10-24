@@ -715,7 +715,7 @@ fun MainScreen(
             val authUser = FirebaseAuth.getInstance().currentUser?.takeUnless { it.isAnonymous }
             if (authUser == null) {
                 val cachedRescueRole = securityRepository
-                    .getUsableStoredCertificateRole(allowExpired = true)
+                    .getUsableStoredCertificateRole(allowExpired = false)
                     ?.takeIf { it in ALLOWED_RESCUE_ROLES }
                 rescueRoleResult = if (cachedRescueRole != null) {
                     LocalKeyStorage.saveRole(context, cachedRescueRole)
@@ -729,7 +729,7 @@ fun MainScreen(
 
             LocalKeyStorage.saveUid(context, authUser.uid)
             val cachedCertificateRole = securityRepository
-                .getUsableStoredCertificateRole(allowExpired = true)
+                .getUsableStoredCertificateRole(allowExpired = false)
             val cachedRescueRole = cachedCertificateRole?.let {
                 it.takeIf { role -> role in ALLOWED_RESCUE_ROLES }
             }

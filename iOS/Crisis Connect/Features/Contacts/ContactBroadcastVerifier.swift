@@ -77,6 +77,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
     // retried, or they starve the real QR host out of the 12s verification window.
     private var rejectedFallbackPeripheralIds: Set<UUID> = []
     private var activeCandidateIsFallback = false
+    private var controlWriteChunks: [Data] = []
     private var controlCharacteristic: CBCharacteristic?
     private var bootstrapPayload: P2pBootstrapPayload?
     private var controlStage: P2pControlStage?
@@ -121,6 +122,10 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         timeout: TimeInterval = 12,
         completion: @escaping (ContactVerificationOutcome) -> Void
     ) {
+        guard payload.supportsSecureOfflinePairing else {
+            completion(.failed(.notFound))
+            return
+        }
         queue.async { [weak self] in
             guard let self else { return }
             self.stopScanning(disconnect: true)
@@ -132,6 +137,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             self.completion = completion
             self.shouldStartWhenReady = true
             self.controlCharacteristic = nil
+            self.controlWriteChunks.removeAll()
             self.bootstrapPayload = nil
             self.controlStage = nil
             self.clientNonce = nil
@@ -158,6 +164,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             self.keyData = nil
             self.localDisplayName = ""
             self.controlCharacteristic = nil
+            self.controlWriteChunks.removeAll()
             self.bootstrapPayload = nil
             self.controlStage = nil
             self.clientNonce = nil
@@ -318,7 +325,9 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
 
         case P2pBleProtocol.controlCharacteristicUUID:
             guard
-                let object = try? JSONSerialization.jsonObject(with: value) as? [String: Any],
+                let keyData,
+                let plaintext = P2pPrivacyWire.open(value, key: keyData, purpose: .control),
+                let object = try? JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
                 let type = (object["type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             else {
                 disconnectAndResumeScan()
@@ -351,6 +360,10 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         }
         guard let controlCharacteristic else {
             disconnectAndResumeScan()
+            return
+        }
+        if !controlWriteChunks.isEmpty {
+            peripheral.writeValue(controlWriteChunks.removeFirst(), for: controlCharacteristic, type: .withResponse)
             return
         }
         peripheral.readValue(for: controlCharacteristic)
@@ -437,7 +450,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             disconnectAndResumeScan()
             return
         }
-        peripheral.writeValue(data, for: controlCharacteristic, type: .withResponse)
+        writePrivateControl(data, peripheral: peripheral, characteristic: controlCharacteristic)
     }
 
     private func handleServerHello(_ object: [String: Any]) {
@@ -555,12 +568,25 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             disconnectAndResumeScan()
             return
         }
-        peripheral.writeValue(data, for: controlCharacteristic, type: .withResponse)
+        writePrivateControl(data, peripheral: peripheral, characteristic: controlCharacteristic)
+    }
+
+    private func writePrivateControl(_ data: Data, peripheral: CBPeripheral, characteristic: CBCharacteristic) {
+        guard let keyData,
+              let sealed = P2pPrivacyWire.seal(data, key: keyData, purpose: .control),
+              let framed = P2pPrivacyWire.frameControl(sealed) else { disconnectAndResumeScan(); return }
+        let size = max(1, peripheral.maximumWriteValueLength(for: .withResponse))
+        controlWriteChunks = stride(from: 0, to: framed.count, by: size).map {
+            framed.subdata(in: $0..<min($0 + size, framed.count))
+        }
+        peripheral.writeValue(controlWriteChunks.removeFirst(), for: characteristic, type: .withResponse)
     }
 
     private func parseBootstrapPayload(from data: Data) -> P2pBootstrapPayload? {
         guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let keyData,
+            let plaintext = P2pPrivacyWire.open(data, key: keyData, purpose: .bootstrap),
+            let json = try? JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
             let shareId = (json["shareId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
             let sessionCode = (json["sessionCode"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
             let platform = (json["platform"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -610,6 +636,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             return
         }
         controlCharacteristic = nil
+        controlWriteChunks.removeAll()
         bootstrapPayload = nil
         controlStage = nil
         clientNonce = nil
@@ -623,6 +650,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         activePeripheral = nil
         activeCandidateIsFallback = false
         controlCharacteristic = nil
+        controlWriteChunks.removeAll()
         bootstrapPayload = nil
         controlStage = nil
         clientNonce = nil
@@ -681,6 +709,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         keyData = nil
         localDisplayName = ""
         controlCharacteristic = nil
+        controlWriteChunks.removeAll()
         bootstrapPayload = nil
         controlStage = nil
         clientNonce = nil

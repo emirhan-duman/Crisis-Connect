@@ -20,6 +20,9 @@ interface SignalStoreDao {
     @Query("SELECT * FROM signal_identities WHERE address = :address LIMIT 1")
     fun getIdentity(address: String): SignalIdentityEntity?
 
+    @Query("DELETE FROM signal_identities WHERE address = :address")
+    fun deleteIdentity(address: String)
+
     // ---- Sessions ----
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun putSession(entity: SignalSessionEntity)

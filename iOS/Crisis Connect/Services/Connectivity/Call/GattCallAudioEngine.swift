@@ -58,20 +58,22 @@ final class GattCallAudioEngine {
     }
 
     private var emittedFrameCount: Int = 0
+    private var captureBufferCount = 0
+    private var loggedHardwareBuffer = false
 
-    /// True while CallKit coordinates this call's audio session. Apple's contract: the app must
-    /// NOT setActive itself — CallKit activates the session (provider didActivate) and only that
-    /// activation opens the privileged call-audio path. Self-activating "works" for output but
-    /// leaves the MICROPHONE feed zeroed, which is exactly the silent-uplink bug this fixes.
+    /// CallKit activates the session in provider(_:didActivate:). Hardware setup waits
+    /// for that callback instead of caching the inactive input route.
     var callKitManagesSession = false
+    private var callKitSessionActivated = false
     private var voiceProcessingEnabled = false
+    private var voiceProcessingConfigured = false
     // Fallback when voice processing can't be enabled: raw AVAudioEngine input has NO telephony
     // AGC (Android records with VOICE_COMMUNICATION, which does) — peers heard a whisper.
     private var captureSoftwareGain: Float = 1.0
 
     func prepare() -> Bool {
         do {
-            try ensureSessionAndEngine()
+            try ensureSessionAndEngine(startEngine: false)
             return true
         } catch {
             return false
@@ -79,14 +81,16 @@ final class GattCallAudioEngine {
     }
 
     func startCapture(onFrame: @escaping (Data) -> Void) -> Bool {
+        self.onFrame = onFrame
         do {
-            try ensureSessionAndEngine()
+            try ensureSessionAndEngine(startEngine: true)
         } catch {
+            self.onFrame = nil
             return false
         }
-        self.onFrame = onFrame
-        installTapIfNeeded()
-        return true
+        // CallKit may not have activated the route yet. Keep the capture request so
+        // didActivate can install its tap once a real hardware format is available.
+        return hasInstalledTap || (callKitManagesSession && !callKitSessionActivated)
     }
 
     func stopCapture() {
@@ -100,7 +104,7 @@ final class GattCallAudioEngine {
 
     func startPlayback() -> Bool {
         do {
-            try ensureSessionAndEngine()
+            try ensureSessionAndEngine(startEngine: false)
         } catch {
             NSLog("GattCallAudio: startPlayback ensureSession FAILED: %@", String(describing: error))
             return false
@@ -140,6 +144,7 @@ final class GattCallAudioEngine {
             try? session.setActive(false, options: [.notifyOthersOnDeactivation])
         }
         sessionActive = false
+        callKitSessionActivated = false
         callKitManagesSession = false
         engineConfigured = false
         muted = false
@@ -147,34 +152,25 @@ final class GattCallAudioEngine {
 
     // MARK: - Setup
 
-    private func ensureSessionAndEngine() throws {
+    private func ensureSessionAndEngine(startEngine: Bool) throws {
         if !sessionActive {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(
-                .playAndRecord,
-                mode: .voiceChat,
-                options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
-            )
-            try session.setPreferredSampleRate(Self.sampleRate)
-            try session.setPreferredIOBufferDuration(0.02)
             if !callKitManagesSession {
+                try session.setCategory(.playAndRecord, mode: .voiceChat,
+                    options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker])
+                try session.setPreferredSampleRate(Self.sampleRate)
+                try session.setPreferredIOBufferDuration(0.02)
                 try session.setActive(true, options: [])
             }
             sessionActive = true
         }
 
-        let inputFormat = engine.inputNode.inputFormat(forBus: 0)
-        inputConverter = AVAudioConverter(from: inputFormat, to: pcmFormat)
-        if encoder == nil {
-            let enc = AVAudioConverter(from: pcmFormat, to: opusFormat)
-            enc?.bitRate = bitrateBps
-            encoder = enc
-        }
-        if decoder == nil { decoder = AVAudioConverter(from: opusFormat, to: pcmFormat) }
+        // Even reading inputNode before activation caches a zero-channel hardware
+        // route on some devices. Defer all hardware-node access, not only installTap.
+        if callKitManagesSession && !callKitSessionActivated { return }
 
-        if !engineConfigured {
-            // Telephony-grade AGC + echo cancellation on the mic path (must be toggled while the
-            // engine is stopped; changes the input format, which the tap install re-queries).
+        if !voiceProcessingConfigured {
+            voiceProcessingConfigured = true
             do {
                 try engine.inputNode.setVoiceProcessingEnabled(true)
                 voiceProcessingEnabled = true
@@ -183,52 +179,92 @@ final class GattCallAudioEngine {
                 captureSoftwareGain = 8.0
                 MessagingDiagLog.log("gatt-call voice processing unavailable (\(error)) — software gain fallback")
             }
+        }
+
+        let inputFormat = engine.inputNode.inputFormat(forBus: 0)
+        if inputFormat.sampleRate > 0, inputFormat.channelCount > 0 {
+            inputConverter = AVAudioConverter(from: inputFormat, to: pcmFormat)
+        }
+        if encoder == nil {
+            let enc = AVAudioConverter(from: pcmFormat, to: opusFormat)
+            enc?.bitRate = bitrateBps
+            encoder = enc
+        }
+        if decoder == nil { decoder = AVAudioConverter(from: opusFormat, to: pcmFormat) }
+
+        if !engineConfigured {
+            // Capture this before connecting the 16 kHz player. Letting the mixer
+            // infer its output from the wire format can stop VPIO microphone callbacks.
+            let hardwareFormat = engine.inputNode.outputFormat(forBus: 0)
+            guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
+                throw CaptureRouteError.unavailable
+            }
             engine.attach(playerNode)
             engine.connect(playerNode, to: engine.mainMixerNode, format: pcmFormat)
+            engine.connect(engine.mainMixerNode, to: engine.outputNode, format: hardwareFormat)
             engineConfigured = true
         }
-        if !engine.isRunning {
+        if startEngine, !engine.isRunning {
+            // A microphone tap must participate in the graph when it starts. Starting
+            // only the playback graph first can leave VPIO capture disconnected.
+            if onFrame != nil { installTapIfNeeded() }
             engine.prepare()
-            do {
-                try engine.start()
-            } catch {
-                guard callKitManagesSession else { throw error }
-                // Session not activated by CallKit yet — ensureLiveAfterSessionActivation()
-                // completes the start when didActivate fires.
-                MessagingDiagLog.log("gatt-call engine start deferred until CallKit activation")
-            }
+            try engine.start()
+            let audio = AVAudioSession.sharedInstance()
+            MessagingDiagLog.log("gatt-call engine running=\(engine.isRunning) category=\(audio.category.rawValue) inputAvailable=\(audio.isInputAvailable) inputs=\(audio.currentRoute.inputs.map { $0.portType.rawValue })")
+            if onFrame != nil, !hasInstalledTap, !installTapIfNeeded() { throw CaptureRouteError.unavailable }
         }
     }
 
-    private func installTapIfNeeded() {
-        guard !hasInstalledTap else { return }
+    @discardableResult
+    private func installTapIfNeeded() -> Bool {
+        guard !hasInstalledTap else { return true }
+        guard !callKitManagesSession || callKitSessionActivated else { return false }
         // Build the converter from the format the tap will actually deliver — querying it before
         // engine.start() (or before CallKit activates the session) can yield a stale/0Hz format
         // whose converter swallows every captured buffer into silence.
-        let inputFormat = engine.inputNode.inputFormat(forBus: 0)
-        inputConverter = AVAudioConverter(from: inputFormat, to: pcmFormat)
+        let inputFormat = engine.inputNode.outputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
+              let converter = AVAudioConverter(from: inputFormat, to: pcmFormat) else {
+            MessagingDiagLog.log("gatt-call capture tap deferred until a live input route is available")
+            return false
+        }
+        inputConverter = converter
         MessagingDiagLog.log(
             "gatt-call tap installed format=\(Int(inputFormat.sampleRate))Hz/\(inputFormat.channelCount)ch converter=\(inputConverter != nil)"
         )
         engine.inputNode.installTap(onBus: 0, bufferSize: Self.tapBufferSize, format: inputFormat) { [weak self] buffer, _ in
-            guard let self, let copied = Self.copyBuffer(buffer) else { return }
-            self.processingQueue.async { self.processCapturedBuffer(copied) }
+            guard let self else { return }
+            if !self.loggedHardwareBuffer {
+                self.loggedHardwareBuffer = true
+                MessagingDiagLog.log("gatt-call hardware callback frames=\(buffer.frameLength) capacity=\(buffer.frameCapacity) float=\(buffer.floatChannelData != nil)")
+            }
+            guard let copied = Self.copyBuffer(buffer) else { return }
+            self.processingQueue.async {
+                self.captureBufferCount += 1
+                if self.captureBufferCount == 1 {
+                    MessagingDiagLog.log("gatt-call first microphone buffer frames=\(copied.frameLength) rate=\(Int(copied.format.sampleRate))")
+                }
+                self.processCapturedBuffer(copied)
+            }
         }
         hasInstalledTap = true
+        return true
     }
 
     /// CallKit activated the audio session (its manual-audio handoff): (re)start the engine on
     /// the now-live route, reinstall the capture tap, and resume playback. Also recovers a start
     /// that was deferred because activation hadn't happened yet.
     func refreshInputAfterSessionActivation() {
+        callKitSessionActivated = true
+        // didActivate can arrive before startCapture. Remember it; setup will resume there.
+        guard sessionActive else { return }
         if hasInstalledTap {
             engine.inputNode.removeTap(onBus: 0)
             hasInstalledTap = false
         }
-        if !engine.isRunning {
-            engine.prepare()
-            try? engine.start()
-        }
+        do { try ensureSessionAndEngine(startEngine: true) }
+        catch { MessagingDiagLog.log("gatt-call activated audio route could not start: \(error)"); return }
         if onFrame != nil {
             installTapIfNeeded()
         }
@@ -238,6 +274,8 @@ final class GattCallAudioEngine {
     }
 
     // MARK: - Capture → Opus
+
+    private enum CaptureRouteError: Error { case unavailable }
 
     private func processCapturedBuffer(_ buffer: AVAudioPCMBuffer) {
         for converted in convertInputBuffer(buffer) {

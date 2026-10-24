@@ -73,6 +73,7 @@ struct GattMeshPacket: Codable, Equatable {
     var blobHeight: Int? = nil
     var blobKind: String? = nil
     var blobDurationMillis: Int64? = nil
+    var securePttWire: Data? = nil
 }
 
 enum GattMeshProtocol {
@@ -559,6 +560,10 @@ enum GattMeshProtocol {
     }
 
     static func encodePacket(_ packet: GattMeshPacket) -> Data? {
+        switch packet.type {
+        case .pttAudio, .pttJoin, .pttLeave, .pttFloorClaim, .pttFloorRelease: return nil
+        default: break
+        }
         let object = packetJSONObject(packet)
         return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
@@ -626,6 +631,9 @@ enum GattMeshProtocol {
                     profile: profile
                 )
 
+                if profile.id == MeshProfile.authority.id && decryptedMessage == nil {
+                    return nil
+                }
                 return GattMeshPacket(
                     id: id,
                     senderLabel: senderLabel,
@@ -648,6 +656,7 @@ enum GattMeshProtocol {
                 )
             }
 
+            guard profile.id != MeshProfile.authority.id else { return nil }
             guard
                 protocolValue == protocolChatV1 || protocolValue == protocolChatV3 || protocolValue == protocolControlV4,
                 let messageRaw = object[fieldMessage] as? String
@@ -885,71 +894,8 @@ enum GattMeshProtocol {
             )
 
         case .pttAudio, .pttJoin, .pttLeave, .pttFloorClaim, .pttFloorRelease:
-            // Telsiz: origin id is carried in blobId, seq in blobIdx, Opus audio in blobData,
-            // claimId in message, sender's verified agency in blobKind. Mirrors Android wire format.
-            guard
-                protocolValue == protocolImageV5,
-                let originRaw = nonEmpty(trimmedStringValue(object[fieldBlobId]))
-            else {
-                return nil
-            }
-            let pttOrigin = String(originRaw.prefix(64))
-            if typeValue == .pttAudio {
-                guard
-                    let seq = (object[fieldBlobIndex] as? NSNumber)?.intValue, seq >= 0,
-                    let audioBase64 = nonEmpty(trimmedStringValue(object[fieldBlobData])),
-                    audioBase64.count <= 4_096
-                else {
-                    return nil
-                }
-                return GattMeshPacket(
-                    id: id,
-                    senderLabel: senderLabel,
-                    timestampMillis: timestamp.int64Value,
-                    message: "",
-                    type: .pttAudio,
-                    receiptType: nil,
-                    receiptMessageIds: [],
-                    authNonce: nil,
-                    authProofJSON: nil,
-                    hop: hop,
-                    protocol: protocolValue,
-                    encrypted: false,
-                    keyId: nil,
-                    ivBase64: nil,
-                    cipherBase64: nil,
-                    originProofJSON: nil,
-                    originSignatureBase64: nil,
-                    isReadable: true,
-                    blobId: pttOrigin,
-                    blobIndex: seq,
-                    blobDataBase64: audioBase64
-                )
-            }
-            let claimIdMessage = nonEmpty(trimmedStringValue(object[fieldMessage])).map { String($0.prefix(32)) } ?? ""
-            let agency = nonEmpty(trimmedStringValue(object[fieldBlobKind])).map { String($0.prefix(64)) }
-            return GattMeshPacket(
-                id: id,
-                senderLabel: senderLabel,
-                timestampMillis: timestamp.int64Value,
-                message: claimIdMessage,
-                type: typeValue,
-                receiptType: nil,
-                receiptMessageIds: [],
-                authNonce: nil,
-                authProofJSON: nil,
-                hop: hop,
-                protocol: protocolValue,
-                encrypted: false,
-                keyId: nil,
-                ivBase64: nil,
-                cipherBase64: nil,
-                originProofJSON: nil,
-                originSignatureBase64: nil,
-                isReadable: true,
-                blobId: pttOrigin,
-                blobKind: agency
-            )
+            // CPT2 is decoded at the authenticated transport boundary. Never downgrade to v5.
+            return nil
         }
     }
 

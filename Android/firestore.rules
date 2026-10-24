@@ -501,6 +501,11 @@ service cloud.firestore {
 
     // Shared authority-mesh group key. Only ever read/written by the
     // issueAuthorityMeshKey Cloud Function (Admin SDK); clients never read it.
+    // Staged security activation is operator-owned; client writes must never enable a cohort.
+    match /securityProtocolRollouts/{document} {
+      allow read, write: if false;
+    }
+
     match /authorityMeshKeys/{document} {
       allow read: if false;
       allow write: if false;

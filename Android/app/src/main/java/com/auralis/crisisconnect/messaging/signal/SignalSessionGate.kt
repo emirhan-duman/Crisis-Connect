@@ -22,15 +22,83 @@ import com.auralis.crisisconnect.messaging.MessageContent
  * All calls hit libsignal's blocking store → never on the main thread.
  */
 class SignalSessionGate private constructor(
-    context: Context,
+    private val context: Context,
     private val transport: SignalMessageTransport,
     private val client: InternetMessagingClient,
 ) {
+    private val bindings = SignalPeerBinding(context)
+    private fun scope(peerUid: String): Triple<String, String, String>? {
+        val owner = client.currentUid()?.takeIf { it.isNotBlank() } ?: return null
+        val contact = com.auralis.crisisconnect.data.getContactByPeerUid(context, peerUid) ?: return null
+        val key = contact.peerPublicKey.takeIf { it.isNotBlank() } ?: return null
+        return Triple(owner, peerUid, key)
+    }
+    private fun expectedIdentity(peerUid: String): String? {
+        val (owner, peer, key) = scope(peerUid) ?: return null
+        check(!bindings.changed(owner, peer, key)) { "Signal identity changed; remove and re-pair this contact" }
+        return bindings.read(owner, peer, key)
+    }
+    fun identityChangePending(peerUid: String): Boolean = scope(peerUid)?.let { (owner, peer, key) ->
+        bindings.changed(owner, peer, key)
+    } == true
+    fun hasIdentityBinding(peerUid: String): Boolean = scope(peerUid)?.let { (owner, peer, key) -> bindings.read(owner, peer, key) != null } == true
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun hasV3Session(peerUid: String): Boolean =
-        peerUid.isNotBlank() && transport.hasSession(peerUid)
+        peerUid.isNotBlank() && transport.hasSession(peerUid) &&
+            expectedIdentity(peerUid)?.let { expected ->
+                transport.peerIdentityKey(peerUid)?.serialize()?.let {
+                    android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) == expected
+                }
+            } == true
+
+    fun peerUpgradeRequired(peerUid: String): Boolean {
+        if (hasIdentityBinding(peerUid)) return false
+        val scope = scope(peerUid) ?: return false
+        return bindings.migrationPending(scope.first, scope.second, scope.third) ||
+            AppDatabase.getInstance(context).signalStoreDao().getSessionsForName(peerUid).isNotEmpty()
+    }
+    fun markPeerUpgradeRequired(peerUid: String): Boolean {
+        val scope = scope(peerUid) ?: return false
+        if (!bindings.markMigrationPending(scope.first, scope.second, scope.third)) return false
+        com.auralis.crisisconnect.data.getContactByPeerUid(context, peerUid)?.let {
+            com.auralis.crisisconnect.data.saveContact(context, it)
+        }
+        return true
+    }
+
+    fun localIdentityBase64(): String = android.util.Base64.encodeToString(transport.localIdentityKey().serialize(), android.util.Base64.NO_WRAP)
+
+    fun acceptBinding(peerUid: String, p256: String, signal: String): Boolean = synchronized(CRYPTO_LOCK) {
+        val (owner, peer, pinned) = scope(peerUid) ?: return@synchronized false
+        if (pinned != p256) return@synchronized false
+        val previous = bindings.read(owner, peer, pinned)
+        // Validate serialized identity before persisting any pin.
+        org.signal.libsignal.protocol.IdentityKey(android.util.Base64.decode(signal, android.util.Base64.NO_WRAP))
+        if (!bindings.accept(owner, peer, pinned, signal)) {
+            com.auralis.crisisconnect.data.getContactByPeerUid(context, peer)?.let {
+                com.auralis.crisisconnect.data.saveContact(context, it.copy(peerKeyChanged = true))
+            }
+            return@synchronized false
+        }
+        if (previous == null) clearProtocolPeer(peer)
+        true
+    }
+
+    private fun clearProtocolPeer(peer: String) {
+        val dao = AppDatabase.getInstance(context).signalStoreDao()
+        dao.deleteSessionsForName(peer)
+        dao.deleteIdentity(org.signal.libsignal.protocol.SignalProtocolAddress(peer, 1).toString())
+    }
+
+    fun forgetPeer(peer: String, p256: String) = synchronized(CRYPTO_LOCK) {
+        client.currentUid()?.let { bindings.reset(it, peer, p256) }
+        clearProtocolPeer(peer)
+    }
+
+    fun claimBindingAnnouncement(peer: String, p256: String): Boolean =
+        client.currentUid()?.let { bindings.claimAnnouncement(it, peer, p256, System.currentTimeMillis()) } == true
 
     /**
      * Ensure we can send v3 to [peerUid]. [forceEstablish] true (durable messages) will fetch a
@@ -39,7 +107,8 @@ class SignalSessionGate private constructor(
      */
     suspend fun ensureOutbound(peerUid: String, forceEstablish: Boolean): Boolean {
         if (peerUid.isBlank()) return false
-        if (transport.hasSession(peerUid)) return true
+        val expected = expectedIdentity(peerUid) ?: return false
+        if (hasV3Session(peerUid)) return true
         if (!forceEstablish) return false
         if (isNegativeProbeFresh(peerUid)) return false
 
@@ -52,12 +121,13 @@ class SignalSessionGate private constructor(
             markNegativeProbe(peerUid)
             return false
         }
+        check(bundle.identityKeyBase64 == expected) { "Prekey bundle does not match the authenticated Signal identity" }
         return runCatching {
             synchronized(CRYPTO_LOCK) {
                 // Re-check under the lock: a concurrent sender (e.g. a call's ICE-signal burst) may
                 // have established while we fetched the bundle. Re-processing the bundle would RESET
                 // the ratchet and reuse message counters, so only the first establisher wins.
-                if (!transport.hasSession(peerUid)) {
+                if (!hasV3Session(peerUid)) {
                     transport.establishOutboundSession(peerUid, bundle)
                 }
             }
@@ -69,12 +139,24 @@ class SignalSessionGate private constructor(
     }
 
     fun encrypt(peerUid: String, content: MessageContent): SignalMessageTransport.Wire =
-        synchronized(CRYPTO_LOCK) { transport.encrypt(peerUid, content) }
+        synchronized(CRYPTO_LOCK) { check(hasV3Session(peerUid)); transport.encrypt(peerUid, content) }
 
     fun typeLabel(type: Int): String = transport.typeLabel(type)
 
     fun decrypt(peerUid: String, ctypeLabel: String, ciphertextBase64: String): MessageContent =
-        synchronized(CRYPTO_LOCK) { transport.decrypt(peerUid, ctypeLabel, ciphertextBase64) }
+        synchronized(CRYPTO_LOCK) {
+            val expected = expectedIdentity(peerUid) ?: run {
+                markPeerUpgradeRequired(peerUid)
+                error("Peer update is required to authenticate this Signal identity")
+            }
+            val identity = if (ctypeLabel == "prekey") {
+                org.signal.libsignal.protocol.message.PreKeySignalMessage(android.util.Base64.decode(ciphertextBase64, android.util.Base64.NO_WRAP)).identityKey
+            } else transport.peerIdentityKey(peerUid)
+            check(identity?.serialize()?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) } == expected) {
+                "Signal identity mismatch; remove and re-pair this contact"
+            }
+            transport.decrypt(peerUid, ctypeLabel, ciphertextBase64)
+        }
 
     /**
      * The forward-secret (v3) safety number for [peerUid], or null if we hold no v3 identity for

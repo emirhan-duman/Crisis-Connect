@@ -159,7 +159,7 @@ final class PttController {
             log("ptt press rejected: floor busy")
             return
         case .idle:
-            let id = Int64.random(in: Int64.min...Int64.max)
+            let id = Int64.random(in: 0...Int64(UInt32.max))
             localTalkTag = String(format: "%04x", Int.random(in: 0..<0x10000))
             let started = engine.startCapture { [weak self] opus in self?.broadcastAudioFrame(opus) }
             if !started {
@@ -505,7 +505,7 @@ final class PttController {
     private static let heartbeatMs: Int64 = 3_000
     private static let presenceTimeoutMs: Int64 = 10_000
     // Opus frames bundled into one BLE packet (halves the on-air packet rate).
-    private static let framesPerPacket = 2
+    private static let framesPerPacket = 1
     // Flush a partial bundle if no new frame arrives within this window (end of a transmission).
     private static let bundleFlushTimeout: TimeInterval = 0.03
 }

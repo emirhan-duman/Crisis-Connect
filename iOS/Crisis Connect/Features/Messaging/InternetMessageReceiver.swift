@@ -490,10 +490,6 @@ final class InternetMessageReceiver: @unchecked Sendable {
 
         // Anti-downgrade pin: once a v3 session exists with this peer, a v1 message from them is a
         // stripped-v3 downgrade attempt — drop fail-closed (no ack). Same rule as Android.
-        if !isSignal, SignalSessionGate.shared.hasV3Session(senderUid) {
-            NSLog("InternetMessageReceiver: dropping v1 message; downgrade from a v3 session with peer")
-            return false
-        }
 
         // Claim the id BEFORE touching the ratchet: the push handler and the Firestore listener
         // both deliver each doc, and a v3 message key is one-time — the losing copy must skip
@@ -543,6 +539,24 @@ final class InternetMessageReceiver: @unchecked Sendable {
         }
         NSLog("InternetMessageReceiver: internet recv template=%d via %@", content.templateCode, isSignal ? "v3" : "v2")
 
+        if content.templateCode == InternetChatTransport.signalIdentityBindingTemplate {
+            let object = content.text.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            if !isSignal, let existing, existing.peerPublicKey == senderKeyB64,
+               let signal = object?["signal"] as? String,
+               (try? SignalSessionGate.shared.acceptBinding(peerUid: senderUid, p256: senderKeyB64, signal: signal)) == true,
+               object?["reply"] as? Bool == true {
+                _ = try? await InternetChatTransport(client: client).sendSignalIdentityBinding(contact: existing, requestReply: false)
+            }
+            await client.acknowledgeMessage(messageId, expectedUid: myUid)
+            return false
+        }
+        if !SignalMigrationPolicy.permitsApplication(isSignal: isSignal,
+            hasAuthenticatedBinding: SignalSessionGate.shared.hasIdentityBinding(senderUid),
+            identityChanged: SignalSessionGate.shared.identityChangePending(senderUid)) {
+            InternetMessageDedup.shared.release(messageId)
+            return false
+        }
+
         // Reserved control codes ride the same sealed channel but are never chat messages.
         if DisasterTrafficController.shared.isSaving, [200, 201].contains(content.templateCode) {
             await client.acknowledgeMessage(messageId, expectedUid: myUid)
@@ -572,7 +586,9 @@ final class InternetMessageReceiver: @unchecked Sendable {
                 "announce recv: rsc=\(rsc) key=\(!effectiveKey.isEmpty)(payload=\(!announcedKey.isEmpty)) matched=\(target?.name ?? "NONE")"
             )
             var didHeal = false
-            if !effectiveKey.isEmpty, let target {
+            if !effectiveKey.isEmpty, let target, let key = ContactStore.shared.aesKey(for: target),
+               ContactIdentityBinding.verify(proof: obj?["binding"] as? String ?? "", key: key,
+                   uid: senderUid, sessionCode: rsc, publicKey: effectiveKey) {
                 // Heal FIRST, ack LAST: a healed contact + absorbed duplicate is the whole point, and
                 // a v3 announce can't be re-decrypted on replay, so it must land on first receipt.
                 if let healed = ContactStore.shared.healAndAbsorb(

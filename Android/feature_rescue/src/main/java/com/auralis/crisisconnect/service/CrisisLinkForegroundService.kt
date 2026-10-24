@@ -2769,7 +2769,7 @@ class CrisisLinkForegroundService : Service() {
         suspend fun canStartSuspend(context: Context): Boolean {
             val appContext = context.applicationContext
             val canStart = runCatching {
-                SecurityRepository(appContext).hasUsableStoredCertificate(allowExpired = true)
+                SecurityRepository(appContext).hasUsableStoredCertificate(allowExpired = false)
             }.getOrDefault(false)
             cachedStartEligibility = canStart
             return canStart

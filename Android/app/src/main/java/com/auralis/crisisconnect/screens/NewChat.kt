@@ -337,6 +337,7 @@ fun NewChatScreen(navController: NavController) {
                 val bluetoothName = currentBluetoothName(context)
                 val json = JSONObject().apply {
                     put("v", 1)
+                    put("offlineProtocolVersion", 2)
                     put("code", sessionCode)
                     put("key", aesKey)
                     put("platform", "android")

@@ -4,6 +4,35 @@ All notable changes to Crisis Connect are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.1-beta.2] - 2026-10-24
+
+**Security review preview / pre-release.** Android phone `1.2.1` (70), Wear OS `1.2.1` (71),
+iOS/watchOS apps and extensions `1.2.1` (39). Independent review and retesting are in progress.
+
+### Security
+
+- Hardened SOS peer authorization, authority mesh and push-to-talk authentication, pairing keys,
+  database key separation, Signal identity binding and protocol downgrade handling.
+- Added staged V2 authentication and authority-key protocols while retaining separate legacy
+  server contracts. New protocol cohorts remain disabled until explicitly configured.
+- Improved encrypted receipts, radio identity privacy, certificate expiry checks and preservation
+  of encrypted state during storage failures.
+- Internal Android builds use their separate package and debug signing identity.
+
+### Fixed
+
+- Corrected CallKit audio activation and hardware output format selection so the iOS microphone
+  produces Opus frames during a duplex GATT call.
+- Prevented idle audio pipelines from starting or deactivating another call's shared audio session.
+- Added opt-in physical-device and isolated SOS lifecycle regression coverage.
+
+### Review and distribution
+
+- Published for independent retesting; this is not a claim that the ongoing assessment is complete.
+- Android review download is an **internal test package**, not an update for the Play Store app.
+- No app-store submission, backend deployment or production rollout activation is included.
+- See [Beta 2 notes](docs/releases/1.2.1-beta.2.md) for verification and compatibility limits.
+
 ## [1.2.0-beta.1] - 2026-10-20
 
 **Early access / pre-release.** Android phone `1.2.0` (`versionCode` 69), Wear OS `1.2.0`

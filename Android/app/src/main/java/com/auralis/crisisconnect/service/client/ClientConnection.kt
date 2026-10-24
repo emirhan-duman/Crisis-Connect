@@ -518,7 +518,9 @@ class ClientConnection(
         val gatt = gatt ?: throw IllegalStateException("Not connected to $address")
         val ackCharacteristic = secureAckCharacteristic
             ?: throw IllegalStateException("Ack characteristic missing for $address")
-        val payload = BleChatEnvelope.encodeReadAck(messageIds)
+        val key = sessionKey ?: throw IllegalStateException("Handshake not complete")
+        val payload = com.auralis.crisisconnect.service.SecureBleReceipt.seal(key, BleChatEnvelope.encodeReadAck(messageIds))
+            ?: throw IllegalStateException("Invalid receipt")
         if (!writeCharacteristic(gatt, ackCharacteristic, payload)) {
             throw IllegalStateException("Failed to send read receipt to $address")
         }
@@ -943,7 +945,9 @@ class ClientConnection(
             return true
         }
         val sessionCode = resolveSessionCodeForAddress(address.uppercase(Locale.US))
-        val ack = BleChatEnvelope.decodeAck(bytes)
+        val key = sessionKey ?: return false
+        val authenticated = com.auralis.crisisconnect.service.SecureBleReceipt.open(key, bytes) ?: return false
+        val ack = BleChatEnvelope.decodeAck(authenticated)
         if (ack == null) {
             val text = String(bytes, StandardCharsets.UTF_8)
             Log.d(TAG, "[$address] Received ACK payload '$text'")
@@ -1059,7 +1063,8 @@ class ClientConnection(
         connectionScope.launch {
             val currentGatt = gatt ?: return@launch
             val ackCharacteristic = secureAckCharacteristic ?: return@launch
-            val payload = BleChatEnvelope.encodeDeliveredAck(ackId)
+            val key = sessionKey ?: return@launch
+            val payload = com.auralis.crisisconnect.service.SecureBleReceipt.seal(key, BleChatEnvelope.encodeDeliveredAck(ackId)) ?: return@launch
             runCatching {
                 operationMutex.withLock {
                     writeCharacteristic(currentGatt, ackCharacteristic, payload)
@@ -1089,6 +1094,13 @@ class ClientConnection(
 
     private suspend fun handlePeerIdentity(identity: BlePeerIdentityUtils.PeerIdentity) {
         val normalizedAddress = address.uppercase(Locale.US)
+        identity.broadcastId?.let { stableId ->
+            userId = "ccid:$stableId"
+            BleBroadcastDirectory.update(stableId, address, System.currentTimeMillis())
+            BlePeerIdentityUtils.SignalLocationRegistry.bindSignalId(address, stableId)
+            RescueFeatureManager(context).notifySignalLocationUpdated()
+            emitState(lastStatus, userId = userId, peerBatteryPercent = identity.batteryPercent)
+        }
         val sessionCode = resolveSessionCodeForAddress(normalizedAddress)
         val claimedRoleValue = BlePeerIdentityUtils.normalizePeerRoleValue(identity.role)
         if (claimedRoleValue == BlePeerIdentityUtils.ROLE_RESCUE) {

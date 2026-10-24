@@ -349,6 +349,7 @@ private suspend fun readBootstrapFromDevice(
             var gatt: BluetoothGatt? = null
             var bootstrapPayload: P2pBootstrapPayload? = null
             var controlCharacteristic: BluetoothGattCharacteristic? = null
+            val privateControlChunks = java.util.ArrayDeque<ByteArray>()
             var controlStage: ControlStage? = null
             var authenticatedServerName: String? = null
             var authenticatedServerAvatarBase64: String? = null
@@ -516,7 +517,7 @@ private suspend fun readBootstrapFromDevice(
                         put("proof", helloProof)
                     }
                     val bytes = frame.toString().toByteArray(Charsets.UTF_8)
-                    if (bytes.size <= maxControlPayloadBytes) {
+                    if (bytes.size <= P2pPrivacyWire.MAX_CONTROL_BYTES - 32) {
                         if (!option.includeAvatar || !option.includeName) {
                             Log.d(
                                 TAG,
@@ -543,7 +544,12 @@ private suspend fun readBootstrapFromDevice(
 
             fun startControlWrite(gatt: BluetoothGatt, payloadBytes: ByteArray): Boolean {
                 val control = controlCharacteristic ?: return false
-                control.value = payloadBytes
+                val sealed = P2pPrivacyWire.seal(payloadBytes, aesKey, P2pPrivacyWire.Purpose.CONTROL) ?: return false
+                val framed = P2pPrivacyWire.frameControl(sealed) ?: return false
+                privateControlChunks.clear()
+                val size = (negotiatedMtu - 3).coerceIn(20, 512)
+                framed.asList().chunked(size).forEach { privateControlChunks.add(it.toByteArray()) }
+                control.value = privateControlChunks.removeFirst()
                 val started = runCatching { gatt.writeCharacteristic(control) }.getOrDefault(false)
                 if (!started) {
                     Log.w(
@@ -753,7 +759,7 @@ private suspend fun readBootstrapFromDevice(
 
                         P2pBleProtocol.BOOTSTRAP_CHARACTERISTIC_UUID -> {
                             val payload = parseBootstrapPayload(
-                                bytes = value,
+                                bytes = P2pPrivacyWire.open(value, aesKey, P2pPrivacyWire.Purpose.BOOTSTRAP) ?: run { finish(null); return },
                                 expectedShareId = expectedShareId
                             ) ?: run {
                                 Log.w(TAG, "Invalid P2P bootstrap payload from ${device.address}")
@@ -822,7 +828,8 @@ private suspend fun readBootstrapFromDevice(
                                 finish(null)
                                 return
                             }
-                            val controlRaw = controlBytes.toString(Charsets.UTF_8)
+                            val plaintext = P2pPrivacyWire.open(controlBytes, aesKey, P2pPrivacyWire.Purpose.CONTROL) ?: run { finish(null); return }
+                            val controlRaw = plaintext.toString(Charsets.UTF_8)
                             val controlPayload = runCatching {
                                 JSONObject(controlRaw)
                             }.getOrNull() ?: run {
@@ -1004,6 +1011,11 @@ private suspend fun readBootstrapFromDevice(
                     }
                     val control = controlCharacteristic ?: run {
                         finish(null)
+                        return
+                    }
+                    if (privateControlChunks.isNotEmpty()) {
+                        control.value = privateControlChunks.removeFirst()
+                        if (!runCatching { gatt.writeCharacteristic(control) }.getOrDefault(false)) finish(null)
                         return
                     }
                     if (!startCharacteristicRead(

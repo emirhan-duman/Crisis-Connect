@@ -59,6 +59,20 @@ final class ContactOnboardingLifecycleTests: XCTestCase {
         subscription = nil
     }
 
+    func testLegacyQrNeverStartsRadioOrReplaysOldVerifiedCheckpoint() async throws {
+        let driver = Driver(), store = Persistence(), journal = Journal()
+        let legacy = ContactQRPayload(offlineProtocolVersion: 1, code: "peer", key: payload.key, platform: "android")
+        let owner = ContactOnboardingCoordinator(verifier: driver, persistence: store, backgroundLease: Lease(), finishDelay: .zero, journal: journal)
+        owner.start(payload: legacy, fallbackName: "Peer", source: .qr, localSessionCode: "me", localDisplayName: "Me")
+        XCTAssertTrue(driver.completions.isEmpty); XCTAssertEqual(store.writes, 0)
+        var pending = ContactPairingCheckpoint(payload: legacy, fallbackName: "Peer", manual: false, owner: "me:", createdAt: Date())
+        pending.verified = verified
+        try journal.write(pending)
+        let reopened = ContactOnboardingCoordinator(verifier: driver, persistence: store, backgroundLease: Lease(), finishDelay: .zero, journal: journal)
+        await reopened.resumePending(localSessionCode: "me", localDisplayName: "Me")
+        XCTAssertTrue(driver.completions.isEmpty); XCTAssertEqual(store.writes, 0)
+    }
+
     func testDetachedScreenDoesNotCancelAndReattachedScreenGetsSavedResult() async {
         let driver = Driver(), store = Persistence(), lease = Lease()
         let owner = ContactOnboardingCoordinator(verifier: driver, persistence: store, backgroundLease: lease, finishDelay: .zero)

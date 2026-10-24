@@ -12,7 +12,6 @@ import androidx.room.TypeConverters
 import androidx.sqlite.db.SupportSQLiteDatabase
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import net.zetetic.database.sqlcipher.SQLiteNotADatabaseException
-import java.io.File
 
 @Database(
     entities = [
@@ -29,7 +28,7 @@ import java.io.File
         com.auralis.crisisconnect.data.signal.SignalKyberPreKeyEntity::class,
         com.auralis.crisisconnect.data.signal.SignalSenderKeyEntity::class,
     ],
-    version = 29
+    version = 31
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
@@ -42,7 +41,6 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         private const val TAG = "AppDatabase"
         private const val DB_NAME = "app_database"
-        private const val DB_BACKUP_DIR = "db_recovery_backups"
         @Volatile
         private var SQLCIPHER_LOADED = false
 
@@ -61,9 +59,8 @@ abstract class AppDatabase : RoomDatabase() {
 
                 val appContext = context.applicationContext
                 ensureSqlCipherLoaded()
-                val passphrase = buildSqlCipherPassphrase(appContext)
                 val instance = runCatching {
-                    openDatabaseWithRecovery(appContext, passphrase)
+                    openWithIndependentKey(appContext)
                 }.getOrElse { error ->
                     Log.e(TAG, "Failed to open encrypted database", error)
                     throw IllegalStateException(
@@ -76,33 +73,31 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        private fun openDatabaseWithRecovery(
-            context: Context,
-            passphrase: ByteArray
-        ): AppDatabase {
-            return runCatching {
-                createAndOpenDatabase(context, passphrase)
-            }.recoverCatching { error ->
-                if (!shouldResetDatabase(error)) {
-                    throw error
+        private fun openWithIndependentKey(context: Context): AppDatabase {
+            val previous = LocalKeyStorage.getOrCreateSqlCipherKey(context)
+            val next = LocalKeyStorage.prepareIndependentSqlCipherKey(context)
+            val nextBytes = next.toByteArray(Charsets.UTF_8)
+            val database = try {
+                createAndOpenDatabase(context, nextBytes)
+            } catch (error: Throwable) {
+                if (previous == next || !isEncryptionKeyFailure(error)) throw error
+                val legacy = createAndOpenDatabase(context, previous.toByteArray(Charsets.UTF_8))
+                try {
+                    val encrypted = legacy.openHelper.writableDatabase as? net.zetetic.database.sqlcipher.SQLiteDatabase
+                        ?: error("SQLCipher database handle is unavailable")
+                    encrypted.changePassword(next.toByteArray(Charsets.UTF_8))
+                } finally {
+                    legacy.close()
                 }
-                val backupDir = backupDatabaseFiles(context)
-                if (backupDir != null) {
-                    Log.w(
-                        TAG,
-                        "Encrypted database open failed; backed up files to ${backupDir.absolutePath} before reset",
-                        error
-                    )
-                } else {
-                    Log.w(
-                        TAG,
-                        "Encrypted database open failed; no backup files were created before reset",
-                        error
-                    )
-                }
-                resetDatabaseFiles(context)
-                createAndOpenDatabase(context, passphrase)
-            }.getOrThrow()
+                createAndOpenDatabase(context, nextBytes)
+            }
+            try {
+                LocalKeyStorage.commitIndependentSqlCipherKey(context, next)
+            } catch (error: Throwable) {
+                database.close()
+                throw error
+            }
+            return database
         }
 
         private fun createAndOpenDatabase(
@@ -119,73 +114,13 @@ abstract class AppDatabase : RoomDatabase() {
             return created
         }
 
-        private fun shouldResetDatabase(error: Throwable): Boolean {
+        private fun isEncryptionKeyFailure(error: Throwable): Boolean {
             return generateSequence(error) { throwable -> throwable.cause }.any { throwable ->
                 throwable is SQLiteNotADatabaseException ||
                     throwable is SQLiteDatabaseCorruptException ||
                     throwable.message?.contains("file is not a database", ignoreCase = true) == true ||
                     throwable.message?.contains("hmac check failed", ignoreCase = true) == true ||
                     throwable.message?.contains("error decrypting page", ignoreCase = true) == true
-            }
-        }
-
-        private fun backupDatabaseFiles(context: Context): File? {
-            val dbFile = context.getDatabasePath(DB_NAME)
-            val candidates = listOf(
-                dbFile,
-                File("${dbFile.path}-wal"),
-                File("${dbFile.path}-shm"),
-                File("${dbFile.path}-journal")
-            ).filter { it.exists() }
-            if (candidates.isEmpty()) {
-                return null
-            }
-
-            val backupRoot = File(context.noBackupFilesDir, DB_BACKUP_DIR)
-            if (!backupRoot.exists() && !backupRoot.mkdirs()) {
-                Log.w(TAG, "Unable to create database backup root: ${backupRoot.absolutePath}")
-                return null
-            }
-
-            val backupDir = File(backupRoot, "${DB_NAME}_${System.currentTimeMillis()}")
-            if (!backupDir.mkdirs()) {
-                Log.w(TAG, "Unable to create database backup directory: ${backupDir.absolutePath}")
-                return null
-            }
-
-            var copiedAnyFile = false
-            candidates.forEach { source ->
-                val target = File(backupDir, source.name)
-                runCatching {
-                    source.inputStream().use { input ->
-                        target.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    target.setLastModified(source.lastModified())
-                    copiedAnyFile = true
-                }.onFailure { throwable ->
-                    Log.w(TAG, "Unable to back up database file ${source.absolutePath}", throwable)
-                }
-            }
-            return backupDir.takeIf { copiedAnyFile }
-        }
-
-        private fun resetDatabaseFiles(context: Context) {
-            if (!context.deleteDatabase(DB_NAME)) {
-                Log.w(TAG, "deleteDatabase($DB_NAME) returned false; trying manual cleanup")
-            }
-            val dbFile = context.getDatabasePath(DB_NAME)
-            val sidecarFiles = listOf(
-                dbFile,
-                File("${dbFile.path}-wal"),
-                File("${dbFile.path}-shm"),
-                File("${dbFile.path}-journal")
-            )
-            sidecarFiles.forEach { file ->
-                if (file.exists() && !file.delete()) {
-                    Log.w(TAG, "Unable to delete database file: ${file.absolutePath}")
-                }
             }
         }
 
@@ -222,7 +157,9 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_25_26,
                     MIGRATION_26_27,
                     MIGRATION_27_28,
-                    MIGRATION_28_29
+                    MIGRATION_28_29,
+                    MIGRATION_29_30,
+                    MIGRATION_30_31
                 )
                 .addCallback(object : RoomDatabase.Callback() {
                     override fun onOpen(db: SupportSQLiteDatabase) {
@@ -232,6 +169,22 @@ abstract class AppDatabase : RoomDatabase() {
                 })
             return builder
                 .build()
+        }
+
+        // Retire cached route badges. Legacy key bytes are quarantined separately in v31.
+        private val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Cached route attestations were not signatures over their message contents.
+                db.execSQL("UPDATE messages SET originVerifiedRole = NULL, originVerifiedAtMillis = NULL")
+            }
+        }
+
+        private val MIGRATION_30_31 = object : Migration(30, 31) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE contacts ADD COLUMN offlineKeyVersion INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("UPDATE contacts SET offlineKeyVersion = 2 WHERE aesKey = '' AND peerKeyChanged = 0")
+                db.execSQL("UPDATE contacts SET verified = 0, verifiedIdentityKey = '', verifiedAt = NULL WHERE offlineKeyVersion = 1")
+            }
         }
 
         // v29: Signal-protocol (v3) messaging store — pure CREATE TABLE, no data transform, so it

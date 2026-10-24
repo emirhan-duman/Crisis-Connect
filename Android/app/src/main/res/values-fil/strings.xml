@@ -661,7 +661,6 @@ Android: %3$s</string>
     <string name="nearby_match_notification_text">I-tap upang kumonekta sa Bluetooth</string>
     <string name="nearby_pairing_channel_name">Mga kahilingan sa pairing sa malapit</string>
     <string name="nearby_pairing_request_title">Gusto ni %1$s na kumonekta sa malapit</string>
-    <string name="nearby_pairing_request_text">Tanggapin upang mag-chat sa Bluetooth.</string>
     <string name="nearby_pairing_accept">Tanggapin</string>
     <string name="nearby_pairing_decline">Tanggihan</string>
     <string name="manual_connect_button">Mag-pair sa device</string>
@@ -1357,7 +1356,6 @@ Petsa: %4$s</string>
     <string name="notification_photo_message_body">Mensahe ng larawan</string>
     <string name="chat_encryption_setup_title">I-secure ang chat na ito</string>
     <string name="chat_encryption_setup_instruction">I-scan ang QR code na ipinapakita sa Bagong Chat na screen ng kabilang device upang i-import ang ibinahaging encryption key.</string>
-    <string name="chat_encryption_setup_session_mismatch">Kabilang ang QR na ito sa ibang chat session.</string>
     <string name="chat_encryption_setup_invalid_qr">Hindi suportadong format ng QR.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Bine-verify ang encryption key…</string>
     <string name="chat_encryption_setup_handshake_failed">Hindi ma-verify ang encryption key. Subukang muli.</string>

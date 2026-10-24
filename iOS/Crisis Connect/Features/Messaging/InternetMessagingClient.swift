@@ -152,6 +152,8 @@ final class InternetMessagingClient {
     static let region = "us-central1"
     static let defaultTtlMs = 24 * 60 * 60 * 1000
 
+    private let securityCapabilitiesLock = NSLock()
+    private var securityCapabilities: [String: (TimeInterval, Bool)] = [:]
     private let functions: Functions
     private let auth: Auth
     private let firestore: Firestore
@@ -169,6 +171,25 @@ final class InternetMessagingClient {
             ? Firestore.firestore(app: FirebaseApp.app()!, database: MessagingDatabaseTarget.databaseID)
             : Firestore.firestore())
         self.regionalCalls = regionalCalls ?? (functions == nil ? RegionalMessagingCalls() : nil)
+    }
+
+    func supportsSignalIdentityBinding(peerUid: String) async -> Bool {
+        guard let owner = currentUid else { return false }
+        let scope = owner + "|" + peerUid, now = ProcessInfo.processInfo.systemUptime
+        securityCapabilitiesLock.lock()
+        let cached = securityCapabilities[scope]
+        securityCapabilitiesLock.unlock()
+        if let cached, now >= cached.0, now - cached.0 <= 60 { return cached.1 }
+        var supported = false
+        if let result = try? await functions.httpsCallable("getMessagingSecurityCapabilitiesV2")
+            .callAsync(["targetUid": peerUid]), let data = result.data as? [String: Any] {
+            supported = currentUid == owner && (data["protocolVersion"] as? NSNumber)?.doubleValue == 2 && data["signalIdentityBinding"] as? Bool == true
+        }
+        securityCapabilitiesLock.lock()
+        if securityCapabilities.count >= 128 { securityCapabilities.removeAll() }
+        securityCapabilities[scope] = (now, supported)
+        securityCapabilitiesLock.unlock()
+        return supported
     }
 
     var currentUid: String? { auth.currentUser?.uid }

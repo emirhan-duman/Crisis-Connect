@@ -637,7 +637,6 @@
     <string name="nearby_match_notification_text">Ji bo girêdana bi Bluetooth bitikîne</string>
     <string name="nearby_pairing_channel_name">Daxwazên girêdana nêzîk</string>
     <string name="nearby_pairing_request_title">%1$s dixwaze li nêzîk girêbide</string>
-    <string name="nearby_pairing_request_text">Ji bo chata bi Bluetooth qebûl bike.</string>
     <string name="nearby_pairing_accept">Qebûl bike</string>
     <string name="nearby_pairing_decline">Red bike</string>
     <string name="manual_connect_button">Bi amûrê re girêbide</string>
@@ -1328,7 +1327,6 @@
     <string name="notification_photo_message_body">Peyama wêneyê</string>
     <string name="chat_encryption_setup_title">Vê chatê ewle bike</string>
     <string name="chat_encryption_setup_instruction">Ji bo anîna kilîta şîfrekirinê ya parvekirî koda QR ya li ser dîmena Chata Nû ya amûra din bişopîne.</string>
-    <string name="chat_encryption_setup_session_mismatch">Ev QR ya danişîneke chatê ya cuda ye.</string>
     <string name="chat_encryption_setup_invalid_qr">Formata QR ya nepiştgirîkirî.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Kilîta şîfrekirinê tê pejirandin…</string>
     <string name="chat_encryption_setup_handshake_failed">Kilîta şîfrekirinê nehat pejirandin. Dîsa biceribîne.</string>

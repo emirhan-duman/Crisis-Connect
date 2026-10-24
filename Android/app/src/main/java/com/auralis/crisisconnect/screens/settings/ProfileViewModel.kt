@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.core.net.toUri
 import android.util.Log
 import com.auralis.crisisconnect.BuildConfig
 import androidx.lifecycle.AndroidViewModel
@@ -812,9 +813,13 @@ class ProfileViewModel(
         val base = enterpriseSsoWebBase()
         _uiState.update { it.copy(isLoading = true, emailSignInError = null) }
         val localeCode = if (Locale.getDefault().language.equals("tr", ignoreCase = true)) "tr" else "en"
-        val url = "$base/login?client=mobile&locale=$localeCode"
+        val attempt = EnterpriseSsoBridge.begin(appContext)
+        val url = "$base/login".toUri().buildUpon().appendQueryParameter("client", "mobile")
+            .appendQueryParameter("locale", localeCode).appendQueryParameter("mobileProtocol", "2").appendQueryParameter("mobilePlatform", "android")
+            .appendQueryParameter("mobileState", attempt.state).appendQueryParameter("mobileChallenge", attempt.challenge)
+            .build().toString()
         runCatching {
-            activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            activity.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
         }.onFailure {
             _uiState.update { it.copy(isLoading = false) }
             notifyMessage(appContext.getString(R.string.profile_enterprise_sso_not_configured))
@@ -825,7 +830,7 @@ class ProfileViewModel(
         viewModelScope.launch {
             EnterpriseSsoBridge.results.collect { result ->
                 when (result) {
-                    is EnterpriseSsoBridge.Result.Code -> completeEnterpriseSsoWithCode(result.code)
+                    is EnterpriseSsoBridge.Result.Code -> completeEnterpriseSsoWithCode(result)
                     is EnterpriseSsoBridge.Result.Error -> handleProviderSignInFailure(
                         appContext.getString(R.string.profile_enterprise_sso_provider_label),
                         IllegalStateException(result.reason ?: "sso-failed")
@@ -840,7 +845,8 @@ class ProfileViewModel(
         BuildConfig.MOBILE_SYNC_BASE_URL.trim().trimEnd('/')
             .ifBlank { "https://crisisconnect.network" }
 
-    private fun completeEnterpriseSsoWithCode(code: String) {
+    private fun completeEnterpriseSsoWithCode(result: EnterpriseSsoBridge.Result.Code) {
+        val code = result.code
         val base = enterpriseSsoWebBase()
         if (code.isBlank()) {
             _uiState.update { it.copy(isLoading = false) }
@@ -848,7 +854,7 @@ class ProfileViewModel(
         }
         _uiState.update { it.copy(isLoading = true) }
         viewModelScope.launch {
-            val token = withContext(Dispatchers.IO) { exchangeEnterpriseSsoCode(base, code) }
+            val token = withContext(Dispatchers.IO) { exchangeEnterpriseSsoCode(base, result) }
             val providerLabel = appContext.getString(R.string.profile_enterprise_sso_provider_label)
             if (token.isNullOrBlank()) {
                 handleProviderSignInFailure(providerLabel, IllegalStateException("sso-exchange-failed"))
@@ -877,12 +883,13 @@ class ProfileViewModel(
         }
     }
 
-    private fun exchangeEnterpriseSsoCode(base: String, code: String): String? {
+    private fun exchangeEnterpriseSsoCode(base: String, result: EnterpriseSsoBridge.Result.Code): String? {
         return runCatching {
-            val payload = JSONObject().put("code", code).toString()
+            val payload = JSONObject().put("code", result.code).put("state", result.state)
+                .put("verifier", result.verifier).toString()
                 .toRequestBody("application/json".toMediaType())
             val request = Request.Builder()
-                .url("$base/api/auth/sso/mobile-token")
+                .url("$base/api/auth/sso/v2/mobile-token")
                 .post(payload)
                 .build()
             OkHttpClient().newCall(request).execute().use { response ->

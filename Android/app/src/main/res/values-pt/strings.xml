@@ -661,7 +661,6 @@ Android: %3$s</string>
     <string name="nearby_match_notification_text">Toque para conectar via Bluetooth</string>
     <string name="nearby_pairing_channel_name">Solicitações de pareamento por proximidade</string>
     <string name="nearby_pairing_request_title">%1$s quer se conectar por perto</string>
-    <string name="nearby_pairing_request_text">Aceite para conversar via Bluetooth.</string>
     <string name="nearby_pairing_accept">Aceitar</string>
     <string name="nearby_pairing_decline">Recusar</string>
     <string name="manual_connect_button">Parear com o dispositivo</string>
@@ -1357,7 +1356,6 @@ Data: %4$s</string>
     <string name="notification_photo_message_body">Mensagem de foto</string>
     <string name="chat_encryption_setup_title">Proteger este chat</string>
     <string name="chat_encryption_setup_instruction">Escaneie o código QR mostrado na tela Nova conversa do outro dispositivo para importar a chave de criptografia compartilhada.</string>
-    <string name="chat_encryption_setup_session_mismatch">Este QR pertence a uma sessão de chat diferente.</string>
     <string name="chat_encryption_setup_invalid_qr">Formato de QR não suportado.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Verificando a chave de criptografia…</string>
     <string name="chat_encryption_setup_handshake_failed">Não foi possível verificar a chave de criptografia. Tente novamente.</string>

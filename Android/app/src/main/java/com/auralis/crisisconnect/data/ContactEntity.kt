@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.util.Locale
@@ -36,15 +37,17 @@ data class ContactEntity(
     // exchanged. Child contacts are never offered/used as SOS emergency contacts.
     val peerIsChild: Boolean = false,
     // Hidden transport-only contact for an authority channel peer (offline Bluetooth bridge).
-    val isAuthorityBridge: Boolean = false
+    val isAuthorityBridge: Boolean = false,
+    @ColumnInfo(defaultValue = "1") val offlineKeyVersion: Int = 2
 )
 
 fun ContactEntity.toContact(): Contact {
     val normalizedVerifiedIdentityKey = normalizeVerifiedIdentityKey(verifiedIdentityKey)
-    val trusted = verified && normalizedVerifiedIdentityKey.isNotBlank()
+    val trusted = offlineKeyVersion >= 2 && verified && normalizedVerifiedIdentityKey.isNotBlank()
     return Contact(
         name = name,
-        aesKey = aesKey,
+        aesKey = if (offlineKeyVersion >= 2) aesKey else "",
+        offlineKeyVersion = offlineKeyVersion,
         sessionCode = sessionCode,
         verified = trusted,
         verifiedIdentityKey = if (trusted) normalizedVerifiedIdentityKey else "",
@@ -68,11 +71,12 @@ fun ContactEntity.toContact(): Contact {
 
 fun Contact.toEntity(): ContactEntity {
     val normalizedVerifiedIdentityKey = normalizeVerifiedIdentityKey(verifiedIdentityKey)
-    val trusted = verified && normalizedVerifiedIdentityKey.isNotBlank()
+    val trusted = offlineKeyVersion >= 2 && verified && normalizedVerifiedIdentityKey.isNotBlank()
     return ContactEntity(
         sessionCode = sessionCode,
         name = name,
-        aesKey = aesKey,
+        aesKey = if (offlineKeyVersion >= 2) aesKey else "",
+        offlineKeyVersion = offlineKeyVersion,
         verified = trusted,
         verifiedIdentityKey = if (trusted) normalizedVerifiedIdentityKey else "",
         verifiedAt = if (trusted) verifiedAt else null,
@@ -91,4 +95,16 @@ fun Contact.toEntity(): ContactEntity {
         peerIsChild = peerIsChild,
         isAuthorityBridge = isAuthorityBridge
     )
+}
+
+/** Preserve retired bytes only inside storage. They never enter transport-facing Contact.aesKey. */
+internal fun preserveLegacyOfflineStorage(incoming: ContactEntity, existing: ContactEntity?): ContactEntity {
+    if (existing?.offlineKeyVersion == 1 && existing.aesKey.isNotBlank() && incoming.aesKey == existing.aesKey) {
+        return incoming.copy(offlineKeyVersion = 1, verified = false, verifiedIdentityKey = "", verifiedAt = null)
+    }
+    if (incoming.offlineKeyVersion < 2 && existing != null && existing.offlineKeyVersion >= 2 && existing.aesKey.isNotBlank()) return existing
+    if (existing == null || existing.offlineKeyVersion >= 2 ||
+        (incoming.offlineKeyVersion >= 2 && incoming.aesKey.isNotBlank())) return incoming
+    return incoming.copy(aesKey = existing.aesKey, offlineKeyVersion = 1,
+        verified = false, verifiedIdentityKey = "", verifiedAt = null)
 }

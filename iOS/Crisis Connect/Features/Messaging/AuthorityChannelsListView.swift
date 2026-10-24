@@ -179,7 +179,7 @@ final class AuthorityChannelsListStore: ObservableObject {
         let session = InternetConversation.pairId(myUid, peerUid)
         guard let contact = ContactStore.shared.contacts.first(where: {
             $0.sessionCode.caseInsensitiveCompare(session) == .orderedSame
-        }), !contact.aesKeyBase64.isEmpty else { return false }
+        }), ContactStore.shared.aesKey(for: contact) != nil else { return false }
         return ContactBroadcastManager.shared.isSessionConnected(contact.id)
             || P2pGattChatManager.shared(sessionId: contact.id).isReady()
     }
@@ -994,7 +994,7 @@ final class HierarchyThreadStore: ObservableObject {
                 scopeType: scopeType
             )
         }
-        guard let contact, !contact.aesKeyBase64.isEmpty else {
+        guard let contact, ContactStore.shared.aesKey(for: contact) != nil else {
             if bluetoothLinked { bluetoothLinked = false }
             if let contact, !bridgeAutoLinkAttempted, NearbyAutoLink.isEligible(contact) {
                 bridgeAutoLinkAttempted = true

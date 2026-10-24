@@ -663,7 +663,6 @@ Android: %3$s</string>
     <string name="nearby_match_notification_text">Натисніть, щоб під’єднатися через Bluetooth</string>
     <string name="nearby_pairing_channel_name">Запити на з’єднання поблизу</string>
     <string name="nearby_pairing_request_title">%1$s хоче під’єднатися поблизу</string>
-    <string name="nearby_pairing_request_text">Прийміть, щоб спілкуватися через Bluetooth.</string>
     <string name="nearby_pairing_accept">Прийняти</string>
     <string name="nearby_pairing_decline">Відхилити</string>
     <string name="manual_connect_button">З’єднати з пристроєм</string>
@@ -1359,7 +1358,6 @@ Android: %3$s</string>
     <string name="notification_photo_message_body">Фото-повідомлення</string>
     <string name="chat_encryption_setup_title">Захистити цей чат</string>
     <string name="chat_encryption_setup_instruction">Відскануйте QR-код, показаний на екрані «Новий чат» іншого пристрою, щоб імпортувати спільний ключ шифрування.</string>
-    <string name="chat_encryption_setup_session_mismatch">Цей QR належить іншому сеансу чату.</string>
     <string name="chat_encryption_setup_invalid_qr">Непідтримуваний формат QR.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Перевірка ключа шифрування…</string>
     <string name="chat_encryption_setup_handshake_failed">Не вдалося перевірити ключ шифрування. Спробуйте ще раз.</string>

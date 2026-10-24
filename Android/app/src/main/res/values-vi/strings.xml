@@ -660,7 +660,6 @@ Android: %3$s</string>
     <string name="nearby_match_notification_text">Chạm để kết nối qua Bluetooth</string>
     <string name="nearby_pairing_channel_name">Yêu cầu ghép nối lân cận</string>
     <string name="nearby_pairing_request_title">%1$s muốn kết nối ở gần</string>
-    <string name="nearby_pairing_request_text">Chấp nhận để trò chuyện qua Bluetooth.</string>
     <string name="nearby_pairing_accept">Chấp nhận</string>
     <string name="nearby_pairing_decline">Từ chối</string>
     <string name="manual_connect_button">Ghép nối với thiết bị</string>
@@ -1356,7 +1355,6 @@ Ngày: %4$s</string>
     <string name="notification_photo_message_body">Tin nhắn ảnh</string>
     <string name="chat_encryption_setup_title">Bảo mật cuộc trò chuyện này</string>
     <string name="chat_encryption_setup_instruction">Quét mã QR hiển thị trên màn hình Trò chuyện mới của thiết bị kia để nhập khóa mã hóa chung.</string>
-    <string name="chat_encryption_setup_session_mismatch">QR này thuộc về một phiên trò chuyện khác.</string>
     <string name="chat_encryption_setup_invalid_qr">Định dạng QR không được hỗ trợ.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Đang xác minh khóa mã hóa…</string>
     <string name="chat_encryption_setup_handshake_failed">Không thể xác minh khóa mã hóa. Hãy thử lại.</string>

@@ -28,8 +28,8 @@ async function assertAuthorityEligible(request: CallableRequest<unknown>): Promi
  * pass the role check and never receive it. The doc is only ever read/written via the Admin SDK
  * here (clients are denied direct read access in firestore.rules).
  *
- * Rotation (deferred): write a new doc with a bumped keyId and have clients accept both for a grace
- * window. For now keyId is fixed at "authority-v1" to match the mesh payload keyId.
+ * Compatibility endpoint for already shipped apps. New apps call issueAuthorityMeshKeyV2 only.
+ * Keep this key and its document independent from the secure protocol throughout staged rollout.
  */
 export const issueAuthorityMeshKey = onCall(
   { enforceAppCheck: true },

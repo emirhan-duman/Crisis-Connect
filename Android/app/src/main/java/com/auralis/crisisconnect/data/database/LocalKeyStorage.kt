@@ -19,6 +19,8 @@ object LocalKeyStorage {
     private const val MIGRATION_MARKER_KEY = "__migration_complete_v2"
     private const val AES_KEY = "local_aes_key"
     private const val SQLCIPHER_KEY = "local_sqlcipher_key"
+    private const val SQLCIPHER_PENDING_KEY = "local_sqlcipher_pending_key_v2"
+    private const val SQLCIPHER_KEY_VERSION = "local_sqlcipher_key_version"
     private const val UID_KEY = "local_uid"
     private const val COUNTRY_KEY = "local_country"
     private const val COUNTRY_SOURCE_KEY = "local_country_source"
@@ -116,11 +118,13 @@ object LocalKeyStorage {
             Log.i(TAG, "Migrated legacy encrypted preferences to keystore-backed storage")
         }.onFailure { throwable ->
             Log.w(TAG, "Legacy encrypted preferences migration failed", throwable)
+            throw IllegalStateException("Legacy encrypted preferences are unavailable; preserving existing keys", throwable)
         }
     }
 
     @Suppress("DEPRECATION")
     private fun openLegacyEncryptedPrefs(context: Context): SharedPreferences? {
+        if (context.getSharedPreferences(LEGACY_PREF_NAME, Context.MODE_PRIVATE).all.isEmpty()) return null
         return runCatching {
             val masterKey = androidx.security.crypto.MasterKey.Builder(context)
                 .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM)
@@ -132,9 +136,9 @@ object LocalKeyStorage {
                 androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
-        }.onFailure { throwable ->
-            Log.d(TAG, "No readable legacy encrypted prefs found for migration", throwable)
-        }.getOrNull()
+        }.getOrElse { throwable ->
+            throw IllegalStateException("Legacy encrypted preferences are unavailable; preserving existing keys", throwable)
+        }
     }
 
     fun getOrCreateAesKey(context: Context): String {
@@ -162,9 +166,33 @@ object LocalKeyStorage {
         }
 
         val legacyAesKey = canonicalizeAesKey(securePrefs.getString(AES_KEY, null))
-        val sqlCipherKey = legacyAesKey ?: KeyGeneratorUtil.generateAesKeyBase64()
+        val sqlCipherKey = if (context.getDatabasePath("app_database").exists()) {
+            legacyAesKey ?: error("Existing database encryption key is unavailable")
+        } else {
+            KeyGeneratorUtil.generateAesKeyBase64()
+        }
         securePrefs.putString(SQLCIPHER_KEY, sqlCipherKey)
         return sqlCipherKey
+    }
+
+    /** Persist the independent key BEFORE rekey; a crash can leave the DB on either key. */
+    fun prepareIndependentSqlCipherKey(context: Context): String {
+        val securePrefs = prefs(context)
+        if (securePrefs.getString(SQLCIPHER_KEY_VERSION, null) == "2") {
+            return getOrCreateSqlCipherKey(context)
+        }
+        canonicalizeAesKey(securePrefs.getString(SQLCIPHER_PENDING_KEY, null))?.let { return it }
+        val next = KeyGeneratorUtil.generateAesKeyBase64()
+        check(securePrefs.putStringCommitted(SQLCIPHER_PENDING_KEY, next)) { "Database key checkpoint failed" }
+        return next
+    }
+
+    /** Called only after reopening the database successfully with the independent key. */
+    fun commitIndependentSqlCipherKey(context: Context, key: String) {
+        val securePrefs = prefs(context)
+        check(securePrefs.putStringCommitted(SQLCIPHER_KEY, key)) { "Database key commit failed" }
+        check(securePrefs.putStringCommitted(SQLCIPHER_KEY_VERSION, "2")) { "Database key version commit failed" }
+        securePrefs.remove(SQLCIPHER_PENDING_KEY)
     }
 
     fun saveAesKey(context: Context, base64Key: String) {

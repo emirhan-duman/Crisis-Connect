@@ -1604,3 +1604,11 @@
 "AUTHORITY_RESILIENT_NOTICE" = "Güncel uygulamalar için ayrı sohbet. Mesajlar yalnız bu oturuma katılan doğrulanmış cihazlara ulaşır; eski uygulamalar uyum sohbetini kullanır.";
 "AUTHORITY_COMPATIBILITY_NOTICE" = "Eski uygulamalarla ayrı sohbet. İlk bölgenin bağlantısı gerekir; dayanıklı oturumun mesajları buraya aktarılmaz.";
 "CHAT_STATUS_INTERNET_AVAILABLE" = "İnternet kullanılabilir";
+
+"SAFETY_NUMBER_REPAIR_REQUIRED" = "Bu kişinin güvenli kimliği değişti. Mesaj gönderimi durduruldu. Kimliği doğrulayıp yeniden eşleştirmek için birlikte yeni bir QR kod tarayın.";
+
+"NEARBY_PAIRING_IDENTITY_WARNING" = "Bu kişi telefon numaranı biliyor. Adı ve kimliği doğrulanmadı. Yalnızca yerel bir bağlantı kurulur; hesap kimliği veya kayıtlı bir kişiyle yeniden eşleşmek için yeni bir QR kod kullan.";
+
+"OFFLINE_PAIRING_UPGRADE_REQUIRED" = "Bluetooth eşleştirmesi güvenlik için güncellendi. Karşı tarafın uygulamayı güncelleyip yeni QR kod oluşturmasını iste ve yeniden tara. Sohbet geçmişin korunur.";
+
+"PEER_SECURITY_UPGRADE_REQUIRED" = "Bu görüşmeyi güvenle doğrulamak için iki uygulamayı da güncelleyin. Mesajlar kuyrukta korunur; daha zayıf şifrelemeye geçilmez.";

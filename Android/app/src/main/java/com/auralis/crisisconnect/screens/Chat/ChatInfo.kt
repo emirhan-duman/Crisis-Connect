@@ -75,10 +75,12 @@ fun ChatInfoScreen(navController: NavController, sessionCode: String) {
     val contactPhotoUrl by viewModel.contactPhotoUrl.collectAsStateWithLifecycle()
     val safetyNumber by viewModel.safetyNumber.collectAsStateWithLifecycle()
     val peerKeyChanged by viewModel.peerKeyChanged.collectAsStateWithLifecycle()
+    val signalRePairRequired by viewModel.signalRePairRequired.collectAsStateWithLifecycle()
     val safetyNumberForwardSecret by viewModel.safetyNumberForwardSecret.collectAsStateWithLifecycle()
     val signalInfo by viewModel.signalInfo.collectAsStateWithLifecycle()
     val signalPermissionMissing by viewModel.signalPermissionMissing.collectAsStateWithLifecycle()
     val isSessionEncrypted by viewModel.isSessionEncrypted.collectAsStateWithLifecycle()
+    val offlineRepairRequired by viewModel.offlineRepairRequired.collectAsStateWithLifecycle()
     val storedAesKey by viewModel.sessionAesKey.collectAsStateWithLifecycle()
     val contactAvatarVersion by ContactAvatarStorage.observeAvatarVersion(sessionCode)
         .collectAsStateWithLifecycle(initialValue = 0L)
@@ -186,17 +188,23 @@ fun ChatInfoScreen(navController: NavController, sessionCode: String) {
                 isEncrypted = isSessionEncrypted,
                 hasStoredKey = !storedAesKey.isNullOrBlank(),
                 onEnableEncryption = {
-                    navController.navigate("chat/$encodedSessionCode/secure_setup")
+                    navController.navigate(if (offlineRepairRequired) "qr_scan" else "chat/$encodedSessionCode/secure_setup")
                 },
                 onShowStoredCode = {
                     navController.navigate("chat/$encodedSessionCode/handshake_code")
                 }
             )
 
+            if (offlineRepairRequired) {
+                Text(text = stringResource(R.string.offline_pairing_upgrade_required),
+                    style = MaterialTheme.typography.bodyMedium)
+            }
+
             safetyNumber?.let {
                 SafetyNumberCard(
                     safetyNumber = it,
                     keyChanged = peerKeyChanged,
+                    rePairRequired = signalRePairRequired,
                     forwardSecret = safetyNumberForwardSecret,
                     onVerify = { viewModel.acknowledgePeerKeyChange() }
                 )
@@ -299,6 +307,7 @@ private fun CenteredNameWithEdit(
 private fun SafetyNumberCard(
     safetyNumber: String,
     keyChanged: Boolean,
+    rePairRequired: Boolean,
     forwardSecret: Boolean,
     onVerify: () -> Unit
 ) {
@@ -349,7 +358,7 @@ private fun SafetyNumberCard(
             }
             if (warn) {
                 Text(
-                    text = stringResource(R.string.safety_number_changed_description),
+                    text = stringResource(if (rePairRequired) R.string.safety_number_repair_required else R.string.safety_number_changed_description),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
@@ -392,7 +401,7 @@ private fun SafetyNumberCard(
                     MaterialTheme.colorScheme.onSurfaceVariant
                 }
             )
-            if (warn) {
+            if (warn && !rePairRequired) {
                 Button(
                     onClick = onVerify,
                     modifier = Modifier.align(Alignment.End)

@@ -39,7 +39,9 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
+import androidx.annotation.ColorRes
 import androidx.glance.unit.ColorProvider
+import androidx.compose.ui.graphics.Color
 import com.auralis.crisisconnect.MainActivity
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.screens.Tools.data.DisasterEvent
@@ -134,8 +136,7 @@ private data class WidgetSnapshot(
     val result: DisasterFetchResult?
 )
 
-private val CardTextPrimary = ColorProvider(R.color.widget_text_primary)
-private val CardTextSecondary = ColorProvider(R.color.widget_text_secondary)
+private fun widgetColor(context: Context, @ColorRes resource: Int) = ColorProvider(Color(context.getColor(resource)))
 
 @Composable
 private fun DisastersWidgetContent(snapshot: WidgetSnapshot, launchIntent: Intent) {
@@ -184,7 +185,7 @@ private fun WidgetHeader(context: Context, snapshot: WidgetSnapshot, showUpdated
             maxLines = 1,
             modifier = GlanceModifier.defaultWeight(),
             style = TextStyle(
-                color = CardTextPrimary,
+                color = widgetColor(context, R.color.widget_text_primary),
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -194,7 +195,7 @@ private fun WidgetHeader(context: Context, snapshot: WidgetSnapshot, showUpdated
             Text(
                 text = DateUtils.getRelativeTimeSpanString(updatedMillis).toString(),
                 maxLines = 1,
-                style = TextStyle(color = CardTextSecondary, fontSize = 10.sp)
+                style = TextStyle(color = widgetColor(context, R.color.widget_text_secondary), fontSize = 10.sp)
             )
         }
         // Generous tap target around the small glyph (widget quality guidance).
@@ -229,7 +230,7 @@ private fun EmptyState(context: Context, modifier: GlanceModifier) {
             Text(
                 text = context.getString(R.string.widget_disasters_empty),
                 style = TextStyle(
-                    color = CardTextSecondary,
+                    color = widgetColor(context, R.color.widget_text_secondary),
                     fontSize = 12.sp,
                     textAlign = TextAlign.Center
                 )
@@ -255,7 +256,7 @@ private fun EventRow(context: Context, event: DisasterEvent) {
                 text = badgeText(event),
                 maxLines = 1,
                 style = TextStyle(
-                    color = ColorProvider(badge.foreground),
+                    color = widgetColor(context, badge.foreground),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -267,7 +268,7 @@ private fun EventRow(context: Context, event: DisasterEvent) {
                 text = event.title,
                 maxLines = 1,
                 style = TextStyle(
-                    color = CardTextPrimary,
+                    color = widgetColor(context, R.color.widget_text_primary),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium
                 )
@@ -275,7 +276,7 @@ private fun EventRow(context: Context, event: DisasterEvent) {
             Text(
                 text = eventSubLine(event),
                 maxLines = 1,
-                style = TextStyle(color = CardTextSecondary, fontSize = 11.sp)
+                style = TextStyle(color = widgetColor(context, R.color.widget_text_secondary), fontSize = 11.sp)
             )
         }
     }

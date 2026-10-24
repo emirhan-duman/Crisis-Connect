@@ -197,9 +197,12 @@ final class NearbyPairingPeripheral: NSObject, ObservableObject, BlePeripheralHo
     func accept(_ id: UUID) {
         queue.async {
             guard let session = self.sessions[id], let peer = session.peer else { return }
-            self.responses[id] = (try? session.responder.responseMessage(status: NearbySpakePairing.statusOk))
-            if let key = try? session.responder.contactKey() {
-                NearbyPairingSupport.savePairedContact(peer: peer, contactKey: key, bluetoothAddress: id.uuidString)
+            do {
+                let key = try session.responder.contactKey()
+                try NearbyPairingSupport.savePairedContact(peer: peer, contactKey: key, bluetoothAddress: id.uuidString)
+                self.responses[id] = try session.responder.responseMessage(status: NearbySpakePairing.statusOk)
+            } catch {
+                self.responses[id] = NearbySpakePairing.rejectMessage()
             }
             DispatchQueue.main.async { if self.pendingApproval?.id == id { self.pendingApproval = nil } }
         }
@@ -324,9 +327,9 @@ final class NearbyPairingCentral: NSObject, CBCentralManagerDelegate, CBPeripher
                 guard let peer = try? initiator.onMessage4(value), let key = try? initiator.contactKey() else {
                     finish(.failed); return
                 }
-                let sessionCode = NearbyPairingSupport.savePairedContact(
+                guard let sessionCode = try? NearbyPairingSupport.savePairedContact(
                     peer: peer, contactKey: key, bluetoothAddress: peripheral.identifier.uuidString
-                )
+                ) else { finish(.failed); return }
                 finish(.paired(sessionCode: sessionCode, displayName: peer.displayName))
             default:
                 finish(.notMatched) // REJECT

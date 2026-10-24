@@ -7,7 +7,6 @@ import com.auralis.crisisconnect.core.io.normalizeSafeTransferId
 import com.auralis.crisisconnect.core.media.ImageFileUtils
 import com.auralis.crisisconnect.data.MessageDeliveryStatus
 import com.auralis.crisisconnect.data.MessageType
-import com.auralis.crisisconnect.data.updateContactAesKey
 import com.auralis.crisisconnect.data.updateContactName
 import com.auralis.crisisconnect.data.updateContactPeerIdentity
 import com.auralis.crisisconnect.data.updateLocalMessageDeliveryState
@@ -166,41 +165,25 @@ internal class RfcommIncomingPayloadDelegate(
             }
 
             payload.startsWith("DECRYPT_FAIL|") -> {
-                val uuid = payload.substringAfter('|').takeIf { it.isNotBlank() } ?: return
-                Log.w(TAG, "Remote peer failed to decrypt message $uuid for $sessionCode — clearing AES key to fall back to plaintext")
-                serviceScope.launch {
-                    // Clear the mismatched AES key so subsequent messages are sent
-                    // as plaintext until the users re-pair via QR.
-                    updateContactAesKey(appContext, sessionCode, "")
-                    // Re-queue the failed message so it is resent unencrypted.
-                    updateLocalMessageDeliveryState(
-                        context = appContext,
-                        uuid = uuid,
-                        deliveryStatus = MessageDeliveryStatus.QUEUED,
-                        retryCount = 0,
-                        nextRetryAtMillis = null,
-                        lastAttemptAtMillis = null,
-                        lastError = null,
-                        outboundRoute = null
-                    )
-                }
-                onSessionActive(sessionCode)
+                // Remote diagnostics cannot erase keys or authorize plaintext retransmission.
+                Log.w(TAG, "Peer reported a decryption failure; retaining the paired key")
             }
 
-            payload.startsWith("DELIVERED|") -> {
-                val uuid = payload.substringAfter('|').takeIf { it.isNotBlank() } ?: return
+            payload.startsWith("SEC_RECEIPT|") -> {
                 serviceScope.launch {
-                    markLocalMessagesDelivered(appContext, sessionCode, listOf(uuid))
+                    val contact = getContact(appContext, sessionCode) ?: return@launch
+                    val receipt = SecureRfcommReceipt.open(contact.aesKey, payload) ?: return@launch
+                    when (receipt.kind) {
+                        SecureRfcommReceipt.Kind.DELIVERED -> markLocalMessagesDelivered(appContext, sessionCode, listOf(receipt.messageId))
+                        SecureRfcommReceipt.Kind.READ -> com.auralis.crisisconnect.data.markLocalMessagesReadWithRecipient(
+                            context = appContext, sessionCode = sessionCode, messageUuids = listOf(receipt.messageId), recipientLabel = contact.name)
+                    }
+                    onSessionActive(sessionCode)
                 }
-                onSessionActive(sessionCode)
             }
-
-            payload.startsWith("ACK|") -> {
-                val uuid = payload.substringAfter('|').takeIf { it.isNotBlank() } ?: return
-                serviceScope.launch {
-                    markMessagesAsRead(appContext, listOf(uuid))
-                }
-                onSessionActive(sessionCode)
+            payload.startsWith("DELIVERED|") || payload.startsWith("ACK|") -> {
+                // Legacy unsigned receipts must not suppress retries of an emergency message.
+                return
             }
 
             payload.startsWith("SEC_MSG|") -> {
@@ -287,7 +270,7 @@ internal class RfcommIncomingPayloadDelegate(
     }
 
     private fun isControlPayload(payload: String): Boolean {
-        return payload.startsWith("DELIVERED|") ||
+        return payload.startsWith("SEC_RECEIPT|") || payload.startsWith("DELIVERED|") ||
             payload.startsWith("DECRYPT_FAIL|") ||
             payload.startsWith("ACK|") ||
             payload.startsWith("PEER_NAME|") ||
@@ -298,8 +281,11 @@ internal class RfcommIncomingPayloadDelegate(
     }
 
     private fun sendDeliveryAck(sessionCode: String, messageUuid: String) {
-        val payload = "DELIVERED|$messageUuid\n"
-        writeToSession(sessionCode, payload.toByteArray(Charsets.UTF_8))
+        serviceScope.launch {
+            val contact = getContact(appContext, sessionCode) ?: return@launch
+            val payload = SecureRfcommReceipt.seal(contact.aesKey, SecureRfcommReceipt.Kind.DELIVERED, messageUuid) ?: return@launch
+            writeToSession(sessionCode, payload.toByteArray(Charsets.UTF_8))
+        }
     }
 
     fun saveLegacyMessage(sessionCode: String, text: String) {

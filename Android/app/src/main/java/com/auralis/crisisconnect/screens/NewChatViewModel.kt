@@ -88,8 +88,8 @@ class NewChatViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(exceptionHandler) {
             val code = generateSessionCode()
             _sessionCode.value = code
-            val key = LocalKeyStorage.getOrCreateAesKey(context)
-            _aesKey.value = key
+            val key = com.auralis.crisisconnect.data.database.KeyGeneratorUtil.generateAesKeyBase64()
+            if (_aesKey.value.isBlank()) _aesKey.value = key
             _userName.value = getSavedUserName(context).first()
             if (canModifyBluetoothAdapter()) {
                 if (originalName == null) {
@@ -124,6 +124,7 @@ class NewChatViewModel(application: Application) : AndroidViewModel(application)
 
     fun requestQrShare() {
         if (_qrShareId.value.isBlank()) {
+            _aesKey.value = com.auralis.crisisconnect.data.database.KeyGeneratorUtil.generateAesKeyBase64()
             _qrShareId.value = generateShareId()
         }
         _qrShareRequested.value = true

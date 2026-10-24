@@ -21,6 +21,19 @@ that every native binary is reproducible from this repository. In particular, th
 Android MLS worker libraries and the separately produced iOS frameworks still require independent
 source-to-binary provenance.
 
+### Beta 2 review package
+
+`v1.2.1-beta.2` publishes a separately packaged, debug-signed internal APK for review. Its SBOM
+uses `internalRuntimeClasspath`. This preview's signing workflow is run from the dedicated
+`codex/security-1.2.1-beta.2` branch; verify its Sigstore bundles with the exact identity:
+
+```text
+https://github.com/emirhan-duman/Crisis-Connect/.github/workflows/sign-release-assets.yml@refs/heads/codex/security-1.2.1-beta.2
+```
+
+Use this branch identity only for the Beta 2 review assets. The normal release identity below
+remains `refs/heads/main`. Checksums and the CycloneDX attestation checks apply to both.
+
 ## Verify an Android asset
 
 Install [GitHub CLI](https://cli.github.com/) and
