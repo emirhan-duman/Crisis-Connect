@@ -10,6 +10,8 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -134,6 +136,11 @@ fun SOSScreen(navController: NavController) {
     val isRunning by GattSOSServerService.isDeclared.collectAsStateWithLifecycle()
     val startTimestamp by GattSOSServerService.startTimestampMillis.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val saved by com.auralis.crisisconnect.watch.WatchRecoveryStore.get(context).state.collectAsStateWithLifecycle()
+    if (!isRunning && (saved.startedAt != null || saved.unavailable)) {
+        SavedSosScreen(navController, saved)
+        return
+    }
     val palette = rememberSosPalette()
     var hasSeenRunning by rememberSaveable { mutableStateOf(false) }
     val elapsedMillis by rememberElapsedMillis(startTimestamp = startTimestamp, isRunning = isRunning)
@@ -915,4 +922,39 @@ private fun formatElapsed(elapsedMillis: Long): String {
     } else {
         String.format("%02d:%02d", minutes, seconds)
     }
+}
+
+/** Restoring history is intentionally passive; only this explicit gesture resumes transmission. */
+@Composable
+private fun SavedSosScreen(
+    navController: NavController,
+    saved: com.auralis.crisisconnect.watch.WatchRecoveryStore.Snapshot
+) {
+    val context = LocalContext.current
+    val failure by GattSOSServerService.startFailureMessage.collectAsStateWithLifecycle()
+    var actionError by remember { mutableStateOf(false) }
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)) {
+        Text(stringResource(R.string.sos_recovery_title), style = MaterialTheme.typography.headlineSmall)
+        Text(stringResource(if (saved.unavailable) R.string.sos_recovery_unavailable else R.string.sos_recovery_body))
+        saved.replies.filter { it.kind != "contact" }.takeLast(3).forEach { reply ->
+            Text(reply.text)
+            Text(stringResource(if (reply.result == "accepted") R.string.watch_reply_handed_off else R.string.watch_reply_uncertain), style = MaterialTheme.typography.bodySmall)
+        }
+        if (failure != null || actionError) Text(failure ?: stringResource(R.string.sos_recovery_failed))
+        Button(enabled = !saved.unavailable, onClick = {
+            actionError = runCatching {
+                androidx.core.content.ContextCompat.startForegroundService(context,
+                    Intent(context, GattSOSServerService::class.java)
+                        .putExtra(GattSOSServerService.EXTRA_USER_DECLARED, true)
+                        .putExtra(GattSOSServerService.EXTRA_RESUME_SESSION_ID, saved.startedAt.toString()))
+            }.isFailure
+        }) { Text(stringResource(R.string.sos_recovery_resume)) }
+        Button(enabled = !saved.unavailable, onClick = {
+            actionError = runCatching { GattSOSServerService.stopBroadcast(context) }.isFailure
+            if (!actionError) navController.popBackStack()
+        }) { Text(stringResource(R.string.sos_recovery_end)) }
+        Button(onClick = { navController.popBackStack() }) { Text(stringResource(R.string.sos_screen_back)) }
+    }
+}
 }

@@ -56,6 +56,8 @@ object MessagingBootstrap {
 
     // Long-lived scope for connectivity-triggered retries (outlives the caller's coroutine).
     private val retryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var preKeyJob: kotlinx.coroutines.Job? = null
+    private var preKeyUid: String? = null
     @Volatile private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
 
     // Most specific directory args seen so far, so a connectivity retry re-publishes with the phone
@@ -101,11 +103,18 @@ object MessagingBootstrap {
         // forward-secret session with us. Best-effort — messaging falls back to the v2 envelope for
         // peers without a session if this fails. On IO: the prekey store is blocking Room and this
         // bootstrap is launched from Main (MainActivity.onCreate).
-        runCatching {
-            withContext(Dispatchers.IO) {
-                com.auralis.crisisconnect.messaging.signal.SignalPreKeyManager.create(context).ensurePublished()
+        if (preKeyJob?.isActive != true || preKeyUid != resolvedUid) {
+            preKeyJob?.cancel()
+            preKeyUid = resolvedUid
+            preKeyJob = retryScope.launch {
+                // Bulk key maintenance must not hold up the emergency inbox or consume the
+                // constrained uplink. Existing sessions/keys remain available throughout.
+                com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.first { !it }
+                if (client.currentUid() == resolvedUid) runCatching {
+                    com.auralis.crisisconnect.messaging.signal.SignalPreKeyManager.create(context).ensurePublished()
+                }.onFailure { Log.w(TAG, "Failed to publish Signal prekeys", it) }
             }
-        }.onFailure { Log.w(TAG, "Failed to publish Signal prekeys", it) }
+        }
 
         // Start the realtime downlink so incoming internet messages arrive while the app is open,
         // independent of FCM push delivery (which handles background / closed-app cases).
@@ -143,7 +152,9 @@ object MessagingBootstrap {
         val displayName = runCatching { getSavedUserName(context).first().trim() }
             .getOrNull()?.takeIf { it.isNotBlank() }
         val photoUrl = runCatching {
-            FirebaseFirestore.getInstance().document("users/$resolvedUid").get().await().getString("photoURL")
+            withTimeoutOrNull(1_500) {
+                ResilientApplicationStore.profiles().document("users/$resolvedUid").get().await().getString("photoURL")
+            }
         }.getOrNull()?.takeIf { it.isNotBlank() }
 
         runCatching {

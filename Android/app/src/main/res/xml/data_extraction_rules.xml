@@ -5,6 +5,14 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
+        <exclude domain="sharedpref" path="qr_pairing_recovery.xml"/>
+        <exclude domain="sharedpref" path="contact_access_consent.xml"/>
+    <exclude domain="sharedpref" path="messaging_receipts.xml"/>
+    <exclude domain="sharedpref" path="traffic_measurements.xml"/>
+        <exclude domain="sharedpref" path="watch_commands_v1.xml"/>
+        <exclude domain="sharedpref" path="watch_approval.xml"/>
+        <exclude domain="sharedpref" path="sos_cloud_reporter.xml"/>
+        <exclude domain="sharedpref" path="sos_contact_notifier.xml"/>
         <!-- TODO: Use <include> and <exclude> to control what is backed up.
         <include .../>
         <exclude .../>
@@ -12,8 +20,18 @@
     </cloud-backup>
     <!--
     <device-transfer>
+        <exclude domain="sharedpref" path="qr_pairing_recovery.xml"/>
         <include .../>
         <exclude .../>
     </device-transfer>
     -->
+    <device-transfer>
+        <exclude domain="sharedpref" path="contact_access_consent.xml"/>
+    <exclude domain="sharedpref" path="messaging_receipts.xml"/>
+    <exclude domain="sharedpref" path="traffic_measurements.xml"/>
+        <exclude domain="sharedpref" path="watch_commands_v1.xml"/>
+        <exclude domain="sharedpref" path="watch_approval.xml"/>
+        <exclude domain="sharedpref" path="sos_cloud_reporter.xml"/>
+        <exclude domain="sharedpref" path="sos_contact_notifier.xml"/>
+    </device-transfer>
 </data-extraction-rules>

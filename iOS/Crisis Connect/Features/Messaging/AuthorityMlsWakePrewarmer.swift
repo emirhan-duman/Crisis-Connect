@@ -19,20 +19,25 @@ actor AuthorityMlsWakePrewarmer {
         selfUid: String,
         peerUid: String,
         scopeType: AuthorityMlsScopeType,
-        channelId: String
+        channelId: String,
+        resilient: Bool? = nil
     ) async -> Bool {
         guard !selfUid.isEmpty, !peerUid.isEmpty, selfUid != peerUid, !channelId.isEmpty else { return false }
-        let key = "\(scopeType.rawValue)\u{0}\(channelId)\u{0}\(peerUid)"
+        let key = "\(scopeType.rawValue)\u{0}\(channelId)\u{0}\(peerUid)\u{0}\(String(describing: resilient))"
         guard inFlight.insert(key).inserted else { return true }
         defer { inFlight.remove(key) }
 
         do {
+            let raw = AuthorityMlsBinding(scopeType: scopeType, channelId: channelId,
+                participants: [selfUid, peerUid], resilient: resilient == true, routeResolved: resilient != nil)
+            let pinned = try await ResilientApplicationStore.resolve(raw)
             let channel = try await AuthorityMlsChatChannel.prepare(
                 selfUid: selfUid,
                 peerUid: peerUid,
                 scopeType: scopeType,
                 channelId: channelId,
-                deviceLabel: String("iPhone \(UIDevice.current.model)".prefix(64))
+                deviceLabel: String("iPhone \(UIDevice.current.model)".prefix(64)),
+                resolvedBinding: pinned
             )
             defer { Task { await channel.close() } }
             for attempt in 0..<20 {

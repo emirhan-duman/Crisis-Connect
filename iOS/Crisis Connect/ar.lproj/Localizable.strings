@@ -1452,3 +1452,30 @@
 "guide_redesign_subtitle_now" = "اختر الحالة واعرف أول إجراء صحيح خلال ثوانٍ.";
 "guide_redesign_subtitle_prepare" = "أكمل خططك وقوائم التحقق المتاحة دون اتصال.";
 "guide_redesign_unknown_region" = "منطقة غير معروفة";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "العثور على جهات اتصالك عبر الإنترنت";
+"CONTACTS_DISCLOSURE_BODY" = "يقرأ Crisis Connect الأسماء وأرقام الهواتف من جهات اتصالك للعثور على مستخدمي التطبيق. يرسل أرقام الهواتف للمطابقة إلى خوادم Crisis Connect التي تستضيفها Google Firebase في الولايات المتحدة. تبقى الأسماء على جهازك. تُعالج الأرقام المطلوبة دون تخزين دائم، وتبقى نتائج المطابقة على جهازك. قد يؤدي تحديث هذه الشاشة أو العودة إليها وهي مفتوحة إلى إرسال الأرقام مجددًا. يُحفظ اختيارك لهذا الحساب على هذا الجهاز. يمكنك سحب موافقتك من الإعدادات ضمن الوصول إلى جهات الاتصال.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "العثور على جهات اتصال قريبة";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "يقرأ Crisis Connect أسماء جهات الاتصال وأرقام الهواتف على جهازك لتختار شخصًا تبحث عنه بالقرب منك. يُستخدم الرقم المختار للتحقق من الهوية عبر Bluetooth. لا ترسل هذه الميزة جهات اتصالك إلى خادم. يُحفظ اختيارك لهذا الحساب على هذا الجهاز. يمكنك سحب موافقتك من الإعدادات ضمن الوصول إلى جهات الاتصال.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "أوافق";
+"CONTACTS_DISCLOSURE_DECLINE" = "ليس الآن";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "الوصول إلى جهات الاتصال";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "يُحفظ اختيارك لهذا الحساب على هذا الجهاز. يمكنك سحب موافقتك من الإعدادات ضمن الوصول إلى جهات الاتصال.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "سحب الموافقة على المطابقة عبر الإنترنت";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "سحب الموافقة على جهات الاتصال القريبة";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "الإنترنت متاح";

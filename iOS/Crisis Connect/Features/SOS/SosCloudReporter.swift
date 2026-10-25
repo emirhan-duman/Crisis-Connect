@@ -78,12 +78,14 @@ final class SosCloudReporter: ObservableObject, @unchecked Sendable {
 
     /// Starts the uplink for a freshly started SOS broadcast. Runs entirely on its own task so a
     /// slow network call can never delay or block BLE startup or teardown.
-    func onSosStarted() {
+    func onSosStarted(resuming: Bool = false) {
         guard !PlatformRuntime.isRunningTests else { return }
         heartbeatTask?.cancel()
         // A new broadcast supersedes any queued resolve for the same device signal.
-        UserDefaults.standard.removeObject(forKey: Keys.pendingResolveSignalId)
-        UserDefaults.standard.set(false, forKey: Keys.hasReportedActive)
+        if !resuming {
+            UserDefaults.standard.removeObject(forKey: Keys.pendingResolveSignalId)
+            UserDefaults.standard.set(false, forKey: Keys.hasReportedActive)
+        }
         // @Published `state` now drives the active-SOS UI, so every mutation hops to the main actor.
         let initialState: State = hasUsableInternet ? .sending : .waitingForNetwork
         Task { @MainActor in self.state = initialState }

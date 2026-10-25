@@ -629,7 +629,7 @@
     <string name="add_from_contacts_empty">Пока никого из ваших контактов нет в Crisis Connect.</string>
     <string name="add_from_contacts_permission_needed">Для поиска знакомых требуется разрешение на доступ к контактам.</string>
     <string name="add_from_contacts_sign_in_required">Войдите, чтобы найти контакты в Crisis Connect.</string>
-    <string name="add_from_contacts_privacy_note">Ваши номера сопоставляются по хэшу и никогда не хранятся на сервере. Появляются только те, кто выбрал быть обнаруживаемым.</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect читает имена и номера телефонов из ваших контактов, чтобы найти пользователей приложения. Номера отправляются для сопоставления на серверы Crisis Connect, размещённые в Google Firebase в США. Имена остаются на устройстве. Запрашиваемые номера обрабатываются без постоянного хранения; совпадения остаются на устройстве. Обновление этого экрана или возврат к нему, пока он открыт, может повторно отправить номера. Выбор сохраняется для этого аккаунта на этом устройстве. Отозвать согласие можно в настройках, в разделе «Доступ к контактам».</string>
     <string name="add_from_contacts_found_count">%1$d в Crisis Connect</string>
     <string name="add_from_contacts_empty_hint">Они появятся здесь, как только подтвердят свой номер телефона в приложении.</string>
     <string name="add_from_contacts_search_hint">Поиск по имени или номеру</string>
@@ -1212,6 +1212,7 @@
     <string name="chat_status_connected">Подключено</string>
     <string name="chat_status_connected_bluetooth">Подключено по Bluetooth</string>
     <string name="chat_status_connected_internet">Подключено через интернет</string>
+    <string name="chat_status_connected_satellite">Подключено через спутник</string>
     <string name="internet_message_channel_name">Интернет-сообщения</string>
     <string name="internet_message_notification_title">Новое сообщение</string>
     <string name="channel_message_notification_body">Новое сообщение</string>
@@ -1787,4 +1788,20 @@
     <string name="profile_delete_account_error_verification">Не удалось подтвердить удаление на этом устройстве. Проверьте подключение и повторите попытку.</string>
     <string name="profile_delete_account_error_signed_out">Чтобы удалить аккаунт, нужно войти в него.</string>
     <string name="profile_delete_account_reauth_needed">В целях безопасности перед удалением нужно подтвердить, что это вы. Выйдите, войдите снова и повторите удаление.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">Найти контакты в интернете</string>
+    <string name="contacts_disclosure_body">Crisis Connect читает имена и номера телефонов из ваших контактов, чтобы найти пользователей приложения. Номера отправляются для сопоставления на серверы Crisis Connect, размещённые в Google Firebase в США. Имена остаются на устройстве. Запрашиваемые номера обрабатываются без постоянного хранения; совпадения остаются на устройстве. Обновление этого экрана или возврат к нему, пока он открыт, может повторно отправить номера. Выбор сохраняется для этого аккаунта на этом устройстве. Отозвать согласие можно в настройках, в разделе «Доступ к контактам».</string>
+    <string name="contacts_local_disclosure_title">Найти контакты поблизости</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect читает только имя и номер телефона, которыми вы делитесь через системный выбор контактов, чтобы найти человека поблизости. Выбранный номер используется для проверки личности через Bluetooth. Эта функция не отправляет ваши контакты на сервер. Выбор сохраняется для этого аккаунта на этом устройстве. Отозвать согласие можно в настройках, в разделе «Доступ к контактам».</string>
+    <string name="contacts_disclosure_accept">Согласен</string>
+    <string name="contacts_disclosure_decline">Не сейчас</string>
+    <string name="contacts_consent_settings_title">Доступ к контактам</string>
+    <string name="contacts_consent_settings_hint">Выбор сохраняется для этого аккаунта на этом устройстве. Отозвать согласие можно в настройках, в разделе «Доступ к контактам».</string>
+    <string name="contacts_consent_revoke_online">Отозвать согласие на поиск в интернете</string>
+    <string name="contacts_consent_revoke_nearby">Отозвать согласие для контактов поблизости</string>
+    <string name="nearby_choose_contact">Выбрать контакт</string>
+    <string name="nearby_contact_selection_failed">Не удалось прочитать выбранный номер. Выберите другой контакт.</string>
+    <string name="chat_status_internet_available">Интернет доступен</string>
+    <string name="chat_status_satellite_available">Спутниковая связь доступна</string>
 </resources>

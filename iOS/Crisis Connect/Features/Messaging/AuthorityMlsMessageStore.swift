@@ -57,4 +57,42 @@ actor AuthorityMlsMessageStore {
         if records.count > Self.maxMessages { records.removeFirst(records.count - Self.maxMessages) }
         try MlsStateVault.saveProtectedData(try JSONEncoder().encode(records), context: context)
     }
+
+    /// Bulk, one-commit import used by protocol rollovers. Message ids are content-stable.
+    func merge(_ applications: [AuthorityMlsPendingReceivedApplication]) throws {
+        guard !applications.isEmpty else { return }
+        var records: [Record] = if let encoded = try MlsStateVault.loadProtectedData(context: context) {
+            try JSONDecoder().decode([Record].self, from: encoded)
+        } else {
+            []
+        }
+        var storedAt = max(
+            Int64(Date().timeIntervalSince1970 * 1000),
+            (records.map(\.storedAtMillis).max() ?? 0) + 1
+        )
+        for application in applications {
+            guard application.messageId.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil,
+                  !application.senderCredential.isEmpty, application.senderCredential.utf8.count <= 512,
+                  !application.plaintext.isEmpty, application.plaintext.count <= Self.maxPlaintextBytes else {
+                throw AuthorityMlsMessagePayloadError.malformed
+            }
+            if let existing = records.first(where: { $0.messageId == application.messageId }) {
+                guard let existingPlaintext = Data(base64Encoded: existing.plaintextBase64),
+                      existingPlaintext == application.plaintext else {
+                    throw AuthorityMlsMessagePayloadError.malformed
+                }
+            }
+            records.removeAll { $0.messageId == application.messageId }
+            records.append(Record(
+                messageId: application.messageId,
+                senderCredential: application.senderCredential,
+                plaintextBase64: application.plaintext.base64EncodedString(),
+                storedAtMillis: storedAt
+            ))
+            storedAt += 1
+        }
+        records.sort { $0.storedAtMillis < $1.storedAtMillis }
+        if records.count > Self.maxMessages { records.removeFirst(records.count - Self.maxMessages) }
+        try MlsStateVault.saveProtectedData(try JSONEncoder().encode(records), context: context)
+    }
 }

@@ -473,9 +473,12 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     /// broadcast, and being advertised where rescuers can see it — hangs off THIS, never off
     /// `isSessionActive`. Conflating the two is what made merely opening a chat transmit a real SOS.
     @Published private(set) var isEmergencyDeclared: Bool = false
+    @Published private(set) var emergencySessionID: String?
     @Published private(set) var bluetoothState: CBManagerState = .unknown
     @Published private(set) var lastAuthenticatedFieldTeamSessionId: UUID?
 
+    @Published private(set) var recoveryError: String?
+    var recoveryRequired: Bool { !isEmergencyDeclared && SOSRecoveryStore.shared.snapshot.session != nil }
     private var startDate: Date?
     private var timer: Timer?
 
@@ -553,7 +556,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
 
     var hostProfileIdentifier: String { "sos" }
     var hostPrimaryServiceUUID: CBUUID { serviceUUID }
-    var isPeripheralHostActive: Bool { isSessionActive && PlatformRuntime.supportsBlePeripheralHosting }
+    var isPeripheralHostActive: Bool { isSessionActive && PlatformRuntime.supportsBlePeripheralHosting && !WatchE2ETestMode.enabled }
     var hostedAdvertisementDescriptor: BleHostedAdvertisementDescriptor? {
         // Hosting is advertised only when an emergency was declared. CoreBluetooth cannot put service
         // DATA in an advertisement — the trick Android uses to mark intent — so on iOS intent is
@@ -616,7 +619,8 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     /// the agency dashboard and auto-messaged the user's contacts with no user action at all. The
     /// emergency block below is unchanged and un-gated internally: a suppressed real SOS is far worse
     /// than an accidental one, so nothing here is made conditional except who may reach it.
-    func start(declaringEmergency: Bool) {
+    func start(declaringEmergency: Bool, resumingID: String? = nil) {
+        if declaringEmergency && !isEmergencyDeclared, !declareEmergency(resumingID: resumingID) { return }
         guard timer == nil else {
             // A chat already had the session up and the user has now pressed SOS: escalate in place
             // rather than returning, or the real emergency would be silently swallowed.
@@ -630,13 +634,13 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         if declaringEmergency {
             declareEmergency()
         }
-        startDate = Date()
+        startDate = SOSRecoveryStore.shared.snapshot.session?.startedAt ?? Date()
         updateElapsed()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.updateElapsed()
         }
         timer?.tolerance = 0.2
-        guard PlatformRuntime.supportsBlePeripheralHosting else {
+        guard PlatformRuntime.supportsBlePeripheralHosting, !WatchE2ETestMode.enabled else {
             bluetoothState = .unsupported
             isBroadcasting = false
             return
@@ -645,29 +649,53 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     }
 
     /// Idempotent: the SOS button can be pressed while a chat session is already hosting.
-    private func declareEmergency() {
-        guard !isEmergencyDeclared else { return }
+    @discardableResult
+    private func declareEmergency(resumingID: String? = nil) -> Bool {
+        guard !isEmergencyDeclared else { return true }
+        let saved: SOSRecoveryStore.Session
+        do { saved = try SOSRecoveryStore.shared.begin(resuming: resumingID); recoveryError = nil }
+        catch { recoveryError = "Kayıtlı SOS devam edemedi. Oturum korundu."; return false }
+        emergencySessionID = saved.id
+        startDate = saved.startedAt
         isEmergencyDeclared = true
-        AppAnalytics.sosActivated()
+        #if DEBUG && targetEnvironment(simulator)
+        if WatchE2ETestMode.enabled { return true }
+        #endif
+        if resumingID == nil { AppAnalytics.sosActivated() }
         // Lock-screen + Dynamic Island live status (best-effort, never blocks the broadcast).
-        SosLiveActivityController.sosDeclared(startedAt: Date())
+        SosLiveActivityController.sosDeclared(startedAt: saved.startedAt)
         Task { @MainActor in
             self.signalLocationCoordinator.beginBroadcasting()
         }
         // Internet uplinks (best-effort; never block the BLE broadcast): the agency dashboard
         // report and the automatic emergency-contact alerts.
-        SosCloudReporter.shared.onSosStarted()
-        SosContactNotifier.shared.onSosStarted()
+        SosCloudReporter.shared.onSosStarted(resuming: resumingID != nil)
+        SosContactNotifier.shared.onSosStarted(resuming: resumingID != nil)
         // The session was advertised as chat-only until now; re-announce it so rescuers can see it.
         BlePeripheralHostCoordinator.shared.setNeedsRefresh()
+        return true
     }
 
     func stop() {
+        do { try SOSRecoveryStore.shared.finish(); recoveryError = nil }
+        catch { recoveryError = "SOS kaydı kapatılamadı. Tekrar dene."; return }
+        #if DEBUG && targetEnvironment(simulator)
+        if WatchE2ETestMode.enabled {
+            isSessionActive = false
+            isEmergencyDeclared = false
+            emergencySessionID = nil
+            timer?.invalidate(); timer = nil; startDate = nil; elapsedSeconds = 0
+            lastAuthenticatedFieldTeamSessionId = nil
+            isBroadcasting = false
+            return
+        }
+        #endif
         isSessionActive = false
         if isEmergencyDeclared {
             SosLiveActivityController.sosEnded()
         }
         isEmergencyDeclared = false
+        emergencySessionID = nil
         Task { @MainActor in
             self.signalLocationCoordinator.endBroadcasting()
         }

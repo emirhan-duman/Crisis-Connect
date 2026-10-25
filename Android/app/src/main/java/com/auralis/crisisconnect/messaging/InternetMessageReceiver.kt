@@ -32,6 +32,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /** Result of handling an incoming internet message (for the caller to notify with). */
@@ -101,8 +103,12 @@ internal suspend fun receiveInternetMessage(
     senderUid: String,
     myUid: String,
     messageId: String,
-    payload: IncomingCiphertext
+    payload: IncomingCiphertext,
+    messagingClient: InternetMessagingClient = InternetMessagingClient()
 ): ReceivedInternetMessage? {
+    if (messagingClient.currentUid() != myUid) return null
+    if (com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value &&
+        com.auralis.crisisconnect.connectivity.DisasterTrafficPolicy.isAttachmentChunk(messageId)) return null
     val sender = senderUid.trim()
     if (sender.isEmpty()) {
         Log.w(RECEIVE_TAG, "Dropping internet message with no sender")
@@ -185,7 +191,7 @@ internal suspend fun receiveInternetMessage(
         // Benign (it was already delivered), so also ack it: the original delivery's ack may have
         // been lost, and without one the server copy replays on every listener attach forever.
         Log.d(RECEIVE_TAG, "Ignoring already-decrypted v3 message $messageId")
-        InternetMessagingClient().acknowledgeMessage(messageId)
+        messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
         return null
     } catch (t: Throwable) {
         // A genuine authentication/decryption failure — surface it, and release the claim so a real
@@ -202,12 +208,17 @@ internal suspend fun receiveInternetMessage(
             if (payload is IncomingCiphertext.V2) "v3(${payload.ctypeLabel})" else "v2"
     )
 
+    if (com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value &&
+        content.templateCode in setOf(200, 201)) {
+        messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
+        return null
+    }
     // Delivery/read receipts reference OUR local bubbles; apply them to the existing thread and
     // stop. Handled BEFORE the thread auto-creation below so a receipt never creates a contact.
     if (content.templateCode == InternetChatTransport.DELIVERY_RECEIPT_TEMPLATE ||
         content.templateCode == InternetChatTransport.READ_RECEIPT_TEMPLATE
     ) {
-        InternetMessagingClient().acknowledgeMessage(messageId)
+        messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
         if (contact != null) {
             applyInternetReceipt(context, contact, content)
         }
@@ -217,7 +228,7 @@ internal suspend fun receiveInternetMessage(
     // Ephemeral "peer is typing" pulse → in-memory bus only; never stored, never notified. Also
     // before thread auto-creation: a pulse from a peer we don't hold must not create a ghost thread.
     if (content.templateCode == InternetChatTransport.TYPING_SIGNAL_TEMPLATE) {
-        InternetMessagingClient().acknowledgeMessage(messageId)
+        messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
         contact?.sessionCode?.trim()?.takeIf { it.isNotBlank() }?.let(TypingIndicatorBus::signalTyping)
         return null
     }
@@ -258,7 +269,7 @@ internal suspend fun receiveInternetMessage(
         // Ack even on a no-match: replaying it would not match any better, and a v3 copy is
         // undecryptable on replay. A transient heal failure is the only case we'd want to retry, but
         // Room failures here are effectively permanent, so acking avoids an infinite relay replay.
-        InternetMessagingClient().acknowledgeMessage(messageId)
+        messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
         return null
     }
 
@@ -294,7 +305,7 @@ internal suspend fun receiveInternetMessage(
     // A child device asks this user to become its parent → approval notification with
     // accept/decline actions; never filed as a chat message.
     if (content.templateCode == InternetChatTransport.PARENT_REQUEST_TEMPLATE) {
-        InternetMessagingClient().acknowledgeMessage(messageId)
+        messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
         runCatching { ParentRequestNotifier.notifyParentRequest(context, contact) }
             .onFailure { Log.w(RECEIVE_TAG, "Failed to surface parent request", it) }
         return null
@@ -303,7 +314,7 @@ internal suspend fun receiveInternetMessage(
     // The asked contact answered our parent request: promote or drop the pending entry.
     // confirmParent/the pending check make a duplicate FCM+listener delivery a no-op.
     if (content.templateCode == InternetChatTransport.PARENT_RESPONSE_TEMPLATE) {
-        InternetMessagingClient().acknowledgeMessage(messageId)
+        messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
         val accepted = runCatching {
             org.json.JSONObject(content.text).optString("action")
         }.getOrDefault("") == "accept"
@@ -325,7 +336,7 @@ internal suspend fun receiveInternetMessage(
     // WebRTC call signaling (SDP/ICE + ring/accept/reject/end) rides the relay tagged with a reserved
     // templateCode. Route it to the call manager and ack it; never file it as a chat message.
     if (content.templateCode == InternetChatTransport.CALL_SIGNAL_TEMPLATE) {
-        InternetMessagingClient().acknowledgeMessage(messageId)
+        messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
         runCatching {
             InternetCallManager.onSignal(contact, sender, org.json.JSONObject(content.text))
         }.onFailure { Log.w(RECEIVE_TAG, "Failed to route call signal", it) }
@@ -336,8 +347,7 @@ internal suspend fun receiveInternetMessage(
     // silent (no notification, no new message). If the original alert never arrived, file the
     // update AS the alert so the contact still ends up with the emergency + latest location.
     if (content.templateCode == InternetChatTransport.SOS_LOCATION_UPDATE_TEMPLATE) {
-        InternetMessagingClient().acknowledgeMessage(messageId)
-        runCatching {
+        val applied = runCatching {
             val payload = org.json.JSONObject(content.text)
             val ref = payload.optString("ref").trim()
             val newText = payload.optString("text").trim()
@@ -354,7 +364,8 @@ internal suspend fun receiveInternetMessage(
                     )
                 }
             }
-        }.onFailure { Log.w(RECEIVE_TAG, "Failed to apply SOS location update", it) }
+        }.onFailure { InternetMessageDedup.release(messageId); Log.w(RECEIVE_TAG, "Failed to apply SOS location update", it) }
+        if (applied.isSuccess) messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
         return null
     }
 
@@ -365,14 +376,14 @@ internal suspend fun receiveInternetMessage(
     if (attachment != null) {
         // Ack THIS chunk so the relay drops its copy, then buffer it. We only persist a message and
         // notify once every chunk of the transfer has arrived and reassembled.
-        InternetMessagingClient().acknowledgeMessage(messageId)
+        InternetMessagingClient().acknowledgeMessage(messageId, expectedUid = myUid)
         val complete = AttachmentReassembler.offer(attachment) ?: return null
         val display = persistReceivedAttachment(context, threadSessionCode, attachment, complete)
             ?: return null
         // The sender's voice/image bubble uuid IS the transferId, so this flips it to "delivered".
         // A document's bubble is the paired CC_FILE text message, whose receipt goes out via the
         // text path below; the transferId receipt is then a harmless no-op on the sender.
-        sendInternetDeliveryReceipt(context, contact, attachment.transferId)
+        sendInternetDeliveryReceipt(context, contact, attachment.transferId, messagingClient)
         // Documents carry no display text (the CC_FILE message is the visible bubble) — don't notify.
         if (display.isEmpty()) return null
         return ReceivedInternetMessage(
@@ -389,18 +400,18 @@ internal suspend fun receiveInternetMessage(
     } else {
         MessageType.TEXT
     }
-    val inserted = saveRemoteMessage(
+    val inserted = try { saveRemoteMessage(
         context = context,
         sessionCode = threadSessionCode,
         uuid = messageId,
         text = display,
         senderDisplayName = contact.name,
         messageType = messageType
-    )
-    InternetMessagingClient().acknowledgeMessage(messageId)
+    ) } catch (error: Exception) { InternetMessageDedup.release(messageId); throw error }
+    messagingClient.acknowledgeMessage(messageId, expectedUid = myUid)
     // Tell the sender their bubble reached this device (idempotent on their side, so re-sending it
     // for a duplicate doc is harmless — and it covers a first receipt that got lost).
-    sendInternetDeliveryReceipt(context, contact, messageId)
+    sendInternetDeliveryReceipt(context, contact, messageId, messagingClient)
     if (!inserted) {
         // Duplicate: the FCM push and the realtime listener both delivered this doc — notify once.
         return null
@@ -458,10 +469,11 @@ private suspend fun applyInternetReceipt(
 private suspend fun sendInternetDeliveryReceipt(
     context: Context,
     contact: Contact,
-    messageId: String
+    messageId: String,
+    messagingClient: InternetMessagingClient = InternetMessagingClient()
 ) {
     runCatching {
-        InternetChatTransport(context).sendReceipt(
+        InternetChatTransport(context, messagingClient).sendReceipt(
             contact = contact,
             templateCode = InternetChatTransport.DELIVERY_RECEIPT_TEMPLATE,
             messageIds = listOf(messageId)
@@ -586,24 +598,126 @@ private suspend fun persistReceivedAttachment(
  * / closed-app delivery) — the listener guarantees delivery whenever both peers are online, without
  * depending on FCM reaching every device. Same E2E decrypt + anti-impersonation as the push path.
  */
-object InternetMessageReceiver {
-    private const val TAG = "InternetMsgListener"
+internal class InternetInboxReceiver(
+    private val client: InternetMessagingClient = InternetMessagingClient(),
+    private val online: (Context) -> Boolean = { com.auralis.crisisconnect.connectivity.SatelliteNetworkStatus.hasEmergencyInternet(it) }
+) {
+    private val TAG = "InternetMsgListener"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var registration: ListenerRegistration? = null
     private var listeningUid: String? = null
+    private var compactJob: kotlinx.coroutines.Job? = null
+    private var policyJob: kotlinx.coroutines.Job? = null
+    private var appContext: Context? = null
+    private var generation = 0
+    private val receiveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var enabled = false
+    private val schedule = CompactSyncSchedule()
+    @Synchronized private fun reserveCompactPoll(): Boolean = schedule.reserve(android.os.SystemClock.elapsedRealtime())
+    @Synchronized private fun syncSucceeded(moreWork: Boolean) = schedule.succeeded(
+        android.os.SystemClock.elapsedRealtime(), moreWork, kotlin.random.Random.nextLong(0, 60_001))
+    @Synchronized private fun applyServerDelay() = schedule.deferUntil(android.os.SystemClock.elapsedRealtime(),
+        com.auralis.crisisconnect.connectivity.DisasterTrafficController.retryAfterMs)
+    @Synchronized private fun syncFailed() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        schedule.failed(now, kotlin.random.Random.nextLong(0, 60_001))
+        schedule.deferUntil(now, com.auralis.crisisconnect.connectivity.DisasterTrafficController.retryAfterMs)
+    }
+
+    @Synchronized fun onForeground() {
+        if (compactJob != null && com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value) {
+            stopSession()
+            appContext?.let { start(it) }
+        }
+    }
 
     @Synchronized
     fun start(context: Context) {
-        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
-        if (listeningUid == uid && registration != null) return
-        stop()
+        enabled = true
+        refresh(context)
+    }
+
+    @Synchronized private fun refresh(context: Context) {
+        if (!enabled) return
+        appContext = context.applicationContext
+        CompactInboxState.start(context)
+        if (policyJob == null) {
+            policyJob = scope.launch {
+                com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.collect {
+                    appContext?.let { refresh(it) }
+                }
+            }
+        }
+        val uid = client.currentUid() ?: run { stopSession(); return }
+        val saving = com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value
+        if (listeningUid == uid && ((!saving && registration != null) || (saving && registration == null)) && compactJob?.isActive == true) return
+        stopSession()
         listeningUid = uid
+        val session = generation
         val appContext = context.applicationContext
-        registration = FirebaseFirestore.getInstance()
+        compactJob = scope.launch {
+                val receipts = ReceiptJournal(appContext)
+                var cursor: String? = null
+                kotlinx.coroutines.delay(kotlin.random.Random.nextLong(0, 2_001))
+                while (kotlinx.coroutines.currentCoroutineContext().isActive && client.currentUid() == uid) {
+                    if (com.auralis.crisisconnect.connectivity.DisasterTrafficController.foreground &&
+                        (saving || CompactInboxState.pending(uid).isNotEmpty() || CompactInboxState.hasProfile(uid) ||
+                            runCatching { receipts.next(uid) != null }.getOrDefault(false)) &&
+                        online(appContext) && reserveCompactPoll()) {
+                        val started = android.os.SystemClock.elapsedRealtime()
+                        try {
+                            val page = client.compactInbox(cursor, receive = saving)
+                            com.auralis.crisisconnect.connectivity.DisasterTrafficController.record(true, android.os.SystemClock.elapsedRealtime() - started)
+                            for (data in page.messages) {
+                                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                val payload = if ((data["v"] as? Number)?.toInt() == 2) IncomingCiphertext.V2(
+                                    data["ctype"] as? String ?: "", data["ciphertext"] as? String ?: ""
+                                ) else IncomingCiphertext.V1(SealedMessage(
+                                    ephemeralPublicKey = data["ephemeralPubKey"] as? String ?: "",
+                                    nonce = data["nonce"] as? String ?: "",
+                                    ciphertext = data["ciphertext"] as? String ?: "",
+                                    alg = data["alg"] as? String ?: E2eEnvelope.ALG
+                                ))
+                                val received = receiveInternetMessage(appContext, data["conversationId"] as? String ?: "",
+                                    data["senderUid"] as? String ?: "", uid, data["messageId"] as? String ?: "", payload, client)
+                                if (received != null && !ActiveChatTracker.isSessionActive(received.sessionCode)) {
+                                    postInternetMessageNotification(appContext, data["conversationId"] as? String ?: "",
+                                        received.senderName, received.display, sessionCode = received.sessionCode,
+                                        senderUid = if (saving) null else data["senderUid"] as? String)
+                                }
+                            }
+                            cursor = page.cursor
+                            val receipt = receipts.next(uid)
+                            if (receipt != null) {
+                                val contact = getContactByPeerUid(appContext, receipt.peer)
+                                if (contact != null) {
+                                    if (!InternetChatTransport(appContext,client).sendReceipt(contact,
+                                            receipt.template,receipt.ids,journal = false)) throw IllegalStateException("Receipt retry required")
+                                    if (client.currentUid() == uid) receipts.confirm(uid,receipt)
+                                }
+                            }
+                            syncSucceeded(page.cursor != null || CompactInboxState.pending(uid).isNotEmpty() || receipts.next(uid) != null)
+                            applyServerDelay()
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            // An inner SDK timeout must retry; cancellation of this session must stop.
+                            syncFailed()
+                        } catch (error: Exception) {
+                            syncFailed()
+                            com.auralis.crisisconnect.connectivity.DisasterTrafficController.record(false,
+                                android.os.SystemClock.elapsedRealtime() - started, error)
+                            Log.w(TAG, "Compact inbox deferred", error)
+                        }
+                    }
+                    kotlinx.coroutines.delay(1_000)
+                }
+            }
+        if (saving) return
+        registration = client.messageStore
             .collection("messages")
             .whereEqualTo("recipientUid", uid)
             .addSnapshotListener { snapshot, error ->
-                if (error != null || snapshot == null) return@addSnapshotListener
+                if (!isCurrent(session) || error != null || snapshot == null) return@addSnapshotListener
                 for (change in snapshot.documentChanges) {
                     if (change.type != DocumentChange.Type.ADDED) continue
                     val d = change.document
@@ -627,9 +741,10 @@ object InternetMessageReceiver {
                             )
                         )
                     }
-                    scope.launch {
+                    receiveScope.launch {
+                        if (!isCurrent(session)) return@launch
                         runCatching {
-                            receiveInternetMessage(appContext, conversationId, senderUid, uid, messageId, payload)
+                            receiveInternetMessage(appContext, conversationId, senderUid, uid, messageId, payload, client)
                         }.onSuccess { received ->
                             // Whoever wins InternetMessageDedup owns the message — and when this
                             // listener won, the message was filed SILENTLY: the returned value
@@ -654,10 +769,33 @@ object InternetMessageReceiver {
             }
     }
 
+    @Synchronized private fun isCurrent(session: Int): Boolean = enabled && generation == session
+
+    @Synchronized fun stop() {
+        enabled = false
+        stopSession()
+        policyJob?.cancel()
+        policyJob = null
+    }
+
     @Synchronized
-    fun stop() {
+    private fun stopSession() {
+        generation += 1
+        // Stop new deliveries, but let an accepted message finish its local commit. Cancelling
+        // after Signal decryption would consume the one-time key without storing the plaintext.
+        compactJob?.cancel()
+        compactJob = null
         registration?.remove()
         registration = null
         listeningUid = null
     }
+}
+
+
+/** Application lifecycle facade; independent sessions permit real scheduler integration tests. */
+object InternetMessageReceiver {
+    private val receiver by lazy { InternetInboxReceiver() }
+    fun start(context: Context) = receiver.start(context)
+    fun stop() = receiver.stop()
+    fun onForeground() = receiver.onForeground()
 }

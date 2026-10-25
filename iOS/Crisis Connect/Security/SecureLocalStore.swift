@@ -289,6 +289,25 @@ struct LocalEncryptedFilePayload {
     let wasEncrypted: Bool
 }
 
+/// A transient Keychain error must never rotate the key protecting existing chat files.
+enum PersistentFileKeyResolver {
+    static func resolve(read: () -> (OSStatus, Data?), insert: (Data) -> OSStatus, generate: () -> Data?) -> String? {
+        func valid(_ result: (OSStatus, Data?)) -> String? {
+            guard result.0 == errSecSuccess, let encoded = result.1,
+                  let value = String(data: encoded, encoding: .utf8),
+                  let key = Data(base64Encoded: value, options: [.ignoreUnknownCharacters]), key.count == 32 else { return nil }
+            return key.base64EncodedString()
+        }
+        let first = read()
+        if first.0 == errSecSuccess { return valid(first) }
+        guard first.0 == errSecItemNotFound, let bytes = generate(), bytes.count == 32 else { return nil }
+        let status = insert(Data(bytes.base64EncodedString().utf8))
+        guard status == errSecSuccess || status == errSecDuplicateItem else { return nil }
+        // Concurrent creators must all use the canonical persisted key, never their own candidate.
+        return valid(read())
+    }
+}
+
 enum LocalEncryptedFileStore {
     private nonisolated static let envelopeMagic = Data("CCFILE1".utf8)
     private nonisolated static let fileEncryptionKeyStorageKey = "local.fileEncryptionKey"
@@ -298,28 +317,22 @@ enum LocalEncryptedFileStore {
     ]
 
     nonisolated static func loadOrCreateFileEncryptionKeyBase64() -> String {
-        if let existing = KeychainStore.loadString(fileEncryptionKeyStorageKey),
-           let data = Data(base64Encoded: existing, options: [.ignoreUnknownCharacters]),
-           data.count == 32 {
-            return data.base64EncodedString()
-        }
-
-        var keyData = Data(count: 32)
-        let status = keyData.withUnsafeMutableBytes { bytes in
-            SecRandomCopyBytes(kSecRandomDefault, 32, bytes.baseAddress!)
-        }
-        guard status == errSecSuccess else {
-            return ""
-        }
-
-        let base64 = keyData.base64EncodedString()
-        KeychainStore.saveString(base64, key: fileEncryptionKeyStorageKey)
-        if let persisted = KeychainStore.loadString(fileEncryptionKeyStorageKey),
-           let data = Data(base64Encoded: persisted, options: [.ignoreUnknownCharacters]),
-           data.count == 32 {
-            return data.base64EncodedString()
-        }
-        return base64
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "com.crisisconnect.securestore", kSecAttrAccount as String: fileEncryptionKeyStorageKey]
+        return PersistentFileKeyResolver.resolve(read: {
+            var lookup = query; lookup[kSecMatchLimit as String] = kSecMatchLimitOne; lookup[kSecReturnData as String] = true
+            var item: CFTypeRef?
+            let status = SecItemCopyMatching(lookup as CFDictionary, &item)
+            return (status, item as? Data)
+        }, insert: { data in
+            var create = query; create[kSecValueData as String] = data
+            create[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            return SecItemAdd(create as CFDictionary, nil) // Never delete/replace an existing encryption key.
+        }, generate: {
+            var bytes = Data(count: 32)
+            let status = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault,32,$0.baseAddress!) }
+            return status == errSecSuccess ? bytes : nil
+        }) ?? ""
     }
 
     nonisolated static func read(from url: URL) throws -> LocalEncryptedFilePayload {

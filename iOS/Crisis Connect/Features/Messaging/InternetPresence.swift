@@ -86,8 +86,10 @@ final class PresenceReporter: @unchecked Sendable {
         guard heartbeatTask == nil else { return }
         heartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.syncAccountPreferenceOnce()
-                await self?.publish()
+                if !DisasterTrafficController.shared.isSaving {
+                    await self?.syncAccountPreferenceOnce()
+                    await self?.publish()
+                }
                 try? await Task.sleep(nanoseconds: Self.heartbeatSeconds * 1_000_000_000)
             }
         }
@@ -174,6 +176,7 @@ final class PresenceReporter: @unchecked Sendable {
     }
 
     private func publish() async {
+        guard !DisasterTrafficController.shared.isSaving else { return }
         guard isSharingEnabled, let uid = Auth.auth().currentUser?.uid else { return }
         let stamp = Int(Date().timeIntervalSince1970 * 1000)
         try? await Firestore.firestore()
@@ -245,6 +248,19 @@ final class ChatPeerPresenceState: ObservableObject {
 
     init(sessionId: UUID) {
         self.sessionId = sessionId
+        DisasterTrafficController.shared.$saving
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let uid = self.peerUid
+                self.peerUid = nil
+                self.presenceListener?.remove()
+                self.presenceListener = nil
+                self.remotePresence = nil
+                self.setPeerUid(uid)
+                self.refreshTyping(TypingIndicatorBus.shared.typing)
+            }
+            .store(in: &cancellables)
 
         TypingIndicatorBus.shared.$typing
             .receive(on: DispatchQueue.main)
@@ -302,7 +318,7 @@ final class ChatPeerPresenceState: ObservableObject {
         presenceListener?.remove()
         presenceListener = nil
         remotePresence = nil
-        if let next {
+        if let next, !DisasterTrafficController.shared.isSaving {
             presenceListener = Firestore.firestore()
                 .collection("presence")
                 .document(next)
@@ -320,7 +336,7 @@ final class ChatPeerPresenceState: ObservableObject {
     private func refreshTyping(_ map: [UUID: Date]) {
         let expiresAt = map[sessionId]
         let now = Date()
-        let active = expiresAt.map { $0 > now } ?? false
+        let active = !DisasterTrafficController.shared.isSaving && (expiresAt.map { $0 > now } ?? false)
         if isTyping != active {
             isTyping = active
         }
@@ -337,6 +353,11 @@ final class ChatPeerPresenceState: ObservableObject {
     }
 
     private func refreshPresence() {
+        if DisasterTrafficController.shared.isSaving {
+            presenceRecheckTask?.cancel()
+            presence = .unknown
+            return
+        }
         let local = ContactLastSeenStore.lastSeen(sessionId: sessionId)
         let last = [local, remotePresence].compactMap { $0 }.max()
         let now = Date()

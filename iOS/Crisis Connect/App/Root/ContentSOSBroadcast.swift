@@ -13,6 +13,7 @@ import UIKit
 struct SOSBroadcastView: View {
     var onCancel: () -> Void
     @ObservedObject private var manager = SOSBroadcastManager.shared
+    @ObservedObject private var recovery = SOSRecoveryStore.shared
     @State private var activeChatSessionId: UUID?
     // Apple-style arming phase (Android parity): a 5-second haptic countdown the user can abort
     // with a deliberate slide before the emergency broadcast actually starts. Skipped when SOS is
@@ -35,10 +36,12 @@ struct SOSBroadcastView: View {
         // report plus contact alerts with NO abort window. `isEmergencyDeclared` is set only by
         // declareEmergency() (:650) and cleared only by stop() (:670) — it is the real "an SOS is
         // live" flag.
-        if isArming && !manager.isEmergencyDeclared {
+        if !manager.isEmergencyDeclared && (recovery.snapshot.session != nil || recovery.unavailable) {
+            SavedSOSRecoveryView(onClose: onCancel)
+        } else if isArming && !manager.isEmergencyDeclared {
             SOSCountdownView(
                 onCancelled: onCancel,
-                onFired: { isArming = false }
+                onFired: { manager.start(declaringEmergency: true); isArming = false }
             )
         } else {
             broadcastScreen
@@ -130,7 +133,7 @@ struct SOSBroadcastView: View {
         .onAppear {
             // The one place a real emergency is declared: this screen is only reached by the user
             // triggering SOS. Everything else brings the session up with declaringEmergency: false.
-            manager.start(declaringEmergency: true)
+            // Opening/restoring this screen does not declare a new emergency.
         }
         .onReceive(manager.$lastAuthenticatedFieldTeamSessionId.receive(on: RunLoop.main)) { sessionId in
             guard let sessionId else { return }
@@ -218,7 +221,7 @@ private struct SOSCountdownView: View {
             while secondsLeft > 0 {
                 haptic.impactOccurred()
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                guard !fired else { return }
+                guard !fired, !Task.isCancelled else { return }
                 secondsLeft -= 1
             }
             guard !fired else { return }

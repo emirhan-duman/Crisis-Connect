@@ -57,7 +57,7 @@ final class AuthorityChannelStore: ObservableObject {
             return
         }
         do {
-            let userDoc = try await Firestore.firestore().collection("users").document(uid).getDocument()
+            let userDoc = try await ResilientApplicationStore.profiles().collection("users").document(uid).getDocument()
             let slug = (userDoc.get("agencySlug") as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !slug.isEmpty else {

@@ -51,6 +51,17 @@
 
 ---
 
+## 1.2.0 Early Access
+
+The next mobile release is **1.2.0 Early Access · Beta 1**, tracked as
+[`v1.2.0-beta.1`](https://github.com/emirhan-duman/Crisis-Connect/releases/tag/v1.2.0-beta.1).
+It is a GitHub **pre-release**; `v1.1.9` remains the latest stable GitHub release.
+
+This preview includes the latest mobile messaging, contact-pairing and SOS recovery work,
+constrained-network traffic policies, and experimental Apple Watch / Wear OS support.
+Phone app versions are Android **1.2.0 (69)** and iOS **1.2.0 (38)**; Wear OS uses build **70**.
+See the [early-access notes](docs/releases/1.2.0-beta.1.md) for distribution, validation and limitations.
+
 ## Table of Contents
 
 - [The Problem](#the-problem)
@@ -524,7 +535,7 @@ Cloud Functions live under `Android/functions` and cover role certificate issuan
 | `internal` | QA / testing | Release keystore | Debug provider |
 | `release` | Production (Play Store) | Release keystore | Play Integrity |
 
-**iOS** public-source builds use Xcode 16+ with code signing disabled. Production signing,
+**iOS** public-source builds use Xcode 26+ with code signing disabled. Production signing,
 App Attest credentials and App Store distribution configuration are intentionally maintained
 outside this public mirror.
 
@@ -551,8 +562,8 @@ installing: `f690576ab7a1dd5d6266247a469bd5893bfbd082307d994982d918d69c3124e8`.
 
 | Platform | Requirements |
 |:--|:--|
-| **Android** | Android Studio Ladybug+ · JDK 21 · Android SDK 36 |
-| **iOS** | Xcode 16+ · iOS 17+ deployment target · macOS Sequoia+ · Rust toolchain (to build the vendored native libraries) |
+| **Android** | Android Studio Ladybug+ · JDK 21 · Android SDK 37 |
+| **iOS** | Xcode 26+ · iOS 17+ deployment target · macOS Sequoia+ · Rust toolchain (to build the vendored native libraries) |
 | **Backend** | Node.js 20+ · Firebase CLI · Firebase project (Firestore, Auth, Functions) |
 
 > **Important:** BLE features require a **physical device**. Simulators and emulators do not support Bluetooth.
@@ -722,7 +733,7 @@ checkout cannot currently link or run the Xcode test plan because the vendored
 These commands are available to contributors but, unless noted in the table above, are **not**
 executed by public CI.
 
-**Android** -- requires JDK 21 and Android SDK 36, plus the configuration files from
+**Android** -- requires JDK 21 and Android SDK 37, plus the configuration files from
 [Build From Source](#build-from-source) (`app/google-services.json` can be the example file for
 local unit tests):
 
@@ -736,7 +747,7 @@ cd Android
 
 Instrumented tests that touch Bluetooth need a **physical device**; emulators have no BLE radio.
 
-**iOS** -- the validation that CI runs needs macOS with Xcode 16+, but does not build the app or
+**iOS** -- the validation that CI runs needs macOS with Xcode 26+, but does not build the app or
 need the vendored native libraries:
 
 ```bash
@@ -745,7 +756,7 @@ cd iOS
 ```
 
 Running the XCTest suites is manual and requires the vendored native libraries to be built
-first (Xcode 16+ and a Rust toolchain; see [iOS/README.md](iOS/README.md)):
+first (Xcode 26+ and a Rust toolchain; see [iOS/README.md](iOS/README.md)):
 
 ```bash
 cd iOS

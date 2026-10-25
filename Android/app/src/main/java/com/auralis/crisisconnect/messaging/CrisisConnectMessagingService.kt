@@ -117,9 +117,10 @@ class CrisisConnectMessagingService : FirebaseMessagingService() {
         val ciphertext = data["ciphertext"].let { inline ->
             if (!inline.isNullOrBlank()) return@let inline
             if (data["fetch"] != "1") return
+            if (com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value && data["priority"] != "high") return
             fetchedDoc = runCatching {
                 Tasks.await(
-                    FirebaseFirestore.getInstance().collection("messages")
+                    InternetMessagingClient().messageStore.collection("messages")
                         .whereEqualTo("messageId", messageId)
                         .whereEqualTo("recipientUid", myUid)
                         .limit(1)
@@ -302,7 +303,7 @@ class CrisisConnectMessagingService : FirebaseMessagingService() {
         val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         val parent = runCatching {
             Tasks.await(
-                FirebaseFirestore.getInstance().document("authorityMlsV2/$conversationId").get(),
+                (if (data["store"] == "ha") ResilientApplicationStore.profiles() else FirebaseFirestore.getInstance()).document("authorityMlsV2/$conversationId").get(),
                 5,
                 TimeUnit.SECONDS,
             )
@@ -319,7 +320,7 @@ class CrisisConnectMessagingService : FirebaseMessagingService() {
         val channelId = parent.getString("channelId")?.takeIf { it.isNotBlank() } ?: return
         val canonical = runCatching {
             AuthorityMlsIdentifiers.canonicalBinding(
-                AuthorityMlsBinding(scopeType, channelId, participants),
+                AuthorityMlsBinding(scopeType, channelId, participants, resilient = data["store"] == "ha"),
             )
         }.getOrNull() ?: return
         if (canonical.participants != participants ||
@@ -331,7 +332,7 @@ class CrisisConnectMessagingService : FirebaseMessagingService() {
                 AuthorityMlsPrewarmer.prewarm(
                     applicationContext,
                     myUid,
-                    listOf(AuthorityMlsPrewarmTarget(peerUid, scopeType, channelId)),
+                    listOf(AuthorityMlsPrewarmTarget(peerUid, scopeType, channelId, resilient = canonical.resilient)),
                 )
             }
         }
@@ -347,7 +348,7 @@ class CrisisConnectMessagingService : FirebaseMessagingService() {
         val messageId = data["messageId"].orEmpty()
         if (!AUTHORITY_MLS_CONVERSATION.matches(conversationId) || !SAFE_MLS_ID.matches(messageId)) return
         val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
-        val firestore = FirebaseFirestore.getInstance()
+        val firestore = if (data["store"] == "ha") ResilientApplicationStore.profiles() else FirebaseFirestore.getInstance()
         val parent = runCatching {
             Tasks.await(firestore.document("authorityMlsV2/$conversationId").get(), 5, TimeUnit.SECONDS)
         }.getOrNull() ?: return
@@ -363,7 +364,7 @@ class CrisisConnectMessagingService : FirebaseMessagingService() {
         val channelId = parent.getString("channelId")?.takeIf { it.isNotBlank() } ?: return
         val canonical = runCatching {
             AuthorityMlsIdentifiers.canonicalBinding(
-                AuthorityMlsBinding(scopeType, channelId, participants),
+                AuthorityMlsBinding(scopeType, channelId, participants, resilient = data["store"] == "ha"),
             )
         }.getOrNull() ?: return
         if (canonical.participants != participants ||
@@ -393,6 +394,7 @@ class CrisisConnectMessagingService : FirebaseMessagingService() {
             ciphertext.getTimestamp("createdAt") == null
         ) return
 
+        ResilientApplicationStore.rememberSessionChoice(applicationContext, canonical, !canonical.resilient)
         val route = if (scopeType == AuthorityMlsScopeType.HIERARCHY) {
             "authority_channel/${Uri.encode(channelId)}/${Uri.encode(peerUid)}"
         } else {
@@ -658,7 +660,7 @@ private fun resolveSenderAvatar(context: Context, senderUid: String?, senderName
     val photo = senderUid?.let { uid ->
         avatarCache[uid] ?: runCatching {
             val doc = Tasks.await(
-                FirebaseFirestore.getInstance().collection("users").document(uid).get(),
+                ResilientApplicationStore.profiles().collection("users").document(uid).get(),
                 2, TimeUnit.SECONDS
             )
             val url = doc.getString("photoURL")?.trim()?.takeIf { it.startsWith("https://") }

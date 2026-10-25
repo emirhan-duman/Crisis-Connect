@@ -340,6 +340,49 @@ final class ContactStore: ObservableObject {
         loadPersisted()
     }
 
+    /// Allows an isolated store for persistence/recovery contract tests.
+    init(persistenceURL: URL) {
+        self.persistenceURL = persistenceURL
+        loadPersisted()
+    }
+
+    /// Wait for both disk restore and its published roster before answering a cold-start request.
+    func waitUntilLoaded() async {
+        await withCheckedContinuation { continuation in
+            persistenceQueue.async {
+                // loadPersisted enqueues the roster publication on this same serial main queue.
+                DispatchQueue.main.async { continuation.resume() }
+            }
+        }
+    }
+
+    /// Pairing's completion receipt must never get ahead of the contacts file on disk.
+    func flushDurably() async throws {
+        let snapshot = stateQueue.sync { storedContacts }
+        let url = persistenceURL
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            persistenceQueue.async {
+                do {
+                    try LocalEncryptedFileStore.write(JSONEncoder().encode(snapshot), to: url)
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    /// The peripheral must commit the authenticated peer before acknowledging server_finish.
+    /// Called on the Bluetooth host queue, never on the main/UI thread.
+    func prepareForHostPairing() {
+        persistenceQueue.sync {} // Initial disk restore must precede the identity upsert.
+    }
+
+    func flushPairingFromHost() throws {
+        try persistenceQueue.sync {
+            let snapshot = stateQueue.sync { storedContacts }
+            try LocalEncryptedFileStore.write(JSONEncoder().encode(snapshot), to: persistenceURL)
+        }
+    }
+
     func contact(for broadcastId: String) -> ContactRecord? {
         let normalized = broadcastId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return stateQueue.sync {

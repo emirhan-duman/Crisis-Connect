@@ -46,8 +46,8 @@
 			<string>com.auralis.crisisconnect</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>app-1-YOUR_GCM_SENDER_ID-ios-YOUR_APP_HASH</string>
-				<string>com.googleusercontent.apps.YOUR_GCM_SENDER_ID-YOUR_CLIENT_ID_SUFFIX</string>
+				<string>app-1-865429938209-ios-c1a5d69af54bfc6a988360</string>
+				<string>com.googleusercontent.apps.865429938209-g5uotf7he8kobsekpp14t2f3v23mehsa</string>
 			</array>
 		</dict>
 		<dict>
@@ -63,6 +63,11 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- SwiftUI lifecycle apps must forward Firebase callbacks explicitly. Keeping this disabled
+	     also prevents Phone Auth from depending on AppDelegate swizzling, which is unreliable when
+	     Firebase is initialized before didFinishLaunching. -->
+	<key>FirebaseAppDelegateProxyEnabled</key>
+	<false/>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>CRISIS_CONNECT_WEB_URL</key>

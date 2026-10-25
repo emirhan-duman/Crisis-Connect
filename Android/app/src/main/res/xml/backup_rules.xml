@@ -6,6 +6,14 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
+    <exclude domain="sharedpref" path="qr_pairing_recovery.xml"/>
+    <exclude domain="sharedpref" path="contact_access_consent.xml"/>
+    <exclude domain="sharedpref" path="messaging_receipts.xml"/>
+    <exclude domain="sharedpref" path="traffic_measurements.xml"/>
+        <exclude domain="sharedpref" path="watch_commands_v1.xml"/>
+        <exclude domain="sharedpref" path="watch_approval.xml"/>
+        <exclude domain="sharedpref" path="sos_cloud_reporter.xml"/>
+        <exclude domain="sharedpref" path="sos_contact_notifier.xml"/>
     <!--
    <include domain="sharedpref" path="."/>
    <exclude domain="sharedpref" path="device.xml"/>

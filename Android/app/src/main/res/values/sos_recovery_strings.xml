@@ -1,0 +1,10 @@
+<resources>
+    <string name="sos_recovery_title">Saved SOS</string>
+    <string name="sos_recovery_body">Your previous SOS and replies were saved. Broadcasting is paused. Continue only if you still need help. Continuing keeps the same session and does not repeat initial contact alerts.</string>
+    <string name="sos_recovery_resume">Continue saved SOS</string>
+    <string name="sos_recovery_end">End saved SOS</string>
+    <string name="sos_recovery_failed">SOS could not continue. Check Bluetooth and permissions. Your saved session is unchanged.</string>
+    <string name="watch_reply_handed_off">Handed to the connection; delivery is not confirmed.</string>
+    <string name="watch_reply_uncertain">Delivery is not confirmed. This reply will not be sent again automatically.</string>
+    <string name="sos_recovery_unavailable">Saved SOS history could not be read. No SOS has been restarted. Reopen the app and try again.</string>
+</resources>

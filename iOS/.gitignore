@@ -41,3 +41,15 @@ fastlane/test_output
 
 # Local build output (xcodebuild -derivedDataPath, exported .app bundles)
 build-artifacts/
+# Local signed release artifacts
+/release/output/
+
+# Local independent-watch compiler sources and derived output
+/build/watch-signal/
+/build/watch-project-link/
+/build/IndependentWatchDerivedData/
+
+# Local Firebase configuration and reconstructed native libraries
+GoogleService-Info.plist
+*.a
+.ci-derived-data/

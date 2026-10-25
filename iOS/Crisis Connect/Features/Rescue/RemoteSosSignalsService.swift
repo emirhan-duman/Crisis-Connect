@@ -220,7 +220,7 @@ final class RemoteSosSignalsService: ObservableObject {
     private static func resolveAgencySlug() async -> String? {
         let uid = Auth.auth().currentUser?.uid ?? SecureLocalStore.shared.loadUid()
         guard let uid, !uid.isEmpty else { return nil }
-        guard let snapshot = try? await Firestore.firestore()
+        guard let snapshot = try? await ResilientApplicationStore.profiles()
             .collection("users")
             .document(uid)
             .getDocumentAsync(),

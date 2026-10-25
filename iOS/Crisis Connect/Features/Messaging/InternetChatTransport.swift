@@ -16,6 +16,7 @@
 
 import Foundation
 import Network
+import Combine
 
 final class InternetChatTransport: @unchecked Sendable {
     static let shared = InternetChatTransport()
@@ -25,6 +26,9 @@ final class InternetChatTransport: @unchecked Sendable {
     private let monitorQueue = DispatchQueue(label: "internet.transport.reachability")
     private let stateLock = NSLock()
     private var isOnline = false
+    private var isUltraConstrained = false
+    private let availabilitySubject = PassthroughSubject<Void, Never>()
+    var availabilityChanges: AnyPublisher<Void, Never> { availabilitySubject.eraseToAnyPublisher() }
 
     static let templateFreeText = 0
     // Reserved templateCodes shared with Android — control traffic that rides the sealed channel
@@ -59,17 +63,33 @@ final class InternetChatTransport: @unchecked Sendable {
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
             self.stateLock.lock()
+            let wasOnline = self.isOnline
+            let wasConstrained = self.isUltraConstrained
             self.isOnline = path.status == .satisfied
+            if #available(iOS 26.0, *) {
+                self.isUltraConstrained = path.isUltraConstrained
+            } else {
+                self.isUltraConstrained = false
+            }
+            let changed = wasOnline != self.isOnline || wasConstrained != self.isUltraConstrained
             self.stateLock.unlock()
+            if changed { self.availabilitySubject.send(()) }
         }
         monitor.start(queue: monitorQueue)
     }
 
+    deinit { monitor.cancel() }
+
     /// True only when signed in AND on a usable connection.
-    func isAvailable() -> Bool {
+    func isAvailable(allowUltraConstrained: Bool = false) -> Bool {
         guard client.currentUid != nil else { return false }
         stateLock.lock(); defer { stateLock.unlock() }
-        return isOnline
+        return isOnline && (allowUltraConstrained || !isUltraConstrained)
+    }
+
+    func isOnUltraConstrainedPath() -> Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return isUltraConstrained
     }
 
     // MARK: - The single seal-and-relay funnel (v3 preferred, v2 fallback)
@@ -114,8 +134,21 @@ final class InternetChatTransport: @unchecked Sendable {
         directWriteOnly: Bool = false,
         // Stamped on the wire doc (not the ciphertext): set only for a call OFFER so the backend
         // fires an iOS PushKit VoIP ring for a force-quit recipient.
-        callRing: Bool = false
+        callRing: Bool = false,
+        allowUltraConstrainedPath: Bool = false
     ) async throws {
+        let traffic = DisasterTrafficController.shared
+        guard !traffic.isSaving || (content.attachment == nil && traffic.allowsText(template: content.templateCode, text: content.text)) else {
+            throw InternetMessagingClientError.constrainedNetworkDisallowed
+        }
+        stateLock.lock()
+        let constrained = isUltraConstrained
+        stateLock.unlock()
+        guard allowUltraConstrainedPath || !constrained else {
+            throw InternetMessagingClientError.constrainedNetworkDisallowed
+        }
+        try await traffic.awaitSendSlot(emergency: content.templateCode == Self.sosAlertTemplate)
+        let wirePriority = content.templateCode == Self.sosAlertTemplate ? "high" : priority
         let envelope: RelayableInternetEnvelope
         if await SignalSessionGate.shared.ensureOutbound(route.peerUid, forceEstablish: forceEstablish) {
             let wire = try SignalSessionGate.shared.encrypt(route.peerUid, content: content)
@@ -123,7 +156,7 @@ final class InternetChatTransport: @unchecked Sendable {
                 messageId: messageId,
                 conversationId: route.conversationId,
                 recipientUid: route.peerUid,
-                priority: priority,
+                priority: wirePriority,
                 createdAtMs: createdAtMs,
                 ttlMs: ttlMs,
                 ctype: wire.ctype,
@@ -149,7 +182,7 @@ final class InternetChatTransport: @unchecked Sendable {
                 messageId: messageId,
                 conversationId: route.conversationId,
                 recipientUid: route.peerUid,
-                priority: priority,
+                priority: wirePriority,
                 createdAtMs: createdAtMs,
                 ttlMs: ttlMs,
                 sealed: sealed,
@@ -169,14 +202,32 @@ final class InternetChatTransport: @unchecked Sendable {
         }
     }
 
-    /// Direct Firestore write first (fast, no cold start), callable as the fallback with the id
-    /// sanitized to its stricter charset — mirrors Android's relayEnvelope.
+    /// Normal mode uses a bounded direct write; conservation uses the callable immediately.
+    /// Both retain the original ID, including '~', so a timeout cannot duplicate the envelope.
     private func relayEnvelope(_ envelope: RelayableInternetEnvelope) async throws {
+        let started = ProcessInfo.processInfo.systemUptime
         do {
-            try await client.writeMessageDoc(envelope)
-        } catch {
-            MessagingDiagLog.log("direct write failed (\(error)) — falling back to relayMessage callable")
-            _ = try await client.relayMessage(envelope.sanitizedForCallable())
+            if DisasterTrafficController.shared.isSaving {
+                _ = try await client.relayMessage(envelope)
+            } else {
+                do { try await client.writeMessageDoc(envelope) }
+                catch is CancellationError { throw CancellationError() }
+                catch {
+                    try Task.checkCancellation()
+                    if client.usesRegionalDelivery { throw error }
+                    if (error as? URLError)?.code == .timedOut {
+                        DisasterTrafficController.shared.record(succeeded: false, duration: 12, error: error)
+                    }
+                    _ = try await client.relayMessage(envelope)
+                }
+            }
+            TrafficMeasurements.shared.request(succeeded:true)
+            DisasterTrafficController.shared.record(succeeded: true, duration: ProcessInfo.processInfo.systemUptime - started)
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            TrafficMeasurements.shared.request(succeeded:false)
+            DisasterTrafficController.shared.record(succeeded: false, duration: ProcessInfo.processInfo.systemUptime - started, error: error)
+            throw error
         }
     }
 
@@ -192,7 +243,41 @@ final class InternetChatTransport: @unchecked Sendable {
         priority: String = "normal",
         templateCode: Int = InternetChatTransport.templateFreeText
     ) async -> Bool {
-        guard let route = route(for: contact) else { return false }
+        let onSatellite = isOnUltraConstrainedPath()
+        let payloadBytes = text.utf8.count
+        let messageType: String
+        switch templateCode {
+        case Self.templateFreeText:
+            messageType = "free_text"
+        case Self.sosAlertTemplate:
+            messageType = "sos_alert"
+        default:
+            messageType = "other"
+        }
+        if onSatellite {
+            AppAnalytics.satelliteMessage(
+                result: "attempted",
+                messageType: messageType,
+                payloadBytes: payloadBytes
+            )
+        }
+        let satelliteTextAllowed = ConstrainedMessagePolicy.allowsText(
+            templateCode: templateCode,
+            text: text
+        )
+        guard let route = route(for: contact) else {
+            if onSatellite {
+                let failureCategory = client.currentUid == nil
+                    ? "identity_unavailable" : "peer_unavailable"
+                AppAnalytics.satelliteMessage(
+                    result: "skipped",
+                    messageType: messageType,
+                    payloadBytes: payloadBytes,
+                    failureCategory: failureCategory
+                )
+            }
+            return false
+        }
         do {
             try await sealAndRelay(
                 route: route,
@@ -200,10 +285,40 @@ final class InternetChatTransport: @unchecked Sendable {
                 messageId: messageId,
                 createdAtMs: createdAtMs,
                 priority: priority,
-                ttlMs: Self.defaultTtlMs
+                ttlMs: Self.defaultTtlMs,
+                allowUltraConstrainedPath: satelliteTextAllowed
             )
+            if onSatellite {
+                AppAnalytics.satelliteMessage(
+                    result: "accepted_by_relay",
+                    messageType: messageType,
+                    payloadBytes: payloadBytes
+                )
+            }
             return true
         } catch {
+            let failureCategory: String
+            if let clientError = error as? InternetMessagingClientError,
+               case .constrainedNetworkDisallowed = clientError {
+                failureCategory = "constrained_policy"
+            } else {
+                failureCategory = "relay_failure"
+            }
+            if onSatellite {
+                AppAnalytics.satelliteMessage(
+                    result: failureCategory == "constrained_policy" ? "deferred" : "failed",
+                    messageType: messageType,
+                    payloadBytes: payloadBytes,
+                    failureCategory: failureCategory
+                )
+                if failureCategory != "constrained_policy" {
+                    CrashReporter.recordSatelliteFailure(
+                        error,
+                        component: "chat_message",
+                        category: failureCategory
+                    )
+                }
+            }
             MessagingDiagLog.log("send FAILED for \(messageId): \(String(describing: error))")
             return false
         }
@@ -299,12 +414,17 @@ final class InternetChatTransport: @unchecked Sendable {
     /// Sends an E2E delivery/read receipt ({"ids":[...]}, templateCode 204/205), byte-compatible
     /// with Android. Idempotent on the receiving side, so re-sending for a duplicate is harmless.
     @discardableResult
-    func sendReceipt(contact: ContactRecord, templateCode: Int, messageIds: [String]) async -> Bool {
+    func sendReceipt(contact: ContactRecord, templateCode: Int, messageIds: [String], journal: Bool = true) async -> Bool {
         guard let route = route(for: contact) else { return false }
         let ids = Array(Set(messageIds.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }))
         guard !ids.isEmpty else { return true }
         do {
+            let batch = ReceiptBatch(peer:route.peerUid,template:templateCode,ids:ids)
+            if journal {
+                try ReceiptJournal.shared.enqueue(uid:route.myUid,batch:batch)
+                if DisasterTrafficController.shared.isSaving || ids.count > 6 { return true }
+            }
             let payload = try JSONSerialization.data(withJSONObject: ["ids": ids])
             try await sealAndRelay(
                 route: route,
@@ -317,6 +437,7 @@ final class InternetChatTransport: @unchecked Sendable {
                 priority: "normal",
                 ttlMs: Self.defaultTtlMs
             )
+            if journal, client.currentUid == route.myUid { try ReceiptJournal.shared.confirm(uid:route.myUid,batch:batch) }
             return true
         } catch {
             NSLog("InternetChatTransport: receipt send failed: %@", String(describing: error))

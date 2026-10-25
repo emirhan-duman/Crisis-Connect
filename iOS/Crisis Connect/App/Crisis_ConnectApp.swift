@@ -28,7 +28,7 @@ enum FirebaseRuntime {
     }
 
     static func ensureConfigured() {
-        guard !PlatformRuntime.isRunningTests else { return }
+        guard !PlatformRuntime.isRunningTests, !WatchE2ETestMode.enabled else { return }
         guard FirebaseApp.app() == nil else { return }
         AppCheck.setAppCheckProviderFactory(CrisisConnectAppCheckProviderFactory())
         FirebaseApp.configure()
@@ -57,13 +57,48 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        if WatchE2ETestMode.enabled {
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.environment["CRISIS_WATCH_CHAT_RESET"] == "1" {
+                Task { @MainActor in
+                    if WatchE2ETestMode.contactRebootEnabled { await WatchE2ETestSupport.rebootContactStore.waitUntilLoaded() }
+                    let chat = SOSChatStore.shared
+                    while !chat.watchProjectionReady { try? await Task.sleep(for: .milliseconds(20)) }
+                    chat.clear()
+                    for name in ["watch-chat-effects.json","watch-chat-commands.json","watch-chat-drop-receipt","watch-contact-effects.json","watch-contact-projection.json"] {
+                        try? FileManager.default.removeItem(at:FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0].appendingPathComponent(name))
+                    }
+                    try? Data("ready".utf8).write(to: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("watch-chat-ready"), options: .atomic)
+                }
+            }
+            if ProcessInfo.processInfo.environment["CRISIS_RECOVERY_SEED"] == "1" {
+                do {
+                    let store = SOSRecoveryStore.shared
+                    try store.finish()
+                    _ = try store.begin()
+                    try store.reserve(id: "recovery-safe", peer: WatchE2ETestSupport.peerID, text: "İyiyim")
+                    try store.complete(id: "recovery-safe", result: "accepted")
+                    try store.reserve(id: "recovery-injured", peer: WatchE2ETestSupport.peerID, text: "Yaralıyım")
+                } catch { assertionFailure("Recovery fixture could not be saved") }
+            }
+            #endif
+            PhoneWatchBridge.shared.start()
+            return true
+        }
         guard !PlatformRuntime.isRunningTests else { return true }
+        // Firebase Phone Auth creates its APNs/notification managers from UIApplication during
+        // configuration. In a SwiftUI lifecycle app, configuring from App.init() is too early on
+        // newer iOS releases and leaves those managers unavailable (Auth error 17054). Firebase
+        // must be configured here, after UIApplication has installed the adapted app delegate.
         FirebaseRuntime.ensureConfigured()
+        _ = Auth.auth()
+        AppAnalytics.applyStoredConsent()
         // Arm PushKit + the internet message/call receivers on EVERY launch — including a
         // background/VoIP-push wake of a force-quit app (no SwiftUI scene, so the deferred .task
         // never runs). Without this the PKPushRegistry delegate is never set on a cold push launch
         // and the incoming internet call is silently dropped.
         bootstrapCoreServices()
+        PhoneWatchBridge.shared.start()
         OfflineMapBackgroundManager.shared.register()
         CrisisLinkBackgroundRefreshManager.shared.register()
         CertificateRenewalBackgroundManager.shared.register()
@@ -99,12 +134,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
-        guard !PlatformRuntime.isRunningTests else { return }
+        guard !PlatformRuntime.isRunningTests, !WatchE2ETestMode.enabled else { return }
         FirebaseRuntime.ensureConfigured()
-        // FCM exchanges the APNs token for the messaging token it hands to our backend. Firebase
-        // Auth receives the same token through its app-delegate proxy while swizzling is enabled.
-        // Do not also call Auth.setAPNSToken here: FirebaseAuth 12.7 can receive this callback
-        // before its phone-auth token manager exists and force-unwrap nil on iPadOS 27.
+        // Swizzling is deliberately disabled for the SwiftUI lifecycle, so both Firebase Auth and
+        // Messaging must receive the APNs token explicitly. Firebase is initialized in
+        // didFinishLaunching above, before remote-notification registration can complete.
+        Auth.auth().setAPNSToken(deviceToken, type: .unknown)
         Messaging.messaging().apnsToken = deviceToken
     }
 
@@ -122,14 +157,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
-        guard !PlatformRuntime.isRunningTests else {
+        guard !PlatformRuntime.isRunningTests, !WatchE2ETestMode.enabled else {
             completionHandler(.noData)
             return
         }
         FirebaseRuntime.ensureConfigured()
-        // Firebase Auth's app-delegate proxy handles its silent verification notification while
-        // method swizzling is enabled. Calling canHandleNotification manually is only required
-        // when that proxy is disabled and hits the same uninitialized-manager crash as above.
+        // Phone Auth first sends a local forwarding probe through this callback, then (on a real
+        // device) receives the silent APNs app-verification payload here. Forward both before any
+        // app-specific push handling; otherwise verifyPhoneNumber fails with Auth error 17054 and
+        // never reaches the SMS request.
+        if Auth.auth().canHandleNotification(userInfo) {
+            completionHandler(.noData)
+            return
+        }
         Task {
             let resourceWake = await ResourceAlertWakeClient.shared.handleRemotePush(userInfo: userInfo)
             switch resourceWake {
@@ -193,7 +233,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func scheduleDeferredLaunchTasks() {
-        guard !PlatformRuntime.isRunningTests else { return }
+        guard !PlatformRuntime.isRunningTests, !WatchE2ETestMode.enabled else { return }
         FirebaseRuntime.ensureConfigured()
         guard !hasScheduledDeferredLaunchTasks else { return }
         hasScheduledDeferredLaunchTasks = true
@@ -243,7 +283,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     /// throttle future VoIP pushes). Idempotent; called from didFinishLaunching AND the deferred
     /// task. Runs on the main thread (both callers are main-thread UIKit entry points).
     func bootstrapCoreServices() {
-        guard !PlatformRuntime.isRunningTests, !hasBootstrappedCoreServices else { return }
+        guard !PlatformRuntime.isRunningTests, !WatchE2ETestMode.enabled, !hasBootstrappedCoreServices else { return }
         hasBootstrappedCoreServices = true
         FirebaseRuntime.ensureConfigured()
 
@@ -257,7 +297,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             FirebaseBootstrapper.shared.start()
             // Rust MLS core for SFU group calls (inert until SfuCallConfig flips on).
             RustMlsWorkerBackend.activate()
-            // App-wide SFU authority-call receive (no-op while SfuCallConfig.enabled is false).
+            // App-wide MLS-E2EE SFU authority-call receiver.
             SfuAuthorityCallReceiver.start()
             // Internet (WebRTC) call engine: hooks the call-signal bus + Firestore offer listener,
             // so an incoming call rings even on a cold push wake.
@@ -268,7 +308,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
-        guard !PlatformRuntime.isRunningTests else { return }
+        guard !PlatformRuntime.isRunningTests, !WatchE2ETestMode.enabled else { return }
         RescueClientManager.shared.bootstrapRuntime()
         if !AppStoreScreenshotSupport.isAnySceneEnabled {
             RescueLiveLocationCoordinator.shared.bootstrap()
@@ -280,8 +320,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        guard !PlatformRuntime.isRunningTests else { return }
+        guard !PlatformRuntime.isRunningTests, !WatchE2ETestMode.enabled else { return }
         PresenceReporter.shared.onAppForeground()
+        DisasterTrafficController.shared.setForeground(true)
         // Deliver a "resolved" SOS report / contact all-clear that couldn't go out when the
         // broadcast stopped offline.
         Task { await SosCloudReporter.shared.deliverPendingResolve() }
@@ -306,8 +347,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
-        guard !PlatformRuntime.isRunningTests else { return }
+        guard !PlatformRuntime.isRunningTests, !WatchE2ETestMode.enabled else { return }
         PresenceReporter.shared.onAppBackground()
+        DisasterTrafficController.shared.setForeground(false)
         OfflineMapBackgroundManager.shared.scheduleIfNeeded()
         CrisisLinkBackgroundRefreshManager.shared.scheduleIfNeeded()
         CertificateRenewalBackgroundManager.shared.scheduleIfNeeded()
@@ -317,6 +359,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 @main
+@MainActor
+enum CrisisConnectEntryPoint {
+    static func main() {
+        // Run before SwiftUI/Core Image opens Metal's persistent shader cache.
+        PlatformRuntime.prepareMacMetalCache()
+        Crisis_ConnectApp.main()
+    }
+}
+
 struct Crisis_ConnectApp: App {
     @StateObject private var settings = AppSettingsViewModel()
     @StateObject private var startupCoordinator = AppStartupCoordinator()
@@ -328,10 +379,6 @@ struct Crisis_ConnectApp: App {
             Self.applyUITestLaunchOverrides()
         }
         Self.configureSystemAppearance()
-        if !PlatformRuntime.isRunningTests {
-            FirebaseRuntime.ensureConfigured()
-            AppAnalytics.applyStoredConsent()
-        }
 #if DEBUG
         let localizations = Bundle.main.localizations
         let preferred = Bundle.main.preferredLocalizations
@@ -494,6 +541,11 @@ struct Crisis_ConnectApp: App {
 
     var body: some Scene {
         WindowGroup {
+            if WatchE2ETestMode.enabled {
+                #if DEBUG && targetEnvironment(simulator)
+                WatchE2EPhoneView()
+                #endif
+            } else {
             AppStartupHost(coordinator: startupCoordinator)
             .environmentObject(settings)
             .environment(\.locale, settings.resolvedLocale)
@@ -511,6 +563,7 @@ struct Crisis_ConnectApp: App {
             }
             .onContinueUserActivity("INStartAudioCallIntent") { activity in
                 Self.placeCallBack(from: activity)
+            }
             }
         }
     }

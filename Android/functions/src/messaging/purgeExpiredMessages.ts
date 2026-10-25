@@ -1,5 +1,6 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { Timestamp } from "firebase-admin/firestore";
+import { getMessagingFirestore as getFirestore } from "./databaseTarget";
 
 /**
  * Safety-net cleanup for messages that were never acknowledged (recipient gone or never came

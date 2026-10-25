@@ -1,0 +1,1203 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isDemoUser() {
+      return isSignedIn() && request.auth.uid == "8blrCEoszTWBVWb3lA1TnbSn7aJ3";
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdminRole(roleValue) {
+      return roleValue is string && roleValue.lower() == "admin";
+    }
+
+    function isAuthorityRole(roleValue) {
+      return roleValue is string && roleValue.lower() == "authority";
+    }
+
+    function isFieldTeamRole(roleValue) {
+      return roleValue is string
+        && roleValue.lower() in ["fieldteam", "field-team", "field_team"];
+    }
+
+    function isDashboardRole(roleValue) {
+      return isAuthorityRole(roleValue)
+        || isAdminRole(roleValue)
+        || isFieldTeamRole(roleValue);
+    }
+
+    function isRescueRole(roleValue) {
+      return isAdminRole(roleValue)
+        || isFieldTeamRole(roleValue);
+    }
+
+    function unchangedField(field) {
+      return (
+        (!(field in resource.data) && !(field in request.resource.data))
+        || (
+          (field in resource.data)
+          && (field in request.resource.data)
+          && request.resource.data[field] == resource.data[field]
+        )
+      );
+    }
+
+    function validMessageReceipt(receiptId) {
+      return receiptId.split("__").size() == 2
+        && receiptId.split("__")[0] == request.auth.uid
+        && request.resource.data.viewerUid == request.auth.uid
+        && request.resource.data.partnerUid == receiptId.split("__")[1]
+        && request.resource.data.deliveredAt is int
+        && request.resource.data.deliveredAt > 0
+        && (
+          !("at" in request.resource.data)
+          || (
+            request.resource.data.at is int
+            && request.resource.data.at > 0
+            && request.resource.data.deliveredAt >= request.resource.data.at
+          )
+        )
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    function messageReceiptMovesForward() {
+      return (
+          !("deliveredAt" in resource.data)
+          || request.resource.data.deliveredAt >= resource.data.deliveredAt
+        )
+        && (
+          !("at" in resource.data)
+          || request.resource.data.at >= resource.data.at
+        );
+    }
+
+    function orgRoleDeniesDashboard() {
+      return ("orgRole" in userDoc())
+        && userDoc().orgRole is map
+        && ("permissions" in userDoc().orgRole)
+        && userDoc().orgRole.permissions is map
+        && ("dashboard" in userDoc().orgRole.permissions)
+        && userDoc().orgRole.permissions.dashboard == false
+        && !isAdminRole(userDoc().role)
+        && !isAuthorityRole(userDoc().role)
+        // Platform-admin flags exempt too — matches hasPlatformAdminFlag in
+        // lib/dashboard-access.ts so the exemption truly mirrors the server
+        // resolver's super-role short-circuit.
+        && !(("superAdmin" in userDoc()) && userDoc().superAdmin == true)
+        && !(("platformAdmin" in userDoc()) && userDoc().platformAdmin == true)
+        && !(("globalDashboardAccess" in userDoc()) && userDoc().globalDashboardAccess == true);
+    }
+
+    function hasDashboardAccess() {
+      return (isDemoUser()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid)))
+        || (isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && isDashboardRole(userDoc().role)
+        && (
+          !("dashboardAccess" in userDoc())
+          || userDoc().dashboardAccess == true
+          || userDoc().dashboardAccess == 1
+          || (
+            userDoc().dashboardAccess is string
+            && userDoc().dashboardAccess.lower() in ["true", "1", "yes", "on", "enabled"]
+          )
+        )
+        && !orgRoleDeniesDashboard());
+    }
+
+    function isDashboardAdminUser() {
+      return !isDemoUser()
+        && hasDashboardAccess()
+        && isAdminRole(userDoc().role);
+    }
+
+    function isPlatformAdminUser() {
+      return !isDemoUser()
+        && isDashboardAdminUser()
+        && (
+          (("platformAdmin" in userDoc()) && userDoc().platformAdmin == true)
+          || (("globalDashboardAccess" in userDoc()) && userDoc().globalDashboardAccess == true)
+        );
+    }
+
+    function isDashboardAccessManager() {
+      return !isDemoUser()
+        && hasDashboardAccess()
+        && (
+          isAdminRole(userDoc().role)
+          || isAuthorityRole(userDoc().role)
+        );
+    }
+
+    function hasRescueClaim() {
+      return !isDemoUser()
+        && isSignedIn()
+        && request.auth.token is map
+        && "role" in request.auth.token
+        && isRescueRole(request.auth.token.role);
+    }
+
+    function hasRescueProfileRole() {
+      return !isDemoUser()
+        && isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && isRescueRole(userDoc().role)
+        && userDoc().verified == true;
+    }
+
+    function validRescueDeviceId(deviceId) {
+      return deviceId is string
+        && deviceId.matches('^cc-[0-9a-f]{24}$');
+    }
+
+    function currentUserAgencySlug() {
+      return userDoc().agencySlug;
+    }
+
+    function currentUserAgencyKey() {
+      return userDoc().agencyKey;
+    }
+
+    function currentUserPanelId() {
+      let data = userDoc();
+      return isDemoUser()
+        ? "cc-demo-sandbox-8blrceosztwbvwb3la1tnbsn7aj3"
+        : (("panelId" in data && data.panelId is string)
+        ? data.panelId
+        : (("agencySlug" in data && data.agencySlug is string)
+          ? data.agencySlug
+          : (("agencyKey" in data && data.agencyKey is string) ? data.agencyKey : null)));
+    }
+
+    function userPanelId(uid) {
+      let data = get(/databases/$(database)/documents/users/$(uid)).data;
+      return ("panelId" in data && data.panelId is string)
+        ? data.panelId
+        : (("agencySlug" in data && data.agencySlug is string)
+          ? data.agencySlug
+          : (("agencyKey" in data && data.agencyKey is string)
+            ? data.agencyKey
+            : null));
+    }
+
+    function canWriteRescuePanel(agencyId) {
+      return hasRescueClaim()
+        && hasRescueProfileRole()
+        // panelId is the canonical binding. currentUserPanelId() falls back to
+        // legacy agency aliases only when panelId is absent, so a stale alias
+        // cannot grant writes to a second panel.
+        && currentUserPanelId() is string
+        && currentUserPanelId() == agencyId;
+    }
+
+    function hasPanelReadAccess() {
+      return hasDashboardAccess() || hasRescueProfileRole();
+    }
+
+    function isAgencyPanelCollection(collectionId) {
+      return isDemoUser()
+        ? collectionId == "agencyPanels"
+        : collectionId in ["agencyPanels", "afadpanel"];
+    }
+
+    function panelDocData(panelCollection, panelId) {
+      return get(/databases/$(database)/documents/$(panelCollection)/$(panelId)).data;
+    }
+
+    function isDemoPanel(panelCollection, panelId) {
+      return isDemoUser()
+        && panelCollection == "agencyPanels"
+        && panelId == "cc-demo-sandbox-8blrceosztwbvwb3la1tnbsn7aj3"
+        && exists(/databases/$(database)/documents/agencyPanels/$(panelId))
+        && panelDocData(panelCollection, panelId).demoMode == true;
+    }
+
+    function currentUserPanelDocData(membershipPanelId) {
+      return get(/databases/$(database)/documents/agencyPanels/$(membershipPanelId)).data;
+    }
+
+    function canReadAgencyByKey(panelId) {
+      return isSignedIn()
+        && (isDemoUser()
+          ? isDemoPanel("agencyPanels", panelId)
+          : currentUserPanelId() is string
+            && panelId == currentUserPanelId());
+    }
+
+    function canReadAgencyByName(data) {
+      return isSignedIn()
+        // Organization names are a last-resort legacy membership fallback.
+        // Once any canonical panelId/agencySlug/agencyKey binding exists,
+        // only that binding (plus its trusted hierarchy) may authorize data.
+        && currentUserPanelId() == null
+        && data is map
+        && data.agency is string
+        && (
+          (("agency" in userDoc()) && userDoc().agency is string && data.agency == userDoc().agency)
+          || (("agencyName" in userDoc()) && userDoc().agencyName is string && data.agency == userDoc().agencyName)
+          || (("authority" in userDoc()) && userDoc().authority is string && data.agency == userDoc().authority)
+          || (("institution" in userDoc()) && userDoc().institution is string && data.agency == userDoc().institution)
+          || (("organization" in userDoc()) && userDoc().organization is string && data.agency == userDoc().organization)
+        );
+    }
+
+    function writeAgencyMatchesUser(value) {
+      return isSignedIn()
+        && value is string
+        && (
+          (("agency" in userDoc()) && userDoc().agency is string && value == userDoc().agency)
+          || (("agencyName" in userDoc()) && userDoc().agencyName is string && value == userDoc().agencyName)
+          || (("authority" in userDoc()) && userDoc().authority is string && value == userDoc().authority)
+          || (("institution" in userDoc()) && userDoc().institution is string && value == userDoc().institution)
+          || (("organization" in userDoc()) && userDoc().organization is string && value == userDoc().organization)
+        );
+    }
+
+    function writeAgencyMatchesPanel(panelCollection, panelId, value) {
+      return isSignedIn()
+        && value is string
+        && (
+          (
+            ("panelId" in userDoc())
+            && userDoc().panelId is string
+            && userDoc().panelId == panelId
+            && exists(/databases/$(database)/documents/$(panelCollection)/$(panelId))
+            && panelDocData(panelCollection, panelId).agency is string
+            && value == panelDocData(panelCollection, panelId).agency
+          )
+          || (
+            !("panelId" in userDoc())
+            && writeAgencyMatchesUser(value)
+          )
+        );
+    }
+
+    function canReadAgencyByHierarchy(panelId, data) {
+      let membershipPanelId = currentUserPanelId();
+      return !isDemoUser()
+        && isSignedIn()
+        && data is map
+        && (
+          (
+            ("parentPanelId" in data)
+            && data.parentPanelId is string
+            && membershipPanelId is string
+            && data.parentPanelId == membershipPanelId
+          )
+          || (
+            ("ancestorPanelIds" in data)
+            && data.ancestorPanelIds is list
+            && membershipPanelId is string
+            && membershipPanelId in data.ancestorPanelIds
+          )
+          || (
+            membershipPanelId is string
+            && exists(/databases/$(database)/documents/agencyPanels/$(membershipPanelId))
+            && ("ancestorPanelIds" in currentUserPanelDocData(membershipPanelId))
+            && currentUserPanelDocData(membershipPanelId).ancestorPanelIds is list
+            && panelId in currentUserPanelDocData(membershipPanelId).ancestorPanelIds
+          )
+          || (
+            membershipPanelId is string
+            && exists(/databases/$(database)/documents/agencyPanels/$(membershipPanelId))
+            && ("parentPanelId" in currentUserPanelDocData(membershipPanelId))
+            && currentUserPanelDocData(membershipPanelId).parentPanelId is string
+            && currentUserPanelDocData(membershipPanelId).parentPanelId == panelId
+          )
+        );
+    }
+
+    function canManageAgencyByTrustedBinding(panelId) {
+      return isSignedIn()
+        && canReadAgencyByKey(panelId);
+    }
+
+    function canReadAgencyPanel(panelId, data) {
+      return hasPanelReadAccess()
+        && (isDemoUser()
+          ? isDemoPanel("agencyPanels", panelId)
+          : (
+          isPlatformAdminUser()
+          || canReadAgencyByKey(panelId)
+          || canReadAgencyByName(data)
+          || canReadAgencyByHierarchy(panelId, data)
+        ));
+    }
+
+    function canReadAgencyPanelFromParent(panelCollection, panelId) {
+      return hasPanelReadAccess()
+        && (isDemoUser()
+          ? isDemoPanel(panelCollection, panelId)
+          : (
+          isPlatformAdminUser()
+          || canReadAgencyByKey(panelId)
+          || canReadAgencyByName(panelDocData(panelCollection, panelId))
+          || canReadAgencyByHierarchy(panelId, panelDocData(panelCollection, panelId))
+        ));
+    }
+
+    function isAgendaKeyMember(panelCollection, panelId) {
+      return !isDemoUser()
+        && panelCollection == "agencyPanels"
+        && hasPanelReadAccess()
+        && canReadAgencyByKey(panelId);
+    }
+
+    function canManageAgencyAccessControl(panelId) {
+      return isDashboardAccessManager()
+        && (
+          isPlatformAdminUser()
+          || canManageAgencyByTrustedBinding(panelId)
+        );
+    }
+
+    function organizationProfileProjectionUnchanged() {
+      let protectedFields = [
+        "authorityName",
+        "displayName",
+        "shortName",
+        "jurisdictionName",
+        "scopeLabel",
+        "regionCode",
+        "headquarters",
+        "organizationTemplate",
+        "organizationId",
+        "legalName",
+        "organizationStatus",
+        "authorityVerificationStatus",
+        "administrativeLevel",
+        "parentOrganizationId",
+        "serviceDomains",
+        "primaryJurisdictionCode",
+        "participatesIn112",
+        "officialWebsite",
+        "organizationProfileVersion",
+        "resourceMutualAidProfile"
+      ];
+      return (
+          resource == null
+          && !request.resource.data.keys().hasAny(protectedFields)
+        ) || (
+          resource != null
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedFields)
+        );
+    }
+
+    function responderOperationalProjectionUnchanged() {
+      let protectedFields = [
+        "qualificationDeploymentHoldCredentialIds",
+        "resourcePersonnelCredentialReadiness",
+        "resourcePersonnelCredentialReadinessNextEvaluationAt",
+        "resourcePersonnelCredentialReadinessIndexVersion",
+        "resourcePersonnelCredentialReadinessLastErrorCode",
+        "resourcePersonnelCredentialReadinessFailureCount",
+        "resourcePersonnelFitnessProjectionVersion",
+        "resourcePersonnelFitnessEvidenceVersion",
+        "resourcePersonnelFitnessDeploymentBlocked",
+        "resourcePersonnelFitnessRestrictionFrom",
+        "resourcePersonnelFitnessRestrictionUntil",
+        "resourcePersonnelFitnessProjectionUpdatedAt",
+        "resourcePersonnelSafetyCoverageVersion",
+        "resourcePersonnelSafetyActiveDutyId",
+        "resourcePersonnelSafetyActiveDutySource",
+        "resourcePersonnelSafetyActiveDutySourceId",
+        "resourcePersonnelSafetyActiveDutyEndAt",
+        "resourcePersonnelSafetyNextTransitionAt",
+        "resourcePersonnelReturnState",
+        "resourcePersonnelReturnReleasedAt",
+        "resourcePersonnelReturnEtaAt",
+        "resourcePersonnelReturnArrivedAt",
+        "resourcePersonnelReturnDestinationFacilityId",
+        "resourcePersonnelReturnDestinationFacilityName",
+        "resourcePersonnelReturnOutProcessingStatus",
+        "resourcePersonnelReturnOutProcessingDueAt",
+        "resourcePersonnelReturnNextTransitionAt",
+        "resourcePersonnelRestEligibleAt"
+      ];
+      return (
+          resource == null
+          && !request.resource.data.keys().hasAny(protectedFields)
+        ) || (
+          resource != null
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedFields)
+        );
+    }
+
+    function validSignalDocId(signalId, data) {
+      return (
+          !("signalId" in data)
+          || (
+            data.signalId is string
+            && data.signalId == signalId
+          )
+        )
+        && signalId is string
+        && signalId.matches("^cc-[0-9a-f]{24}$");
+    }
+
+    function clientWritableSignalKeys() {
+      return [
+        "signalId", "schemaVersion", "status", "source",
+        "firstSeenMillis", "lastSeenMillis", "lastSeenAt", "lastSeenAddress",
+        "lastReporterUid", "lastReporterDeviceId", "lastReporterLocation",
+        "victimRole", "reporterIds",
+        "gps", "victimGps", "estimatedVictimGps", "locationSource",
+        "relativeEstimate", "locationUpdatedAtMillis",
+        "victimName", "victimDisplayName", "victimBatteryPercent",
+        "updatedAt"
+      ];
+    }
+
+    function validActiveSignalWrite(signalId, data) {
+      return validSignalDocId(signalId, data)
+        && data.lastReporterUid == request.auth.uid
+        && data.schemaVersion is int
+        && data.schemaVersion >= 1
+        && data.status == "active"
+        && data.source == "ble"
+        && data.firstSeenMillis is int
+        && data.firstSeenMillis > 0
+        && data.lastSeenMillis is int
+        && data.lastSeenMillis >= data.firstSeenMillis;
+    }
+
+    function signalCreateKeysAllowed() {
+      return request.resource.data.keys().hasOnly(clientWritableSignalKeys());
+    }
+
+    function signalUpdateKeysAllowed() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(clientWritableSignalKeys());
+    }
+
+    function validUserCreate(userId) {
+      let data = request.resource.data;
+      return (!("id" in data) || data.id == userId)
+        && (!("role" in data) || data.role == "user")
+        && (!("verified" in data) || data.verified == false)
+        && (!("dashboardAccess" in data) || data.dashboardAccess == false || data.dashboardAccess == "false")
+        && !("agency" in data)
+        && !("agencyName" in data)
+        && !("agencyKey" in data)
+        && !("agencySlug" in data)
+        && !("authority" in data)
+        && !("institution" in data)
+        && !("organization" in data)
+        && !("panelId" in data)
+        && !("defaultDashboardPanelId" in data)
+        && !("defaultPanelId" in data)
+        && !("platformAdmin" in data)
+        && !("globalDashboardAccess" in data)
+        && !("superAdmin" in data)
+        && !("workflowRole" in data)
+        && !("workflowRoleUpdatedAt" in data)
+        && !("workflowRoleUpdatedBy" in data)
+        && !("orgRole" in data)
+        && !("permissions" in data)
+        && !("rolePermissions" in data)
+        && !("dashboardPermissions" in data)
+        && !("licenseManagement" in data)
+        && !("canManageLicense" in data)
+        && !("photoURL" in data)
+        && !("phoneVerifiedAt" in data)
+        && !("phoneVerifiedE164" in data)
+        && !("_profileMirrorRevision" in data);
+    }
+
+    function userHasAssignedRole(data) {
+      return ("role" in data)
+        && data.role is string
+        && data.role.size() > 0
+        && data.role.lower() != "user";
+    }
+
+    function userHasOrgAffiliation(data) {
+      return (("agency" in data) && data.agency is string && data.agency.size() > 0)
+        || (("agencyName" in data) && data.agencyName is string && data.agencyName.size() > 0)
+        || (("agencyKey" in data) && data.agencyKey is string && data.agencyKey.size() > 0)
+        || (("agencySlug" in data) && data.agencySlug is string && data.agencySlug.size() > 0)
+        || (("authority" in data) && data.authority is string && data.authority.size() > 0)
+        || (("institution" in data) && data.institution is string && data.institution.size() > 0)
+        || (("organization" in data) && data.organization is string && data.organization.size() > 0);
+    }
+
+    function canSelfUploadAvatar() {
+      // Evaluate against the current (pre-write) document so a client cannot
+      // smuggle role/agency into the same update — those fields are also
+      // pinned by unchangedField rules below.
+      return userHasAssignedRole(resource.data)
+        && userHasOrgAffiliation(resource.data);
+    }
+
+    function validPhotoURLForUser(userId) {
+      // Photo must point at our Firebase Storage bucket and at the caller's
+      // own user folder. Empty / null clears the photo.
+      return !("photoURL" in request.resource.data)
+        || request.resource.data.photoURL == null
+        || request.resource.data.photoURL == ""
+        || (
+          request.resource.data.photoURL is string
+          && request.resource.data.photoURL.matches(
+            "^https://firebasestorage\\.googleapis\\.com/v0/b/[^/]+/o/users%2F" + userId + "%2F.*"
+          )
+        );
+    }
+
+    function isClearingOwnAvatar() {
+      return "photoURL" in request.resource.data
+        && (
+          request.resource.data.photoURL == null
+          || request.resource.data.photoURL == ""
+        );
+    }
+
+    function validUserUpdate(userId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny([
+        "id", "role", "verified", "dashboardAccess", "agency", "agencyName", "agencyKey", "agencySlug",
+        "authority", "institution", "organization", "panelId", "defaultDashboardPanelId", "defaultPanelId",
+        "platformAdmin", "globalDashboardAccess", "superAdmin", "workflowRole", "workflowRoleUpdatedAt",
+        "workflowRoleUpdatedBy", "orgRole", "permissions", "rolePermissions", "dashboardPermissions",
+        "licenseManagement", "canManageLicense", "disabled", "_profileMirrorRevision"
+      ])
+      && (!changed.hasAny(["photoURL"]) || (validPhotoURLForUser(userId) && (isClearingOwnAvatar() || canSelfUploadAvatar())))
+      && (!changed.hasAny(["phoneVerifiedAt", "phoneVerifiedE164"])
+        || (changed.hasAny(["phoneNumber"]) && request.resource.data.get("phoneVerifiedAt", null) == null
+          && request.resource.data.get("phoneVerifiedE164", null) == null));
+    }
+
+    function isValidContactSubmission() {
+      let data = request.resource.data;
+      return data.keys().hasAll(["name", "email", "subject", "message", "contactEmail", "createdAt", "domain", "locale", "path", "source", "status"])
+        && data.keys().hasOnly(["name", "email", "subject", "message", "contactEmail", "createdAt", "domain", "locale", "path", "source", "status"])
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.email is string && data.email.matches("^[^@]+@[^@]+\\.[^@]+$")
+        && data.subject is string && data.subject.size() > 0 && data.subject.size() <= 200
+        && data.message is string && data.message.size() > 0 && data.message.size() <= 5000
+        && data.contactEmail is string
+        && data.contactEmail.size() > 0
+        && data.contactEmail.size() <= 254
+        && data.contactEmail.matches("^[^@]+@[^@]+\\.[^@]+$")
+        && data.domain is string
+        && data.domain.size() > 0
+        && data.domain.size() <= 253
+        && data.domain.matches("^[A-Za-z0-9.-]+(:[0-9]{1,5})?$")
+        && data.locale is string
+        && data.locale in ["en", "tr"]
+        && data.path is string
+        && data.path.size() > 0
+        && data.path.size() <= 2048
+        && data.path.matches("^/[A-Za-z0-9_./~%-]*$")
+        && data.source == "contact-page"
+        && data.status == "new"
+        && (data.createdAt is timestamp || data.createdAt is int);
+    }
+
+    function haPolicy(id) {
+      return get(/databases/$(database)/documents/applicationRuntime/hierarchyAccess).data.get("policies", {}).get(id, {});
+    }
+    function haPanel(id) {
+      return get(/databases/$(database)/documents/applicationRuntime/hierarchyAccess).data.get("panels", {}).get(id, {});
+    }
+    function haDirection(a, b, x, y) {
+      return (x.get("parentPanelId", "") == b || b in x.get("ancestorPanelIds", [])) ? "up"
+        : ((y.get("parentPanelId", "") == a || a in y.get("ancestorPanelIds", [])) ? "down"
+        : ((x.get("parentPanelId", "") != "" && x.get("parentPanelId", "") == y.get("parentPanelId", "")) ? "sibling" : "none"));
+    }
+    function haHierarchyPolicyAllowed(channelId) {
+      let channel = get(/databases/$(database)/documents/hierarchyChannels/$(channelId)).data;
+      let a = channel.panelIds[0];
+      let b = channel.panelIds[1];
+      let x = haPanel(a);
+      let y = haPanel(b);
+      let direction = haDirection(a, b, x, y);
+      let inverse = direction == "up" ? "down" : (direction == "down" ? "up" : "sibling");
+      let global = haPolicy("global");
+      let first = haPolicy(a);
+      let second = haPolicy(b);
+      return direction != "none" && global.get(direction, true) != false && global.get(inverse, true) != false
+        && !((a + "|" + b) in global.get("blockedPairs", []))
+        && first.get(direction, true) != false && second.get(inverse, true) != false
+        && !(b in first.get("blockedPeers", [])) && !(a in second.get("blockedPeers", []));
+    }
+    function isHierarchyChannelActive(channelId) {
+      return haHierarchyPolicyAllowed(channelId) && exists(/databases/$(database)/documents/hierarchyChannels/$(channelId))
+        && (
+          !("active" in get(/databases/$(database)/documents/hierarchyChannels/$(channelId)).data)
+          || get(/databases/$(database)/documents/hierarchyChannels/$(channelId)).data.active == true
+        );
+    }
+
+    function isHierarchyChannelMember(channelId) {
+      return !isDemoUser()
+        && isSignedIn()
+        && hasPanelReadAccess()
+        && currentUserPanelId() is string
+        && isHierarchyChannelActive(channelId)
+        && get(/databases/$(database)/documents/hierarchyChannels/$(channelId)).data.panelIds is list
+        && currentUserPanelId() in get(/databases/$(database)/documents/hierarchyChannels/$(channelId)).data.panelIds;
+    }
+
+    function hierarchyCallParticipant(uid, channelId) {
+      return uid is string
+        && uid.size() > 0
+        && uid.size() <= 128
+        && exists(/databases/$(database)/documents/users/$(uid))
+        && isHierarchyChannelActive(channelId)
+        && get(/databases/$(database)/documents/hierarchyChannels/$(channelId)).data.panelIds is list
+        && userPanelId(uid) is string
+        && userPanelId(uid)
+          in get(/databases/$(database)/documents/hierarchyChannels/$(channelId)).data.panelIds;
+    }
+
+    function agencyCallParticipant(uid, panelId) {
+      return uid is string
+        && uid.size() > 0
+        && uid.size() <= 128
+        && exists(/databases/$(database)/documents/users/$(uid))
+        && userPanelId(uid) is string
+        && userPanelId(uid) == panelId;
+    }
+
+    function validAuthoritySfuCallSignal(data, expectedScopeType, expectedChannelId) {
+      return data.signalVersion == 2
+        && data.scopeType == expectedScopeType
+        && data.channelId == expectedChannelId
+        && data.from is string
+        && data.from.size() > 0
+        && data.from.size() <= 128
+        && data.to is string
+        && data.to.size() > 0
+        && data.to.size() <= 128
+        && data.from != data.to
+        && data.callId is string
+        && data.callId.matches("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89AaBb][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$")
+        && data.type in ["offer", "answer", "reject", "busy", "end", "cancel"]
+        && data.createdAt == request.time
+        && data.expireAt is timestamp
+        && data.expireAt > request.time
+        && data.expireAt <= request.time + duration.value(25, "h")
+        && (
+          (
+            data.type == "offer"
+            && data.keys().hasOnly([
+              "signalVersion", "scopeType", "channelId", "from", "to", "callId", "type",
+              "roomId", "video", "sfuVersion", "createdAt", "expireAt"
+            ])
+            && data.keys().hasAll(["roomId", "video", "sfuVersion"])
+            && data.roomId is string
+            && data.roomId.matches("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89AaBb][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$")
+            && data.video is bool
+            && data.sfuVersion == 2
+          )
+          || (
+            data.type == "answer"
+            && data.keys().hasOnly([
+              "signalVersion", "scopeType", "channelId", "from", "to", "callId", "type",
+              "sfuVersion", "createdAt", "expireAt"
+            ])
+            && data.keys().hasAll(["sfuVersion"])
+            && data.sfuVersion == 2
+          )
+          || (
+            data.type in ["reject", "busy", "end", "cancel"]
+            && data.keys().hasOnly([
+              "signalVersion", "scopeType", "channelId", "from", "to", "callId", "type",
+              "createdAt", "expireAt"
+            ])
+          )
+        );
+    }
+
+    function validSfuExpiry(data) {
+      return data.expireAt is timestamp
+        && data.expireAt > request.time
+        && data.expireAt <= request.time + duration.value(13, "h");
+    }
+
+    function sfuUserBelongsToScope(uid, data) {
+      let membershipPanelId = (uid == request.auth.uid) ? currentUserPanelId() : userPanelId(uid);
+      return uid is string
+        && uid.size() > 0
+        && uid.size() <= 128
+        && exists(/databases/$(database)/documents/users/$(uid))
+        && membershipPanelId is string
+        && (
+          (
+            data.scopeType == "agency"
+            && exists(/databases/$(database)/documents/agencyPanels/$(data.channelId))
+            && (
+              membershipPanelId == data.channelId
+              || (
+                exists(/databases/$(database)/documents/agencyPanels/$(membershipPanelId))
+                && (
+                  ("childPanelIds" in get(/databases/$(database)/documents/agencyPanels/$(data.channelId)).data
+                    && get(/databases/$(database)/documents/agencyPanels/$(data.channelId)).data.childPanelIds is list
+                    && membershipPanelId in get(/databases/$(database)/documents/agencyPanels/$(data.channelId)).data.childPanelIds)
+                  || ("ancestorPanelIds" in get(/databases/$(database)/documents/agencyPanels/$(data.channelId)).data
+                    && get(/databases/$(database)/documents/agencyPanels/$(data.channelId)).data.ancestorPanelIds is list
+                    && membershipPanelId in get(/databases/$(database)/documents/agencyPanels/$(data.channelId)).data.ancestorPanelIds)
+                  || ("childPanelIds" in get(/databases/$(database)/documents/agencyPanels/$(membershipPanelId)).data
+                    && get(/databases/$(database)/documents/agencyPanels/$(membershipPanelId)).data.childPanelIds is list
+                    && data.channelId in get(/databases/$(database)/documents/agencyPanels/$(membershipPanelId)).data.childPanelIds)
+                  || ("ancestorPanelIds" in get(/databases/$(database)/documents/agencyPanels/$(membershipPanelId)).data
+                    && get(/databases/$(database)/documents/agencyPanels/$(membershipPanelId)).data.ancestorPanelIds is list
+                    && data.channelId in get(/databases/$(database)/documents/agencyPanels/$(membershipPanelId)).data.ancestorPanelIds)
+                )
+              )
+            )
+          )
+          || (
+            data.scopeType == "hierarchy"
+            && isHierarchyChannelActive(data.channelId)
+            && get(/databases/$(database)/documents/hierarchyChannels/$(data.channelId)).data.panelIds is list
+            && (
+              membershipPanelId in get(/databases/$(database)/documents/hierarchyChannels/$(data.channelId)).data.panelIds
+              || (
+                exists(/databases/$(database)/documents/agencyPanels/$(membershipPanelId))
+                && "parentPanelId" in get(/databases/$(database)/documents/agencyPanels/$(membershipPanelId)).data
+                && get(/databases/$(database)/documents/agencyPanels/$(membershipPanelId)).data.parentPanelId is string
+                && get(/databases/$(database)/documents/agencyPanels/$(membershipPanelId)).data.parentPanelId
+                  in get(/databases/$(database)/documents/hierarchyChannels/$(data.channelId)).data.panelIds
+              )
+            )
+          )
+        );
+    }
+
+    function validSfuRoomBinding(data) {
+      return data.version == 2
+        && data.scopeType is string
+        && data.scopeType in ["agency", "hierarchy"]
+        && data.channelId is string
+        && data.channelId.size() > 0
+        && data.channelId.size() <= 256
+        && data.callId is string
+        && data.callId.matches("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89AaBb][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}$")
+        && data.participants is list
+        && data.participants.size() == 2
+        && data.participants[0] != data.participants[1]
+        && sfuUserBelongsToScope(data.participants[0], data)
+        && sfuUserBelongsToScope(data.participants[1], data);
+    }
+
+    function canAccessSfuRoom(data) {
+      return hasPanelReadAccess()
+        && validSfuRoomBinding(data)
+        && request.auth.uid in data.participants;
+    }
+
+    function validSfuTrack(track) {
+      return track is map
+        && track.keys().hasOnly(["trackName", "kind", "source"])
+        && track.keys().hasAll(["trackName", "kind", "source"])
+        && track.trackName is string
+        && track.trackName.size() > 0
+        && track.trackName.size() <= 256
+        && track.kind is string
+        && track.kind in ["audio", "video"]
+        && track.source is string
+        && track.source in ["mic", "camera", "screen"]
+        && (
+          (track.source == "mic" && track.kind == "audio")
+          || (track.source in ["camera", "screen"] && track.kind == "video")
+        );
+    }
+
+    function validSfuTracks(tracks) {
+      return tracks is list
+        && tracks.size() > 0
+        && tracks.size() <= 3
+        && validSfuTrack(tracks[0])
+        && (tracks.size() < 2 || validSfuTrack(tracks[1]))
+        && (tracks.size() < 3 || validSfuTrack(tracks[2]));
+    }
+
+    function validSfuParticipant(participantUid, data) {
+      return data.keys().hasOnly([
+          "uid", "name", "photoUrl", "cameraOn", "muted", "sessionId", "tracks",
+          "updatedAt", "expireAt"
+        ])
+        && data.keys().hasAll([
+          "uid", "name", "photoUrl", "cameraOn", "muted", "sessionId", "tracks",
+          "updatedAt", "expireAt"
+        ])
+        && data.uid == participantUid
+        && data.uid == request.auth.uid
+        && data.name is string
+        && data.name.size() > 0
+        && data.name.size() <= 200
+        && (data.photoUrl == null || (data.photoUrl is string && data.photoUrl.size() <= 2048))
+        && data.cameraOn is bool
+        && data.muted is bool
+        && data.sessionId is string
+        && data.sessionId.size() > 0
+        && data.sessionId.size() <= 256
+        && validSfuTracks(data.tracks)
+        && data.updatedAt == request.time
+        && validSfuExpiry(data);
+    }
+
+    function haActiveProfile(user) {
+      let role = user.get("role", "").lower();
+      let dashboard = user.get("dashboardAccess", true);
+      let exempt = role in ["admin", "authority"] || user.get("superAdmin", false) == true
+        || user.get("platformAdmin", false) == true || user.get("globalDashboardAccess", false) == true;
+      return user.get("disabled", false) != true
+        && role in ["admin", "authority", "fieldteam", "field-team", "field_team"]
+        && (dashboard in [true, 1, "true", "1", "yes", "on", "enabled"]
+          || (user.get("verified", false) == true && role in ["admin", "fieldteam", "field-team", "field_team"]))
+        && (exempt || user.get("orgRole", {}).get("permissions", {}).get("dashboard", true) != false);
+    }
+    function haScopeMember(uid, binding) {
+      let user = get(/databases/$(database)/documents/users/$(uid)).data;
+      let panel = user.get("panelId", user.get("agencySlug", user.get("agencyKey", "")));
+      let own = panel is string && panel.size() > 0
+        ? (binding.scopeType == "hierarchy" ? haPanel(panel) : get(/databases/$(database)/documents/agencyPanels/$(panel)).data) : {};
+      let agency = binding.scopeType == "agency" ? get(/databases/$(database)/documents/agencyPanels/$(binding.channelId)).data : {};
+      let hierarchy = binding.scopeType == "hierarchy" ? get(/databases/$(database)/documents/hierarchyChannels/$(binding.channelId)).data : {};
+      return haActiveProfile(user) && panel is string && panel.size() > 0
+        && ((binding.scopeType == "agency" && (panel == binding.channelId
+          || panel in agency.get("childPanelIds", []) || panel in agency.get("ancestorPanelIds", [])
+          || binding.channelId in own.get("childPanelIds", []) || binding.channelId in own.get("ancestorPanelIds", [])))
+        || (binding.scopeType == "hierarchy" && hierarchy.get("active", true) != false
+          && hierarchy.get("disabled", false) != true
+          && (panel in hierarchy.get("panelIds", []) || own.get("parentPanelId", "") in hierarchy.get("panelIds", []))));
+    }
+    function validAuthorityMlsBinding(data) {
+      return data.version == 2
+        && data.scopeType in ["agency", "hierarchy"]
+        && data.channelId is string
+        && data.channelId.size() > 0
+        && data.channelId.size() <= 256
+        && data.participants is list
+        && data.participants.size() == 2
+        && data.participants[0] != data.participants[1]
+        && haScopeMember(data.participants[0], data)
+        && haScopeMember(data.participants[1], data)
+        && data.createdBy is string
+        && data.createdBy in data.participants
+        && data.creatorCredential is string
+        && data.creatorCredential.size() > 0
+        && data.creatorCredential.size() <= 512
+        && data.nextControlSequence is int
+        && data.nextControlSequence >= 0
+        && data.lastControlId is string
+        && data.lastControlId.size() <= 128
+        && data.nextApplicationSequence is int
+        && data.nextApplicationSequence >= 0
+        && data.lastMessageId is string
+        && data.lastMessageId.size() <= 128;
+    }
+
+    function canAccessAuthorityMls(data) {
+      return isSignedIn() && !isDemoUser()
+        && data.version == 2
+        && data.scopeType in ["agency", "hierarchy"]
+        && request.auth.uid in data.participants
+        && haScopeMember(data.participants[0], data)
+        && haScopeMember(data.participants[1], data)
+        && (data.scopeType != "hierarchy" || haHierarchyPolicyAllowed(data.channelId));
+    }
+
+    function authorityMlsParent(conversationId) {
+      return get(/databases/$(database)/documents/authorityMlsV2/$(conversationId)).data;
+    }
+
+    function canAccessAuthorityMlsChild(conversationId) {
+      return exists(/databases/$(database)/documents/authorityMlsV2/$(conversationId))
+        && canAccessAuthorityMls(authorityMlsParent(conversationId));
+    }
+
+    function validAuthorityMlsSenderDevice(conversationId, data) {
+      return data.senderUid == request.auth.uid
+        && data.senderDeviceId is string
+        && data.senderDeviceId.matches("^[A-Za-z0-9_-]{1,128}$")
+        && data.senderCredential is string
+        && data.senderCredential.matches("^cc-mls:v1:[A-Za-z0-9_-]{2,256}:[A-Za-z0-9_-]{2,256}$")
+        && exists(
+          /databases/$(database)/documents/authorityMlsV2/$(conversationId)/devices/$(data.senderDeviceId)
+        )
+        && get(
+          /databases/$(database)/documents/authorityMlsV2/$(conversationId)/devices/$(data.senderDeviceId)
+        ).data.uid == request.auth.uid
+        && get(
+          /databases/$(database)/documents/authorityMlsV2/$(conversationId)/devices/$(data.senderDeviceId)
+        ).data.credential == data.senderCredential;
+    }
+
+    function isAdminClaim() {
+      return isSignedIn()
+        && request.auth.token.role is string
+        && request.auth.token.role.lower() == 'admin';
+    }
+
+    function isAuthenticated() { return isSignedIn(); }
+    // Server-owned messages contain recipientUid, senderUid and opaque ciphertext.
+    // Clients only read their own inbox. All writes, key distribution, routing,
+    // profiles, receipts, migration jobs and account markers are server-only.
+
+    function ownsInboxMessage() {
+      return isAuthenticated() && resource.data.recipientUid is string
+        && resource.data.recipientUid == request.auth.uid;
+    }
+    function accountIsOpen() {
+      return !exists(/databases/$(database)/documents/messagingAccounts/$(request.auth.uid))
+        || get(/databases/$(database)/documents/messagingAccounts/$(request.auth.uid)).data.state != 'deleted';
+    }
+    match /messages/{messageId} {
+      allow get, list: if ownsInboxMessage() && accountIsOpen();
+      allow create, update, delete: if false;
+    }
+    match /users/{userId} {
+      // The demo login is verified by the server, which returns the fixed
+      // projected profile. Never expose its stored source document to the
+      // browser SDK, even for a self-read.
+      allow read: if !isDemoUser() && isSignedIn() && accountIsOpen() && request.auth.uid == userId;
+      allow create: if !isDemoUser() && (isSignedIn() && accountIsOpen() && request.auth.uid == userId && validUserCreate(userId) && !("disabled" in request.resource.data));
+      allow update: if !isDemoUser() && (isSignedIn() && accountIsOpen() && request.auth.uid == userId && validUserUpdate(userId) && unchangedField("disabled") && unchangedField("verified"));
+      allow delete: if !isDemoUser() && (false);
+    }
+
+    match /authorityMlsV2/{conversationId} {
+      // `ensureAuthorityMlsConversation` performs an existence check before its create. A missing
+      // document has no binding to authorize against yet, so permit only the canonical, empty lookup
+      // to an authenticated panel user. Existing conversations still require exact participant and
+      // agency/hierarchy membership below, preventing conversation-existence probing across scopes.
+      allow get: if (
+          resource == null
+          && haActiveProfile(userDoc())
+          && conversationId.matches("^am2_[A-Za-z0-9_-]{43}$")
+        ) || canAccessAuthorityMls(resource.data);
+      allow list: if false;
+      allow create: if isSignedIn() && !isDemoUser() && (
+        conversationId.matches("^am2_[A-Za-z0-9_-]{43}$")
+        && request.resource.data.keys().hasOnly([
+          "version", "scopeType", "channelId", "participants", "createdBy", "creatorCredential", "createdAt",
+          "nextControlSequence", "lastControlId", "nextApplicationSequence", "lastMessageId"
+        ])
+        && validAuthorityMlsBinding(request.resource.data)
+        && (request.resource.data.scopeType != "hierarchy" || haHierarchyPolicyAllowed(request.resource.data.channelId))
+        && validHaConversationRoute(conversationId, request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.nextControlSequence == 0
+        && request.resource.data.lastControlId == ""
+        && request.resource.data.nextApplicationSequence == 0
+        && request.resource.data.lastMessageId == "");
+      // The only mutable fields form the atomic, gap-free control and application sequences.
+      allow update: if !isDemoUser() && (canAccessAuthorityMls(resource.data)
+        && (
+          (
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(["nextControlSequence", "lastControlId"])
+            && request.resource.data.nextControlSequence == resource.data.nextControlSequence + 1
+            && request.resource.data.lastControlId is string
+            && request.resource.data.lastControlId.size() > 0
+            && request.resource.data.lastControlId.size() <= 128
+            && existsAfter(
+              /databases/$(database)/documents/authorityMlsV2/$(conversationId)/control/$(request.resource.data.lastControlId)
+            )
+          )
+          ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(["nextApplicationSequence", "lastMessageId"])
+            && request.resource.data.nextApplicationSequence == resource.data.nextApplicationSequence + 1
+            && request.resource.data.lastMessageId is string
+            && request.resource.data.lastMessageId.size() > 0
+            && request.resource.data.lastMessageId.size() <= 128
+            && existsAfter(
+              /databases/$(database)/documents/authorityMlsV2/$(conversationId)/messages/$(request.resource.data.lastMessageId)
+            )
+          )
+        ));
+      allow delete: if !isDemoUser() && (false);
+    }
+
+    match /authorityMlsV2/{conversationId}/devices/{deviceId} {
+      allow read: if canAccessAuthorityMlsChild(conversationId);
+      allow create: if !isDemoUser() && (canAccessAuthorityMlsChild(conversationId)
+        && request.resource.data.keys().hasOnly([
+          "uid", "deviceId", "credential", "signingPublicKey", "label", "createdAt"
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.deviceId == deviceId
+        && deviceId.matches("^[A-Za-z0-9_-]{1,128}$")
+        && request.resource.data.credential is string
+        && request.resource.data.credential.matches("^cc-mls:v1:[A-Za-z0-9_-]{2,256}:[A-Za-z0-9_-]{2,256}$")
+        && request.resource.data.signingPublicKey is string
+        && request.resource.data.signingPublicKey.matches("^[A-Za-z0-9_-]{43}$")
+        && request.resource.data.label is string
+        && request.resource.data.label.size() <= 64
+        && request.resource.data.createdAt == request.time);
+      allow update: if !isDemoUser() && (false);
+      allow delete: if !isDemoUser() && (canAccessAuthorityMlsChild(conversationId)
+        && resource.data.uid == request.auth.uid);
+    }
+
+    match /authorityMlsV2/{conversationId}/control/{eventId} {
+      allow read: if canAccessAuthorityMlsChild(conversationId);
+      allow create: if !isDemoUser() && (canAccessAuthorityMlsChild(conversationId)
+        && eventId.matches("^c_[A-Za-z0-9_-]{43}$")
+        && request.resource.data.keys().hasOnly([
+          "senderUid", "senderDeviceId", "senderCredential", "payload", "sequence", "createdAt"
+        ])
+        && validAuthorityMlsSenderDevice(conversationId, request.resource.data)
+        && request.resource.data.payload is string
+        && request.resource.data.payload.size() > 0
+        && request.resource.data.payload.size() <= 262144
+        // Cross-platform MLS handshakes are canonical JSON envelopes whose binary fields are
+        // base64url. Their signatures and credential/key bindings are verified by the MLS engine);
+        // Firestore remains an opaque, immutable, size-bounded relay.
+        && request.resource.data.sequence == authorityMlsParent(conversationId).nextControlSequence
+        && request.resource.data.createdAt == request.time
+        && getAfter(
+          /databases/$(database)/documents/authorityMlsV2/$(conversationId)
+        ).data.nextControlSequence == request.resource.data.sequence + 1
+        && getAfter(
+          /databases/$(database)/documents/authorityMlsV2/$(conversationId)
+        ).data.lastControlId == eventId);
+      allow update, delete: if !isDemoUser() && (false);
+    }
+
+    match /authorityMlsV2/{conversationId}/messages/{messageId} {
+      allow read: if canAccessAuthorityMlsChild(conversationId);
+      allow create: if !isDemoUser() && (canAccessAuthorityMlsChild(conversationId)
+        && messageId.matches("^m_([A-Za-z0-9_-]{22}|[0-9A-Fa-f]{32})$")
+        && request.resource.data.keys().hasOnly([
+          "senderUid", "senderDeviceId", "senderCredential", "messageId", "contentVersion",
+          "ciphertext", "sequence", "createdAt"
+        ])
+        && validAuthorityMlsSenderDevice(conversationId, request.resource.data)
+        && request.resource.data.messageId == messageId
+        && request.resource.data.contentVersion == 2
+        && request.resource.data.sequence == authorityMlsParent(conversationId).nextApplicationSequence
+        && request.resource.data.ciphertext is string
+        && request.resource.data.ciphertext.size() > 0
+        && request.resource.data.ciphertext.size() <= 900000
+        && request.resource.data.ciphertext.matches("^[A-Za-z0-9_-]+$")
+        && request.resource.data.createdAt == request.time
+        && getAfter(
+          /databases/$(database)/documents/authorityMlsV2/$(conversationId)
+        ).data.nextApplicationSequence == request.resource.data.sequence + 1
+        && getAfter(
+          /databases/$(database)/documents/authorityMlsV2/$(conversationId)
+        ).data.lastMessageId == messageId);
+      allow update, delete: if !isDemoUser() && (false);
+    }
+
+    match /authorityMlsPreparationInbox/{recipientUid}/requests/{conversationId} {
+      allow get: if !isDemoUser()
+        && isSignedIn()
+        && request.auth.uid == recipientUid
+        && conversationId.matches("^am2_[A-Za-z0-9_-]{43}$")
+        && resource.data.version == 2
+        && resource.data.conversationId == conversationId
+        && resource.data.recipientUid == recipientUid;
+      // The collection path itself is recipient-scoped and every row is Admin-SDK-only. Rules
+      // cannot safely inspect a wildcard document id while authorizing a collection query, so the
+      // client independently revalidates every row and its canonical MLS parent before use.
+      allow list: if !isDemoUser() && isSignedIn() && request.auth.uid == recipientUid;
+      allow write: if !isDemoUser() && (false);
+    }
+
+    match /authorityMlsNotificationInbox/{recipientUid}/authorityMlsNotificationEntries/{notificationId} {
+      allow get: if !isDemoUser()
+        && isSignedIn()
+        && request.auth.uid == recipientUid
+        && resource.data.version == 2
+        && resource.data.recipientUid == recipientUid
+        && resource.data.senderUid is string
+        && resource.data.senderUid != recipientUid
+        && resource.data.conversationId is string
+        && resource.data.conversationId.matches("^am2_[A-Za-z0-9_-]{43}$")
+        && resource.data.messageId is string
+        && resource.data.messageId.matches("^[A-Za-z0-9_.:-]{1,180}$")
+        && resource.data.claimedAt is timestamp
+        && resource.data.expireAt is timestamp
+        && notificationId == resource.data.conversationId + "__" + resource.data.messageId;
+      // The collection itself is already recipient-scoped and Admin-SDK-only. As with the MLS
+      // preparation inbox, the client revalidates every row before surfacing it.
+      allow list: if !isDemoUser() && isSignedIn() && request.auth.uid == recipientUid;
+      allow write: if !isDemoUser() && (false);
+    }
+
+    function validHaConversationRoute(conversationId, data) {
+      let route = get(/databases/$(database)/documents/authorityHaRoutesById/$(conversationId)).data;
+      return route.generation == 11 && route.conversationId == conversationId
+        && route.scopeType == data.scopeType && route.channelId == data.channelId
+        && route.participants == data.participants;
+    }
+    match /authorityHaRoutesById/{conversationId} {
+      allow get: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow list, write: if false;
+    }
+    match /agencyPanels/{panelId} {
+      allow get: if canReadAgencyPanel(panelId, resource.data);
+      allow list, write: if false;
+    }
+    match /hierarchyChannels/{channelId} {
+      allow get: if isHierarchyChannelMember(channelId);
+      allow list, write: if false;
+    }
+    match /messagingPolicies/{id} { allow read, write: if false; }
+
+
+    function canUseHaScope(scope, channelId) {
+      return isSignedIn() && !isDemoUser() && haActiveProfile(userDoc())
+        && userDoc().get("disabled", false) != true
+        && haScopeMember(request.auth.uid, {"scopeType": scope, "channelId": channelId})
+        && (scope != "hierarchy" || haHierarchyPolicyAllowed(channelId));
+    }
+    function validHaReceipt(receiptId, scope, channelId) {
+      return request.resource.data.keys().hasOnly(["viewerUid", "partnerUid", "deliveredAt", "at", "updatedAt"])
+        && validMessageReceipt(receiptId)
+        && haScopeMember(request.resource.data.partnerUid, {"scopeType": scope, "channelId": channelId});
+    }
+    function validHaTyping(typingUid, scope, channelId) {
+      return typingUid == request.auth.uid && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(["uid", "to", "typing", "at"])
+        && request.resource.data.typing is bool && request.resource.data.at == request.time
+        && haScopeMember(request.resource.data.to, {"scopeType": scope, "channelId": channelId});
+    }
+
+    match /agencyPanels/{channelId}/readReceipts/{receiptId} {
+      allow get: if canUseHaScope("agency", channelId)
+        && receiptId.split("__").size() == 2 && request.auth.uid in receiptId.split("__");
+      allow create: if canUseHaScope("agency", channelId) && validHaReceipt(receiptId, "agency", channelId);
+      allow update: if canUseHaScope("agency", channelId) && validHaReceipt(receiptId, "agency", channelId) && messageReceiptMovesForward();
+      allow list, delete: if false;
+    }
+    match /agencyPanels/{channelId}/typing/{typingUid} {
+      allow get: if canUseHaScope("agency", channelId)
+        && (resource == null || typingUid == request.auth.uid || resource.data.to == request.auth.uid);
+      allow create, update: if canUseHaScope("agency", channelId) && validHaTyping(typingUid, "agency", channelId);
+      allow list, delete: if false;
+    }
+
+    match /hierarchyChannels/{channelId}/readReceipts/{receiptId} {
+      allow get: if canUseHaScope("hierarchy", channelId)
+        && receiptId.split("__").size() == 2 && request.auth.uid in receiptId.split("__");
+      allow create: if canUseHaScope("hierarchy", channelId) && validHaReceipt(receiptId, "hierarchy", channelId);
+      allow update: if canUseHaScope("hierarchy", channelId) && validHaReceipt(receiptId, "hierarchy", channelId) && messageReceiptMovesForward();
+      allow list, delete: if false;
+    }
+    match /hierarchyChannels/{channelId}/typing/{typingUid} {
+      allow get: if canUseHaScope("hierarchy", channelId)
+        && (resource == null || typingUid == request.auth.uid || resource.data.to == request.auth.uid);
+      allow create, update: if canUseHaScope("hierarchy", channelId) && validHaTyping(typingUid, "hierarchy", channelId);
+      allow list, delete: if false;
+    }
+
+    match /{document=**} { allow read, write: if false; }
+  }
+}

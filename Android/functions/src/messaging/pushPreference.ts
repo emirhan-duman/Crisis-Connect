@@ -1,4 +1,6 @@
-import { getFirestore } from "firebase-admin/firestore";
+import { getMessagingFirestore as getFirestore } from "./databaseTarget";
+import { currentMessagingDatabaseId, MULTIREGION_MESSAGING_DATABASE } from "./databaseTarget";
+import { readLegacyProfile } from "./highAvailabilityStore";
 import * as logger from "firebase-functions/logger";
 
 /**
@@ -20,8 +22,9 @@ import * as logger from "firebase-functions/logger";
  */
 async function readPushPreference(uid: string): Promise<boolean> {
   try {
-    const snap = await getFirestore().doc(`users/${uid}`).get();
-    const prefs = snap.get("notificationPreferences");
+    const prefs = currentMessagingDatabaseId() === MULTIREGION_MESSAGING_DATABASE
+      ? (await readLegacyProfile(uid))?.notificationPreferences
+      : (await getFirestore().doc(`users/${uid}`).get()).get("notificationPreferences");
     if (!prefs || typeof prefs !== "object") return true;
     const push = (prefs as Record<string, unknown>).push;
     // Only an explicit `false` suppresses; anything else is treated as opted in.

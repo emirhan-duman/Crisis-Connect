@@ -13,6 +13,7 @@ struct AdvancedSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                NavigationLink("Bağımsız saat mesajları") { IndependentMessagingSettingsView() }
                 AdvancedPublicMeshCard(
                     publicMeshEnabled: $settings.publicMeshEnabled,
                     notificationsEnabled: $settings.gattMeshNotificationsEnabled,

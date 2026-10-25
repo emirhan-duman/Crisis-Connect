@@ -1452,3 +1452,30 @@
 "guide_redesign_subtitle_now" = "صورتِ حال منتخب کریں اور چند سیکنڈ میں پہلا درست قدم دیکھیں۔";
 "guide_redesign_subtitle_prepare" = "اپنے منصوبے اور آف لائن چیک لسٹ مکمل کریں۔";
 "guide_redesign_unknown_region" = "نامعلوم علاقہ";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "اپنے رابطے آن لائن تلاش کریں";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect ایپ استعمال کرنے والوں کو تلاش کرنے کے لیے آپ کے رابطوں کے نام اور فون نمبر پڑھتا ہے۔ نمبروں کو ملانے کے لیے امریکہ میں Google Firebase پر موجود Crisis Connect سرورز کو بھیجتا ہے۔ نام آپ کے آلے پر رہتے ہیں۔ تلاش کیے گئے نمبروں پر مستقل ذخیرے کے بغیر کارروائی ہوتی ہے؛ ملنے والے نتائج آلے پر رہتے ہیں۔ یہ اسکرین کھلی ہونے کے دوران ریفریش کرنے یا واپس آنے سے نمبر دوبارہ بھیجے جا سکتے ہیں۔ آپ کی پسند اس آلے پر اس اکاؤنٹ کے لیے محفوظ رہتی ہے۔ آپ ترتیبات میں رابطوں تک رسائی کے تحت رضامندی واپس لے سکتے ہیں۔";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "قریبی رابطے تلاش کریں";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect آپ کے آلے پر رابطوں کے نام اور فون نمبر پڑھتا ہے تاکہ آپ قریب تلاش کرنے کے لیے کسی شخص کو منتخب کر سکیں۔ منتخب نمبر Bluetooth کے ذریعے شناخت کی تصدیق کے لیے استعمال ہوتا ہے۔ یہ خصوصیت آپ کے رابطے سرور کو نہیں بھیجتی۔ آپ کی پسند اس آلے پر اس اکاؤنٹ کے لیے محفوظ رہتی ہے۔ آپ ترتیبات میں رابطوں تک رسائی کے تحت رضامندی واپس لے سکتے ہیں۔";
+"CONTACTS_DISCLOSURE_ACCEPT" = "میں متفق ہوں";
+"CONTACTS_DISCLOSURE_DECLINE" = "ابھی نہیں";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "رابطوں تک رسائی";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "آپ کی پسند اس آلے پر اس اکاؤنٹ کے لیے محفوظ رہتی ہے۔ آپ ترتیبات میں رابطوں تک رسائی کے تحت رضامندی واپس لے سکتے ہیں۔";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "آن لائن مماثلت کی رضامندی واپس لیں";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "قریبی رابطوں کی رضامندی واپس لیں";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "انٹرنیٹ دستیاب ہے";

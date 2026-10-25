@@ -1,0 +1,6 @@
+<resources>
+    <string name="watch_sos_channel">Watch SOS</string>
+    <string name="watch_sos_notification_title">Start SOS requested from your watch</string>
+    <string name="watch_sos_notification_body">Tap within 30 seconds to start the SOS broadcast.</string>
+    <string name="watch_sos_not_started">SOS was not started. Open Crisis Connect and check permissions.</string>
+</resources>

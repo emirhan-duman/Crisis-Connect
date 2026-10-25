@@ -87,6 +87,32 @@ enum MlsStateVault {
         guard journalDelete == errSecSuccess else { throw MlsStateVaultError.keychain(journalDelete) }
     }
 
+    /// Atomically replaces durable envelope metadata without advancing the native MLS ratchet.
+    /// The caller must target an inactive context; any ratchet journal keeps this operation closed.
+    static func saveMetadataOnly(_ snapshot: Data, context: String) throws {
+        try validate(context: context)
+        guard !snapshot.isEmpty, snapshot.count <= maxSnapshotBytes else {
+            throw MlsStateVaultError.invalidSnapshot
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        if try itemExists(query: journalQuery(context: context)) ||
+            itemExists(query: legacyJournalQuery(context: context)) {
+            throw MlsStateVaultError.unfinishedAdvance
+        }
+        let encoded = try seal(snapshot, context: context)
+        let url = try stateURL(context: context)
+        try encoded.write(to: url, options: [.atomic, .completeFileProtection])
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var protectedURL = url
+        try protectedURL.setResourceValues(values)
+        let legacyDelete = SecItemDelete(legacySnapshotQuery(context: context) as CFDictionary)
+        guard legacyDelete == errSecSuccess || legacyDelete == errSecItemNotFound else {
+            throw MlsStateVaultError.keychain(legacyDelete)
+        }
+    }
+
     static func delete(context: String) throws {
         try validate(context: context)
         lock.lock()

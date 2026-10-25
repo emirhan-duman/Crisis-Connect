@@ -238,8 +238,22 @@ class AuthorityMlsChatChannel private constructor(
             channelId: String,
             deviceLabel: String,
             foreground: Boolean = true,
+            compatibility: Boolean = false,
+            resolvedBinding: AuthorityMlsBinding? = null,
         ): AuthorityMlsChatChannel {
-            val binding = AuthorityMlsBinding(scopeType, channelId, listOf(selfUid, peerUid))
+            val unresolved = AuthorityMlsBinding(scopeType, channelId, listOf(selfUid, peerUid), routeResolved = compatibility)
+            val binding = resolvedBinding?.let {
+                require(it.routeResolved && it.scopeType == scopeType && it.channelId == channelId &&
+                    it.participants.toSet() == setOf(selfUid, peerUid)) { "Prewarmed MLS binding changed" }
+                AuthorityMlsIdentifiers.canonicalBinding(it)
+            } ?: ResilientApplicationStore.resolve(context, unresolved)
+            val currentConversationId = AuthorityMlsIdentifiers.conversationId(binding)
+            AuthorityMlsPendingApplicationStore.migrate(
+                context.applicationContext,
+                selfUid,
+                AuthorityMlsIdentifiers.legacyConversationIds(binding),
+                currentConversationId,
+            )
             if (foreground) {
                 // A visible thread must preempt its background prewarmer. Both deliberately use the
                 // same exclusive ratchet lease, so letting a stalled background fetch keep ownership
@@ -252,7 +266,11 @@ class AuthorityMlsChatChannel private constructor(
                 binding = binding,
                 deviceLabel = deviceLabel,
             )
-            return AuthorityMlsChatChannel(context.applicationContext, selfUid, peerUid, session)
+            check(session.conversationId == currentConversationId) {
+                "Authority MLS session selected an unexpected protocol generation."
+            }
+            val transport = AuthorityMlsTransport().apply { configure(binding) }
+            return AuthorityMlsChatChannel(context.applicationContext, selfUid, peerUid, session, transport)
         }
 
         private fun randomMessageId(): String {
