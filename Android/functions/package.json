@@ -24,7 +24,7 @@
     "@google-cloud/storage": "^8.1.0",
     "@peculiar/asn1-android": "^2.3.13",
     "@peculiar/asn1-schema": "^2.3.13",
-    "@peculiar/x509": "^1.12.3",
+    "@peculiar/x509": "^2.1.0",
     "cbor-x": "^1.6.0",
     "firebase-admin": "^14.4.0",
     "firebase-functions": "^7.3.2",
