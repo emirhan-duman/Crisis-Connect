@@ -1014,6 +1014,18 @@ Hosted Weblate supports Crisis Connect with free translation hosting through its
 
 BetterQA supports Crisis Connect with a complimentary security assessment of the Android and iOS apps, including automated scanning, engineer validation of findings, remediation guidance, and one retest. The assessment has been agreed; results are pending.
 
+<p>
+  <a href="https://backbox.dev/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/supporters/backbox-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/supporters/backbox-light.png" />
+      <img src="docs/supporters/backbox-light.png" alt="BackBox AI" width="150" />
+    </picture>
+  </a>
+</p>
+
+BackBox AI supports Crisis Connect with open-source security reviews and security analysis through the BackBox open-source partnership program.
+
 ## License
 
 This project is licensed under the [GNU Affero General Public License v3.0](./LICENSE).
