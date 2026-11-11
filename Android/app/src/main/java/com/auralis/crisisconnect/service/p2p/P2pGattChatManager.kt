@@ -461,6 +461,10 @@ class P2pGattChatManager(
             validatedIdentity
     }
 
+    /** The shared manager's ready connection may belong to a different visible conversation. */
+    fun isReadyForSession(sessionCode: String): Boolean =
+        currentContact?.sessionCode?.equals(sessionCode, ignoreCase = true) == true && isReady()
+
     suspend fun sendText(
         message: ChatMessage,
         contact: Contact

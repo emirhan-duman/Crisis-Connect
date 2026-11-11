@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +67,7 @@ fun ContactAvatar(
     modifier: Modifier = Modifier,
     textStyle: TextStyle = MaterialTheme.typography.titleMedium
 ) {
+    val saving by com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.collectAsState()
     val context = LocalContext.current
     val placeholderInitial = stringResource(R.string.contact_initial_placeholder)
     val initials = remember(displayName, placeholderInitial) {
@@ -128,6 +130,7 @@ fun ContactAvatar(
             AsyncImage(
                 model = ImageRequest.Builder(context)
                     .data(photoUrl)
+                    .networkCachePolicy(if (saving) coil.request.CachePolicy.DISABLED else coil.request.CachePolicy.ENABLED)
                     .crossfade(true)
                     .build(),
                 contentDescription = null,
@@ -135,7 +138,7 @@ fun ContactAvatar(
                 contentScale = ContentScale.Crop,
                 onSuccess = { remoteImageLoaded = true },
                 onError = { result ->
-                    remoteImageFailed = true
+                    if (!saving) remoteImageFailed = true
                     val uri = runCatching { Uri.parse(photoUrl) }.getOrNull()
                     Log.w(
                         "ContactAvatar",

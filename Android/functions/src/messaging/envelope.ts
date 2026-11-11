@@ -24,7 +24,7 @@ const MAX_B64_NONCE = 32; // 12-byte GCM nonce → 16 b64 chars.
 const MAX_ID_LEN = 128;
 
 const B64_REGEX = /^[A-Za-z0-9+/]+=*$/;
-const ID_REGEX = /^[A-Za-z0-9._:-]{1,128}$/;
+const ID_REGEX = /^[A-Za-z0-9._:~-]{1,128}$/;
 // Firebase Auth UIDs are alphanumeric; keep the guard permissive but bounded.
 const UID_REGEX = /^[A-Za-z0-9]{1,128}$/;
 
@@ -60,7 +60,7 @@ function requireId(obj: Record<string, unknown>, field: string): string {
   if (typeof value !== "string" || !ID_REGEX.test(value)) {
     throw new HttpsError(
       "invalid-argument",
-      `${field} must be 1-${MAX_ID_LEN} chars of [A-Za-z0-9._:-].`
+      `${field} must be 1-${MAX_ID_LEN} chars of [A-Za-z0-9._:~-].`
     );
   }
   return value;

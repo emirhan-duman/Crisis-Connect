@@ -82,7 +82,7 @@ final class ProfileViewModel: ObservableObject {
     }()
     private lazy var firestore: Firestore = {
         FirebaseRuntime.ensureConfigured()
-        return Firestore.firestore()
+        return ResilientApplicationStore.profiles()
     }()
     private lazy var functions: Functions = {
         FirebaseRuntime.ensureConfigured()

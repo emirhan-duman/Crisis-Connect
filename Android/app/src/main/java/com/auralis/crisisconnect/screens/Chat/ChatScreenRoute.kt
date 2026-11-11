@@ -389,6 +389,8 @@ fun ChatScreen(
     val timelineItems by viewModel.timelineItems.collectAsStateWithLifecycle()
     val isPeerTyping by viewModel.isPeerTyping.collectAsStateWithLifecycle()
     val peerPresence by viewModel.peerPresence.collectAsStateWithLifecycle()
+    val trafficPresence by com.auralis.crisisconnect.connectivity.DisasterTrafficController.presence.collectAsStateWithLifecycle()
+    val trafficSaving by com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.collectAsStateWithLifecycle()
     val hasSharedLocationMessages = remember(timelineItems) {
         timelineItems.any { item ->
             val message = (item as? ChatTimelineItem.Msg)?.message ?: return@any false
@@ -407,15 +409,15 @@ fun ChatScreen(
             }
             .firstOrNull()
     }
-    val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
-    // Broad-scope consumers only need the Connected/not-Connected boolean; derivedStateOf keeps
-    // Connecting↔Disconnected reconnect churn from invalidating them.
-    val isBluetoothConnected by remember { derivedStateOf { connectionState == ChatConnectionState.Connected } }
-    val transport by viewModel.transport.collectAsStateWithLifecycle()
+    val connectionStatus by viewModel.connectionStatus.collectAsStateWithLifecycle()
+    val connectionState = connectionStatus.state
+    val transport = connectionStatus.transport
+    val isBluetoothConnected = connectionStatus.bluetoothReady
+    val canTrackLocation = connectionStatus.allowsLocationUpdates(trafficSaving)
     val contactPhotoUrl by viewModel.contactPhotoUrl.collectAsStateWithLifecycle()
     val ownLocationSnapshot = rememberOwnLocationSnapshot(
         enabled = hasSharedLocationMessages && hasLocationPermission(context),
-        liveTracking = isBluetoothConnected
+        liveTracking = canTrackLocation
     )
     val signalInfo by viewModel.signalInfo.collectAsStateWithLifecycle()
     // Stable deferred-read provider: bubbles take a lambda instead of the value, so an RSSI hit no
@@ -461,7 +463,7 @@ fun ChatScreen(
             else -> emptyList()
         }
     }
-    val canOpenAttachmentMenu = availableAttachmentActions.isNotEmpty()
+    val canOpenAttachmentMenu = availableAttachmentActions.isNotEmpty() && (!trafficSaving || isBluetoothConnected)
     var pendingUnreadMessageIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val messageLookup = remember(messages) { messages.associateBy(ChatMessage::messageUuid) }
     val infoTargetMessage = remember(messages, infoTargetMessageUuid) {
@@ -825,7 +827,7 @@ fun ChatScreen(
                     val locationEstimate = fetchCurrentLocationEstimateForChatSend(
                         context = context,
                         bleRssi = signalInfo?.rssi,
-                        preferFreshFix = connectionState == ChatConnectionState.Connected
+                        preferFreshFix = canTrackLocation
                     )
                     if (locationEstimate == null) {
                         isSharingLocation = false
@@ -1026,7 +1028,7 @@ fun ChatScreen(
                                     displayName = displayName,
                                     stableKey = sessionCode,
                                     bitmap = remoteProfileBitmap,
-                                    photoUrl = contactPhotoUrl,
+                                    photoUrl = if (trafficSaving) null else contactPhotoUrl,
                                     modifier = Modifier.size(40.dp),
                                     textStyle = MaterialTheme.typography.titleMedium
                                 )
@@ -1047,7 +1049,7 @@ fun ChatScreen(
                                     var badgeCompact by remember { mutableStateOf(false) }
                                     LaunchedEffect(connectionState, transport) {
                                         badgeCompact = false
-                                        if (connectionState == ChatConnectionState.Connected) {
+                                        if (connectionState == ChatConnectionState.Connected || connectionState == ChatConnectionState.Available) {
                                             delay(2_500)
                                             badgeCompact = true
                                         }
@@ -1062,6 +1064,16 @@ fun ChatScreen(
                                             compact = badgeCompact
                                         )
                                         when {
+                                            trafficPresence != com.auralis.crisisconnect.connectivity.TrafficPresence.NORMAL -> Text(
+                                                text = stringResource(when (trafficPresence) {
+                                                    com.auralis.crisisconnect.connectivity.TrafficPresence.SOS -> R.string.traffic_local_sos
+                                                    com.auralis.crisisconnect.connectivity.TrafficPresence.OFFLINE -> R.string.traffic_local_offline
+                                                    else -> R.string.traffic_local_limited
+                                                }),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                maxLines = 1
+                                            )
                                             isPeerTyping -> Text(
                                                 text = stringResource(R.string.chat_typing),
                                                 style = MaterialTheme.typography.bodySmall,
@@ -1122,7 +1134,7 @@ fun ChatScreen(
                                             viewModel.startCall()
                                         }
                                     },
-                                    enabled = canPlaceCall
+                                    enabled = canPlaceCall && (!trafficSaving || isBluetoothConnected)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.Phone,
@@ -1165,6 +1177,14 @@ fun ChatScreen(
                             scrolledContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
                         )
                     )
+                    if (trafficSaving) {
+                        Text(
+                            stringResource(R.string.chat_disaster_mode_detail),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
                     AnimatedVisibility(
                         visible = minimizedCall != null,
                         enter = slideInVertically(
@@ -1252,7 +1272,7 @@ fun ChatScreen(
                         hasRecordedVoice = hasRecordedVoice,
                         isSendingVoice = isSendingVoice,
                         recordingDurationMillis = { recordingDuration },
-                        canRecordVoice = canSendVoiceMessages,
+                        canRecordVoice = canSendVoiceMessages && (!trafficSaving || isBluetoothConnected),
                         onAttachmentClick = {
                             if (!canOpenAttachmentMenu) {
                                 return@MessageComposer
@@ -1395,7 +1415,7 @@ fun ChatScreen(
                             }
                         }
                     }
-                    if (isPeerTyping) {
+                    if (isPeerTyping && !trafficSaving) {
                         item(key = "typing_indicator", contentType = "typing_indicator") {
                             TypingIndicatorBubble()
                         }

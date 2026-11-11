@@ -192,6 +192,9 @@ private fun P2pMessageInfoSheetContent(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
+                Text(text = stringResource(R.string.traffic_delivery_explanation),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                 Text(
                     text = messageBody,

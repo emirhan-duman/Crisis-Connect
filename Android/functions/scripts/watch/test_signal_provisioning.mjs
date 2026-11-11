@@ -1,0 +1,33 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {generateKeyPairSync,randomUUID,randomBytes,sign} from 'node:crypto';
+import {initializeApp} from 'firebase-admin/app';
+import {getFirestore} from 'firebase-admin/firestore';
+import protocol from '../../lib/watch/deviceProtocol.js';
+import registry from '../../lib/watch/deviceRegistry.js';
+import provisioning from '../../lib/watch/signalProvisioning.js';
+test('Signal binding requires phone ownership and watch proof; immutable device identity and unique indices',async()=>{
+ assert.match(process.env.FIRESTORE_EMULATOR_HOST??'',/^127\.0\.0\.1:/);initializeApp({projectId:'demo-crisis-independent-watch'});process.env.WATCH_INDEPENDENT_PROVISIONING='true';const db=getFirestore();
+ const ownerUid='bindingOwner',deviceID=randomUUID(),{privateKey,publicKey}=generateKeyPairSync('ec',{namedCurve:'prime256v1'}),publicDer=publicKey.export({format:'der',type:'spki'}).toString('base64');
+ const signature=p=>sign('sha256',Buffer.from(protocol.WATCH_DOMAIN+p),privateKey).toString('base64');
+ const auth={uid:ownerUid,token:{}};
+ const enroll=id=>registry.enrollIndependentWatch.run({auth,data:{deviceID:id,publicKey:publicDer,confirmed:true,signature:signature(protocol.enrollmentPayload(ownerUid,id,publicDer))}});
+ await assert.rejects(registry.enrollIndependentWatch.run({auth:{uid:ownerUid,token:{firebase:{sign_in_provider:'anonymous'}}},data:{}}),e=>e.code==='permission-denied');
+ const first=await enroll(deviceID);assert.equal(first.signalDeviceId,2);
+ // These are format-only test vectors. Native watch tests validate actual Signal signatures / PQXDH.
+ const curve=()=>Buffer.concat([Buffer.from([5]),randomBytes(32)]).toString('base64');
+ const bundle={deviceId:2,registrationId:123,identityKey:curve(),signedPreKey:curve(),signedSignature:randomBytes(64).toString('base64'),kyberPreKey:randomBytes(1569).toString('base64'),kyberSignature:randomBytes(64).toString('base64')};
+ const make=(b=bundle)=>{const payload=Buffer.from(JSON.stringify({version:1,kind:'signal-binding',ownerUid,deviceID,expiresAt:Date.now()+300000,bundle:b})).toString('base64');return{confirmed:true,payload,signature:signature(payload)}};
+ const data=make();await assert.rejects(provisioning.configureIndependentWatchSignal.run({auth:{uid:'notOwner',token:{}},data}));
+ await assert.rejects(provisioning.configureIndependentWatchSignal.run({auth,data:{...data,signature:randomBytes(70).toString('base64')}}));
+ await provisioning.configureIndependentWatchSignal.run({auth,data});await provisioning.configureIndependentWatchSignal.run({auth,data});
+ await assert.rejects(provisioning.configureIndependentWatchSignal.run({auth,data:make({...bundle,identityKey:curve()})}),e=>e.code==='failed-precondition');
+ const other=randomUUID();
+ const phone=await registry.enrollIndependentWatch.run({auth,data:{deviceID:other,publicKey:publicDer,confirmed:true,kind:'phoneInbox',signature:signature(protocol.enrollmentPayload(ownerUid,other,publicDer))}});
+ assert.equal(phone.signalDeviceId,3);assert.deepEqual(phone.scopes,['shortMessage']);
+ const registration=(await db.doc(`watchInstallations/${other}`).get()).data();
+ assert.throws(()=>protocol.authorizeWatch(registration,{deviceID:other,action:'startSOS'},Date.now()));
+ await registry.revokeIndependentWatch.run({auth,data:{deviceID:other}});
+ const next=randomUUID();assert.equal((await enroll(next)).signalDeviceId,4,'revoked device index must not be reused');
+ for(const id of [deviceID,other,next])await db.recursiveDelete(db.doc(`watchInstallations/${id}`));await db.doc(`watchAccounts/${ownerUid}`).delete();
+});

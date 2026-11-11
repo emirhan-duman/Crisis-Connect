@@ -1,0 +1,11 @@
+{
+  "firestore": {"rules": "firestore.rules"},
+  "functions": [{"source": "functions", "codebase": "default", "disallowLegacyRuntimeConfig": true}],
+  "emulators": {
+    "auth": {"host": "0.0.0.0", "port": 9099},
+    "functions": {"host": "0.0.0.0", "port": 5001},
+    "firestore": {"host": "0.0.0.0", "port": 8080},
+    "hub": {"host": "0.0.0.0", "port": 4400},
+    "ui": {"enabled": false}
+  }
+}

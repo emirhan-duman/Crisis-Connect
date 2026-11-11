@@ -183,6 +183,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -1283,22 +1284,23 @@ fun ConnectionStatusBadge(
     // visible at a glance while the presence line ("çevrimiçi" / son görülme) gets the space.
     compact: Boolean = false
 ) {
-    val statusIcon = when (connectionState) {
-        ChatConnectionState.Connected -> when (transport) {
-            ChatTransport.Bluetooth -> Icons.Filled.Bluetooth
-            ChatTransport.Internet -> Icons.Filled.Public
-        }
-        else -> null
-    }
     val connectedLabel = when (transport) {
         ChatTransport.Bluetooth -> R.string.chat_status_connected_bluetooth
         ChatTransport.Internet -> R.string.chat_status_connected_internet
+        ChatTransport.Satellite -> R.string.chat_status_connected_satellite
     }
     val (label, backgroundColor, contentColor) = when (connectionState) {
         ChatConnectionState.Connected -> Triple(
             stringResource(connectedLabel),
             StatusConnectedContainer,
             StatusConnectedOnContainer
+        )
+
+        ChatConnectionState.Available -> Triple(
+            stringResource(if (transport == ChatTransport.Satellite)
+                R.string.chat_status_satellite_available else R.string.chat_status_internet_available),
+            MaterialTheme.colorScheme.secondaryContainer,
+            MaterialTheme.colorScheme.onSecondaryContainer
         )
 
         ChatConnectionState.Connecting -> Triple(
@@ -1319,8 +1321,9 @@ fun ConnectionStatusBadge(
             MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
-    // Only collapse when there IS an icon to stand in for the text (i.e. the connected states).
-    val iconOnly = compact && statusIcon != null
+    // Collapse the label only when the connected transport has a matching icon.
+    val hasConnectedIcon = connectionState == ChatConnectionState.Connected || connectionState == ChatConnectionState.Available
+    val iconOnly = compact && hasConnectedIcon
     Surface(
         color = backgroundColor,
         contentColor = contentColor,
@@ -1332,12 +1335,25 @@ fun ConnectionStatusBadge(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            statusIcon?.let { icon ->
-                Icon(
-                    imageVector = icon,
-                    contentDescription = if (iconOnly) label else null,
-                    modifier = Modifier.size(12.dp)
-                )
+            if (hasConnectedIcon) {
+                val iconDescription = if (iconOnly) label else null
+                when (transport) {
+                    ChatTransport.Bluetooth -> Icon(
+                        imageVector = Icons.Filled.Bluetooth,
+                        contentDescription = iconDescription,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    ChatTransport.Internet -> Icon(
+                        imageVector = Icons.Filled.Public,
+                        contentDescription = iconDescription,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    ChatTransport.Satellite -> Icon(
+                        painter = painterResource(R.drawable.ic_satellite),
+                        contentDescription = iconDescription,
+                        modifier = Modifier.size(if (iconOnly) 12.dp else 14.dp)
+                    )
+                }
             }
             AnimatedVisibility(
                 visible = !iconOnly,

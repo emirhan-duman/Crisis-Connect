@@ -627,7 +627,7 @@
     <string name="add_from_contacts_empty">আপনার পরিচিতিদের মধ্যে এখনো কেউ Crisis Connect-এ নেই।</string>
     <string name="add_from_contacts_permission_needed">আপনার পরিচিত মানুষদের খুঁজতে পরিচিতি অনুমতি প্রয়োজন।</string>
     <string name="add_from_contacts_sign_in_required">Crisis Connect-এ পরিচিতি খুঁজতে সাইন ইন করুন।</string>
-    <string name="add_from_contacts_privacy_note">আপনার নম্বরগুলো হ্যাশ দ্বারা মেলানো হয় এবং সার্ভারে কখনো সংরক্ষিত হয় না। কেবল যারা আবিষ্কারযোগ্য হতে বেছে নিয়েছে তারাই দেখা যায়।</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect অ্যাপ ব্যবহারকারীদের খুঁজতে আপনার পরিচিতিদের নাম ও ফোন নম্বর পড়ে। মেলানোর জন্য নম্বরগুলো যুক্তরাষ্ট্রে Google Firebase-এ হোস্ট করা Crisis Connect সার্ভারে পাঠায়। নাম আপনার ডিভাইসে থাকে। অনুসন্ধানের নম্বর স্থায়ীভাবে সংরক্ষণ না করে প্রক্রিয়া করা হয়; মিলে যাওয়া ফল ডিভাইসে থাকে। এই স্ক্রিন খোলা থাকা অবস্থায় রিফ্রেশ করলে বা ফিরে এলে নম্বর আবার পাঠানো হতে পারে। এই ডিভাইসে এই অ্যাকাউন্টের জন্য আপনার পছন্দ মনে রাখা হয়। সেটিংসের পরিচিতিতে অ্যাক্সেস অংশ থেকে সম্মতি প্রত্যাহার করতে পারেন।</string>
     <string name="add_from_contacts_found_count">%1$d জন Crisis Connect-এ</string>
     <string name="add_from_contacts_empty_hint">তারা অ্যাপে তাদের ফোন নম্বর যাচাই করলে এখানে দেখা যাবে।</string>
     <string name="add_from_contacts_search_hint">নাম বা নম্বর অনুসন্ধান করুন</string>
@@ -1188,6 +1188,7 @@
     <string name="chat_status_connected">সংযুক্ত</string>
     <string name="chat_status_connected_bluetooth">ব্লুটুথের মাধ্যমে সংযুক্ত</string>
     <string name="chat_status_connected_internet">ইন্টারনেটের মাধ্যমে সংযুক্ত</string>
+    <string name="chat_status_connected_satellite">স্যাটেলাইটের মাধ্যমে সংযুক্ত</string>
     <string name="internet_message_channel_name">ইন্টারনেট বার্তা</string>
     <string name="internet_message_notification_title">নতুন বার্তা</string>
     <string name="channel_message_notification_body">নতুন বার্তা</string>
@@ -1781,4 +1782,20 @@
     <string name="profile_delete_account_error_verification">এই ডিভাইসে মুছে ফেলা যাচাই করা যায়নি। আপনার সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।</string>
     <string name="profile_delete_account_error_signed_out">অ্যাকাউন্ট মুছতে সাইন ইন করতে হবে।</string>
     <string name="profile_delete_account_reauth_needed">আপনার নিরাপত্তার জন্য মুছে ফেলার আগে নিশ্চিত করতে হবে যে এটি আপনিই। সাইন আউট করে আবার সাইন ইন করুন, তারপর আবার চেষ্টা করুন।</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">অনলাইনে পরিচিতদের খুঁজুন</string>
+    <string name="contacts_disclosure_body">Crisis Connect অ্যাপ ব্যবহারকারীদের খুঁজতে আপনার পরিচিতিদের নাম ও ফোন নম্বর পড়ে। মেলানোর জন্য নম্বরগুলো যুক্তরাষ্ট্রে Google Firebase-এ হোস্ট করা Crisis Connect সার্ভারে পাঠায়। নাম আপনার ডিভাইসে থাকে। অনুসন্ধানের নম্বর স্থায়ীভাবে সংরক্ষণ না করে প্রক্রিয়া করা হয়; মিলে যাওয়া ফল ডিভাইসে থাকে। এই স্ক্রিন খোলা থাকা অবস্থায় রিফ্রেশ করলে বা ফিরে এলে নম্বর আবার পাঠানো হতে পারে। এই ডিভাইসে এই অ্যাকাউন্টের জন্য আপনার পছন্দ মনে রাখা হয়। সেটিংসের পরিচিতিতে অ্যাক্সেস অংশ থেকে সম্মতি প্রত্যাহার করতে পারেন।</string>
+    <string name="contacts_local_disclosure_title">কাছাকাছি পরিচিতদের খুঁজুন</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect কাছাকাছি কাউকে খুঁজতে শুধু সিস্টেমের পরিচিতি বাছাইকারী দিয়ে শেয়ার করা নাম ও নম্বর পড়ে। নির্বাচিত নম্বর Bluetooth-এর মাধ্যমে পরিচয় যাচাই করতে ব্যবহৃত হয়। এই সুবিধা আপনার পরিচিতিগুলো সার্ভারে পাঠায় না। এই ডিভাইসে এই অ্যাকাউন্টের জন্য আপনার পছন্দ মনে রাখা হয়। সেটিংসের পরিচিতিতে অ্যাক্সেস অংশ থেকে সম্মতি প্রত্যাহার করতে পারেন।</string>
+    <string name="contacts_disclosure_accept">আমি সম্মত</string>
+    <string name="contacts_disclosure_decline">এখন নয়</string>
+    <string name="contacts_consent_settings_title">পরিচিতিতে অ্যাক্সেস</string>
+    <string name="contacts_consent_settings_hint">এই ডিভাইসে এই অ্যাকাউন্টের জন্য আপনার পছন্দ মনে রাখা হয়। সেটিংসের পরিচিতিতে অ্যাক্সেস অংশ থেকে সম্মতি প্রত্যাহার করতে পারেন।</string>
+    <string name="contacts_consent_revoke_online">অনলাইন মিলানের সম্মতি প্রত্যাহার</string>
+    <string name="contacts_consent_revoke_nearby">কাছাকাছি পরিচিতির সম্মতি প্রত্যাহার</string>
+    <string name="nearby_choose_contact">পরিচিতি বেছে নিন</string>
+    <string name="nearby_contact_selection_failed">নির্বাচিত নম্বর পড়া যায়নি। অন্য পরিচিতি বেছে নিন।</string>
+    <string name="chat_status_internet_available">ইন্টারনেট উপলব্ধ</string>
+    <string name="chat_status_satellite_available">স্যাটেলাইট সংযোগ উপলব্ধ</string>
 </resources>

@@ -4,7 +4,7 @@ This project already uses automatic signing with:
 
 - Team ID: `XY9479JQWV`
 - App bundle ID: `com.auralis.crisisconnect`
-- Version line: `1.0.0 (1)`
+- Version line: `1.2.0 (38)` — early access, GitHub tag `v1.2.0-beta.1`
 - Entitlements: `App Attest` and `Wi-Fi Aware`
 
 The fastest way to produce a deployment-reviewable artifact is to create a signed archive and export a local package from it.

@@ -1,4 +1,5 @@
 import FirebaseAnalytics
+import Foundation
 
 /// Mirror of the Android analytics layer (`analytics/Analytics.kt`) — event names and parameters
 /// MUST stay byte-identical across platforms so both apps aggregate in the one Firebase property.
@@ -23,6 +24,25 @@ enum AppAnalytics {
             "transport": String(transport.prefix(36)),
             "chat": chat
         ])
+    }
+
+    /// Constrained satellite text transport milestones; names and parameters mirror Android.
+    /// Never include message contents, coordinates, account IDs, or recipient identifiers.
+    static func satelliteMessage(
+        result: String,
+        messageType: String,
+        payloadBytes: Int,
+        failureCategory: String? = nil
+    ) {
+        var parameters: [String: Any] = [
+            "result": String(result.prefix(32)),
+            "message_type": String(messageType.prefix(24)),
+            "payload_bytes": min(max(payloadBytes, 0), 1_024)
+        ]
+        if let failureCategory {
+            parameters["failure_category"] = String(failureCategory.prefix(32))
+        }
+        log("satellite_message", parameters)
     }
 
     /// Outgoing voice call placed.
@@ -74,20 +94,25 @@ enum AppAnalytics {
         log(AnalyticsEventScreenView, [AnalyticsParameterScreenName: String(route.prefix(100))])
     }
 
-    /// Applies the user's stored consent to the SDK. Called at launch after Firebase configures
-    /// and again whenever the privacy setting changes.
+    /// Applies the user's stored consent to the SDK. Called at launch (after Firebase configures)
+    /// and from the privacy toggle — without both, the switch is theater over unconditional logging.
+    private static let policyObserver: NSObjectProtocol = NotificationCenter.default.addObserver(forName: .disasterTrafficChanged, object:nil, queue:.main) { _ in
+        setCollectionEnabled(PrivacyPreferences.isShareAnalyticsEnabled())
+    }
     static func applyStoredConsent() {
+        _ = policyObserver
         setCollectionEnabled(PrivacyPreferences.isShareAnalyticsEnabled())
     }
 
     static func setCollectionEnabled(_ enabled: Bool) {
-        Analytics.setAnalyticsCollectionEnabled(enabled)
+        Analytics.setAnalyticsCollectionEnabled(enabled && DisasterTrafficController.shared.permits(.telemetry))
         if !enabled {
             Analytics.resetAnalyticsData()
         }
     }
 
     private static func log(_ name: String, _ parameters: [String: Any]? = nil) {
+        guard DisasterTrafficController.shared.permits(.telemetry) else { return }
         Analytics.logEvent(name, parameters: parameters)
     }
 }

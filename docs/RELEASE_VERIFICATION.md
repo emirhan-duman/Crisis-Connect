@@ -37,11 +37,12 @@ asset="$(find . -maxdepth 1 -type f -name '*.apk' -print -quit)"
 Release evidence described here is available for tags created after this policy was introduced.
 Older releases must be rebuilt under the current release workflow before pilot distribution.
 
-Verify the artifact attestation recorded by GitHub:
+Verify the CycloneDX SBOM attestation recorded by GitHub (the CLI defaults to SLSA provenance, so the predicate type must be explicit):
 
 ```bash
 gh attestation verify "$asset" \
-  --repo emirhan-duman/Crisis-Connect
+  --repo emirhan-duman/Crisis-Connect \
+  --predicate-type https://cyclonedx.org/bom
 ```
 
 Verify the keyless Sigstore bundle. The certificate identity is restricted to the release workflow

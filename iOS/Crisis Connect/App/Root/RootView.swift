@@ -841,9 +841,7 @@ private struct OnboardingView: View {
             // iOS never re-shows the system prompt after a denial — without a Settings shortcut
             // the user is stuck permissionless. Mirrors Android's open-app-settings routing.
             Button {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
+                PlatformRuntime.openSystemSettings()
             } label: {
                 Label(NSLocalizedString("Open Settings", comment: ""), systemImage: "exclamationmark.triangle.fill")
                     .labelStyle(.titleAndIcon)

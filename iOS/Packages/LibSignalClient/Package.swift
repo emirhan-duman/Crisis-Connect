@@ -14,7 +14,7 @@ import PackageDescription
 let package = Package(
     name: "LibSignalClient",
     platforms: [
-        .iOS(.v15), .macOS(.v10_15),
+        .iOS(.v15), .macOS(.v10_15), .watchOS(.v10),
     ],
     products: [
         .library(name: "LibSignalClient", targets: ["LibSignalClient"])

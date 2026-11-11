@@ -1,0 +1,9 @@
+<resources>
+    <string name="chat_automatic_disaster_mode">Otomatik veri tasarrufu</string>
+    <string name="chat_disaster_mode_detail">SOS veya kısıtlı bağlantı: kısa metinler aralıklı gönderilir; uzun metinler bağlantının düzelmesini bekler. İnternetten medya, arama ve çevrimiçi durum duraklatılır. Bluetooth kullanılabilir.</string>
+    <string name="traffic_local_sos">Senin durumun: SOS aktif</string>
+    <string name="traffic_local_offline">Bağlantın: çevrimdışı · mesajlar kuyrukta</string>
+    <string name="traffic_local_limited">Bağlantın: kısıtlı · veri tasarrufu</string>
+    <string name="traffic_feed_deferred">Veri tasarrufu için otomatik yenileme duraklatıldı. Elle yenileyebilirsin.</string>
+    <string name="traffic_delivery_explanation">Gönderildi, mesajın taşıma kanalına kabul edildiğini gösterir. Teslim edildi, alıcının onayını; okundu ise okuma işaretini gösterir.</string>
+</resources>

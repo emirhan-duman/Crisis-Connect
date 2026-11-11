@@ -332,7 +332,7 @@ fun RecentDisastersScreen(
             // Stale-data banner — shown ONLY when a refresh failed and we are
             // serving cached data. Fresh-cache reads do NOT trigger this.
             if (uiState.isStale) {
-                OfflineBanner()
+                OfflineBanner(deferred = uiState.error == DisasterErrorType.DEFERRED)
             }
 
             // Main Content Area with pull-to-refresh
@@ -1036,7 +1036,7 @@ fun bearingDegrees(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Doub
 // ─── Banners / states ────────────────────────────────────────────────────────
 
 @Composable
-fun OfflineBanner() {
+fun OfflineBanner(deferred: Boolean = false) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1052,13 +1052,13 @@ fun OfflineBanner() {
         Spacer(modifier = Modifier.width(12.dp))
         Column {
             Text(
-                text = stringResource(R.string.recent_disasters_offline_mode),
+                text = stringResource(if (deferred) R.string.chat_automatic_disaster_mode else R.string.recent_disasters_offline_mode),
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
                 fontSize = 14.sp
             )
             Text(
-                text = stringResource(R.string.recent_disasters_offline_message),
+                text = stringResource(if (deferred) R.string.traffic_feed_deferred else R.string.recent_disasters_offline_message),
                 color = Color.White.copy(alpha = 0.9f),
                 fontSize = 12.sp
             )
@@ -1072,6 +1072,7 @@ fun ErrorState(
     onRetry: () -> Unit
 ) {
     val message = when (error) {
+        DisasterErrorType.DEFERRED -> stringResource(R.string.traffic_feed_deferred)
         DisasterErrorType.TIMEOUT -> stringResource(R.string.recent_disasters_error_timeout)
         else -> stringResource(R.string.recent_disasters_error_offline)
     }

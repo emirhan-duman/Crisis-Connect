@@ -2,6 +2,7 @@ import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore } from "firebase-admin/firestore";
 import { getMessaging, MulticastMessage } from "firebase-admin/messaging";
 import { filterUidsByPushPreference } from "./pushPreference";
+import { constrainedAndroidChannelDeliveryOptions } from "./constrainedDeliveryPolicy";
 
 // Silent pushes are invisible to a force-quit iPhone: iOS delivers content-available only to a
 // running/backgrounded process, so a kurum message to a quit app simply never surfaced — no banner,
@@ -39,7 +40,10 @@ async function pushToUsers(recipientUids: string[], data: Record<string, string>
           message: {
             tokens: androidDocs.map((d) => d.data().token as string),
             data,
-            android: { priority: "high" },
+            android: {
+              priority: "high",
+              ...constrainedAndroidChannelDeliveryOptions(data),
+            },
           },
         });
       }

@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect
 
+import com.auralis.crisisconnect.messaging.ResilientApplicationStore
 import android.app.Activity
 import android.app.Application
 import android.annotation.SuppressLint
@@ -52,6 +53,9 @@ class CrisisConnectApp : Application() {
         super.onCreate()
 
         installFirebaseAppCheck()
+        com.auralis.crisisconnect.connectivity.DisasterTrafficController.start(this)
+        com.auralis.crisisconnect.messaging.CompactInboxState.start(this)
+        com.auralis.crisisconnect.watch.PhoneWatchBridge.start(this)
 
         Analytics.init(this)
         // Apply the persisted choice before app features can emit events. This also replaces a
@@ -163,6 +167,8 @@ class CrisisConnectApp : Application() {
 
             override fun onActivityStarted(activity: Activity) {
                 if (startedActivities++ == 0) {
+                    com.auralis.crisisconnect.connectivity.DisasterTrafficController.setForeground(true)
+                    com.auralis.crisisconnect.messaging.InternetMessageReceiver.onForeground()
                     PresenceReporter.onAppForeground(this@CrisisConnectApp)
                 }
             }
@@ -170,6 +176,7 @@ class CrisisConnectApp : Application() {
             override fun onActivityStopped(activity: Activity) {
                 startedActivities = (startedActivities - 1).coerceAtLeast(0)
                 if (startedActivities == 0) {
+                    com.auralis.crisisconnect.connectivity.DisasterTrafficController.setForeground(false)
                     PresenceReporter.onAppBackground(this@CrisisConnectApp)
                 }
             }
@@ -222,60 +229,68 @@ class CrisisConnectApp : Application() {
     private fun attachCertificateAutoProvisioner() {
         val lastHandledUid = AtomicReference<String?>(null)
         val inFlight = AtomicReference<Job?>(null)
-        FirebaseAuth.getInstance().addAuthStateListener { auth ->
-            val user = auth.currentUser
-            if (user == null || user.isAnonymous) {
-                lastHandledUid.set(null)
-                inFlight.getAndSet(null)?.cancel()
-                return@addAuthStateListener
-            }
-            val uid = user.uid.trim()
-            if (uid.isEmpty()) return@addAuthStateListener
-            if (lastHandledUid.getAndSet(uid) == uid && inFlight.get()?.isActive == true) {
-                return@addAuthStateListener
-            }
-            val job = appScope.launch {
-                val repo = SecurityRepository(this@CrisisConnectApp)
-                val alreadyHadUsable = runCatching { repo.hasUsableStoredCertificate() }
-                    .getOrDefault(false)
-                if (!alreadyHadUsable) {
-                    // The backend only issues certificates to admin/fieldteam (see
-                    // functions certificates/issuance.ts), so for everyone else the
-                    // attempt is doomed — skip silently instead of spamming a
-                    // "could not issue certificate" banner on every sign-in.
-                    val role = resolveRescueRole(uid)
-                    if (role != "admin" && role != "fieldteam") {
-                        Log.i(
-                            TAG,
-                            "Skipping certificate auto-provision for non-rescue role=${role ?: "unknown"}"
-                        )
-                        return@launch
+        appScope.launch {
+            runCatching {
+                // FirebaseAuth construction/listener registration can trigger substantial class
+                // initialization on cold start. Keep that work off the application main thread.
+                FirebaseAuth.getInstance().addAuthStateListener { auth ->
+                    val user = auth.currentUser
+                    if (user == null || user.isAnonymous) {
+                        lastHandledUid.set(null)
+                        inFlight.getAndSet(null)?.cancel()
+                        return@addAuthStateListener
                     }
-                    CertificateProvisioningNotifier.emitInProgress()
+                    val uid = user.uid.trim()
+                    if (uid.isEmpty()) return@addAuthStateListener
+                    if (lastHandledUid.getAndSet(uid) == uid && inFlight.get()?.isActive == true) {
+                        return@addAuthStateListener
+                    }
+                    val job = appScope.launch {
+                        val repo = SecurityRepository(this@CrisisConnectApp)
+                        val alreadyHadUsable = runCatching { repo.hasUsableStoredCertificate() }
+                            .getOrDefault(false)
+                        if (!alreadyHadUsable) {
+                            // The backend only issues certificates to admin/fieldteam (see
+                            // functions certificates/issuance.ts), so for everyone else the
+                            // attempt is doomed — skip silently instead of spamming a
+                            // "could not issue certificate" banner on every sign-in.
+                            val role = resolveRescueRole(uid)
+                            if (role != "admin" && role != "fieldteam") {
+                                Log.i(
+                                    TAG,
+                                    "Skipping certificate auto-provision for non-rescue role=${role ?: "unknown"}"
+                                )
+                                return@launch
+                            }
+                            CertificateProvisioningNotifier.emitInProgress()
+                        }
+                        runCatching {
+                            repo.getOrFetchCertificate()
+                        }.onSuccess {
+                            Log.i(TAG, "Auto-provisioned rescue certificate for uid=${uid.take(6)}…")
+                            if (!alreadyHadUsable) {
+                                CertificateProvisioningNotifier.emitSuccess()
+                            }
+                        }.onFailure { throwable ->
+                            // Non-fatal: the user can retry from the profile card.
+                            // Common reasons: offline, Play Integrity rejection on this
+                            // build (debug APK without Play install), backend missing
+                            // service account permission.
+                            Log.w(
+                                TAG,
+                                "Auto-provision of rescue certificate failed for uid=${uid.take(6)}…",
+                                throwable
+                            )
+                            if (!alreadyHadUsable) {
+                                CertificateProvisioningNotifier.emitFailure(throwable)
+                            }
+                        }
+                    }
+                    inFlight.set(job)
                 }
-                runCatching {
-                    repo.getOrFetchCertificate()
-                }.onSuccess {
-                    Log.i(TAG, "Auto-provisioned rescue certificate for uid=${uid.take(6)}…")
-                    if (!alreadyHadUsable) {
-                        CertificateProvisioningNotifier.emitSuccess()
-                    }
-                }.onFailure { throwable ->
-                    // Non-fatal: the user can retry from the profile card.
-                    // Common reasons: offline, Play Integrity rejection on this
-                    // build (debug APK without Play install), backend missing
-                    // service account permission.
-                    Log.w(
-                        TAG,
-                        "Auto-provision of rescue certificate failed for uid=${uid.take(6)}…",
-                        throwable
-                    )
-                    if (!alreadyHadUsable) {
-                        CertificateProvisioningNotifier.emitFailure(throwable)
-                    }
-                }
+            }.onFailure { throwable ->
+                Log.w(TAG, "Unable to attach certificate auto-provisioner", throwable)
             }
-            inFlight.set(job)
         }
     }
 
@@ -288,7 +303,7 @@ class CrisisConnectApp : Application() {
     private suspend fun resolveRescueRole(uid: String): String? {
         val remoteRole = runCatching {
             suspendCancellableCoroutine<String?> { continuation ->
-                FirebaseFirestore.getInstance()
+                ResilientApplicationStore.profiles()
                     .collection("users").document(uid)
                     .get()
                     .addOnSuccessListener { snapshot ->

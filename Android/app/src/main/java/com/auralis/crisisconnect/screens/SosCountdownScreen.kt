@@ -39,6 +39,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -141,6 +145,17 @@ fun SosCountdownScreen(navController: NavController) {
     val isRunning by GattSOSServerService.isDeclared.collectAsStateWithLifecycle()
     var secondsLeft by remember { mutableIntStateOf(COUNTDOWN_SECONDS) }
     var fired by remember { mutableStateOf(false) }
+    var entryStarted by rememberSaveable { mutableStateOf(false) }
+    var cancelled by rememberSaveable { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && !fired) cancelled = true
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(cancelled) { if (cancelled) navController.popBackStack() }
 
     val activity = context as? Activity
     DisposableEffect(activity) {
@@ -166,12 +181,15 @@ fun SosCountdownScreen(navController: NavController) {
     }
 
     LaunchedEffect(Unit) {
-        while (secondsLeft > 0) {
+        // A restored navigation entry is history, not a fresh user gesture.
+        if (entryStarted) { cancelled = true; return@LaunchedEffect }
+        entryStarted = true
+        while (secondsLeft > 0 && !cancelled) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             delay(1_000L)
             secondsLeft -= 1
         }
-        if (!fired) {
+        if (!fired && !cancelled) {
             fired = true
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             ContextCompat.startForegroundService(

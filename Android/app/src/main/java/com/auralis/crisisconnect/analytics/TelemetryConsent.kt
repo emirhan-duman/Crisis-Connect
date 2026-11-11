@@ -1,6 +1,7 @@
 package com.auralis.crisisconnect.analytics
 
 import android.content.Context
+import com.auralis.crisisconnect.connectivity.DisasterTrafficController
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import com.auralis.crisisconnect.settingsDataStore
@@ -29,25 +30,36 @@ object TelemetryConsent {
         apply(resolveEnabled(stored))
     }
 
+    @Synchronized
     fun apply(isEnabled: Boolean) {
         enabled = isEnabled
+        refreshTrafficPolicy()
+    }
+
+    /** Reapplies the stored choice after connectivity changes without granting new consent. */
+    @Synchronized
+    internal fun refreshTrafficPolicy() {
+        val isEnabled = enabled
+        val canUpload = isEnabled && !DisasterTrafficController.saving.value
         Analytics.setCollectionEnabled(isEnabled)
-        FirebasePerformance.getInstance().setPerformanceCollectionEnabled(isEnabled)
+        FirebasePerformance.getInstance().setPerformanceCollectionEnabled(canUpload)
 
         val crashlytics = FirebaseCrashlytics.getInstance()
         // Keep automatic upload off because an opt-out only changes that override next launch.
         // Explicitly send reports from the previous run only while consent remains enabled.
         crashlytics.setCrashlyticsCollectionEnabled(false)
-        if (isEnabled) {
+        if (canUpload) {
             crashlytics.sendUnsentReports()
-        } else {
+        } else if (!isEnabled) {
             // Do not retain a pre-consent crash for upload after a later opt-in.
             crashlytics.deleteUnsentReports()
         }
     }
 
+    internal fun isCollectionAllowed(): Boolean = enabled && !DisasterTrafficController.saving.value
+
     fun recordException(throwable: Throwable) {
-        if (!enabled) return
+        if (!isCollectionAllowed()) return
         runCatching { FirebaseCrashlytics.getInstance().recordException(throwable) }
     }
 }

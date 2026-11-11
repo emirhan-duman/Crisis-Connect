@@ -32,3 +32,9 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Local signing configuration and generated module output
+keystore.properties
+**/build/
+__pycache__/
+*.pyc

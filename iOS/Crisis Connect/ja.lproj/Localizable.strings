@@ -1504,3 +1504,30 @@
 "guide_redesign_subtitle_now" = "状況を選び、最初に取るべき行動をすぐに確認してください。";
 "guide_redesign_subtitle_prepare" = "計画とオフラインのチェックリストを完了してください。";
 "guide_redesign_unknown_region" = "地域不明";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "連絡先をオンラインで検索";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect は連絡先の名前と電話番号を読み取り、アプリを使っている人を探します。照合のため、電話番号を米国の Google Firebase 上の Crisis Connect サーバーへ送信します。連絡先の名前は端末内に留まります。検索対象の番号は永続保存せずに処理し、照合結果は端末内に保持します。この画面を開いている間に更新したり画面に戻ったりすると、番号が再送信される場合があります。選択はこの端末のこのアカウント用に保存されます。設定の「連絡先へのアクセス」から同意を撤回できます。";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "近くの連絡先を検索";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect は端末内の連絡先の名前と電話番号を読み取り、近くで探す相手を選べるようにします。選択した番号は Bluetooth による本人確認に使います。この機能は連絡先をサーバーへ送信しません。選択はこの端末のこのアカウント用に保存されます。設定の「連絡先へのアクセス」から同意を撤回できます。";
+"CONTACTS_DISCLOSURE_ACCEPT" = "同意する";
+"CONTACTS_DISCLOSURE_DECLINE" = "今はしない";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "連絡先へのアクセス";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "選択はこの端末のこのアカウント用に保存されます。設定の「連絡先へのアクセス」から同意を撤回できます。";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "オンライン照合への同意を撤回";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "近くの連絡先への同意を撤回";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "インターネット利用可能";

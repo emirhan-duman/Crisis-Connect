@@ -3,6 +3,7 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { getStorage } from "firebase-admin/storage";
 import { requireUid } from "../certificates/callerRole";
+import { deleteHighAvailabilityAccount } from "../messaging/highAvailabilityStore";
 
 /**
  * Account + data deletion, the single authoritative erase path for every client.
@@ -198,6 +199,13 @@ export const deleteAccountAndData = onCall(
     await step("messages:received", () =>
       purgeQuery(() => db.collection("messages").where("recipientUid", "==", uid))
     );
+    // Regional deduplication keeps routing metadata after ciphertext ACK; erase both sides too.
+    await step("messagingRegionalReceipts:sent", () =>
+      purgeQuery(() => db.collection("messagingRegionalReceipts").where("senderUid", "==", uid))
+    );
+    await step("messagingRegionalReceipts:received", () =>
+      purgeQuery(() => db.collection("messagingRegionalReceipts").where("recipientUid", "==", uid))
+    );
 
     // ── 5. Role certificates and rescue device records ───────────────────────
     await step("certificates", () =>
@@ -276,6 +284,10 @@ export const deleteAccountAndData = onCall(
     });
 
     // ── 10. Tombstone ────────────────────────────────────────────────────────
+    if (process.env.HA_COMPATIBILITY_ENABLED === "true") {
+      try { await deleteHighAvailabilityAccount(uid); }
+      catch { throw new HttpsError("unavailable", "Account cleanup could not finish. Please retry."); }
+    }
     // Written before the Auth delete so the record exists even if that last call fails.
     await step("tombstone", async () => {
       await db.doc(`${TOMBSTONE_COLLECTION}/${uid}`).set({

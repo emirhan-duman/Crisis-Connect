@@ -631,7 +631,7 @@
     <string name="add_from_contacts_empty">لا أحد من جهات اتصالك على Crisis Connect بعد.</string>
     <string name="add_from_contacts_permission_needed">إذن جهات الاتصال مطلوب للعثور على من تعرفهم.</string>
     <string name="add_from_contacts_sign_in_required">سجّل الدخول للعثور على جهات الاتصال على Crisis Connect.</string>
-    <string name="add_from_contacts_privacy_note">تُطابَق أرقامك عبر التجزئة ولا تُخزَّن على الخادم أبدًا. يظهر فقط من اختاروا أن يكونوا قابلين للاكتشاف.</string>
+    <string name="add_from_contacts_privacy_note">يقرأ Crisis Connect الأسماء وأرقام الهواتف من جهات اتصالك للعثور على مستخدمي التطبيق. يرسل أرقام الهواتف للمطابقة إلى خوادم Crisis Connect التي تستضيفها Google Firebase في الولايات المتحدة. تبقى الأسماء على جهازك. تُعالج الأرقام المطلوبة دون تخزين دائم، وتبقى نتائج المطابقة على جهازك. قد يؤدي تحديث هذه الشاشة أو العودة إليها وهي مفتوحة إلى إرسال الأرقام مجددًا. يُحفظ اختيارك لهذا الحساب على هذا الجهاز. يمكنك سحب موافقتك من الإعدادات ضمن الوصول إلى جهات الاتصال.</string>
     <string name="add_from_contacts_found_count">%1$d على Crisis Connect</string>
     <string name="add_from_contacts_empty_hint">سيظهرون هنا بمجرد التحقق من رقم هاتفهم في التطبيق.</string>
     <string name="add_from_contacts_search_hint">ابحث بالاسم أو الرقم</string>
@@ -1222,6 +1222,7 @@
     <string name="chat_status_connected">متصل</string>
     <string name="chat_status_connected_bluetooth">متصل عبر البلوتوث</string>
     <string name="chat_status_connected_internet">متصل عبر الإنترنت</string>
+    <string name="chat_status_connected_satellite">متصل عبر الأقمار الصناعية</string>
     <string name="internet_message_channel_name">رسائل الإنترنت</string>
     <string name="internet_message_notification_title">رسالة جديدة</string>
     <string name="channel_message_notification_body">رسالة جديدة</string>
@@ -1785,4 +1786,20 @@
     <string name="profile_delete_account_error_verification">تعذر التحقق من الحذف على هذا الجهاز. تحقق من اتصالك وأعد المحاولة.</string>
     <string name="profile_delete_account_error_signed_out">يجب تسجيل الدخول لحذف حسابك.</string>
     <string name="profile_delete_account_reauth_needed">لأمانك، يجب التأكد من هويتك قبل الحذف. سجّل الخروج ثم الدخول مرة أخرى وأعد المحاولة.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">العثور على جهات اتصالك عبر الإنترنت</string>
+    <string name="contacts_disclosure_body">يقرأ Crisis Connect الأسماء وأرقام الهواتف من جهات اتصالك للعثور على مستخدمي التطبيق. يرسل أرقام الهواتف للمطابقة إلى خوادم Crisis Connect التي تستضيفها Google Firebase في الولايات المتحدة. تبقى الأسماء على جهازك. تُعالج الأرقام المطلوبة دون تخزين دائم، وتبقى نتائج المطابقة على جهازك. قد يؤدي تحديث هذه الشاشة أو العودة إليها وهي مفتوحة إلى إرسال الأرقام مجددًا. يُحفظ اختيارك لهذا الحساب على هذا الجهاز. يمكنك سحب موافقتك من الإعدادات ضمن الوصول إلى جهات الاتصال.</string>
+    <string name="contacts_local_disclosure_title">العثور على جهات اتصال قريبة</string>
+    <string name="contacts_local_disclosure_body">يقرأ Crisis Connect فقط الاسم ورقم الهاتف اللذين تشاركهما عبر أداة اختيار جهات الاتصال في النظام للعثور على شخص بالقرب منك. يُستخدم الرقم المختار للتحقق من الهوية عبر Bluetooth. لا ترسل هذه الميزة جهات اتصالك إلى خادم. يُحفظ اختيارك لهذا الحساب على هذا الجهاز. يمكنك سحب موافقتك من الإعدادات ضمن الوصول إلى جهات الاتصال.</string>
+    <string name="contacts_disclosure_accept">أوافق</string>
+    <string name="contacts_disclosure_decline">ليس الآن</string>
+    <string name="contacts_consent_settings_title">الوصول إلى جهات الاتصال</string>
+    <string name="contacts_consent_settings_hint">يُحفظ اختيارك لهذا الحساب على هذا الجهاز. يمكنك سحب موافقتك من الإعدادات ضمن الوصول إلى جهات الاتصال.</string>
+    <string name="contacts_consent_revoke_online">سحب الموافقة على المطابقة عبر الإنترنت</string>
+    <string name="contacts_consent_revoke_nearby">سحب الموافقة على جهات الاتصال القريبة</string>
+    <string name="nearby_choose_contact">اختيار جهة اتصال</string>
+    <string name="nearby_contact_selection_failed">تعذرت قراءة الرقم المختار. اختر جهة اتصال أخرى.</string>
+    <string name="chat_status_internet_available">الإنترنت متاح</string>
+    <string name="chat_status_satellite_available">اتصال القمر الصناعي متاح</string>
 </resources>

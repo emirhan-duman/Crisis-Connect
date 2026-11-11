@@ -19,6 +19,7 @@ data class AuthorityMlsPrewarmTarget(
     val peerUid: String,
     val scopeType: AuthorityMlsScopeType,
     val channelId: String,
+    val resilient: Boolean? = null,
 )
 
 /**
@@ -42,19 +43,26 @@ object AuthorityMlsPrewarmer {
         if (selfUid.isBlank()) return@coroutineScope
         val canonical = targets
             .filter { it.peerUid.isNotBlank() && it.peerUid != selfUid && it.channelId.isNotBlank() }
-            .distinctBy { "${it.scopeType.wireName}\u0000${it.channelId}\u0000${it.peerUid}" }
+            .distinctBy { "${it.scopeType.wireName}\u0000${it.channelId}\u0000${it.peerUid}\u0000${it.resilient}" }
         val permits = Semaphore(4)
         canonical.map { target ->
             async {
                 permits.withPermit {
-                    val binding = AuthorityMlsBinding(
-                        target.scopeType,
-                        target.channelId,
-                        listOf(selfUid, target.peerUid),
-                    )
+                    val unresolved = AuthorityMlsBinding(target.scopeType, target.channelId,
+                        listOf(selfUid, target.peerUid), resilient = target.resilient == true,
+                        routeResolved = target.resilient != null)
+                    val preferred = if (target.resilient == null &&
+                        ResilientApplicationStore.prefersCompatibility(context, unresolved))
+                        unresolved.copy(resilient = false, routeResolved = true) else unresolved
+                    val binding = try { ResilientApplicationStore.resolve(context, preferred) }
+                        catch (error: Throwable) {
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            android.util.Log.w("AuthorityMlsPrewarm", "route unavailable", error)
+                            return@withPermit
+                        }
                     val key = prewarmKey(selfUid, binding)
                     val runningJob = currentCoroutineContext().job
-                    activePrewarms[key] = runningJob
+                    if (activePrewarms.putIfAbsent(key, runningJob) != null) return@withPermit
                     try {
                         val channel = runCatching {
                             AuthorityMlsChatChannel.prepare(
@@ -65,6 +73,7 @@ object AuthorityMlsPrewarmer {
                                 channelId = target.channelId,
                                 deviceLabel = "Android ${Build.MODEL}".take(64),
                                 foreground = false,
+                                resolvedBinding = binding,
                             )
                         }.getOrElse {
                             android.util.Log.w("AuthorityMlsPrewarm", "prepare failed", it)

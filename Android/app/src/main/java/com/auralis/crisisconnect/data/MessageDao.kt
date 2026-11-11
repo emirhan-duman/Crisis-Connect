@@ -71,7 +71,8 @@ interface MessageDao {
             "isLocal = 1, " +
             "isRead = CASE WHEN :isRead THEN 1 ELSE isRead END, " +
             "deliveryStatus = CASE " +
-            "  WHEN :deliveryStatus IN ('QUEUED','SENDING','SENT') " +
+            "  WHEN (:deliveryStatus IN ('QUEUED','SENDING','SENT') OR " +
+            "    (:outboundRoute = 'watch_reply' AND :deliveryStatus = 'FAILED')) " +
             "    AND deliveryStatus IN ('DELIVERED','READ') " +
             "  THEN deliveryStatus ELSE :deliveryStatus END, " +
             "retryCount = :retryCount, " +
@@ -213,14 +214,15 @@ interface MessageDao {
     @Query(
         "UPDATE messages SET deliveryStatus = 'DELIVERED' " +
             "WHERE isLocal = 1 AND messageUuid IN (:messageUuids) " +
-            "AND (deliveryStatus IS NULL OR deliveryStatus NOT IN ('READ', 'FAILED'))"
+            "AND (deliveryStatus IS NULL OR deliveryStatus NOT IN ('READ', 'FAILED') " +
+            "OR (deliveryStatus = 'FAILED' AND outboundRoute = 'watch_reply'))"
     )
     suspend fun markLocalMessagesDelivered(messageUuids: List<String>)
 
     @Query(
         "UPDATE messages SET deliveryStatus = 'READ', isRead = 1 " +
             "WHERE isLocal = 1 AND messageUuid IN (:messageUuids) " +
-            "AND (deliveryStatus IS NULL OR deliveryStatus != 'FAILED')"
+            "AND (deliveryStatus IS NULL OR deliveryStatus != 'FAILED' OR outboundRoute = 'watch_reply')"
     )
     suspend fun markLocalMessagesRead(messageUuids: List<String>)
 
@@ -278,6 +280,12 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages ORDER BY timestampMillis DESC")
     fun observeMessagesNewestFirst(): Flow<List<MessageEntity>>
+
+    /** Watch previews need one row per conversation and recent reply receipts, not full transcripts. */
+    @Query("SELECT * FROM messages WHERE id IN (SELECT MAX(id) FROM messages GROUP BY sessionCode) " +
+        "OR id IN (SELECT id FROM messages WHERE outboundRoute = 'watch_reply' ORDER BY timestampMillis DESC LIMIT 500) " +
+        "ORDER BY timestampMillis DESC, id DESC")
+    fun observeWatchContactPreviews(): Flow<List<MessageEntity>>
 
     @Query("SELECT sessionCode, COUNT(*) AS messageCount FROM messages GROUP BY sessionCode")
     suspend fun getSessionMessageCounts(): List<SessionMessageCountProjection>

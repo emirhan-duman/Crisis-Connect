@@ -632,7 +632,7 @@ Android: %3$s</string>
     <string name="add_from_contacts_empty">Wala pa sa Crisis Connect ang sinuman sa iyong mga kontak.</string>
     <string name="add_from_contacts_permission_needed">Kinakailangan ang pahintulot sa mga kontak upang mahanap ang mga taong kilala mo.</string>
     <string name="add_from_contacts_sign_in_required">Mag-sign in upang maghanap ng mga kontak sa Crisis Connect.</string>
-    <string name="add_from_contacts_privacy_note">Ang iyong mga numero ay itinutugma sa pamamagitan ng hash at hindi kailanman iniimbak sa server. Ang mga taong pumili lang na maging matutuklasan ang lumalabas.</string>
+    <string name="add_from_contacts_privacy_note">Binabasa ng Crisis Connect ang mga pangalan at numero ng telepono sa iyong mga kontak upang mahanap ang mga gumagamit ng app. Ipinapadala ang mga numero para sa pagtutugma sa mga server ng Crisis Connect na naka-host sa Google Firebase sa Estados Unidos. Nananatili sa device ang mga pangalan. Pinoproseso ang mga hinanap na numero nang hindi permanenteng iniimbak; nananatili sa device ang mga tugma. Ang pag-refresh o pagbalik sa screen habang bukas ito ay maaaring muling magpadala ng mga numero. Naaalala ang iyong pagpili para sa account na ito sa device na ito. Maaari mong bawiin ang pahintulot sa Settings, sa Access sa mga kontak.</string>
     <string name="add_from_contacts_found_count">%1$d sa Crisis Connect</string>
     <string name="add_from_contacts_empty_hint">Lalabas sila dito kapag na-verify na nila ang kanilang numero ng telepono sa app.</string>
     <string name="add_from_contacts_search_hint">Maghanap ng pangalan o numero</string>
@@ -1228,6 +1228,7 @@ Petsa: %4$s</string>
     <string name="chat_status_connected">Konektado</string>
     <string name="chat_status_connected_bluetooth">Konektado sa pamamagitan ng Bluetooth</string>
     <string name="chat_status_connected_internet">Konektado sa pamamagitan ng internet</string>
+    <string name="chat_status_connected_satellite">Konektado sa pamamagitan ng satellite</string>
     <string name="internet_message_channel_name">Mga internet na mensahe</string>
     <string name="internet_message_notification_title">Bagong mensahe</string>
     <string name="channel_message_notification_body">Bagong mensahe</string>
@@ -1790,4 +1791,20 @@ Petsa: %4$s</string>
     <string name="profile_delete_account_error_verification">Hindi ma-verify ang pagtanggal sa device na ito. Tingnan ang koneksyon mo at subukan muli.</string>
     <string name="profile_delete_account_error_signed_out">Kailangan mong maka-sign in para tanggalin ang account mo.</string>
     <string name="profile_delete_account_reauth_needed">Para sa seguridad mo, kailangan naming kumpirmahin na ikaw nga ito bago magtanggal. Mag-sign out, mag-sign in muli, tapos subukan ulit.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">Hanapin ang mga kontak online</string>
+    <string name="contacts_disclosure_body">Binabasa ng Crisis Connect ang mga pangalan at numero ng telepono sa iyong mga kontak upang mahanap ang mga gumagamit ng app. Ipinapadala ang mga numero para sa pagtutugma sa mga server ng Crisis Connect na naka-host sa Google Firebase sa Estados Unidos. Nananatili sa device ang mga pangalan. Pinoproseso ang mga hinanap na numero nang hindi permanenteng iniimbak; nananatili sa device ang mga tugma. Ang pag-refresh o pagbalik sa screen habang bukas ito ay maaaring muling magpadala ng mga numero. Naaalala ang iyong pagpili para sa account na ito sa device na ito. Maaari mong bawiin ang pahintulot sa Settings, sa Access sa mga kontak.</string>
+    <string name="contacts_local_disclosure_title">Hanapin ang mga kontak sa malapit</string>
+    <string name="contacts_local_disclosure_body">Binabasa lang ng Crisis Connect ang pangalan at numerong ibinabahagi mo sa pamamagitan ng system contact picker upang mahanap ang isang tao sa malapit. Ginagamit ang napiling numero sa pagpapatunay ng pagkakakilanlan sa Bluetooth. Hindi ipinapadala ng feature na ito ang mga kontak mo sa server. Naaalala ang iyong pagpili para sa account na ito sa device na ito. Maaari mong bawiin ang pahintulot sa Settings, sa Access sa mga kontak.</string>
+    <string name="contacts_disclosure_accept">Sumasang-ayon ako</string>
+    <string name="contacts_disclosure_decline">Hindi ngayon</string>
+    <string name="contacts_consent_settings_title">Access sa mga kontak</string>
+    <string name="contacts_consent_settings_hint">Naaalala ang iyong pagpili para sa account na ito sa device na ito. Maaari mong bawiin ang pahintulot sa Settings, sa Access sa mga kontak.</string>
+    <string name="contacts_consent_revoke_online">Bawiin ang pahintulot sa online na pagtutugma</string>
+    <string name="contacts_consent_revoke_nearby">Bawiin ang pahintulot sa mga kontak sa malapit</string>
+    <string name="nearby_choose_contact">Pumili ng kontak</string>
+    <string name="nearby_contact_selection_failed">Hindi mabasa ang napiling numero. Pumili ng ibang kontak.</string>
+    <string name="chat_status_internet_available">May internet</string>
+    <string name="chat_status_satellite_available">May koneksiyong satellite</string>
 </resources>

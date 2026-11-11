@@ -46,7 +46,8 @@ object PinnedOkHttpClient {
      * Returns a fresh OkHttpClient with the project's pinning policy applied.
      * Callers may further customize (timeouts, interceptors) on top.
      */
-    fun newClient(): OkHttpClient = OkHttpClient.Builder()
+    private val shared by lazy { OkHttpClient.Builder()
         .certificatePinner(pinnerBuilder().build())
-        .build()
+        .build() }
+    fun newClient(): OkHttpClient = shared.newBuilder().build()
 }

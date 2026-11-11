@@ -236,7 +236,9 @@ object InternetCallManager {
         runCatching { RfcommTelecomCoordinator.initialize(context.applicationContext) }
         // Warm the Cloudflare TURN creds now so the first call already has a relay (mobile/CGNAT
         // peers can't connect on STUN alone). Best-effort; failures leave STUN-only in place.
-        scope.launch { runCatching { TurnCredentialsProvider.refresh() } }
+        if (!com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value) {
+            scope.launch { runCatching { TurnCredentialsProvider.refresh() } }
+        }
     }
 
     fun hasActiveCall(): Boolean = synchronized(lock) { peerConnection != null }
@@ -249,6 +251,7 @@ object InternetCallManager {
      * call (e.g. an authority channel's Firestore callSignals); pass null for the citizen relay.
      */
     fun startCall(target: Contact, sender: SignalSender? = null) {
+        if (com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value && sender == null) return
         synchronized(lock) {
             if (peerConnection != null) {
                 Log.w(TAG, "Refusing outgoing call: another call is active")

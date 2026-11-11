@@ -608,7 +608,7 @@
     <string name="add_from_contacts_empty">Hê tu kes ji têkiliyên te li ser Crisis Connect nîne.</string>
     <string name="add_from_contacts_permission_needed">Ji bo dîtina kesên ku tu nas dikî destûra têkiliyan pêwîst e.</string>
     <string name="add_from_contacts_sign_in_required">Ji bo dîtina têkiliyan li ser Crisis Connect têkeve.</string>
-    <string name="add_from_contacts_privacy_note">Hejmarên te bi hash tên lihevanîn û tu carî li ser serverê nayên tomarkirin. Tenê kesên ku hilbijartine kifşbar bin xuya dibin.</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect nav û hejmarên telefonê yên rehbera te dixwîne da kesên ku sepanê bi kar tînin bibîne. Ji bo lihevanînê hejmaran dişîne serverên Crisis Connect ku li Dewletên Yekbûyî ji aliyê Google Firebase ve tên mazûvankirin. Nav li ser cîhaza te dimînin. Hejmarên lêgerînê bê tomarkirina daîmî tên xebitandin; encam li ser cîhaza te dimînin. Dema ev ekran vekirî ye, nûkirin an vegera wê dikare hejmaran dîsa bişîne. Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.</string>
     <string name="add_from_contacts_found_count">%1$d li ser Crisis Connect</string>
     <string name="add_from_contacts_empty_hint">Dema ku ew hejmara telefonê xwe di sepanê de bipejirînin wê li vir xuya bibin.</string>
     <string name="add_from_contacts_search_hint">Li nav an hejmarê bigere</string>
@@ -1199,6 +1199,7 @@
     <string name="chat_status_connected">Girêdayî</string>
     <string name="chat_status_connected_bluetooth">Bi Bluetooth girêdayî</string>
     <string name="chat_status_connected_internet">Bi înternetê girêdayî</string>
+    <string name="chat_status_connected_satellite">Bi peykê ve girêdayî</string>
     <string name="internet_message_channel_name">Peyamên înternetê</string>
     <string name="internet_message_notification_title">Peyama nû</string>
     <string name="channel_message_notification_body">Peyama nû</string>
@@ -1781,4 +1782,20 @@
     <string name="profile_delete_account_error_verification">Jêbirin li vê cîhazê nehat pesendkirin. Girêdana xwe kontrol bike û dîsa biceribîne.</string>
     <string name="profile_delete_account_error_signed_out">Ji bo jêbirina hesab divê tu têketî bî.</string>
     <string name="profile_delete_account_reauth_needed">Ji bo ewlehiya te, berî jêbirinê divê em piştrast bikin ku ev tu yî. Derkeve, dîsa têkeve û paşê dîsa biceribîne.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">Kesên di rehbera xwe de li ser înternetê bibîne</string>
+    <string name="contacts_disclosure_body">Crisis Connect nav û hejmarên telefonê yên rehbera te dixwîne da kesên ku sepanê bi kar tînin bibîne. Ji bo lihevanînê hejmaran dişîne serverên Crisis Connect ku li Dewletên Yekbûyî ji aliyê Google Firebase ve tên mazûvankirin. Nav li ser cîhaza te dimînin. Hejmarên lêgerînê bê tomarkirina daîmî tên xebitandin; encam li ser cîhaza te dimînin. Dema ev ekran vekirî ye, nûkirin an vegera wê dikare hejmaran dîsa bişîne. Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.</string>
+    <string name="contacts_local_disclosure_title">Kesên nêzîk bibîne</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect tenê nav û hejmara ku tu bi hilbijêra têkiliyan a pergalê parve dikî dixwîne da kesekî li nêzîkê bibîne. Hejmara hilbijartî ji bo piştrastkirina nasnameyê bi Bluetooth tê bikaranîn. Ev taybetmendî rehbera te naşîne serverê. Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.</string>
+    <string name="contacts_disclosure_accept">Dipejirînim</string>
+    <string name="contacts_disclosure_decline">Ne niha</string>
+    <string name="contacts_consent_settings_title">Gihîştina rehberê</string>
+    <string name="contacts_consent_settings_hint">Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.</string>
+    <string name="contacts_consent_revoke_online">Pejirandina lihevanîna înternetê rake</string>
+    <string name="contacts_consent_revoke_nearby">Pejirandina kesên nêzîk rake</string>
+    <string name="nearby_choose_contact">Kesekî hilbijêre</string>
+    <string name="nearby_contact_selection_failed">Hejmara hilbijartî nehat xwendin. Ji kerema xwe kesekî din hilbijêre.</string>
+    <string name="chat_status_internet_available">Înternet berdest e</string>
+    <string name="chat_status_satellite_available">Girêdana peykê berdest e</string>
 </resources>

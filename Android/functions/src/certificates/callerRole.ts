@@ -1,5 +1,5 @@
 import { CallableRequest, HttpsError } from "firebase-functions/v2/https";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Firestore } from "firebase-admin/firestore";
 
 /**
  * True when the caller signed in anonymously (no real account). Anonymous callers are allowed to
@@ -52,6 +52,9 @@ export function requireUid(request: CallableRequest<unknown>): string {
   if (!uid) {
     throw new HttpsError("failed-precondition", "Authenticated user ID missing.");
   }
+  if (uid === "8blrCEoszTWBVWb3lA1TnbSn7aJ3") {
+    throw new HttpsError("permission-denied", "Demo accounts are read-only.");
+  }
   return uid;
 }
 
@@ -79,7 +82,8 @@ export function normalizeRoleKey(role: unknown): string {
  */
 export async function resolveCallerRoleKey(
   request: CallableRequest<unknown>,
-  uid: string
+  uid: string,
+  database: Firestore = getFirestore()
 ): Promise<string> {
   const tokenRole = (request.auth?.token as Record<string, unknown> | undefined)?.role;
   const fromToken = normalizeRoleKey(tokenRole);
@@ -87,7 +91,7 @@ export async function resolveCallerRoleKey(
     return fromToken;
   }
   try {
-    const snap = await getFirestore().doc(`users/${uid}`).get();
+    const snap = await database.doc(`users/${uid}`).get();
     const data = snap.data() as { role?: unknown } | undefined;
     return normalizeRoleKey(data?.role);
   } catch (error) {

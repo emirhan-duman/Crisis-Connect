@@ -23816,4 +23816,246 @@
             column="53"/>
     </issue>
 
+
+    <!-- Early access migration triage: see ../../docs/releases/1.2.0-beta.1-lint-triage.md. -->
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="        context?.getSharedPreferences(&quot;compact_inbox&quot;, Context.MODE_PRIVATE)?.edit()?.putBoolean(&quot;profile.$uid&quot;, saving)?.commit()" errorLine2="                                                                                                                          ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/CompactInboxState.kt" line="29" column="123" />
+    </issue>
+
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="        prefs.edit().putStringSet(uid, ids).commit()" errorLine2="                                            ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/CompactInboxState.kt" line="36" column="45" />
+    </issue>
+
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="        prefs.edit().remove(key(online)).commit()" errorLine2="                                         ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/ContactAccessConsent.kt" line="29" column="42" />
+    </issue>
+
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="                    prefs.edit().putString(command.id, outcome).commit()" errorLine2="                                                                ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/watch/PhoneWatchBridge.kt" line="153" column="65" />
+    </issue>
+
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="                context.getSharedPreferences(&quot;watch_approval&quot;, Context.MODE_PRIVATE).edit().clear().commit()" errorLine2="                                                                                                    ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/watch/PhoneWatchBridge.kt" line="202" column="101" />
+    </issue>
+
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="        context.getSharedPreferences(&quot;watch_approval&quot;, Context.MODE_PRIVATE).edit().putString(&quot;id&quot;, command.id).commit()" errorLine2="                                                                                                                ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/watch/PhoneWatchBridge.kt" line="236" column="113" />
+    </issue>
+
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="        prefs.edit().remove(&quot;id&quot;).commit()" errorLine2="                                  ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/watch/PhoneWatchBridge.kt" line="249" column="35" />
+    </issue>
+
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="        if (!resuming) prefs(appContext).edit().remove(KEY_PENDING_ALL_CLEAR_SESSIONS).remove(KEY_ACTIVE_ALERTS).remove(KEY_PENDING_ALERT_IDS).commit()" errorLine2="                                                                                                                                               ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/service/sos/SosContactNotifier.kt" line="111" column="144" />
+    </issue>
+
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="                        prefs(appContext).edit().putString(KEY_PENDING_ALERT_IDS, pendingIds.toString()).commit()" errorLine2="                                                                                                         ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/service/sos/SosContactNotifier.kt" line="176" column="106" />
+    </issue>
+
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="                            prefs(appContext).edit().putString(KEY_ACTIVE_ALERTS, stored.toString()).commit()" errorLine2="                                                                                                     ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/service/sos/SosContactNotifier.kt" line="196" column="102" />
+    </issue>
+
+    <issue id="ApplySharedPref" message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background" errorLine1="            .commit()" errorLine2="             ~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/service/sos/SosContactNotifier.kt" line="275" column="14" />
+    </issue>
+
+    <issue id="LogNotTimber" message="Using 'Log' instead of 'Timber'" errorLine1="                            android.util.Log.w(&quot;AuthorityMlsPrewarm&quot;, &quot;automatic convergence will retry later&quot;, error)" errorLine2="                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/AuthorityMlsPrewarmer.kt" line="102" column="29" />
+    </issue>
+
+    <issue id="LogNotTimber" message="Using 'Log' instead of 'Timber'" errorLine1="                Log.w(" errorLine2="                ^">
+        <location file="src/main/java/com/auralis/crisisconnect/service/client/ClientConnection.kt" line="2138" column="17" />
+    </issue>
+
+    <issue id="LogNotTimber" message="Using 'Log' instead of 'Timber'" errorLine1="            android.util.Log.w(TAG, &quot;Unable to promote internet call service during onCreate&quot;, throwable)" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/call/InternetCallForegroundService.kt" line="87" column="13" />
+    </issue>
+
+    <issue id="LogNotTimber" message="Using 'Log' instead of 'Timber'" errorLine1="                        }.onFailure { Log.w(TAG, &quot;Failed to handle listener message&quot;, it) }" errorLine2="                                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/InternetMessageReceiver.kt" line="766" column="39" />
+    </issue>
+
+    <issue id="LogNotTimber" message="Using 'Log' instead of 'Timber'" errorLine1="                Log.w(TAG, &quot;Ignoring untrusted wake request on exported MainActivity&quot;)" errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/MainActivity.kt" line="1352" column="17" />
+    </issue>
+
+    <issue id="LogNotTimber" message="Using 'Log' instead of 'Timber'" errorLine1="                .onFailure { Log.w(TAG, &quot;EncryptedSharedPreferences unavailable for launch token; using plain prefs&quot;, it) }" errorLine2="                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/MainActivity.kt" line="1461" column="30" />
+    </issue>
+
+    <issue id="LogNotTimber" message="Using 'Log' instead of 'Timber'" errorLine1="            Log.w(TAG, &quot;Mobile profile sync failed&quot;, throwable)" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/sync/MobileSyncClient.kt" line="173" column="13" />
+    </issue>
+
+    <issue id="LogNotTimber" message="Using 'Log' instead of 'Timber'" errorLine1="                .onFailure { Log.w(TAG, &quot;Unable to checkpoint QR share&quot;) }" errorLine2="                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/service/p2p/P2pGattServerService.kt" line="2526" column="30" />
+    </issue>
+
+    <issue id="LogNotTimber" message="Using 'Log' instead of 'Timber'" errorLine1="                .onFailure { Log.w(TAG, &quot;Unable to checkpoint QR share stop&quot;) }" errorLine2="                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/service/p2p/P2pGattServerService.kt" line="2541" column="30" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.no_contacts_message` appears to be unused" errorLine1="    &lt;string name=&quot;no_contacts_message&quot;&gt;No contacts. Use the + button at the bottom right to add one.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="239" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.qr_scan_instruction` appears to be unused" errorLine1="    &lt;string name=&quot;qr_scan_instruction&quot;&gt;Scan the QR code on the other device to add a new contact.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="576" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.qr_scan_camera_permission_required` appears to be unused" errorLine1="    &lt;string name=&quot;qr_scan_camera_permission_required&quot;&gt;Camera permission is required…&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="577" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.qr_scan_camera_permission_help` appears to be unused" errorLine1="    &lt;string name=&quot;qr_scan_camera_permission_help&quot;&gt;Camera access is needed to scan QR codes.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="578" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.qr_scan_status_badge_pairing` appears to be unused" errorLine1="    &lt;string name=&quot;qr_scan_status_badge_pairing&quot;&gt;Secure pairing&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="599" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.qr_scan_status_badge_saving` appears to be unused" errorLine1="    &lt;string name=&quot;qr_scan_status_badge_saving&quot;&gt;Saving contact&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="600" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.qr_scan_status_badge_saved` appears to be unused" errorLine1="    &lt;string name=&quot;qr_scan_status_badge_saved&quot;&gt;Ready&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="601" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.qr_scan_status_badge_already_registered` appears to be unused" errorLine1="    &lt;string name=&quot;qr_scan_status_badge_already_registered&quot;&gt;Existing contact&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="602" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.qr_scan_status_detail_error` appears to be unused" errorLine1="    &lt;string name=&quot;qr_scan_status_detail_error&quot;&gt;The QR was read, but the next step could not be completed.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="610" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.qr_scan_status_hint_hold_steady` appears to be unused" errorLine1="    &lt;string name=&quot;qr_scan_status_hint_hold_steady&quot;&gt;Keep the phone steady while the process finishes.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="611" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.new_chat_prepare_qr_description` appears to be unused" errorLine1="    &lt;string name=&quot;new_chat_prepare_qr_description&quot;&gt;The QR code is prepared only when you choose to share it. At the same time, a nearby connection is turned on so other devices can find you.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="626" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.add_from_contacts_privacy_note` appears to be unused" errorLine1="    &lt;string name=&quot;add_from_contacts_privacy_note&quot;&gt;Crisis Connect reads names and phone numbers from your contacts to find people using the app. It sends the phone numbers to Crisis Connect servers hosted by Google Firebase in the United States for matching. Contact names stay on your device. Queried numbers are processed without being permanently stored; matches are kept on your device. While this screen is open, refreshing or returning to it may send the numbers again. Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="645" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.nearby_contacts_permission_needed` appears to be unused" errorLine1="    &lt;string name=&quot;nearby_contacts_permission_needed&quot;&gt;Contacts access is needed to pick who to look for.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="669" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.authority_device_verification_title` appears to be unused" errorLine1="    &lt;string name=&quot;authority_device_verification_title&quot;&gt;New or changed device set&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="1264" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.authority_device_verification_body` appears to be unused" errorLine1="    &lt;string name=&quot;authority_device_verification_body&quot;&gt;Messaging and internet calls are blocked. Compare this safety number with the person over another channel before approving.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="1265" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.authority_device_verification_approve` appears to be unused" errorLine1="    &lt;string name=&quot;authority_device_verification_approve&quot;&gt;I compared the number&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="1266" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.authority_device_verification_busy` appears to be unused" errorLine1="    &lt;string name=&quot;authority_device_verification_busy&quot;&gt;Verifying…&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="1267" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.authority_device_verification_changed` appears to be unused" errorLine1="    &lt;string name=&quot;authority_device_verification_changed&quot;&gt;The device set changed before approval. Compare the new number again.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="1268" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.new_chat_nearby_title` appears to be unused" errorLine1="    &lt;string name=&quot;new_chat_nearby_title&quot;&gt;Connect nearby&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="2054" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.new_chat_nearby_description` appears to be unused" errorLine1="    &lt;string name=&quot;new_chat_nearby_description&quot;&gt;Scan the other person’s QR code to start a conversation.&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="2055" column="13" />
+    </issue>
+
+    <issue id="UnusedResources" message="The resource `R.string.authority_session` appears to be unused" errorLine1="    &lt;string name=&quot;authority_session&quot;&gt;Conversation&lt;/string&gt;" errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/res/values/strings.xml" line="2068" column="13" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        return prefs.edit().putStringSet(uid, ids.takeLastBounded(2_048)).commit()" errorLine2="               ~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/CompactInboxState.kt" line="17" column="16" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        check(prefs.edit().putLong(&quot;revision.$uid&quot;, revision).commit()) { &quot;Cannot persist traffic revision.&quot; }" errorLine2="              ~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/CompactInboxState.kt" line="25" column="15" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        context?.getSharedPreferences(&quot;compact_inbox&quot;, Context.MODE_PRIVATE)?.edit()?.putBoolean(&quot;profile.$uid&quot;, saving)?.commit()" errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/CompactInboxState.kt" line="29" column="9" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        prefs.edit().putStringSet(uid, ids).commit()" errorLine2="        ~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/CompactInboxState.kt" line="36" column="9" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        prefs.edit().putString(key(online), UUID.randomUUID().toString()).commit()" errorLine2="        ~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/ContactAccessConsent.kt" line="26" column="9" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        prefs.edit().remove(key(online)).commit()" errorLine2="        ~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/ContactAccessConsent.kt" line="29" column="9" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        getSharedPreferences(&quot;crisis_link_queue_status&quot;, Context.MODE_PRIVATE).edit()" errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="../feature_rescue/src/main/java/com/auralis/crisisconnect/service/CrisisLinkForegroundService.kt" line="1672" column="9" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        context?.getSharedPreferences(&quot;disaster_traffic&quot;, Context.MODE_PRIVATE)?.edit()" errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/connectivity/DisasterTrafficController.kt" line="80" column="9" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="                    prefs.edit().putString(command.id, outcome).commit()" errorLine2="                    ~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/watch/PhoneWatchBridge.kt" line="153" column="21" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="                context.getSharedPreferences(&quot;watch_approval&quot;, Context.MODE_PRIVATE).edit().clear().commit()" errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/watch/PhoneWatchBridge.kt" line="202" column="17" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        context.getSharedPreferences(&quot;watch_approval&quot;, Context.MODE_PRIVATE).edit().putString(&quot;id&quot;, command.id).commit()" errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/watch/PhoneWatchBridge.kt" line="236" column="9" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        prefs.edit().remove(&quot;id&quot;).commit()" errorLine2="        ~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/watch/PhoneWatchBridge.kt" line="249" column="9" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        context.applicationContext.getSharedPreferences(&quot;group-ha-routes-v1&quot;, Context.MODE_PRIVATE).edit()" errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/ResilientApplicationStore.kt" line="28" column="9" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="            preferences.edit().putBoolean(&quot;conversation/$uid/${AuthorityMlsIdentifiers.conversationId(result)}&quot;, true).apply()" errorLine2="            ~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/ResilientApplicationStore.kt" line="43" column="13" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        if (resilient) preferences.edit().putBoolean(cacheKey, true)" errorLine2="                       ~~~~~~~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/messaging/ResilientApplicationStore.kt" line="55" column="24" />
+    </issue>
+
+    <issue id="UseKtx" message="Use the KTX extension function `SharedPreferences.edit` instead?" errorLine1="        prefs.edit().putString(&quot;windows&quot;, bounded.toString()).apply()" errorLine2="        ~~~~~~~~~~~~">
+        <location file="src/main/java/com/auralis/crisisconnect/connectivity/TrafficMeasurements.kt" line="52" column="9" />
+    </issue>
+
+    <issue id="UseTomlInstead" message="Use version catalog instead" errorLine1="    implementation(&quot;com.google.firebase:firebase-perf&quot;)" errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="build.gradle.kts" line="496" column="20" />
+    </issue>
+
+    <issue id="UseTomlInstead" message="Use version catalog instead" errorLine1="    implementation(&quot;androidx.appcompat:appcompat:1.7.0&quot;)" errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="build.gradle.kts" line="501" column="20" />
+    </issue>
+
+    <issue id="UseTomlInstead" message="Use version catalog instead" errorLine1="    implementation(&quot;com.google.android.material:material:1.12.0&quot;)" errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location file="build.gradle.kts" line="502" column="20" />
+    </issue>
+
 </issues>

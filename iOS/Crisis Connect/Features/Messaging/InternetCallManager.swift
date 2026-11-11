@@ -200,7 +200,9 @@ final class InternetCallManager: NSObject, ObservableObject {
         InternetCallSignalBus.shared.onSignal = { [weak self] signal in
             self?.onSignal(signal)
         }
-        Task { await TurnCredentialsProvider.shared.refresh() }
+        if !DisasterTrafficController.shared.isSaving {
+            Task { await TurnCredentialsProvider.shared.refresh() }
+        }
     }
 
     private func callKitUUID(for id: String) -> UUID {
@@ -264,6 +266,7 @@ final class InternetCallManager: NSObject, ObservableObject {
     // MARK: - Outgoing
 
     func startCall(contact target: ContactRecord) {
+        guard !DisasterTrafficController.shared.isSaving else { return }
         MessagingDiagLog.log("InternetCall startCall: peer=\(target.peerUid?.prefix(8) ?? "nil") supportsInternet=\(target.supportsInternet) available=\(InternetChatTransport.shared.isAvailable())")
         guard peerConnection == nil else {
             NSLog("InternetCall: refusing outgoing call; another call is active")

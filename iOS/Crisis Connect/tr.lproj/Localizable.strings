@@ -105,16 +105,16 @@
 "CONTACT_BLUETOOTH_DISABLED_MESSAGE" = "Yakındaki QR kişilerini doğrulamak için Bluetooth'u açın.";
 "CONTACT_BLUETOOTH_UNAUTHORIZED_MESSAGE" = "Yakındaki QR kişilerini doğrulamak için Bluetooth erişimine izin verin.";
 "CONTACT_BLUETOOTH_UNSUPPORTED_MESSAGE" = "Bu cihaz yakındaki QR kişilerini Bluetooth üzerinden doğrulayamıyor.";
-"CONTACT_ONBOARDING_SEARCHING_TITLE" = "Yakında aranıyor";
-"CONTACT_ONBOARDING_SEARCHING_MESSAGE" = "Diğer cihazın kişi yayını aranıyor.";
+"CONTACT_ONBOARDING_SEARCHING_TITLE" = "Cihaz aranıyor";
+"CONTACT_ONBOARDING_SEARCHING_MESSAGE" = "Diğer cihazı yakında tutun ve QR ekranını açık bırakın.";
 "CONTACT_ONBOARDING_PAIRING_TITLE" = "Güvenli eşleşme";
-"CONTACT_ONBOARDING_PAIRING_MESSAGE" = "QR payload, canlı Bluetooth el sıkışmasıyla doğrulanıyor.";
+"CONTACT_ONBOARDING_PAIRING_MESSAGE" = "Güvenli bağlantı kurmak için diğer cihaz doğrulanıyor.";
 "CONTACT_ONBOARDING_SAVING_TITLE" = "Kişi kaydediliyor";
-"CONTACT_ONBOARDING_SAVING_MESSAGE" = "Güvenli kişi kaydı ve sohbet oturumu tamamlanıyor.";
+"CONTACT_ONBOARDING_SAVING_MESSAGE" = "Kişi ekleniyor ve sohbetiniz hazırlanıyor.";
 "CONTACT_ONBOARDING_ALREADY_REGISTERED_TITLE" = "Zaten kayıtlı";
-"CONTACT_ONBOARDING_ALREADY_REGISTERED_MESSAGE" = "Mevcut güvenli kişi güncellendi, önceki sohbet geçmişi korundu.";
+"CONTACT_ONBOARDING_ALREADY_REGISTERED_MESSAGE" = "Mevcut kişi güncellendi. Sohbet geçmişiniz korundu.";
 "CONTACT_ONBOARDING_COMPLETED_TITLE" = "Kişi hazır";
-"CONTACT_ONBOARDING_COMPLETED_MESSAGE" = "Güvenli eşleşme tamamlandı. Bu kişiyle çevrimdışı mesajlaşabilirsiniz.";
+"CONTACT_ONBOARDING_COMPLETED_MESSAGE" = "Kişi kaydedildi. Sohbetiniz açılıyor…";
 "CONTACT_CAMERA_TITLE" = "Kamera erişimi";
 "CONTACT_CAMERA_MESSAGE" = "QR kod taramak için kamera izni verin.";
 "Close" = "Kapat";
@@ -1538,3 +1538,69 @@
 "Attach annotation" = "Açıklamayı ekle";
 "Handwritten annotation canvas" = "El yazısı açıklama alanı";
 "Secure dossier" = "Güvenli dosya";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Rehberindeki kişileri internette bul";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect, uygulamayı kullanan kişileri bulmak için rehberindeki adları ve telefon numaralarını okur. Telefon numaralarını eşleştirme amacıyla Google Firebase tarafından ABD’de barındırılan Crisis Connect sunucularına gönderir. Rehberdeki adlar cihazında kalır. Sorgulanan numaralar kalıcı olarak saklanmadan işlenir; eşleşmeler cihazında tutulur. Bu ekran açıkken yenileme veya ekrana geri dönme numaraların tekrar gönderilmesine yol açabilir. Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Yakındaki rehber kişilerini bul";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect, yakınında arayacağın kişiyi seçebilmen için cihazındaki rehber adlarını ve telefon numaralarını okur. Seçilen numara Bluetooth üzerinden kimlik doğrulamada kullanılır. Bu özellik rehberini sunucuya göndermez. Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "Kabul ediyorum";
+"CONTACTS_DISCLOSURE_DECLINE" = "Şimdi değil";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Rehber erişimi";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "İnternet eşleştirme onayını kaldır";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Yakındaki kişiler onayını kaldır";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Otomatik veri tasarrufu";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS veya kısıtlı bağlantı: kısa metinler aralıklı gönderilir; uzun metinler bağlantının düzelmesini bekler. İnternetten medya, arama ve çevrimiçi durum duraklatılır. Bluetooth kullanılabilir.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Senin durumun: SOS aktif";
+"TRAFFIC_LOCAL_OFFLINE" = "Bağlantın: çevrimdışı · mesajlar kuyrukta";
+"TRAFFIC_LOCAL_LIMITED" = "Bağlantın: kısıtlı · veri tasarrufu";
+"TRAFFIC_FEED_DEFERRED" = "Veri tasarrufu için otomatik yenileme duraklatıldı. Elle yenileyebilirsin.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Gönderildi, mesajın taşıma kanalına kabul edildiğini gösterir. Teslim edildi, alıcının onayını; okundu ise okuma işaretini gösterir.";
+
+/* Contact QR scanner */
+"QR_SCANNER_HEADING" = "Kişinin QR kodunu tara";
+"QR_SCANNER_AUTO_HINT" = "QR kodunu çerçevenin içinde tut. Kod otomatik olarak taranır.";
+"QR_SCANNER_READY" = "Kamera hazır";
+"QR_SCANNER_STARTING" = "Kamera açılıyor…";
+"QR_SCANNER_HELP" = "Tarama yardımı";
+"QR_SCANNER_LIGHT_ON" = "Işığı aç";
+"QR_SCANNER_LIGHT_OFF" = "Işığı kapat";
+"QR_SCANNER_LIGHT_ERROR" = "Fener değiştirilemedi. Tekrar dene.";
+"QR_SCANNER_PERMISSION_TITLE" = "Taramak için kameraya izin ver";
+"QR_SCANNER_PERMISSION_DETAIL" = "Crisis Connect QR kodunu tarayıp kişi eklemek için Ayarlar’dan kamera erişimini aç.";
+"QR_SCANNER_OPEN_SETTINGS" = "Ayarları aç";
+"QR_SCANNER_UNAVAILABLE_TITLE" = "Kamera kullanılamıyor";
+"QR_SCANNER_UNAVAILABLE_DETAIL" = "Bu cihazda kullanılabilir kamera yok. Tarayıcıyı kapatıp devam etmek için Manuel Bağlan seçeneğini kullan.";
+"QR_SCANNER_PAUSED_TITLE" = "Kamera duraklatıldı";
+"QR_SCANNER_PAUSED_DETAIL" = "Kamera geçici olarak kullanımda veya kullanılamıyor. Kamera hazır olduğunda tarama devam eder.";
+"QR_SCANNER_TIP_ALIGN" = "QR kodunun tamamını çerçevenin içinde tut.";
+"QR_SCANNER_TIP_STILL" = "Telefonunu kısa bir süre sabit tut. Tarama otomatik olarak başlar.";
+"QR_SCANNER_TIP_LIGHT" = "Tarama başarısız olursa daha aydınlık bir yere geç. Kullanılabiliyorsa feneri aç.";
+
+"CONTACT_ONBOARDING_STEP_SEARCH" = "Ara";
+
+"CONTACT_ONBOARDING_STEP_PAIR" = "Eşleştir";
+
+"CONTACT_ONBOARDING_STEP_SAVE" = "Kaydet";
+
+"CONTACT_ONBOARDING_STEP_DONE" = "Tamamlandı";
+
+"CONTACT_ONBOARDING_STEP_ACTIVE" = "Devam ediyor";
+
+"CONTACT_ONBOARDING_STEP_WAITING" = "Bekliyor";
+
+// Independent resilient and legacy sessions
+"AUTHORITY_SESSION" = "Sohbet";
+"AUTHORITY_RESILIENT_SESSION" = "Dayanıklı";
+"AUTHORITY_COMPATIBILITY_SESSION" = "Eski sürüm uyumu";
+"AUTHORITY_RESILIENT_NOTICE" = "Güncel uygulamalar için ayrı sohbet. Mesajlar yalnız bu oturuma katılan doğrulanmış cihazlara ulaşır; eski uygulamalar uyum sohbetini kullanır.";
+"AUTHORITY_COMPATIBILITY_NOTICE" = "Eski uygulamalarla ayrı sohbet. İlk bölgenin bağlantısı gerekir; dayanıklı oturumun mesajları buraya aktarılmaz.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "İnternet kullanılabilir";

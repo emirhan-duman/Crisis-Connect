@@ -4,9 +4,9 @@ Swift / SwiftUI client for [Crisis Connect](../README.md). Offline-first crisis 
 Bluetooth, with an end-to-end encrypted internet layer on top.
 
 - **Deployment target:** iOS 17.0
-- **Toolchain:** Xcode 16+, Swift 6 language mode where the package sets it
-- **Build verification:** Xcode 16+ with code signing disabled for public-source checks
-- **Version:** 1.1.9 (build 36)
+- **Toolchain:** Xcode 26+, Swift 6 language mode where the package sets it
+- **Build verification:** Xcode 26+ with code signing disabled for public-source checks
+- **Version:** 1.2.0 Early Access · Beta 1 (build 38)
 
 ## Targets
 
@@ -15,8 +15,9 @@ Bluetooth, with an end-to-end encrypted internet layer on top.
 | `Crisis Connect` | Main app |
 | `WidgetExtension` | WidgetKit SOS + Recent Disasters widgets, iOS 18 SOS control, SOS Live Activity |
 | `BroadcastExtension` | ReplayKit upload extension for full-device screen sharing during calls |
-| `Crisis ConnectTests` | 175 unit tests |
+| `Crisis ConnectTests` | Unit and integration tests; live suites require their fixtures |
 | `Crisis ConnectUITests` | UI tests |
+| `CrisisConnectWatch Watch App` | Experimental watchOS companion and independent messaging |
 
 ## Layout
 
@@ -45,7 +46,7 @@ iOS/
 ## Prebuilt binaries are not committed
 
 Two `.xcframework` bundles in this tree ship as **prebuilt static libraries**. Together they are
-roughly **375 MB** of build output, so the `.a` slices are deliberately kept out of this
+roughly **560 MB** including watchOS slices of build output, so the `.a` slices are deliberately kept out of this
 repository — only the headers, module maps and `Info.plist` are committed. You need to produce
 them locally before the app will link.
 

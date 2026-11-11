@@ -33,6 +33,11 @@ class KeystoreBackedPreferences(
         }
         return decoded
     }
+    /** Journals must preserve unreadable data during transient Keystore failures. */
+    fun getStringStrict(key: String, defaultValue: String): String {
+        val encoded = prefs.getString(key, null) ?: return defaultValue
+        return decode(encoded) ?: error("Encrypted preference temporarily unavailable")
+    }
 
     fun putString(key: String, value: String?) {
         if (value == null) {

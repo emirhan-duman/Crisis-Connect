@@ -1,5 +1,8 @@
+import { compatibleCallable } from "./compatibilityRouting";
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
-import { getFirestore, FieldValue, Transaction } from "firebase-admin/firestore";
+import { FieldValue, Transaction } from "firebase-admin/firestore";
+import { getMessagingFirestore as getFirestore, currentMessagingDatabaseId, MULTIREGION_MESSAGING_DATABASE } from "./databaseTarget";
+import { publishHaPrekeys, checkHaPrekeys, fetchHaPrekeys, reserveHaPrekeyBudget } from "./highAvailabilityPrekeys";
 import { requireUid } from "../certificates/callerRole";
 
 /**
@@ -79,11 +82,12 @@ async function deletePool(pool: FirebaseFirestore.CollectionReference): Promise<
  * one-time keys are ADDED to the pools (same keyId overwrites). Returns pool counts so the
  * client can decide whether to top up further.
  */
-export const publishSignalPreKeys = onCall(
+export const publishSignalPreKeys = compatibleCallable("publishSignalPreKeys",
   { enforceAppCheck: true },
   async (request: CallableRequest<unknown>) => {
     const uid = requireUid(request);
     const data = (request.data ?? {}) as Record<string, unknown>;
+    if (currentMessagingDatabaseId() === MULTIREGION_MESSAGING_DATABASE) return publishHaPrekeys(uid, data);
     const db = getFirestore();
 
     const registrationId = data.registrationId;
@@ -162,10 +166,11 @@ export const publishSignalPreKeys = onCall(
 );
 
 /** Cheap own-pool inventory so the client can decide to top up (<20 → publish 100 more). */
-export const checkSignalPreKeys = onCall(
+export const checkSignalPreKeys = compatibleCallable("checkSignalPreKeys",
   { enforceAppCheck: true },
   async (request: CallableRequest<unknown>) => {
     const uid = requireUid(request);
+    if (currentMessagingDatabaseId() === MULTIREGION_MESSAGING_DATABASE) return checkHaPrekeys(uid);
     const meta = await metaRef(uid).get();
     if (!meta.exists) {
       return { published: false, ecCount: 0, kyberCount: 0 };
@@ -187,11 +192,13 @@ export const checkSignalPreKeys = onCall(
  * signed-prekey-only bundle, when the pools are dry — X3DH permits both). `not-found` means the
  * target has never published Signal prekeys → the caller falls back to the v2 envelope.
  */
-export const fetchSignalPreKeyBundle = onCall(
-  { enforceAppCheck: true },
+export const fetchSignalPreKeyBundle = compatibleCallable("fetchSignalPreKeyBundle",
+  // The first message waits for this key exchange; avoid scaling its endpoint to zero.
+  { enforceAppCheck: true, minInstances: 1 },
   async (request: CallableRequest<unknown>) => {
     const uid = requireUid(request);
     const data = (request.data ?? {}) as Record<string, unknown>;
+    if (currentMessagingDatabaseId() === MULTIREGION_MESSAGING_DATABASE) return fetchHaPrekeys(uid, data.targetUid as string);
     const targetUid = data.targetUid;
     if (typeof targetUid !== "string" || targetUid.length === 0 || targetUid.length > 128) {
       throw new HttpsError("invalid-argument", "targetUid must be a non-empty string.");
@@ -205,6 +212,9 @@ export const fetchSignalPreKeyBundle = onCall(
     // pool-draining abuse (forcing victims onto last-resort keys) without touching real use.
     const throttleRef = db.doc(`signalBundleThrottle/${uid}`);
     const dayKey = new Date().toISOString().slice(0, 10);
+    if (process.env.HA_COMPATIBILITY_ENABLED === "true") {
+      await reserveHaPrekeyBudget(uid);
+    } else {
     const throttleSnap = await throttleRef.get();
     const t = throttleSnap.data() ?? {};
     const usedToday = t.dayKey === dayKey && typeof t.count === "number" ? t.count : 0;
@@ -212,6 +222,7 @@ export const fetchSignalPreKeyBundle = onCall(
       throw new HttpsError("resource-exhausted", "Daily prekey bundle limit reached; try again tomorrow.");
     }
     await throttleRef.set({ dayKey, count: usedToday + 1, updatedAt: FieldValue.serverTimestamp() });
+    }
 
     return db.runTransaction(async (tx: Transaction) => {
       const meta = await tx.get(metaRef(targetUid));

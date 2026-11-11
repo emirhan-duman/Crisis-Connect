@@ -72,6 +72,20 @@ class InternetCallForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // Satisfy the foreground-service promotion deadline before starting collectors or resolving
+        // call state. The initial placeholder is replaced with the call-specific notification in
+        // onStartCommand once the manager state is available.
+        ensureChannels()
+        foregroundActive = runCatching {
+            ServiceCompat.startForeground(
+                this,
+                FOREGROUND_ID,
+                servicePlaceholderNotification(),
+                foregroundServiceType(includeMicrophone = false)
+            )
+        }.onFailure { throwable ->
+            android.util.Log.w(TAG, "Unable to promote internet call service during onCreate", throwable)
+        }.isSuccess
         // Live notification: re-render whenever the call changes (state, mute, video, peer), and keep
         // the ringtone in lockstep with the INCOMING state.
         scope.launch {
@@ -357,7 +371,12 @@ class InternetCallForegroundService : Service() {
         }
         return ActivityOptions.makeBasic()
             .setPendingIntentCreatorBackgroundActivityStartMode(
-                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                if (Build.VERSION.SDK_INT >= 36) {
+                    // Background incoming calls use the system full-screen notification path.
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
+                } else {
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                }
             )
             .toBundle()
     }
@@ -642,6 +661,7 @@ class InternetCallForegroundService : Service() {
     }
 
     companion object {
+        private const val TAG = "InternetCallForegroundService"
         private const val ACTION_STOP = "com.auralis.crisisconnect.messaging.call.ACTION_STOP"
         private const val ACTION_ENABLE_MEDIA_PROJECTION =
             "com.auralis.crisisconnect.messaging.call.ACTION_ENABLE_MEDIA_PROJECTION"

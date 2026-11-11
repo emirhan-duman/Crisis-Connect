@@ -82,7 +82,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     private val context = getApplication<Application>()
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+    private val firestore: FirebaseFirestore = com.auralis.crisisconnect.messaging.ResilientApplicationStore.profiles()
 
     private val _showDialog = MutableStateFlow(false)
     val showDialog: StateFlow<Boolean> = _showDialog
@@ -309,7 +309,6 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
                 }
 
             latestCallEventsFlow
-                .distinctUntilChanged()
                 .catch { error ->
                     Log.e(TAG, "Latest call events stream failed", error)
                     emit(emptyMap())

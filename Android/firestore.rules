@@ -905,6 +905,22 @@ service cloud.firestore {
       allow read: if isAgencyPanelCollection(panelCollection)
         && canReadAgencyPanel(panelId, resource.data);
       allow create, update: if isAgencyPanelCollection(panelCollection)
+        // Keep the mobile repository's deployable rules from re-opening the
+        // dashboard hierarchy boundary on a future full Firebase deploy.
+        && (
+          (
+            resource == null
+            && !("parentPanelId" in request.resource.data)
+            && !("ancestorPanelIds" in request.resource.data)
+            && !("childPanelIds" in request.resource.data)
+          )
+          || (
+            resource != null
+            && unchangedField("parentPanelId")
+            && unchangedField("ancestorPanelIds")
+            && unchangedField("childPanelIds")
+          )
+        )
         && (
           isPlatformAdminUser()
         || (
@@ -928,8 +944,6 @@ service cloud.firestore {
           && request.resource.data.agencySlug is string
           && request.resource.data.agencySlug == panelId
           && request.resource.data.updatedByUid == request.auth.uid
-          && unchangedField("parentPanelId")
-          && unchangedField("ancestorPanelIds")
         )
       );
       allow delete: if isAgencyPanelCollection(panelCollection)

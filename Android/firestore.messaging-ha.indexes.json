@@ -1,0 +1,20 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recipientUid", "order": "ASCENDING" },
+        { "fieldPath": "priority", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "messages", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "messages", "fieldPath": "ciphertext", "indexes": [] },
+    { "collectionGroup": "messagingRegionalReceipts", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "ackedMessages", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "messagingAccounts", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "messagingMigrationJobs", "fieldPath": "expireAt", "ttl": true, "indexes": [] }
+  ]
+}

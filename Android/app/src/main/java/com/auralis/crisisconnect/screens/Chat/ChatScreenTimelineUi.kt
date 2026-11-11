@@ -566,6 +566,9 @@ internal fun ChatBubble(
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
+                    if (message.outboundRoute == com.auralis.crisisconnect.watch.WatchReplyChat.ROUTE && message.deliveryStatus?.name !in listOf("DELIVERED", "READ")) {
+                        Text(stringResource(if (message.deliveryStatus?.name == "SENT") R.string.watch_reply_chat_handoff else if (message.lastError == "watch_noPeer") R.string.watch_reply_chat_failed else R.string.watch_reply_chat_uncertain), style = MaterialTheme.typography.labelSmall, color = contentColor.copy(alpha = 0.8f))
+                    }
                     Row(
                         modifier = Modifier.align(
                             if (message.isLocal) Alignment.End else Alignment.Start
@@ -579,7 +582,7 @@ internal fun ChatBubble(
                             color = contentColor.copy(alpha = 0.7f),
                             textAlign = TextAlign.Start
                         )
-                        if (message.isLocal) {
+                        if (message.isLocal && (message.outboundRoute != com.auralis.crisisconnect.watch.WatchReplyChat.ROUTE || message.deliveryStatus?.name in listOf("DELIVERED", "READ"))) {
                             val readIndicatorColor = Color(0xFF34B7F1)
                             val normalizedStatus = when {
                                 message.isRead -> MessageDeliveryStatus.READ

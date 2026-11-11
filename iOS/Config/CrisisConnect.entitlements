@@ -14,6 +14,13 @@
 	<array>
 		<string>Default</string>
 	</array>
+	<key>com.apple.developer.networking.carrier-constrained.app-optimized</key>
+	<true/>
+	<key>com.apple.developer.networking.carrier-constrained.appcategory</key>
+	<array>
+		<string>emergency-8007</string>
+		<string>messaging-8001</string>
+	</array>
 	<key>com.apple.developer.devicecheck.appattest-environment</key>
 	<string>$(APP_ATTEST_ENVIRONMENT)</string>
 	<key>com.apple.developer.wifi-aware</key>

@@ -74,6 +74,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
@@ -210,8 +211,6 @@ data class ChannelThreadState(
     val mlsStagingReady: Boolean = false,
     val mlsSendReady: Boolean = false,
     val securityError: String? = null,
-    val mlsApprovalUid: String? = null,
-    val mlsApprovalError: Boolean = false,
 )
 
 /**
@@ -220,7 +219,8 @@ data class ChannelThreadState(
  * Nav args are supplied via [start] from the screen (no custom factory).
  */
 class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) {
-    private val client = HierarchyMessagingClient()
+    private var client = HierarchyMessagingClient()
+    private var compatibility = false
     private val auth = FirebaseAuth.getInstance()
     private val dao by lazy { AppDatabase.getInstance(getApplication()).authorityMessageDao() }
     private var readCursorListener: ListenerRegistration? = null
@@ -703,10 +703,13 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
         peerDisplayName: String,
         peerAgencyName: String,
         peerRole: String,
+        compatibility: Boolean = false,
     ) {
-        if (this.channelId == channelId && this.peerUid == peerUid && this.scopeType == scopeType &&
+        if (this.channelId == channelId && this.peerUid == peerUid && this.scopeType == scopeType && this.compatibility == compatibility &&
             (mlsChannel != null || mlsJob?.isActive == true)
         ) return
+        this.compatibility = compatibility
+        this.client = HierarchyMessagingClient(compatibility = compatibility)
         this.channelId = channelId
         this.peerUid = peerUid
         this.scopeType = scopeType
@@ -772,7 +775,10 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
         roomJob?.cancel()
         roomJob = viewModelScope.launch(Dispatchers.IO) {
             dao.observeThread(channelId, peerUid).collect { rows ->
-                val msgs = rows.map { it.toHierarchyMessage() }
+                val msgs = rows.filter { it.clientUuid.startsWith("authority-ha-") != compatibility }.map {
+                    val local = if (compatibility) it else it.copy(messageUuid = it.messageUuid.substringAfter(':'))
+                    local.toHierarchyMessage()
+                }
                 cloudMessages.value = msgs
                 _state.value = _state.value.copy(
                     error = if (msgs.isNotEmpty()) null else _state.value.error,
@@ -830,6 +836,7 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
                         scopeType = scopeType,
                         channelId = channelId,
                         deviceLabel = "Android ${android.os.Build.MODEL}".take(64),
+                        compatibility = compatibility,
                     ).also { mlsChannel = it }
                     if (!_state.value.mlsStagingReady) {
                         _state.value = _state.value.copy(mlsStagingReady = true)
@@ -869,6 +876,7 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
                         android.util.Log.w("AuthorityChat", "MLS preparation wake failed", it)
                     }
                 } catch (error: Throwable) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
                     android.util.Log.w("AuthorityChat", "MLS setup will retry automatically", error)
                     _state.value = _state.value.copy(
                         loading = false,
@@ -882,26 +890,6 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
                 delay(if (attempt < 10) 400L else 1_500L)
                 attempt += 1
             }
-        }
-    }
-
-    fun approveDeviceSet(uid: String, expectedFingerprint: String) {
-        val channel = mlsChannel ?: return
-        if (uid.isBlank() || expectedFingerprint.isBlank() || _state.value.mlsApprovalUid != null) return
-        _state.value = _state.value.copy(mlsApprovalUid = uid, mlsApprovalError = false)
-        viewModelScope.launch {
-            runCatching { channel.approveDeviceSet(uid, expectedFingerprint) }
-                .onSuccess { preparation ->
-                    _state.value = _state.value.copy(
-                        mlsPreparation = preparation,
-                        mlsApprovalUid = null,
-                        mlsApprovalError = false,
-                    )
-                }
-                .onFailure { error ->
-                    android.util.Log.w("AuthorityChat", "Device-set approval failed closed", error)
-                    _state.value = _state.value.copy(mlsApprovalUid = null, mlsApprovalError = true)
-                }
         }
     }
 
@@ -945,7 +933,11 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
             clientUuid = if (message.pending) "authority-mls-pending-v2" else "",
         )
         withContext(Dispatchers.IO) {
-            dao.upsertAll(listOf(row.toAuthorityEntity(channelId, myUid)))
+            val cached = row.toAuthorityEntity(channelId, myUid)
+            dao.upsertAll(listOf(if (compatibility) cached else cached.copy(
+                messageUuid = "${mlsChannel?.conversationId ?: error("Missing HA session")}:${message.id}",
+                clientUuid = if (message.pending) "authority-ha-pending-v2" else "authority-ha-confirmed-v2",
+            )))
             val firstAttachment = payload.attachments.firstOrNull()
             dao.upsertConversations(
                 listOf(
@@ -1180,6 +1172,20 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
         }.getOrNull()
     }
 
+    fun pauseThread() {
+        readCursorListener?.remove(); readCursorListener = null
+        deliveryCursorListener?.remove(); deliveryCursorListener = null
+        typingListener?.remove(); typingListener = null
+        typingExpiryJob?.cancel()
+        roomJob?.cancel(); roomJob = null
+        mlsJob?.cancel(); mlsJob = null
+        cloudRetryJob?.cancel(); cloudRetryJob = null
+        bridgeAutoLinkJob?.cancel(); bridgeMessagesJob?.cancel(); btCallStateJob?.cancel()
+        val previous = mlsChannel
+        mlsChannel = null
+        if (previous != null) mlsTeardownScope.launch { previous.close() }
+    }
+
     override fun onCleared() {
         readCursorListener?.remove()
         readCursorListener = null
@@ -1226,9 +1232,38 @@ class AuthorityChannelThreadViewModel(app: Application) : AndroidViewModel(app) 
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AuthorityChannelThreadScreen(
+    navController: NavHostController, channelId: String, peerUid: String, title: String,
+    agency: String = "", role: String = "",
+    scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
+) {
+    val context = LocalContext.current
+    val selectedBinding = com.auralis.crisisconnect.messaging.AuthorityMlsBinding(scopeType, channelId,
+        listOf(FirebaseAuth.getInstance().currentUser?.uid.orEmpty(), peerUid))
+    var compatibility by rememberSaveable(channelId, peerUid, scopeType) {
+        mutableStateOf(com.auralis.crisisconnect.messaging.ResilientApplicationStore.prefersCompatibility(context, selectedBinding))
+    }
+    Column {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            TextButton(onClick = { compatibility = false; com.auralis.crisisconnect.messaging.ResilientApplicationStore.rememberSessionChoice(context, selectedBinding, false) }, enabled = compatibility) {
+                Text(stringResource(R.string.authority_resilient_session))
+            }
+            TextButton(onClick = { compatibility = true; com.auralis.crisisconnect.messaging.ResilientApplicationStore.rememberSessionChoice(context, selectedBinding, true) }, enabled = !compatibility) {
+                Text(stringResource(R.string.authority_compatibility_session))
+            }
+        }
+        Text(stringResource(if (compatibility) R.string.authority_compatibility_notice else R.string.authority_resilient_notice),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
+        androidx.compose.runtime.key(channelId, peerUid, compatibility) {
+            AuthorityChannelThreadContent(navController, channelId, peerUid, title, agency, role, scopeType, compatibility)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AuthorityChannelThreadContent(
     navController: NavHostController,
     channelId: String,
     peerUid: String,
@@ -1236,8 +1271,10 @@ fun AuthorityChannelThreadScreen(
     agency: String = "",
     role: String = "",
     scopeType: AuthorityMlsScopeType = AuthorityMlsScopeType.HIERARCHY,
+    compatibility: Boolean = false,
 ) {
-    val viewModel: AuthorityChannelThreadViewModel = viewModel()
+    val viewModel: AuthorityChannelThreadViewModel = viewModel(key = "$channelId/$peerUid/${scopeType.wireName}/$compatibility")
+    DisposableEffect(viewModel) { onDispose { viewModel.pauseThread() } }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val partnerReadAt by viewModel.partnerReadAt.collectAsStateWithLifecycle()
     val partnerDeliveredAt by viewModel.partnerDeliveredAt.collectAsStateWithLifecycle()
@@ -1245,7 +1282,7 @@ fun AuthorityChannelThreadScreen(
     val securityReady = state.mlsStagingReady
     val callReady = state.mlsPreparation?.ready == true
     LaunchedEffect(channelId, peerUid, scopeType, title, agency, role) {
-        viewModel.start(channelId, peerUid, scopeType, title, agency, role)
+        viewModel.start(channelId, peerUid, scopeType, title, agency, role, compatibility)
     }
 
     // Offline Bluetooth bridge status: green subtitle when this peer's hidden bridge contact has a
@@ -1709,70 +1746,6 @@ fun AuthorityChannelThreadScreen(
                                 readByPeer = message.atMillis <= partnerReadAt,
                                 ownLocation = currentOwnLocation,
                                 bridgeMedia = bridgeMediaMessages[message.id],
-                            )
-                        }
-                    }
-                }
-            }
-
-            val pendingDeviceSets = state.mlsPreparation?.trust.orEmpty()
-                .filter { !it.approved && it.fingerprint.isNotBlank() }
-            if (pendingDeviceSets.isNotEmpty()) {
-                Surface(
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.97f),
-                    shape = RoundedCornerShape(16.dp),
-                    tonalElevation = 8.dp,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(12.dp)
-                        .widthIn(max = 640.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.authority_device_verification_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = stringResource(R.string.authority_device_verification_body),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        pendingDeviceSets.forEach { assessment ->
-                            Surface(
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-                                shape = RoundedCornerShape(12.dp),
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Text(
-                                        text = assessment.safetyNumber,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                    Button(
-                                        enabled = state.mlsApprovalUid == null,
-                                        onClick = { viewModel.approveDeviceSet(assessment.uid, assessment.fingerprint) },
-                                    ) {
-                                        Text(
-                                            if (state.mlsApprovalUid == assessment.uid) {
-                                                stringResource(R.string.authority_device_verification_busy)
-                                            } else {
-                                                stringResource(R.string.authority_device_verification_approve)
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        if (state.mlsApprovalError) {
-                            Text(
-                                text = stringResource(R.string.authority_device_verification_changed),
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall,
                             )
                         }
                     }

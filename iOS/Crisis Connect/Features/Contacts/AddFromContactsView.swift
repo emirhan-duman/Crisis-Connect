@@ -147,10 +147,78 @@ final class AddFromContactsViewModel: ObservableObject {
     /// need not be discoverable online; that is the whole point of finding them over Bluetooth).
     @Published private(set) var deviceContacts: [DeviceContact] = []
 
-    private let client = InternetMessagingClient()
+    @Published private(set) var hasDiscoveryConsent = false
+    @Published private(set) var hasLocalConsent = false
+    private lazy var client = InternetMessagingClient()
+
+    private let consent: ContactAccessConsentStore
+    private var consentSubscription: AnyCancellable?
+    private var lastOnlineToken: String?
+    private var lastLocalToken: String?
+
+    init(consent: ContactAccessConsentStore = .shared) {
+        self.consent = consent
+        refreshConsent()
+        consentSubscription = consent.$revision.dropFirst().sink { [weak self] _ in
+            self?.refreshConsent()
+        }
+    }
+
+    func refreshConsent() {
+        let onlineToken = consent.token(online: true)
+        let localToken = consent.token(online: false)
+        hasDiscoveryConsent = onlineToken != nil
+        hasLocalConsent = localToken != nil
+        if onlineToken == nil || onlineToken != lastOnlineToken { state = .idle }
+        if localToken == nil || localToken != lastLocalToken { deviceContacts = [] }
+        lastOnlineToken = onlineToken
+        lastLocalToken = localToken
+    }
+
+    func acceptDiscoveryDisclosure() { consent.accept(online: true); refreshConsent() }
+    func acceptLocalDisclosure() { consent.accept(online: false); refreshConsent() }
+
+    private func requestContactsPermission() async -> Bool {
+        let status = CNContactStore.authorizationStatus(for: .contacts)
+        if status == .authorized { return true }
+        if #available(iOS 18.0, *), status == .limited { return true }
+        guard status == .notDetermined else {
+            state = .accessDenied
+            return false
+        }
+        let granted = (try? await CNContactStore().requestAccess(for: .contacts)) ?? false
+        if !granted { state = .accessDenied }
+        return granted
+    }
+
+    /// Nearby access is local only; accepting it cannot call the internet directory.
+    func loadNearbyContacts() async {
+        refreshConsent()
+        guard let token = consent.token(online: false) else { return }
+        guard await requestContactsPermission(), !Task.isCancelled,
+              consent.isCurrent(online: false, token: token) else { return }
+        let contacts = await Task.detached(priority: .userInitiated) {
+            DeviceContactsReader.read()
+        }.value
+        guard !Task.isCancelled, consent.isCurrent(online: false, token: token) else { return }
+        deviceContacts = contacts.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+        // Clear a previous permission-denied state after returning from Settings.
+        if case .accessDenied = state { state = .idle }
+    }
+    private var loadInFlight = false
     private static let lookupBatch = 1500
 
     func load() async {
+        // Every entry point (task, refresh, retry, Settings return) must pass this gate.
+        refreshConsent()
+        guard let token = consent.token(online: true), !Task.isCancelled, !loadInFlight else { return }
+        loadInFlight = true
+        defer {
+            loadInFlight = false
+            if case .loading = state { state = .idle }
+        }
         // The directory rejects anonymous callers (free unlimited uids would defeat the scan
         // throttle and enable enumeration), so require a real account up front.
         guard let user = Auth.auth().currentUser, !user.isAnonymous else {
@@ -162,27 +230,15 @@ final class AddFromContactsViewModel: ObservableObject {
         if case .loaded = state { refreshingBehindResults = true } else { refreshingBehindResults = false }
         if !refreshingBehindResults { state = .loading }
 
-        // requestAccess resolves to false WITHOUT prompting once the user has denied permanently,
-        // so re-running this can never escape .accessDenied on its own. Distinguishing the stored
-        // status lets the UI offer Settings instead of a Retry that provably cannot succeed.
-        let status = CNContactStore.authorizationStatus(for: .contacts)
-        if status == .denied || status == .restricted {
-            state = .accessDenied
-            return
-        }
-        let granted = (try? await CNContactStore().requestAccess(for: .contacts)) ?? false
-        guard granted else {
-            state = .accessDenied
-            return
-        }
+        guard await requestContactsPermission(), !Task.isCancelled,
+              consent.isCurrent(online: true, token: token) else { return }
 
         do {
             let contacts = await Task.detached(priority: .userInitiated) {
                 DeviceContactsReader.read()
             }.value
-            deviceContacts = contacts.sorted {
-                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
-            }
+            try Task.checkCancellation()
+            guard consent.isCurrent(online: true, token: token) else { return }
             let nameByPhone = Dictionary(
                 contacts.map { ($0.e164, $0.displayName) },
                 uniquingKeysWith: { first, _ in first }
@@ -190,9 +246,12 @@ final class AddFromContactsViewModel: ObservableObject {
             var discovered: [DiscoveredContact] = []
             let phones = contacts.map(\.e164)
             for batchStart in stride(from: 0, to: phones.count, by: Self.lookupBatch) {
+                try Task.checkCancellation()
+                guard consent.isCurrent(online: true, token: token) else { return }
                 let batch = Array(phones[batchStart..<min(batchStart + Self.lookupBatch, phones.count)])
                 discovered.append(contentsOf: try await client.findContacts(phones: batch))
             }
+            guard consent.isCurrent(online: true, token: token) else { return }
             var seenUids = Set<String>()
             let matches = discovered
                 .filter { seenUids.insert($0.uid).inserted }
@@ -208,9 +267,11 @@ final class AddFromContactsViewModel: ObservableObject {
                 }
                 .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
             state = .loaded(matches)
+        } catch is CancellationError {
+            // Leaving the tab stops the remaining lookup batches.
         } catch {
             NSLog("AddFromContacts: discovery failed: %@", String(describing: error))
-            if !refreshingBehindResults { state = .error }
+            if consent.isCurrent(online: true, token: token), !refreshingBehindResults { state = .error }
         }
     }
 
@@ -245,6 +306,7 @@ struct AddFromContactsView: View {
     @StateObject private var manualPairing = NearbyManualPairing()
     @StateObject private var deviceScanner = NearbyDeviceScanner()
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dismiss) private var dismiss
 
     private enum Tab { case directory, nearby }
     /// Identifiable wrapper so navigationDestination(item:) can push the newly added chat.
@@ -252,6 +314,8 @@ struct AddFromContactsView: View {
 
     @State private var tab: Tab = .directory
     @State private var query = ""
+    @State private var showDisclosure = false
+    @State private var disclosureOnline = true
     @State private var openChat: ChatTarget?
     @State private var discoveryEnabled = NearbyDiscoveryPreferences.isEnabled
     /// The address-book person the Nearby search is currently looking for.
@@ -280,17 +344,33 @@ struct AddFromContactsView: View {
             // them on the picker with a checkmark and no obvious next step.
             SOSChatDetailScreen(sessionId: target.id)
         }
+        .alert(
+            LocalizedStringKey(disclosureOnline ? "CONTACTS_DISCLOSURE_TITLE" : "CONTACTS_LOCAL_DISCLOSURE_TITLE"),
+            isPresented: $showDisclosure
+        ) {
+            Button("CONTACTS_DISCLOSURE_ACCEPT") {
+                if disclosureOnline { viewModel.acceptDiscoveryDisclosure() }
+                else { viewModel.acceptLocalDisclosure() }
+            }
+            Button("CONTACTS_DISCLOSURE_DECLINE", role: .cancel) { dismiss() }
+        } message: {
+            Text(LocalizedStringKey(disclosureOnline ? "CONTACTS_DISCLOSURE_BODY" : "CONTACTS_LOCAL_DISCLOSURE_BODY"))
+        }
         .analyticsScreen("add_from_contacts")
-        .task { await viewModel.load() }
-        .refreshable { await viewModel.load() }
+        .refreshable { await refreshCurrentTab() }
         .onChange(of: scenePhase) { phase in
             // The user may have granted Contacts in Settings while backgrounded (Android rescans
             // on ON_RESUME); without this they return to the same denied screen forever.
             guard phase == .active else { return }
-            if case .accessDenied = viewModel.state { Task { await viewModel.load() } }
+            viewModel.refreshConsent()
+            if case .accessDenied = viewModel.state { Task { await refreshCurrentTab() } }
         }
         .onChange(of: tab) { _ in refreshScanner() }
         .onChange(of: discoveryEnabled) { _ in refreshScanner() }
+        .onChange(of: viewModel.hasLocalConsent) { granted in
+            if !granted { manualPairing.cancel(); nearbyTarget = nil }
+            refreshScanner()
+        }
         .onAppear { refreshScanner() }
         .onDisappear {
             manualPairing.cancel()
@@ -300,7 +380,37 @@ struct AddFromContactsView: View {
 
     // MARK: Directory tab
 
+    private func refreshCurrentTab() async {
+        switch tab {
+        case .directory: await viewModel.load()
+        case .nearby: await viewModel.loadNearbyContacts()
+        }
+    }
+
+    private func contactsDisclosure(online: Bool) -> some View {
+        statusView(
+            icon: "lock.shield",
+            messageKey: online ? "CONTACTS_DISCLOSURE_TITLE" : "CONTACTS_LOCAL_DISCLOSURE_TITLE",
+            actionKey: "CONTACTS_RETRY"
+        ) {
+            disclosureOnline = online
+            showDisclosure = true
+        }
+        .onAppear {
+            disclosureOnline = online
+            showDisclosure = true
+        }
+    }
+
     @ViewBuilder private var directoryTab: some View {
+        if !viewModel.hasDiscoveryConsent {
+            contactsDisclosure(online: true)
+        } else {
+            directoryResults.task { await viewModel.load() }
+        }
+    }
+
+    @ViewBuilder private var directoryResults: some View {
         switch viewModel.state {
         case .idle, .loading:
             ProgressView()
@@ -309,10 +419,9 @@ struct AddFromContactsView: View {
             statusView(
                 icon: "person.crop.circle.badge.exclamationmark",
                 messageKey: "CONTACTS_PERMISSION_DENIED",
-                actionKey: "PRIVACY_OPEN_SETTINGS"
+                actionKey: PlatformRuntime.isDesignedForIPadOnMac ? "Open Settings" : "PRIVACY_OPEN_SETTINGS"
             ) {
-                guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                UIApplication.shared.open(url)
+                PlatformRuntime.openSystemSettings()
             }
         case .signInRequired:
             statusView(icon: "person.crop.circle.badge.questionmark", messageKey: "CONTACTS_SIGNIN_REQUIRED")
@@ -359,7 +468,7 @@ struct AddFromContactsView: View {
     private func refreshScanner() {
         // The passive counter runs only while the Nearby tab is visible AND discovery is opted in —
         // the same gate Android puts on its discovery components.
-        if tab == .nearby && discoveryEnabled {
+        if tab == .nearby && discoveryEnabled && viewModel.hasLocalConsent {
             deviceScanner.start()
         } else {
             deviceScanner.stop()
@@ -367,6 +476,14 @@ struct AddFromContactsView: View {
     }
 
     @ViewBuilder private var nearbyTab: some View {
+        if !viewModel.hasLocalConsent {
+            contactsDisclosure(online: false)
+        } else {
+            nearbyResults.task { await viewModel.loadNearbyContacts() }
+        }
+    }
+
+    @ViewBuilder private var nearbyResults: some View {
         // Discovery is keyed on the phone number (the SPAKE2 password IS the number), so without one
         // the switch would be a lie: it would flip and the responder would silently answer nothing.
         // Lock it and say why — an enabled-looking toggle that does nothing reads as "broken".
@@ -408,10 +525,9 @@ struct AddFromContactsView: View {
                 Section {
                     inlineRecovery(
                         messageKey: "NEARBY_SCAN_PERMISSION_NEEDED",
-                        actionKey: "PRIVACY_OPEN_SETTINGS"
+                        actionKey: PlatformRuntime.isDesignedForIPadOnMac ? "Open Settings" : "PRIVACY_OPEN_SETTINGS"
                     ) {
-                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                        UIApplication.shared.open(url)
+                        PlatformRuntime.openSystemSettings()
                     }
                 }
             } else if deviceScanner.radio == .poweredOff {
@@ -424,10 +540,9 @@ struct AddFromContactsView: View {
                 Section {
                     inlineRecovery(
                         messageKey: "NEARBY_CONTACTS_PERMISSION_NEEDED",
-                        actionKey: "PRIVACY_OPEN_SETTINGS"
+                        actionKey: PlatformRuntime.isDesignedForIPadOnMac ? "Open Settings" : "PRIVACY_OPEN_SETTINGS"
                     ) {
-                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                        UIApplication.shared.open(url)
+                        PlatformRuntime.openSystemSettings()
                     }
                 }
             } else {

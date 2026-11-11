@@ -451,6 +451,15 @@ class ClientConnection(
             try {
                 emitState(ConnectionStatus.Connecting)
                 startGattConnection()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (throwable: Exception) {
+                // Some Bluetooth stacks return null from connectGatt() during transient adapter
+                // or vendor-stack failures. Treat that as a failed attempt and use the existing
+                // backoff path instead of letting an uncaught coroutine exception terminate the app.
+                Log.w(TAG, "[$address] Failed to start GATT connection; scheduling retry", throwable)
+                emitState(ConnectionStatus.Failed, reason = throwable.message ?: "GATT_START_FAILED")
+                scheduleReconnect()
             } finally {
                 connectLaunchInProgress.set(false)
             }

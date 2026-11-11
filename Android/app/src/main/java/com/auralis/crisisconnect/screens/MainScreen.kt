@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -117,11 +118,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -138,6 +137,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -178,6 +179,7 @@ import com.auralis.crisisconnect.data.normalizePreferredTransport
 import com.auralis.crisisconnect.data.PREFERRED_TRANSPORT_BLE_GATT
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.data.local.ContactAvatarStorage
+import com.auralis.crisisconnect.feature.rescueAuthChanges
 import com.auralis.crisisconnect.feature.RescueFeatureManager
 import com.auralis.crisisconnect.isScreenshotDemoModeEnabledSync
 import com.auralis.crisisconnect.screens.Chat.ChatScreenshotDemoScenario
@@ -380,7 +382,7 @@ private fun welcomePermissionRequirements(): List<WelcomePermissionRequirement> 
                 WelcomePermissionRequirement(
                     labelRes = R.string.permission_group_nearby_wifi,
                     descriptionRes = R.string.welcome_permission_nearby_wifi_description,
-                    permissions = listOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+                    permissions = com.auralis.crisisconnect.util.LocalNetworkPermissions.wifiPermissions()
                 )
             )
             add(
@@ -620,6 +622,7 @@ fun MainScreen(
     onOnboardingCompleted: () -> Unit = {}
 ) {
     val viewModel: MainScreenViewModel = viewModel()
+    var showingEmptyConversations by remember { mutableStateOf(false) }
     val showDialog by viewModel.showDialog.collectAsStateWithLifecycle()
     val publicMeshEnabled by viewModel.publicMeshEnabled.collectAsStateWithLifecycle()
     val authorityMeshEnabled by viewModel.authorityMeshEnabled.collectAsStateWithLifecycle()
@@ -642,7 +645,10 @@ fun MainScreen(
     var rescueRoleResult by remember { mutableStateOf<RescueRoleResult?>(null) }
     var rescueLaunchInFlight by remember { mutableStateOf(false) }
     var rescueInstallProgress by remember { mutableStateOf<Int?>(null) }
-    var rescuePrefetchRequested by rememberSaveable { mutableStateOf(false) }
+    var detachRescueInstall by remember { mutableStateOf<(() -> Unit)?>(null) }
+    DisposableEffect(Unit) {
+        onDispose { detachRescueInstall?.invoke() }
+    }
     var welcomeContinueBlocker by remember(context) {
         mutableStateOf(resolveWelcomeContinueBlocker(context))
     }
@@ -655,10 +661,12 @@ fun MainScreen(
     val showAuthorityMeshEntry = authorityMeshEnabled &&
         rescueRoleResult is RescueRoleResult.Authorized
     val onAuthorityMeshSelected: () -> Unit = {
-        rescueFeatureManager.launchInstalled(
-            context,
-            startDestination = RescueFeatureManager.START_DESTINATION_MESH_CHAT
-        )
+        if (!rescueFeatureManager.launchInstalled(
+                context,
+                startDestination = RescueFeatureManager.START_DESTINATION_MESH_CHAT
+            )) {
+            navController.navigate("mesh_chat") { launchSingleTop = true }
+        }
     }
     val sosCountdownNavigator = remember(navController) {
         {
@@ -697,74 +705,81 @@ fun MainScreen(
     }
 
     LaunchedEffect(Unit) {
-        val securityRepository = SecurityRepository(context)
-        val authUser = FirebaseAuth.getInstance().currentUser?.takeUnless { it.isAnonymous }
-        if (authUser == null) {
-            val cachedRescueRole = securityRepository
+        rescueAuthChanges().collectLatest {
+            rescueRoleResult = null
+            detachRescueInstall?.invoke()
+            detachRescueInstall = null
+            rescueLaunchInFlight = false
+            rescueInstallProgress = null
+            val securityRepository = SecurityRepository(context)
+            val authUser = FirebaseAuth.getInstance().currentUser?.takeUnless { it.isAnonymous }
+            if (authUser == null) {
+                val cachedRescueRole = securityRepository
+                    .getUsableStoredCertificateRole(allowExpired = true)
+                    ?.takeIf { it in ALLOWED_RESCUE_ROLES }
+                rescueRoleResult = if (cachedRescueRole != null) {
+                    LocalKeyStorage.saveRole(context, cachedRescueRole)
+                    RescueRoleResult.Authorized(cachedRescueRole)
+                } else {
+                    LocalKeyStorage.clearRole(context)
+                    RescueRoleResult.Unauthorized
+                }
+                return@collectLatest
+            }
+
+            LocalKeyStorage.saveUid(context, authUser.uid)
+            val cachedCertificateRole = securityRepository
                 .getUsableStoredCertificateRole(allowExpired = true)
-                ?.takeIf { it in ALLOWED_RESCUE_ROLES }
+            val cachedRescueRole = cachedCertificateRole?.let {
+                it.takeIf { role -> role in ALLOWED_RESCUE_ROLES }
+            }
+
+            val hasInternet = context.hasUsableInternetConnection()
             rescueRoleResult = if (cachedRescueRole != null) {
                 LocalKeyStorage.saveRole(context, cachedRescueRole)
                 RescueRoleResult.Authorized(cachedRescueRole)
+            } else if (hasInternet) {
+                LocalKeyStorage.clearRole(context)
+                null
             } else {
                 LocalKeyStorage.clearRole(context)
                 RescueRoleResult.Unauthorized
             }
-            return@LaunchedEffect
-        }
 
-        LocalKeyStorage.saveUid(context, authUser.uid)
-        val cachedCertificateRole = securityRepository
-            .getUsableStoredCertificateRole(allowExpired = true)
-        val cachedRescueRole = cachedCertificateRole?.let {
-            it.takeIf { role -> role in ALLOWED_RESCUE_ROLES }
-        }
-
-        val hasInternet = context.hasUsableInternetConnection()
-        rescueRoleResult = if (cachedRescueRole != null) {
-            LocalKeyStorage.saveRole(context, cachedRescueRole)
-            RescueRoleResult.Authorized(cachedRescueRole)
-        } else if (hasInternet) {
-            LocalKeyStorage.clearRole(context)
-            null
-        } else {
-            LocalKeyStorage.clearRole(context)
-            RescueRoleResult.Unauthorized
-        }
-
-        if (!hasInternet) {
-            return@LaunchedEffect
-        }
-
-        val fetchedResult = FirebaseRoleHelper.fetchRescueRole()
-        rescueRoleResult = when (fetchedResult) {
-            is RescueRoleResult.Authorized -> {
-                LocalKeyStorage.saveRole(context, fetchedResult.role)
-                securityRepository.warmUpCertificateInBackground()
-                fetchedResult
+            if (!hasInternet) {
+                return@collectLatest
             }
 
-            RescueRoleResult.Unauthorized -> {
-                LocalKeyStorage.clearRole(context)
-                securityRepository.clearStoredCertificate()
-                RescueRoleResult.Unauthorized
-            }
+            val fetchedResult = FirebaseRoleHelper.fetchRescueRole()
+            rescueRoleResult = when (fetchedResult) {
+                is RescueRoleResult.Authorized -> {
+                    LocalKeyStorage.saveRole(context, fetchedResult.role)
+                    securityRepository.warmUpCertificateInBackground()
+                    fetchedResult
+                }
 
-            RescueRoleResult.Unauthenticated -> {
-                if (cachedRescueRole != null) {
-                    LocalKeyStorage.saveRole(context, cachedRescueRole)
-                    RescueRoleResult.Authorized(cachedRescueRole)
-                } else {
+                RescueRoleResult.Unauthorized -> {
+                    LocalKeyStorage.clearRole(context)
+                    securityRepository.clearStoredCertificate()
                     RescueRoleResult.Unauthorized
                 }
-            }
 
-            is RescueRoleResult.Failure -> {
-                if (cachedRescueRole != null) {
-                    LocalKeyStorage.saveRole(context, cachedRescueRole)
-                    RescueRoleResult.Authorized(cachedRescueRole)
-                } else {
-                    fetchedResult
+                RescueRoleResult.Unauthenticated -> {
+                    if (cachedRescueRole != null) {
+                        LocalKeyStorage.saveRole(context, cachedRescueRole)
+                        RescueRoleResult.Authorized(cachedRescueRole)
+                    } else {
+                        RescueRoleResult.Unauthorized
+                    }
+                }
+
+                is RescueRoleResult.Failure -> {
+                    if (cachedRescueRole != null) {
+                        LocalKeyStorage.saveRole(context, cachedRescueRole)
+                        RescueRoleResult.Authorized(cachedRescueRole)
+                    } else {
+                        fetchedResult
+                    }
                 }
             }
         }
@@ -773,14 +788,6 @@ fun MainScreen(
     LaunchedEffect(rescueRoleResult) {
         val failure = rescueRoleResult as? RescueRoleResult.Failure ?: return@LaunchedEffect
         Log.w(RESCUE_ROLE_LOG_TAG, "Unable to verify rescue role", failure.exception)
-    }
-
-    LaunchedEffect(rescueRoleResult, rescuePrefetchRequested) {
-        if (rescueRoleResult !is RescueRoleResult.Authorized || rescuePrefetchRequested) {
-            return@LaunchedEffect
-        }
-        rescuePrefetchRequested = true
-        rescueFeatureManager.prefetchIfNeeded()
     }
 
     LaunchedEffect(Unit) {
@@ -917,8 +924,9 @@ fun MainScreen(
         return
     }
 
+    val isDarkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     Box(modifier = Modifier.fillMaxSize()) {
-        MainScreenTextureBackground(
+        MainScreenBackground(
             modifier = Modifier.matchParentSize()
         )
 
@@ -932,6 +940,7 @@ fun MainScreen(
                 hoveredElevation = 10.dp
             )
             val isSosActive by GattSOSServerService.isDeclared.collectAsStateWithLifecycle()
+            val savedSos by com.auralis.crisisconnect.watch.WatchRecoveryStore.get(context).state.collectAsStateWithLifecycle()
             val sosStartTimestamp by GattSOSServerService.startTimestampMillis.collectAsStateWithLifecycle()
             val sosElapsedText = rememberSosElapsedText(
                 startTimestamp = sosStartTimestamp,
@@ -943,7 +952,7 @@ fun MainScreen(
                     sosElapsedText ?: "--:--"
                 )
             } else {
-                stringResource(R.string.emergency_button_label)
+                stringResource(if ((savedSos.startedAt != null || savedSos.unavailable)) R.string.sos_recovery_title else R.string.emergency_button_label)
             }
             val sosContainerColor = if (isSosActive) {
                 Color(0xFFB71C1C)
@@ -964,7 +973,7 @@ fun MainScreen(
                         .widthIn(min = 108.dp, max = 184.dp),
                     shape = RoundedCornerShape(18.dp),
                     onClick = {
-                        if (isSosActive) {
+                        if (isSosActive || (savedSos.startedAt != null || savedSos.unavailable)) {
                             navController.navigate("sos_status") {
                                 launchSingleTop = true
                             }
@@ -1038,8 +1047,8 @@ fun MainScreen(
                         is RescueRoleResult.Authorized -> {
                             FloatingActionButton(
                                 modifier = Modifier.size(56.dp),
-                                containerColor = Color(0xFF1D3E66),
-                                contentColor = Color(0xFFF2F6FB),
+                                containerColor = if (isDarkTheme) MaterialTheme.colorScheme.primaryContainer else Color(0xFF1D3E66),
+                                contentColor = if (isDarkTheme) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFFF2F6FB),
                                 elevation = defaultFabElevation,
                                 onClick = {
                                     if (rescueLaunchInFlight) {
@@ -1057,7 +1066,8 @@ fun MainScreen(
                                         ).show()
                                         return@FloatingActionButton
                                     }
-                                    rescueFeatureManager.installAndLaunch(
+                                    detachRescueInstall?.invoke()
+                                    detachRescueInstall = rescueFeatureManager.installAndLaunch(
                                         activity = hostActivity,
                                         confirmationLauncher = rescueInstallConfirmationLauncher,
                                         onStateChanged = { state ->
@@ -1088,7 +1098,7 @@ fun MainScreen(
                                 if (rescueLaunchInFlight) {
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(24.dp),
-                                        color = Color(0xFFF2F6FB)
+                                        color = if (isDarkTheme) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFFF2F6FB)
                                     )
                                 } else {
                                     Icon(
@@ -1107,21 +1117,22 @@ fun MainScreen(
                         }
                     }
 
-                    FloatingActionButton(
-                        modifier = Modifier.size(60.dp),
-                        containerColor = Color(0xFF304A76),
-                        contentColor = Color.White,
-                        elevation = defaultFabElevation,
-                        onClick = {
-                            navController.navigate("new_chat")
+                    if (!showingEmptyConversations) {
+                        FloatingActionButton(
+                            modifier = Modifier.size(60.dp),
+                            containerColor = if (isDarkTheme) MaterialTheme.colorScheme.primary else Color(0xFF304A76),
+                            contentColor = if (isDarkTheme) MaterialTheme.colorScheme.onPrimary else Color.White,
+                            elevation = defaultFabElevation,
+                            onClick = {
+                                navController.navigate("new_chat")
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PersonAdd,
+                                contentDescription = stringResource(R.string.new_chat_title),
+                                modifier = Modifier.size(32.dp)
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PersonAdd,
-                            contentDescription = stringResource(R.string.new_chat_title),
-                            modifier = Modifier.size(32.dp),
-                            tint = Color.White
-                        )
                     }
                 }
             }
@@ -1147,6 +1158,7 @@ fun MainScreen(
                 showAuthorityMeshEntry = showAuthorityMeshEntry,
                 onAuthorityMeshSelected = onAuthorityMeshSelected,
                 meshGeneralUnreadCount = effectiveMeshUnreadCount,
+                onEmptyStateChanged = { showingEmptyConversations = it },
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope
             )
@@ -1229,6 +1241,7 @@ private fun MainConversationContent(
     showAuthorityMeshEntry: Boolean,
     onAuthorityMeshSelected: () -> Unit,
     meshGeneralUnreadCount: Int,
+    onEmptyStateChanged: (Boolean) -> Unit,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
@@ -1625,6 +1638,13 @@ private fun MainConversationContent(
         }
     }
 
+    val showEmptyConversations = isContactsLoaded && searchQuery.isBlank() &&
+        contacts.isEmpty() && channelConversations.isEmpty() &&
+        !showGeneralMeshEntry && !(isCrisisSentinelReady || isCurrentUserRescue)
+    LaunchedEffect(showEmptyConversations) {
+        onEmptyStateChanged(showEmptyConversations)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1653,19 +1673,52 @@ private fun MainConversationContent(
                     )
                 }
             }
-        } else if (searchQuery.isBlank() && contacts.isEmpty() && channelConversations.isEmpty() &&
-            !showGeneralMeshEntry && !(isCrisisSentinelReady || isCurrentUserRescue)) {
+        } else if (showEmptyConversations) {
             Box(
                 modifier = contentModifier,
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = stringResource(R.string.no_contacts_message),
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                    textAlign = TextAlign.Center
-                )
+                        .widthIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp, vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                        Box(modifier = Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.People,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = stringResource(R.string.messages_empty_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.semantics { heading() }
+                    )
+                    Text(
+                        text = stringResource(R.string.messages_empty_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                    Button(
+                        onClick = { navController.navigate("new_chat") },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.new_chat_title))
+                    }
+                }
             }
         } else {
             val listModifier = if (isExpandedScreen) {
@@ -1779,55 +1832,10 @@ private fun MainConversationContent(
 }
 
 @Composable
-private fun MainScreenTextureBackground(
+private fun MainScreenBackground(
     modifier: Modifier = Modifier
 ) {
-    val baseColor = MaterialTheme.colorScheme.background
-    val gridColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f)
-    val vignetteColor = if (baseColor.luminance() > 0.5f) {
-        Color.Black.copy(alpha = 0.09f)
-    } else {
-        Color.Black.copy(alpha = 0.14f)
-    }
-    Box(
-        modifier = modifier
-            .background(baseColor)
-            .drawWithCache {
-                val gridSpacing = 28.dp.toPx()
-                val vignette = Brush.radialGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        Color.Transparent,
-                        vignetteColor
-                    ),
-                    center = Offset(size.width * 0.5f, size.height * 0.5f),
-                    radius = size.maxDimension * 0.92f
-                )
-                onDrawBehind {
-                    var x = 0f
-                    while (x <= size.width) {
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(x, 0f),
-                            end = Offset(x, size.height),
-                            strokeWidth = 1f
-                        )
-                        x += gridSpacing
-                    }
-                    var y = 0f
-                    while (y <= size.height) {
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(0f, y),
-                            end = Offset(size.width, y),
-                            strokeWidth = 1f
-                        )
-                        y += gridSpacing
-                    }
-                    drawRect(brush = vignette)
-                }
-            }
-    )
+    Box(modifier = modifier.background(MaterialTheme.colorScheme.background))
 }
 
 @Composable

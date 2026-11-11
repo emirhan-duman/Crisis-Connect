@@ -69,8 +69,9 @@ fun ChatInfoScreen(navController: NavController, sessionCode: String) {
     val viewModel: ChatScreenViewModel = viewModel()
     val contactName by viewModel.contactName.collectAsStateWithLifecycle()
     val bluetoothAddress by viewModel.contactAddressState.collectAsStateWithLifecycle()
-    val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
-    val transport by viewModel.transport.collectAsStateWithLifecycle()
+    val connectionStatus by viewModel.connectionStatus.collectAsStateWithLifecycle()
+    val connectionState = connectionStatus.state
+    val transport = connectionStatus.transport
     val contactPhotoUrl by viewModel.contactPhotoUrl.collectAsStateWithLifecycle()
     val safetyNumber by viewModel.safetyNumber.collectAsStateWithLifecycle()
     val peerKeyChanged by viewModel.peerKeyChanged.collectAsStateWithLifecycle()

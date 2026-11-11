@@ -631,7 +631,7 @@ Android：%3$s</string>
     <string name="add_from_contacts_empty">您的联系人中还没有人使用 Crisis Connect。</string>
     <string name="add_from_contacts_permission_needed">需要联系人权限才能找到您认识的人。</string>
     <string name="add_from_contacts_sign_in_required">登录以在 Crisis Connect 上查找联系人。</string>
-    <string name="add_from_contacts_privacy_note">您的号码通过哈希匹配，绝不存储在服务器上。只有选择可被发现的人才会出现。</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect 会读取通讯录中的姓名和电话号码，以查找使用此应用的人。电话号码会发送至由 Google Firebase 在美国托管的 Crisis Connect 服务器进行匹配。联系人姓名保留在设备上。查询的号码仅作处理，不会永久存储；匹配结果保留在设备上。此页面打开期间，刷新或返回页面可能会再次发送号码。你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。</string>
     <string name="add_from_contacts_found_count">%1$d 人在 Crisis Connect 上</string>
     <string name="add_from_contacts_empty_hint">当他们在应用中验证电话号码后，就会显示在这里。</string>
     <string name="add_from_contacts_search_hint">搜索姓名或号码</string>
@@ -1227,6 +1227,7 @@ Android：%3$s</string>
     <string name="chat_status_connected">已连接</string>
     <string name="chat_status_connected_bluetooth">已通过蓝牙连接</string>
     <string name="chat_status_connected_internet">已通过互联网连接</string>
+    <string name="chat_status_connected_satellite">已通过卫星连接</string>
     <string name="internet_message_channel_name">互联网消息</string>
     <string name="internet_message_notification_title">新消息</string>
     <string name="channel_message_notification_body">新消息</string>
@@ -1789,4 +1790,20 @@ Android：%3$s</string>
     <string name="profile_delete_account_error_verification">无法在此设备上验证删除。请检查网络连接后重试。</string>
     <string name="profile_delete_account_error_signed_out">需要登录后才能删除账号。</string>
     <string name="profile_delete_account_reauth_needed">为保障安全，删除前需要确认是你本人。请退出登录后重新登录，然后再试一次。</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">在线查找联系人</string>
+    <string name="contacts_disclosure_body">Crisis Connect 会读取通讯录中的姓名和电话号码，以查找使用此应用的人。电话号码会发送至由 Google Firebase 在美国托管的 Crisis Connect 服务器进行匹配。联系人姓名保留在设备上。查询的号码仅作处理，不会永久存储；匹配结果保留在设备上。此页面打开期间，刷新或返回页面可能会再次发送号码。你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。</string>
+    <string name="contacts_local_disclosure_title">查找附近的联系人</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect 仅读取你通过系统联系人选择器分享的姓名和电话号码，以查找附近的人。所选号码用于通过蓝牙验证身份。此功能不会将你的通讯录发送至服务器。你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。</string>
+    <string name="contacts_disclosure_accept">我同意</string>
+    <string name="contacts_disclosure_decline">暂不</string>
+    <string name="contacts_consent_settings_title">通讯录访问</string>
+    <string name="contacts_consent_settings_hint">你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。</string>
+    <string name="contacts_consent_revoke_online">撤回在线匹配同意</string>
+    <string name="contacts_consent_revoke_nearby">撤回附近联系人访问同意</string>
+    <string name="nearby_choose_contact">选择联系人</string>
+    <string name="nearby_contact_selection_failed">无法读取所选电话号码。请选择其他联系人。</string>
+    <string name="chat_status_internet_available">互联网可用</string>
+    <string name="chat_status_satellite_available">卫星连接可用</string>
 </resources>

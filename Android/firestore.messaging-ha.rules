@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Server-owned messages contain recipientUid, senderUid and opaque ciphertext.
+    // Clients only read their own inbox. All writes, key distribution, routing,
+    // profiles, receipts, migration jobs and account markers are server-only.
+    function isAuthenticated() { return request.auth != null; }
+    function ownsInboxMessage() {
+      return isAuthenticated() && resource.data.recipientUid is string
+        && resource.data.recipientUid == request.auth.uid;
+    }
+    function accountIsOpen() {
+      return !exists(/databases/$(database)/documents/messagingAccounts/$(request.auth.uid))
+        || get(/databases/$(database)/documents/messagingAccounts/$(request.auth.uid)).data.state != 'deleted';
+    }
+    match /messages/{messageId} {
+      allow get, list: if ownsInboxMessage() && accountIsOpen();
+      allow create, update, delete: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

@@ -9,8 +9,9 @@ import Foundation
 import CoreBluetooth
 import Combine
 import FirebaseAuth
+import UIKit
 
-struct ContactVerificationResult {
+struct ContactVerificationResult: Codable {
     let shareId: String
     let sessionCode: String
     let displayName: String?
@@ -60,6 +61,8 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
     @Published private(set) var progress: ContactVerificationProgress = .idle
 
     private let queue = DispatchQueue(label: "contact.p2p.scan")
+    private var backgrounded = false
+    private var lifecycleObservers: [NSObjectProtocol] = []
     private var central: CBCentralManager?
     private var timeoutWork: DispatchWorkItem?
     private var shouldStartWhenReady = false
@@ -83,6 +86,33 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
 
     override init() {
         super.init()
+        lifecycleObservers = [
+            NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.setBackgrounded(true)
+            },
+            NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.setBackgrounded(false)
+            }
+        ]
+    }
+
+    deinit {
+        lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
+        timeoutWork?.cancel()
+    }
+
+    private func setBackgrounded(_ value: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.backgrounded = value
+            // Background Core Bluetooth discovery requires an explicit service filter.
+            // Never restart or disconnect an already established handshake.
+            if self.central?.isScanning == true, self.targetPayload != nil {
+                self.central?.stopScan()
+                self.shouldStartWhenReady = true
+                self.startScanIfPossible()
+            }
+        }
     }
 
     func verify(
@@ -613,8 +643,8 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         shouldStartWhenReady = false
         setProgress(.searching)
         central.scanForPeripherals(
-            withServices: nil,
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+            withServices: backgrounded ? [P2pBleProtocol.serviceUUID] : nil,
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: !backgrounded]
         )
         DispatchQueue.main.async { [weak self] in
             self?.isScanning = true

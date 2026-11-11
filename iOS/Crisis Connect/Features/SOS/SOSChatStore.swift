@@ -69,6 +69,7 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
     let timestamp: Date
     var status: SOSChatMessageStatus
     let transportMessageId: String?
+    var watchReplyResult: String? = nil
 
     init(
         id: UUID,
@@ -143,6 +144,7 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
         case timestamp
         case status
         case transportMessageId
+        case watchReplyResult
     }
 
     init(from decoder: Decoder) throws {
@@ -175,6 +177,7 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
         isLocal = try container.decode(Bool.self, forKey: .isLocal)
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         status = try container.decode(SOSChatMessageStatus.self, forKey: .status)
+        watchReplyResult = try container.decodeIfPresent(String.self, forKey: .watchReplyResult)
         let decodedTransportMessageId = (try container.decodeIfPresent(String.self, forKey: .transportMessageId))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         transportMessageId = (decodedTransportMessageId?.isEmpty == false) ? decodedTransportMessageId : nil
@@ -203,6 +206,7 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
         try container.encode(timestamp, forKey: .timestamp)
         try container.encode(status, forKey: .status)
         try container.encodeIfPresent(transportMessageId, forKey: .transportMessageId)
+        try container.encodeIfPresent(watchReplyResult, forKey: .watchReplyResult)
     }
 }
 
@@ -335,10 +339,15 @@ final class SOSChatStore: ObservableObject {
     @Published private(set) var sessions: [SOSChatSession] = []
     @Published private(set) var messagesBySession: [UUID: [SOSChatMessage]] = [:]
 
+    @Published private(set) var watchProjectionReady = false
     private let persistenceQueue = DispatchQueue(label: "sos.chat.persistence")
     private let persistenceURL: URL
     private let sessionUpdateSubject = PassthroughSubject<UUID, Never>()
     private var pendingSave: DispatchWorkItem?
+    private let persistenceRevisionLock = NSLock()
+    private var persistenceRevision: UInt64 = 0
+    private var lastWrittenRevision: UInt64 = 0 // Access only on persistenceQueue.
+    @MainActor private var initialLoadWaiters: [CheckedContinuation<Void, Never>] = []
 
     nonisolated static func voicePreviewText() -> String {
         NSLocalizedString("Voice message", comment: "")
@@ -575,7 +584,22 @@ final class SOSChatStore: ObservableObject {
         loadPersisted()
     }
 
+    /// A cold-start receive must not be acknowledged before the disk snapshot is installed.
+    @MainActor func waitUntilLoaded() async {
+        guard !watchProjectionReady else { return }
+        await withCheckedContinuation { initialLoadWaiters.append($0) }
+    }
+
+    @MainActor private func finishInitialLoad() {
+        watchProjectionReady = true
+        reconcileWatchReplies()
+        let waiters = initialLoadWaiters
+        initialLoadWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
     func clear() {
+        try? SOSRecoveryStore.shared.clearReplies()
         sessions = []
         messagesBySession = [:]
         schedulePersist()
@@ -1157,7 +1181,7 @@ final class SOSChatStore: ObservableObject {
         var result: [(UUID, String, String)] = []
         for (sessionId, messages) in messagesBySession {
             for message in messages
-            where message.isLocal && message.status == .pending && message.kind == .text {
+            where message.isLocal && message.status == .pending && message.kind == .text && message.watchReplyResult == nil {
                 guard let tid = normalizedTransportMessageId(message.transportMessageId) else { continue }
                 result.append((sessionId, tid, message.text))
             }
@@ -1547,15 +1571,88 @@ final class SOSChatStore: ObservableObject {
         return oldName == placeholder
     }
 
+    /// Merge the durable watch journal after disk loading; never enqueue or send these messages.
+    func reconcileWatchReplies(_ source: [SOSRecoveryStore.Reply]? = nil) {
+        guard watchProjectionReady else { return }
+        var changed = false
+        for reply in source ?? SOSRecoveryStore.shared.snapshot.replies {
+            guard let sessionId = UUID(uuidString: reply.peer) else { continue }
+            if session(for: sessionId) == nil { ensureSession(id: sessionId, role: .unknown) }
+            var messages = messagesBySession[sessionId, default: []]
+            let existing = messages.firstIndex { $0.isLocal && $0.transportMessageId == reply.id }
+            if let existing, [.delivered, .read].contains(messages[existing].status) { continue }
+            let status: SOSChatMessageStatus = reply.result == "accepted" ? .sent : .failed
+            if let existing {
+                guard messages[existing].status != status || messages[existing].watchReplyResult != reply.result else { continue }
+                messages[existing].status = status
+                messages[existing].watchReplyResult = reply.result
+            } else {
+                var message = SOSChatMessage(id: UUID(), sessionId: sessionId, text: reply.text,
+                    isLocal: true, timestamp: reply.createdAt ?? .now, status: status, transportMessageId: reply.id)
+                message.watchReplyResult = reply.result
+                messages.append(message)
+            }
+            setMessages(messages, for: sessionId)
+            if let last = messages.last {
+                updateSession(sessionId: sessionId) { session in session.lastUpdated = last.timestamp; session.lastMessage = last.text }
+            }
+            changed = true
+        }
+        if changed { schedulePersist() }
+    }
+
+    /// A watch already owns the send. This projection can never enter the phone retry queue.
+    func reconcileIndependentWatchSent(contact: ContactRecord, id: String, text: String, outcome: String) throws {
+        for (sessionId, messages) in messagesBySession {
+            if let old = messages.first(where: { $0.transportMessageId == id }),
+               sessionId != contact.id || !old.isLocal || old.text != text { throw IndependentWatchError.invalid }
+        }
+        ensureSession(id: contact.id, displayName: contact.name, role: .unknown, isVerified: contact.isVerified)
+        var messages = messagesBySession[contact.id, default: []]
+        let status: SOSChatMessageStatus = outcome == "read" ? .read : outcome == "delivered" ? .delivered : outcome == "accepted" ? .sent : .failed
+        if let index = messages.firstIndex(where: { $0.transportMessageId == id }) {
+            let ranks: [SOSChatMessageStatus] = [.pending, .failed, .sent, .delivered, .read]
+            if ranks.firstIndex(of: status)! > ranks.firstIndex(of: messages[index].status)! { messages[index].status = status }
+            messages[index].watchReplyResult = messages[index].status == .failed ? "uncertain" : "accepted"
+        } else {
+            var message = SOSChatMessage(id: UUID(), sessionId: contact.id, text: text, isLocal: true,
+                timestamp: .now, status: status, transportMessageId: id)
+            message.watchReplyResult = outcome == "uncertain" ? "uncertain" : "accepted"
+            messages.append(message)
+        }
+        setMessages(messages, for: contact.id)
+        if let last = messages.last { updateSession(sessionId: contact.id) { $0.lastUpdated = last.timestamp; $0.lastMessage = last.text } }
+        schedulePersist()
+    }
+
+    private func nextPersistenceRevision() -> UInt64 {
+        persistenceRevisionLock.lock(); defer { persistenceRevisionLock.unlock() }
+        persistenceRevision += 1
+        return persistenceRevision
+    }
+
+    /// Network ACKs may delete the only server copy. Commit the encrypted snapshot first.
+    @MainActor func flushToDisk() async throws {
+        await waitUntilLoaded()
+        pendingSave?.cancel()
+        let snapshot = SOSChatSnapshot(sessions: sessions, messagesBySession: messagesBySession)
+        let revision = nextPersistenceRevision()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            persistenceQueue.async {
+                do { try self.saveSnapshot(snapshot, to: self.persistenceURL, revision: revision); continuation.resume() }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
     private func schedulePersist() {
         pendingSave?.cancel()
-        let snapshot = SOSChatSnapshot(
-            sessions: sessions,
-            messagesBySession: messagesBySession
-        )
+        let snapshot = SOSChatSnapshot(sessions: sessions, messagesBySession: messagesBySession)
+        let revision = nextPersistenceRevision()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.saveSnapshot(snapshot, to: self.persistenceURL)
+            do { try self.saveSnapshot(snapshot, to: self.persistenceURL, revision: revision) }
+            catch { MessagingDiagLog.log("chat snapshot persistence deferred") }
         }
         pendingSave = workItem
         persistenceQueue.asyncAfter(deadline: .now() + 0.4, execute: workItem)
@@ -1567,6 +1664,7 @@ final class SOSChatStore: ObservableObject {
             let url = self.persistenceURL
             guard let payload = try? LocalEncryptedFileStore.read(from: url),
                   let snapshot = try? JSONDecoder().decode(SOSChatSnapshot.self, from: payload.data) else {
+                DispatchQueue.main.async { self.finishInitialLoad() }
                 return
             }
             var updatedSessions = snapshot.sessions
@@ -1605,6 +1703,7 @@ final class SOSChatStore: ObservableObject {
             DispatchQueue.main.async {
                 self.sessions = updatedSessions
                 self.messagesBySession = snapshot.messagesBySession
+                self.finishInitialLoad()
                 if needsPersist {
                     self.schedulePersist()
                 }
@@ -1612,15 +1711,17 @@ final class SOSChatStore: ObservableObject {
         }
     }
 
-    private func saveSnapshot(_ snapshot: SOSChatSnapshot, to url: URL) {
+    private func saveSnapshot(_ snapshot: SOSChatSnapshot, to url: URL, revision: UInt64) throws {
+        guard revision >= lastWrittenRevision else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(snapshot) else { return }
+        let data = try encoder.encode(snapshot)
         let directory = url.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: directory.path) {
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
         }
-        try? LocalEncryptedFileStore.write(data, to: url)
+        try LocalEncryptedFileStore.write(data, to: url)
+        lastWrittenRevision = revision
     }
 }
 

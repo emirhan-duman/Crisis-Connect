@@ -30,6 +30,7 @@ import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.connectivity.SatelliteNetworkStatus
 import com.auralis.crisisconnect.feature.RescueFeatureManager
 import com.auralis.crisisconnect.data.BleBroadcastDirectory
 import com.auralis.crisisconnect.data.database.AgencyRouter
@@ -109,6 +110,7 @@ class CrisisLinkForegroundService : Service() {
     private val syncDecisionEngine = CrisisLinkSyncDecisionEngine()
     private val queueLock = Any()
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var lastQueueReportAtMillis: Long = 0L
     private var lastSuccessfulSyncState: LastSuccessfulSyncState? = null
     private var lastImmediateSyncAtMillis: Long = 0L
     private var consecutiveAuthorizationFailures: Int = 0
@@ -343,6 +345,7 @@ class CrisisLinkForegroundService : Service() {
                 now = now
             )
             normalizeQueuedPayloadsForProfile(profile, payload.rescuerDeviceId)
+            try {
             val hasPendingBefore = pendingQueueSize() > 0
             val hasActiveSignals = payload.activeSignals.isNotEmpty()
             val hasValidatedInternet = hasValidatedInternetConnection()
@@ -480,7 +483,20 @@ class CrisisLinkForegroundService : Service() {
                 hasValidatedInternet = hasValidatedInternet,
                 liveLocationSyncSettings = liveLocationSyncSettings
             )
+            } finally { reportPendingQueueStatus(payload) }
         }
+    }
+
+    private suspend fun reportPendingQueueStatus(payload: CrisisLinkSyncPayload) {
+        val now = System.currentTimeMillis()
+        if (now - lastQueueReportAtMillis < 30_000L || !hasValidatedInternetConnection()) return
+        lastQueueReportAtMillis = now
+        val rows = readQueuedPayloads().filter { it.uid == payload.uid && it.agencySlug == payload.agencySlug }
+        val preferences = getSharedPreferences("crisis_link_queue_status", Context.MODE_PRIVATE)
+        val success = preferences.getLong("${payload.uid}:${payload.agencySlug}", 0L).takeIf { it > 0L }
+        MobileSyncClient.reportQueueStatus(applicationContext, payload.agencySlug, payload.rescuerDeviceId,
+            rows.size, rows.minOfOrNull { it.capturedAtMillis }, success,
+            if (consecutiveAuthorizationFailures > 0) "authorization" else if (rows.isNotEmpty()) "delivery-failed" else null)
     }
 
     private fun normalizeQueuedPayloadsForProfile(
@@ -525,7 +541,8 @@ class CrisisLinkForegroundService : Service() {
 
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+                    !SatelliteNetworkStatus.isConstrained(this@CrisisLinkForegroundService)
                 ) {
                     requestImmediateSync(IMMEDIATE_REASON_NETWORK_CAPABILITIES_CHANGED)
                 }
@@ -682,6 +699,9 @@ class CrisisLinkForegroundService : Service() {
     }
 
     private fun hasValidatedInternetConnection(): Boolean {
+        // Routine responder heartbeats and queued mesh sync must not compete with the SOS uplink
+        // for a scarce satellite data path. Emergency reporting uses its own constrained route.
+        if (SatelliteNetworkStatus.isConstrained(this)) return false
         val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val network = manager.activeNetwork ?: return false
@@ -727,6 +747,7 @@ class CrisisLinkForegroundService : Service() {
         for (payload in queuedPayloads) {
             when (deliverPayload(payload)) {
                 DeliveryResult.Success -> {
+                    recordSuccessfulSync(payload, System.currentTimeMillis())
                     deliveredCount += 1
                 }
                 DeliveryResult.RecoverableFailure -> {
@@ -1648,6 +1669,8 @@ class CrisisLinkForegroundService : Service() {
     }
 
     private fun recordSuccessfulSync(payload: CrisisLinkSyncPayload, now: Long) {
+        getSharedPreferences("crisis_link_queue_status", Context.MODE_PRIVATE).edit()
+            .putLong("${payload.uid}:${payload.agencySlug}", now).apply()
         lastSuccessfulSyncState = LastSuccessfulSyncState(
             activeSignalIds = payload.activeSignals.mapTo(linkedSetOf()) { it.signalId },
             signalFingerprints = payload.activeSignals.associate { signal ->

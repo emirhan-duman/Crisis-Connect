@@ -294,10 +294,30 @@ export const reportSosSignal = onCall(
       await throttleRef.set({ lastReportAtMs: now, updatedAt: FieldValue.serverTimestamp() });
     }
 
+    const result = await db.runTransaction(async (tx: Transaction) => {
+      const prepared = await prepareSosSignalReport(tx, uid, data, now);
+      prepared.write();
+      return prepared.result;
+    });
+
+    return result;
+  }
+);
+
+/** Shared atomic projection used by phone reports and authenticated independent watch commands.
+ * The caller commits its receipt in the same transaction. No writes occur during preparation.
+ */
+export async function prepareSosSignalReport(tx: Transaction, uid: string, data: Record<string, unknown>, now: number) {
+    const db = getFirestore();
+    const signalId = normalizeSignalId(data.signalId);
+    if (!signalId) throw new HttpsError("invalid-argument", "Invalid SOS signal ID.");
+    const status = data.status === "resolved" ? "resolved" : "active";
+    const gps = status === "active" ? parseGps(data) : parseOptionalGps(data);
+    if (status === "active" && !gps) throw new HttpsError("invalid-argument", "An active SOS report requires a valid location.");
+    const batteryPercent = parseBatteryPercent(data.batteryPercent);
+    const countryIso = normalizeCountryIso(data.countryIso);
     const routingRef = db.doc(`${ROUTING_COLLECTION}/${signalId}`);
     const routingConfig = await loadRoutingConfig(db);
-
-    const result = await db.runTransaction(async (tx: Transaction) => {
       const routingSnap = await tx.get(routingRef);
       const routing = routingSnap.data();
 
@@ -354,6 +374,10 @@ export const reportSosSignal = onCall(
       const firstSeenMillis =
         (signalSnap.data()?.firstSeenMillis as number | undefined) ?? now;
 
+
+    return {
+      result: { status, panelId, agency, cause } as ReportSosSignalResult,
+      write: () => {
       if (!routingSnap.exists) {
         tx.set(routingRef, {
           signalId,
@@ -449,12 +473,11 @@ export const reportSosSignal = onCall(
       }
       tx.set(signalRef, signalData, { merge: true });
 
-      return { status, panelId, agency, cause } as ReportSosSignalResult;
-    });
 
-    return result;
-  }
-);
+
+      }
+    };
+}
 
 function normalizeSignalId(raw: unknown): string | null {
   if (typeof raw !== "string") return null;

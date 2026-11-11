@@ -106,6 +106,8 @@ struct ProfileToolbarCompactView: View {
             if let avatarThumbnail = toolbarState.avatarImage {
                 Image(uiImage: avatarThumbnail)
                     .renderingMode(.original)
+                    .resizable()
+                    .scaledToFill()
             } else {
                 Image(systemName: "person.circle")
                     .resizable()

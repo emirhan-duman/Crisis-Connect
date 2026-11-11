@@ -13,7 +13,10 @@
     "test": "npm run build && node --test scripts/test_braces_depth.mjs && node --test scripts/test_attestation_exception_policy.mjs && node scripts/test_authority_mls_preparation.mjs && node scripts/test_authority_mls_preparation.property.js && npm run test:firestore-rules",
     "test:firestore-rules": "firebase emulators:exec --config ../firebase.json --project demo-crisis-connect --only firestore \"node --test scripts/test_firestore_rules.mjs\"",
     "test:authority-mls-preparation": "npm run build && node scripts/test_authority_mls_preparation.mjs",
-    "test:property": "npm run build && node scripts/test_authority_mls_preparation.property.js"
+    "test:property": "npm run build && node scripts/test_authority_mls_preparation.property.js",
+    "test:compact-inbox": "tsc && node --test scripts/test_compact_inbox.mjs",
+    "test:messaging-compatibility": "tsc && node --test scripts/test_compact_inbox.mjs scripts/test_legacy_messaging_compat.mjs",
+    "test:traffic-v2": "tsc && node --test scripts/test_compact_inbox.mjs scripts/test_legacy_messaging_compat.mjs scripts/test_traffic_v2.mjs"
   },
   "engines": {
     "node": "22"

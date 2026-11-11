@@ -32,38 +32,54 @@ export function resolveAuthorityMlsPreparationRecipient(
     channelId,
     participants: participants as [string, string],
   };
-  if (deriveConversationId(binding) !== conversationId &&
+  if (deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v11") !== conversationId &&
+      deriveConversationId(binding) !== conversationId &&
+      derivePriorConversationId(binding) !== conversationId &&
       deriveLegacyConversationId(binding) !== conversationId &&
       deriveRetiredConversationId(binding) !== conversationId &&
       deriveAncientConversationId(binding) !== conversationId &&
       derivePrehistoricConversationId(binding) !== conversationId &&
-      derivePrimordialConversationId(binding) !== conversationId) {
+      derivePrimordialConversationId(binding) !== conversationId &&
+      deriveOriginalConversationId(binding) !== conversationId &&
+      deriveFoundationalConversationId(binding) !== conversationId) {
     return null;
   }
   return { recipientUid: participants[0] === callerUid ? participants[1] : participants[0], binding };
 }
 
 export function deriveConversationId(binding: AuthorityMlsPreparationBinding): string {
-  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v7");
+  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v10");
+}
+
+function derivePriorConversationId(binding: AuthorityMlsPreparationBinding): string {
+  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v9");
 }
 
 function deriveLegacyConversationId(binding: AuthorityMlsPreparationBinding): string {
-  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v6");
+  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v8");
 }
 
 function deriveRetiredConversationId(binding: AuthorityMlsPreparationBinding): string {
-  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v5");
+  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v7");
 }
 
 function deriveAncientConversationId(binding: AuthorityMlsPreparationBinding): string {
-  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v4");
+  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v6");
 }
 
 function derivePrehistoricConversationId(binding: AuthorityMlsPreparationBinding): string {
-  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v3");
+  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v5");
 }
 
 function derivePrimordialConversationId(binding: AuthorityMlsPreparationBinding): string {
+  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v4");
+}
+
+function deriveOriginalConversationId(binding: AuthorityMlsPreparationBinding): string {
+  return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v3");
+}
+
+function deriveFoundationalConversationId(binding: AuthorityMlsPreparationBinding): string {
   return deriveConversationIdForContext(binding, "cc-authority-mls-conversation:v2");
 }
 

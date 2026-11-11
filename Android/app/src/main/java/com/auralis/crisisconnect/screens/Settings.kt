@@ -654,6 +654,11 @@ fun SettingsScreen(navController: NavController) {
                     }
                 }
 
+                Column {
+                    SettingsSectionHeader(title = stringResource(R.string.contacts_consent_settings_title))
+                    GroupedSettingsCard { ContactConsentSettings() }
+                }
+
                 // Section: General
                 Column {
                     SettingsSectionHeader(title = stringResource(R.string.settings_section_general))
@@ -668,7 +673,10 @@ fun SettingsScreen(navController: NavController) {
 
                         SettingsRowDivider()
 
-                        SettingsNavRow(
+                        androidx.compose.material3.TextButton(onClick = {
+                                context.startActivity(android.content.Intent(context, com.auralis.crisisconnect.watch.IndependentMessagingActivity::class.java))
+                            }) { androidx.compose.material3.Text("Bağımsız saat mesajları") }
+                            SettingsNavRow(
                             icon = Icons.Outlined.SettingsSuggest,
                             iconTint = MaterialTheme.colorScheme.tertiary,
                             title = stringResource(R.string.settings_advanced_title),
@@ -1105,7 +1113,7 @@ private fun settingsPermissionRequirements(): List<SettingsPermissionRequirement
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         requirements += SettingsPermissionRequirement(
             labelRes = R.string.permission_group_nearby_wifi,
-            permissions = listOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+            permissions = com.auralis.crisisconnect.util.LocalNetworkPermissions.wifiPermissions()
         )
         requirements += SettingsPermissionRequirement(
             labelRes = R.string.permission_group_notifications,

@@ -74,13 +74,21 @@ final class HierarchyMessagingClient: @unchecked Sendable {
     private static let previewScanLimit = 25
 
     private let db = Firestore.firestore()
+    private let compatibility: Bool
+    init(compatibility: Bool = false) { self.compatibility = compatibility }
 
     // MARK: - Web API (channel discovery + keys)
 
     /// Lists the cross-panel channels this manager may use, each with the peer panel's roster.
     /// A 401/403 (not a manager / not entitled) yields an empty list rather than an error.
     func fetchChannels() async throws -> [HierarchyChannel] {
-        guard let body = try await execute(method: "GET", json: nil) else { return [] }
+        let body: Data
+        if ResilientApplicationStore.enabled {
+            body = try JSONSerialization.data(withJSONObject: await RegionalMessagingCalls().call("listResilientHierarchy", [:]))
+        } else {
+            guard let legacy = try await execute(method: "GET", json: nil) else { return [] }
+            body = legacy
+        }
         guard let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
               let channels = root["channels"] as? [[String: Any]] else {
             return []
@@ -248,25 +256,17 @@ final class HierarchyMessagingClient: @unchecked Sendable {
     // typing.ts) and Android. Metadata only (uids + timestamps), so no encryption; a member only
     // writes its own doc.
 
-    private func metadataRoot(_ channelId: String, scopeType: AuthorityMlsScopeType) -> DocumentReference {
-        if scopeType == .agency {
-            return db.collection("agencyPanels").document(channelId)
-        }
-        return db.collection("hierarchyChannels").document(channelId)
+    private func metadataRoot(_ channelId: String, scopeType: AuthorityMlsScopeType, peerUid: String) -> DocumentReference {
+        let store = !compatibility && ResilientApplicationStore.enabled ? ResilientApplicationStore.profiles() : db
+        return store.collection(scopeType == .agency ? "agencyPanels" : "hierarchyChannels").document(channelId)
     }
 
-    private func readReceipts(
-        _ channelId: String,
-        scopeType: AuthorityMlsScopeType = .hierarchy
-    ) -> CollectionReference {
-        metadataRoot(channelId, scopeType: scopeType).collection("readReceipts")
+    private func readReceipts(_ channelId: String, scopeType: AuthorityMlsScopeType, peerUid: String) -> CollectionReference {
+        metadataRoot(channelId, scopeType: scopeType, peerUid: peerUid).collection("readReceipts")
     }
 
-    private func typingCol(
-        _ channelId: String,
-        scopeType: AuthorityMlsScopeType = .hierarchy
-    ) -> CollectionReference {
-        metadataRoot(channelId, scopeType: scopeType).collection("typing")
+    private func typingCol(_ channelId: String, scopeType: AuthorityMlsScopeType, peerUid: String) -> CollectionReference {
+        metadataRoot(channelId, scopeType: scopeType, peerUid: peerUid).collection("typing")
     }
 
     /// One-shot read of MY cursor toward `peerUid` — drives the home-row unread badge (a last
@@ -277,7 +277,7 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         peerUid: String,
         scopeType: AuthorityMlsScopeType = .hierarchy
     ) async -> Date? {
-        let doc = try? await readReceipts(channelId, scopeType: scopeType)
+        let doc = try? await readReceipts(channelId, scopeType: scopeType, peerUid: peerUid)
             .document("\(myUid)__\(peerUid)").getDocument()
         if let millis = (doc?.get("at") as? NSNumber)?.doubleValue, millis > 0 {
             return Date(timeIntervalSince1970: millis / 1000)
@@ -297,7 +297,7 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         scopeType: AuthorityMlsScopeType = .hierarchy
     ) {
         guard !myUid.isEmpty, !peerUid.isEmpty else { return }
-        readReceipts(channelId, scopeType: scopeType).document("\(myUid)__\(peerUid)").setData([
+        readReceipts(channelId, scopeType: scopeType, peerUid: peerUid).document("\(myUid)__\(peerUid)").setData([
             "viewerUid": myUid,
             "partnerUid": peerUid,
             "deliveredAt": Int(at.timeIntervalSince1970 * 1000),
@@ -315,7 +315,7 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         scopeType: AuthorityMlsScopeType = .hierarchy
     ) {
         guard !myUid.isEmpty, !peerUid.isEmpty else { return }
-        readReceipts(channelId, scopeType: scopeType).document("\(myUid)__\(peerUid)").setData([
+        readReceipts(channelId, scopeType: scopeType, peerUid: peerUid).document("\(myUid)__\(peerUid)").setData([
             "viewerUid": myUid,
             "partnerUid": peerUid,
             "deliveredAt": Int(at.timeIntervalSince1970 * 1000),
@@ -331,7 +331,7 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         scopeType: AuthorityMlsScopeType = .hierarchy,
         onAt: @escaping (Date?) -> Void
     ) -> ListenerRegistration {
-        readReceipts(channelId, scopeType: scopeType)
+        readReceipts(channelId, scopeType: scopeType, peerUid: peerUid)
             .document("\(peerUid)__\(myUid)").addSnapshotListener { snapshot, _ in
             if let millis = (snapshot?.get("at") as? NSNumber)?.doubleValue, millis > 0 {
                 onAt(Date(timeIntervalSince1970: millis / 1000))
@@ -351,7 +351,7 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         scopeType: AuthorityMlsScopeType = .hierarchy,
         onAt: @escaping (Date?) -> Void
     ) -> ListenerRegistration {
-        readReceipts(channelId, scopeType: scopeType)
+        readReceipts(channelId, scopeType: scopeType, peerUid: peerUid)
             .document("\(peerUid)__\(myUid)").addSnapshotListener { snapshot, _ in
             if let millis = (snapshot?.get("deliveredAt") as? NSNumber)?.doubleValue, millis > 0 {
                 onAt(Date(timeIntervalSince1970: millis / 1000))
@@ -372,7 +372,7 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         scopeType: AuthorityMlsScopeType = .hierarchy
     ) {
         guard !myUid.isEmpty, !peerUid.isEmpty else { return }
-        typingCol(channelId, scopeType: scopeType).document(myUid).setData([
+        typingCol(channelId, scopeType: scopeType, peerUid: peerUid).document(myUid).setData([
             "uid": myUid,
             "to": peerUid,
             "typing": typing,
@@ -388,7 +388,7 @@ final class HierarchyMessagingClient: @unchecked Sendable {
         scopeType: AuthorityMlsScopeType = .hierarchy,
         onTyping: @escaping (Bool) -> Void
     ) -> ListenerRegistration {
-        typingCol(channelId, scopeType: scopeType).document(peerUid).addSnapshotListener { snapshot, _ in
+        typingCol(channelId, scopeType: scopeType, peerUid: peerUid).document(peerUid).addSnapshotListener { snapshot, _ in
             let typing = snapshot?.get("typing") as? Bool == true
                 && (snapshot?.get("to") as? String ?? "") == myUid
             onTyping(typing)

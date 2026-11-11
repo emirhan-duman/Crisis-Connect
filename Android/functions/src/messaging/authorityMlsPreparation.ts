@@ -1,5 +1,6 @@
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
-import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { getMessagingFirestore as getFirestore, currentMessagingDatabaseId, MULTIREGION_MESSAGING_DATABASE } from "./databaseTarget";
 import { getMessaging } from "firebase-admin/messaging";
 import { requireUid } from "../certificates/callerRole";
 import {
@@ -86,7 +87,8 @@ export const requestAuthorityMlsPreparation = onCall(
 
     const response = await getMessaging().sendEachForMulticast({
       tokens: tokens.map((entry) => entry.token),
-      data: { type: "authority_mls_prepare_v2", conversationId },
+      data: { type: "authority_mls_prepare_v2", conversationId,
+        ...(currentMessagingDatabaseId() === MULTIREGION_MESSAGING_DATABASE ? { store: "ha" } : {}) },
       android: { priority: "high", ttl: 60 * 60 * 1000, collapseKey: `mls-prepare-${conversationId}` },
       apns: {
         headers: {

@@ -1452,3 +1452,30 @@
 "guide_redesign_subtitle_now" = "Piliin ang sitwasyon at makita ang unang tamang hakbang sa loob ng ilang segundo.";
 "guide_redesign_subtitle_prepare" = "Kumpletuhin ang iyong mga plano at offline na checklist.";
 "guide_redesign_unknown_region" = "Hindi kilalang rehiyon";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Hanapin ang mga kontak online";
+"CONTACTS_DISCLOSURE_BODY" = "Binabasa ng Crisis Connect ang mga pangalan at numero ng telepono sa iyong mga kontak upang mahanap ang mga gumagamit ng app. Ipinapadala ang mga numero para sa pagtutugma sa mga server ng Crisis Connect na naka-host sa Google Firebase sa Estados Unidos. Nananatili sa device ang mga pangalan. Pinoproseso ang mga hinanap na numero nang hindi permanenteng iniimbak; nananatili sa device ang mga tugma. Ang pag-refresh o pagbalik sa screen habang bukas ito ay maaaring muling magpadala ng mga numero. Naaalala ang iyong pagpili para sa account na ito sa device na ito. Maaari mong bawiin ang pahintulot sa Settings, sa Access sa mga kontak.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Hanapin ang mga kontak sa malapit";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Binabasa ng Crisis Connect ang mga pangalan at numero ng telepono sa device upang makapili ka ng taong hahanapin sa malapit. Ginagamit ang napiling numero sa pagpapatunay ng pagkakakilanlan sa Bluetooth. Hindi ipinapadala ng feature na ito ang mga kontak mo sa server. Naaalala ang iyong pagpili para sa account na ito sa device na ito. Maaari mong bawiin ang pahintulot sa Settings, sa Access sa mga kontak.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "Sumasang-ayon ako";
+"CONTACTS_DISCLOSURE_DECLINE" = "Hindi ngayon";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Access sa mga kontak";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Naaalala ang iyong pagpili para sa account na ito sa device na ito. Maaari mong bawiin ang pahintulot sa Settings, sa Access sa mga kontak.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "Bawiin ang pahintulot sa online na pagtutugma";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Bawiin ang pahintulot sa mga kontak sa malapit";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "May internet";

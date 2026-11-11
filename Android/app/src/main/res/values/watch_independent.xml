@@ -1,0 +1,22 @@
+<resources>
+    <string name="watch_independent_title">Independent watch messages</string>
+    <string name="watch_independent_sign_in">Sign in to your account to continue.</string>
+    <string name="watch_independent_explanation">Encrypted watch messages appear in your regular chats. Approve the sending device and contact here.</string>
+    <string name="watch_independent_enable_phone">Enable messages on this phone</string>
+    <string name="watch_independent_phone_ready">Phone receiver ready. Select and approve a contact device.</string>
+    <string name="watch_independent_authorize_watch">Authorize my watch with this account</string>
+    <string name="watch_independent_watch_ready">Watch authorized. You can now approve contact devices.</string>
+    <string name="watch_independent_refresh">Check messages</string>
+    <string name="watch_independent_refreshed">Saved messages and delivery status updated.</string>
+    <string name="watch_independent_disable_phone">Revoke this phone</string>
+    <string name="watch_independent_phone_disabled">Receiver authorization removed. Chat history was preserved.</string>
+    <string name="watch_independent_enable_first">Enable message reception on this phone first.</string>
+    <string name="watch_independent_contact_unavailable">This contact has not enabled independent messaging yet.</string>
+    <string name="watch_independent_device_title">%1$s · %2$s</string>
+    <string name="watch_independent_device_consent">Allow messages from this device?\n\nDevice verification code:\n%1$s\n\nThe other person must also approve.</string>
+    <string name="watch_independent_revoke_device">Revoke device</string>
+    <string name="watch_independent_device_revoked">Contact approval for this device removed.</string>
+    <string name="watch_independent_approve_device">Approve device</string>
+    <string name="watch_independent_device_approved">Device approved.</string>
+    <string name="watch_independent_action_failed">Action could not be completed. Nothing was resent.</string>
+</resources>

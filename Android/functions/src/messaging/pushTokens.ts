@@ -1,5 +1,8 @@
+import { compatibleCallable } from "./compatibilityRouting";
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
+import { getMessagingFirestore as getFirestore, currentMessagingDatabaseId, MULTIREGION_MESSAGING_DATABASE } from "./databaseTarget";
+import { setHaPushToken } from "./highAvailabilityTokens";
 import * as crypto from "crypto";
 import { requireUid } from "../certificates/callerRole";
 
@@ -24,7 +27,7 @@ function tokenDocId(token: string): string {
   return crypto.createHash("sha256").update(token).digest("base64url");
 }
 
-export const registerPushToken = onCall(
+export const registerPushToken = compatibleCallable("registerPushToken",
   { enforceAppCheck: true },
   async (request: CallableRequest<unknown>) => {
     const uid = requireUid(request);
@@ -34,12 +37,20 @@ export const registerPushToken = onCall(
       typeof data.platform === "string" && data.platform.length <= 32
         ? data.platform
         : "android";
+    const traffic = data.trafficPolicyVersion === 1 && typeof data.installationId === "string" &&
+      /^[A-Za-z0-9_-]{1,128}$/.test(data.installationId)
+      ? { installationId: data.installationId, trafficPolicyVersion: 1 } : {};
 
+    if (currentMessagingDatabaseId() === MULTIREGION_MESSAGING_DATABASE) {
+      await setHaPushToken(uid, token, { token, platform, ...traffic, updatedAt: FieldValue.serverTimestamp() });
+      return { ok: true };
+    }
     await getFirestore()
       .doc(`messagingTokens/${uid}/tokens/${tokenDocId(token)}`)
       .set({
         token,
         platform,
+        ...traffic,
         updatedAt: FieldValue.serverTimestamp(),
       });
 
@@ -47,12 +58,17 @@ export const registerPushToken = onCall(
   }
 );
 
-export const unregisterPushToken = onCall(
+export const unregisterPushToken = compatibleCallable("unregisterPushToken",
   { enforceAppCheck: true },
   async (request: CallableRequest<unknown>) => {
     const uid = requireUid(request);
     const data = (request.data ?? {}) as Record<string, unknown>;
     const token = requireToken(data);
+
+    if (currentMessagingDatabaseId() === MULTIREGION_MESSAGING_DATABASE) {
+      await setHaPushToken(uid, token, null);
+      return { ok: true };
+    }
 
     await getFirestore()
       .doc(`messagingTokens/${uid}/tokens/${tokenDocId(token)}`)

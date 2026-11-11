@@ -1452,3 +1452,30 @@
 "guide_redesign_subtitle_now" = "Pilih situasi dan lihat tindakan pertama yang tepat dalam hitungan detik.";
 "guide_redesign_subtitle_prepare" = "Lengkapi rencana dan daftar periksa offline Anda.";
 "guide_redesign_unknown_region" = "Wilayah tidak diketahui";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Temukan kontak secara online";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect membaca nama dan nomor telepon kontak untuk menemukan pengguna aplikasi. Nomor dikirim untuk pencocokan ke server Crisis Connect yang dihosting Google Firebase di Amerika Serikat. Nama tetap di perangkat Anda. Nomor yang dicari diproses tanpa disimpan permanen; hasil pencocokan tetap di perangkat. Menyegarkan atau kembali ke layar ini saat masih terbuka dapat mengirim nomor lagi. Pilihan Anda diingat untuk akun ini di perangkat ini. Anda dapat menarik persetujuan di Pengaturan, pada Akses kontak.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Temukan kontak di sekitar";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect membaca nama dan nomor telepon di perangkat agar Anda dapat memilih orang untuk dicari di sekitar. Nomor yang dipilih digunakan untuk verifikasi identitas melalui Bluetooth. Fitur ini tidak mengirim kontak Anda ke server. Pilihan Anda diingat untuk akun ini di perangkat ini. Anda dapat menarik persetujuan di Pengaturan, pada Akses kontak.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "Saya setuju";
+"CONTACTS_DISCLOSURE_DECLINE" = "Tidak sekarang";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Akses kontak";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Pilihan Anda diingat untuk akun ini di perangkat ini. Anda dapat menarik persetujuan di Pengaturan, pada Akses kontak.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "Tarik persetujuan pencocokan online";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Tarik persetujuan kontak sekitar";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "Internet tersedia";

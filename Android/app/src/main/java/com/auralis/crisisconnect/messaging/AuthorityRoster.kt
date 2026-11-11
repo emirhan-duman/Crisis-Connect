@@ -26,10 +26,11 @@ class AuthorityRosterClient(
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance(REGION),
 ) {
     suspend fun listRoster(agencySlug: String): List<AuthorityRosterMember> = withContext(Dispatchers.IO) {
-        val result = functions.getHttpsCallable("listAuthorityRoster")
-            .call(hashMapOf("agencySlug" to agencySlug))
-            .await()
-        val data = result.data as? Map<*, *>
+        val raw = if (ResilientApplicationStore.ENABLED) {
+            RegionalMessagingCalls().call("listAuthorityRoster", mapOf("agencySlug" to agencySlug))
+        } else functions.getHttpsCallable("listAuthorityRoster")
+            .call(hashMapOf("agencySlug" to agencySlug)).await().data
+        val data = raw as? Map<*, *>
             ?: error("Authority roster response is malformed")
         val members = data["members"] as? List<*>
             ?: error("Authority roster response is malformed")

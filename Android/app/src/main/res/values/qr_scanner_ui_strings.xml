@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qr_scanner_heading">Scan a contact</string>
+    <string name="qr_scanner_auto_hint">Keep the QR inside the frame. It scans automatically.</string>
+    <string name="qr_scanner_camera_ready">Camera ready</string>
+    <string name="qr_scanner_camera_starting">Starting camera…</string>
+    <string name="qr_scanner_help_action">Scanning help</string>
+    <string name="qr_scanner_torch_on">Turn light on</string>
+    <string name="qr_scanner_torch_off">Turn light off</string>
+    <string name="qr_scanner_torch_error">Could not change the flashlight. Try again.</string>
+    <string name="qr_scanner_permission_title">Allow camera to scan</string>
+    <string name="qr_scanner_permission_detail">Use your camera to scan a Crisis Connect QR code and add a contact.</string>
+</resources>

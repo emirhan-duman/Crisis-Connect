@@ -15,6 +15,7 @@
 		1EE224C22F05A2C9001F755A /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE224C12F05A2C9001F755A /* WebRTC */; };
 		1EE224D12F05A2C9001F755A /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 1EE224D02F05A2C9001F755A /* FirebaseStorage */; };
 		1EE224E12F05A2C9001F755A /* OrangeMlsWorker.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1EE224E02F05A2C9001F755A /* OrangeMlsWorker.xcframework */; };
+		1EF09E23307D377C00419897 /* CrisisConnectWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1EF09E19307D377B00419897 /* CrisisConnectWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		2A1F5F3A8F7C4B1282C0D001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 2A1F5F3A8F7C4B1282C0D002 /* GoogleSignIn */; };
 		2A1F5F3A8F7C4B1282C0D005 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 2A1F5F3A8F7C4B1282C0D004 /* FirebaseAppCheck */; };
 		2A1F5F3A8F7C4B1282C0D009 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 2A1F5F3A8F7C4B1282C0D008 /* FirebaseCrashlytics */; };
@@ -22,6 +23,7 @@
 		3C6B57232F12A10100C5E4A1 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; productRef = 3C6B57222F12A10100C5E4A1 /* LiteRTLM */; };
 		4D7C68332F12A10100D6F5B3 /* LibSignalClient in Frameworks */ = {isa = PBXBuildFile; productRef = 4D7C68322F12A10100D6F5B2 /* LibSignalClient */; };
 		5BCE3716C9D3048E664CBA45 /* SampleHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57A7C58256810A58F1EF8775 /* SampleHandler.swift */; };
+		633A95CA759988793004FF01 /* LibSignalClient in Frameworks */ = {isa = PBXBuildFile; productRef = 4D7C68322F12A10100D6F5B2 /* LibSignalClient */; };
 		7437E9CF701C5044CB6616A3 /* CrisisConnectBroadcast.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 7DA889A167865590463323F1 /* CrisisConnectBroadcast.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		80AEDB3EF45F4512201D9689 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7885A0E5520CE50FE31759D9 /* Foundation.framework */; };
 		9BE6AB9CEB0DC5A075D70A02 /* BroadcastFrameClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5BCA632D59FFA8F0AD03276 /* BroadcastFrameClient.swift */; };
@@ -47,6 +49,13 @@
 			remoteGlobalIDString = 1E7EE2272EAD5A1500C66134;
 			remoteInfo = "Crisis Connect";
 		};
+		1EF09E21307D377C00419897 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1E7EE2202EAD5A1500C66134 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1EF09E18307D377B00419897;
+			remoteInfo = "CrisisConnectWatch Watch App";
+		};
 		A934E556258F7744A24452E5 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 1E7EE2202EAD5A1500C66134 /* Project object */;
@@ -64,6 +73,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		1EF09E27307D377C00419897 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				1EF09E23307D377C00419897 /* CrisisConnectWatch Watch App.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		EDE21CF5F516D16D4D102E2E /* Embed App Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -83,9 +103,11 @@
 		1E7EE2372EAD5A1700C66134 /* Crisis ConnectTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Crisis ConnectTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1E7EE2412EAD5A1700C66134 /* Crisis ConnectUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Crisis ConnectUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1EE224E02F05A2C9001F755A /* OrangeMlsWorker.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = OrangeMlsWorker.xcframework; path = Frameworks/OrangeMlsWorker.xcframework; sourceTree = "<group>"; };
+		1EF09E19307D377B00419897 /* CrisisConnectWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "CrisisConnectWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		57A7C58256810A58F1EF8775 /* SampleHandler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
 		7885A0E5520CE50FE31759D9 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		7DA889A167865590463323F1 /* CrisisConnectBroadcast.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CrisisConnectBroadcast.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A9F2BDF04BE5F385E74572A8 /* CrisisConnectWatchIndependentTests.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CrisisConnectWatchIndependentTests.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AD4E06720EC68CE37BDFA922 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		CC71D6E70000000000000001 /* CrisisConnectWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CrisisConnectWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		CC71D6E7000000000000000D /* DisasterModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DisasterModels.swift; path = "Crisis Connect/Features/RecentDisasters/DisasterModels.swift"; sourceTree = "<group>"; };
@@ -111,6 +133,16 @@
 			path = "Crisis ConnectUITests";
 			sourceTree = "<group>";
 		};
+		1EF09E1A307D377B00419897 /* CrisisConnectWatch Watch App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "CrisisConnectWatch Watch App";
+			sourceTree = "<group>";
+		};
+		3E12302DD4C800354A219AC9 /* CrisisConnectWatch Watch App/Independent */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "CrisisConnectWatch Watch App/Independent";
+			sourceTree = SOURCE_ROOT;
+		};
 		CC71D6E70000000000000009 /* WidgetExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = WidgetExtension;
@@ -119,6 +151,14 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		0292EF8DC316ED36983A0457 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				633A95CA759988793004FF01 /* LibSignalClient in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		1E7EE2252EAD5A1500C66134 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -154,6 +194,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1EF09E16307D377B00419897 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CA2271B82E737EAF200A98CD /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -179,11 +226,13 @@
 				1E7EE22A2EAD5A1500C66134 /* Crisis Connect */,
 				1E7EE23A2EAD5A1700C66134 /* Crisis ConnectTests */,
 				1E7EE2442EAD5A1700C66134 /* Crisis ConnectUITests */,
+				1EF09E1A307D377B00419897 /* CrisisConnectWatch Watch App */,
 				1E7EE2292EAD5A1500C66134 /* Products */,
 				442789967E4F79E384AD4824 /* Frameworks */,
 				E4CC3C59DABD6F169DBF3BB7 /* CrisisConnectBroadcast */,
 				CC71D6E70000000000000009 /* WidgetExtension */,
 				CC71D6E70000000000000011 /* WidgetShared */,
+				3E12302DD4C800354A219AC9 /* CrisisConnectWatch Watch App/Independent */,
 			);
 			sourceTree = "<group>";
 		};
@@ -195,6 +244,8 @@
 				1E7EE2412EAD5A1700C66134 /* Crisis ConnectUITests.xctest */,
 				7DA889A167865590463323F1 /* CrisisConnectBroadcast.appex */,
 				CC71D6E70000000000000001 /* CrisisConnectWidgets.appex */,
+				1EF09E19307D377B00419897 /* CrisisConnectWatch Watch App.app */,
+				A9F2BDF04BE5F385E74572A8 /* CrisisConnectWatchIndependentTests.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -240,6 +291,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		02FEDDD069EE2E5D03E3217D /* CrisisConnectWatchIndependentTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DE3549FB4A1AD79E07258DEB /* Build configuration list for PBXNativeTarget "CrisisConnectWatchIndependentTests" */;
+			buildPhases = (
+				A24ADDECF4D2333EA36816A1 /* Sources */,
+				0292EF8DC316ED36983A0457 /* Frameworks */,
+				66D73660E2C8FE684FDEC157 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1EF09E1A307D377B00419897 /* CrisisConnectWatch Watch App */,
+			);
+			name = CrisisConnectWatchIndependentTests;
+			packageProductDependencies = (
+				4D7C68322F12A10100D6F5B2 /* LibSignalClient */,
+			);
+			productName = CrisisConnectWatchIndependentTests;
+			productReference = A9F2BDF04BE5F385E74572A8 /* CrisisConnectWatchIndependentTests.app */;
+			productType = "com.apple.product-type.application";
+		};
 		1E7EE2272EAD5A1500C66134 /* Crisis Connect */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 1E7EE24B2EAD5A1700C66134 /* Build configuration list for PBXNativeTarget "Crisis Connect" */;
@@ -248,15 +322,18 @@
 				1E7EE2252EAD5A1500C66134 /* Frameworks */,
 				1E7EE2262EAD5A1500C66134 /* Resources */,
 				EDE21CF5F516D16D4D102E2E /* Embed App Extensions */,
+				1EF09E27307D377C00419897 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				3BD01FDA62DCE15A3F8FDF27 /* PBXTargetDependency */,
 				CC71D6E7000000000000000C /* PBXTargetDependency */,
+				1EF09E22307D377C00419897 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				1E7EE22A2EAD5A1500C66134 /* Crisis Connect */,
+				3E12302DD4C800354A219AC9 /* CrisisConnectWatch Watch App/Independent */,
 			);
 			name = "Crisis Connect";
 			packageProductDependencies = (
@@ -320,6 +397,28 @@
 			productReference = 1E7EE2412EAD5A1700C66134 /* Crisis ConnectUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		1EF09E18307D377B00419897 /* CrisisConnectWatch Watch App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1EF09E24307D377C00419897 /* Build configuration list for PBXNativeTarget "CrisisConnectWatch Watch App" */;
+			buildPhases = (
+				1EF09E15307D377B00419897 /* Sources */,
+				1EF09E16307D377B00419897 /* Frameworks */,
+				1EF09E17307D377B00419897 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1EF09E1A307D377B00419897 /* CrisisConnectWatch Watch App */,
+			);
+			name = "CrisisConnectWatch Watch App";
+			packageProductDependencies = (
+			);
+			productName = "CrisisConnectWatch Watch App";
+			productReference = 1EF09E19307D377B00419897 /* CrisisConnectWatch Watch App.app */;
+			productType = "com.apple.product-type.application";
+		};
 		2CE81A77B61D30067385668F /* CrisisConnectBroadcast */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = DED627AAA3CF79EDC83E69AC /* Build configuration list for PBXNativeTarget "CrisisConnectBroadcast" */;
@@ -364,7 +463,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2600;
+				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2610;
 				TargetAttributes = {
 					1E7EE2272EAD5A1500C66134 = {
@@ -377,6 +476,9 @@
 					1E7EE2402EAD5A1700C66134 = {
 						CreatedOnToolsVersion = 26.0.1;
 						TestTargetID = 1E7EE2272EAD5A1500C66134;
+					};
+					1EF09E18307D377B00419897 = {
+						CreatedOnToolsVersion = 27.0;
 					};
 				};
 			};
@@ -424,6 +526,8 @@
 				1E7EE2402EAD5A1700C66134 /* Crisis ConnectUITests */,
 				2CE81A77B61D30067385668F /* CrisisConnectBroadcast */,
 				CC71D6E70000000000000002 /* CrisisConnectWidgets */,
+				1EF09E18307D377B00419897 /* CrisisConnectWatch Watch App */,
+				02FEDDD069EE2E5D03E3217D /* CrisisConnectWatchIndependentTests */,
 			);
 		};
 /* End PBXProject section */
@@ -444,6 +548,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		1E7EE23F2EAD5A1700C66134 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1EF09E17307D377B00419897 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		66D73660E2C8FE684FDEC157 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -488,12 +606,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1EF09E15307D377B00419897 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		535912E78F1EFFC34E944F93 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				5BCE3716C9D3048E664CBA45 /* SampleHandler.swift in Sources */,
 				9BE6AB9CEB0DC5A075D70A02 /* BroadcastFrameClient.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A24ADDECF4D2333EA36816A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -520,6 +652,11 @@
 			isa = PBXTargetDependency;
 			target = 1E7EE2272EAD5A1500C66134 /* Crisis Connect */;
 			targetProxy = 1E7EE2422EAD5A1700C66134 /* PBXContainerItemProxy */;
+		};
+		1EF09E22307D377C00419897 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1EF09E18307D377B00419897 /* CrisisConnectWatch Watch App */;
+			targetProxy = 1EF09E21307D377C00419897 /* PBXContainerItemProxy */;
 		};
 		3BD01FDA62DCE15A3F8FDF27 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -667,7 +804,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Config/CrisisConnect.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 36;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_PREVIEWS = YES;
@@ -677,7 +814,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.9;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -699,7 +836,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Config/CrisisConnect.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 36;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -708,7 +845,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.9;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -814,12 +951,80 @@
 			};
 			name = Release;
 		};
+		1EF09E25307D377C00419897 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 38;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Crisis Connect";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.auralis.crisisconnect;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		1EF09E26307D377C00419897 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 38;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Crisis Connect";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.auralis.crisisconnect;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
 		416847645DA18E81DF5FDDBB /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 36;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				ENABLE_BITCODE = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -830,7 +1035,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.9;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.broadcast;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -842,12 +1047,48 @@
 			};
 			name = Release;
 		};
+		54751A5A0CD4EE714E4E6077 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 38;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "CC Independent Test";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.auralis.crisisconnect;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.watchindependenttest;
+				PRODUCT_NAME = CrisisConnectWatchIndependentTests;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CC_WATCH_INDEPENDENT";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
 		8293E2AC11FE0B0F6647CA85 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 36;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				ENABLE_BITCODE = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -858,7 +1099,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.9;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.broadcast;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -869,12 +1110,48 @@
 			};
 			name = Debug;
 		};
+		C3001A218EBB324CFA121D38 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 38;
+				DEVELOPMENT_TEAM = XY9479JQWV;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "CC Independent Test";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.auralis.crisisconnect;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.watchindependenttest;
+				PRODUCT_NAME = CrisisConnectWatchIndependentTests;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG CC_WATCH_INDEPENDENT";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
 		CC71D6E70000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Config/CrisisConnectWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 36;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Config/CrisisConnectWidgetsInfo.plist;
@@ -884,7 +1161,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.9;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -901,7 +1178,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Config/CrisisConnectWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 36;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = XY9479JQWV;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Config/CrisisConnectWidgetsInfo.plist;
@@ -911,7 +1188,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.9;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.auralis.crisisconnect.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -963,6 +1240,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		1EF09E24307D377C00419897 /* Build configuration list for PBXNativeTarget "CrisisConnectWatch Watch App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1EF09E25307D377C00419897 /* Debug */,
+				1EF09E26307D377C00419897 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		CC71D6E70000000000000005 /* Build configuration list for PBXNativeTarget "CrisisConnectWidgets" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -971,6 +1257,15 @@
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
+		};
+		DE3549FB4A1AD79E07258DEB /* Build configuration list for PBXNativeTarget "CrisisConnectWatchIndependentTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C3001A218EBB324CFA121D38 /* Debug */,
+				54751A5A0CD4EE714E4E6077 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
 		};
 		DED627AAA3CF79EDC83E69AC /* Build configuration list for PBXNativeTarget "CrisisConnectBroadcast" */ = {
 			isa = XCConfigurationList;
@@ -1079,12 +1374,10 @@
 		};
 		3C6B57222F12A10100C5E4A1 /* LiteRTLM */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 3C6B57212F12A10100C5E4A1 /* XCLocalSwiftPackageReference "Packages/LiteRT-LM" */;
 			productName = LiteRTLM;
 		};
 		4D7C68322F12A10100D6F5B2 /* LibSignalClient */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 4D7C68312F12A10100D6F5B1 /* XCLocalSwiftPackageReference "Packages/LibSignalClient" */;
 			productName = LibSignalClient;
 		};
 /* End XCSwiftPackageProductDependency section */

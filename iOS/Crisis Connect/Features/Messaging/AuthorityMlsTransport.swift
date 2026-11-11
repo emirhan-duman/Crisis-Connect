@@ -11,6 +11,8 @@ struct AuthorityMlsBinding: Sendable {
     let scopeType: AuthorityMlsScopeType
     let channelId: String
     let participants: [String]
+    var resilient: Bool = false
+    var routeResolved: Bool = false
 }
 
 struct AuthorityMlsDirectoryRecord: Sendable {
@@ -68,10 +70,33 @@ struct AuthorityMlsConversationHandle: Sendable {
 }
 
 enum AuthorityMlsIdentifiers {
+    private static let conversationContexts = [
+        "cc-authority-mls-conversation:v10",
+        "cc-authority-mls-conversation:v9",
+        "cc-authority-mls-conversation:v8",
+        "cc-authority-mls-conversation:v7",
+        "cc-authority-mls-conversation:v6",
+        "cc-authority-mls-conversation:v5",
+        "cc-authority-mls-conversation:v4",
+        "cc-authority-mls-conversation:v3"
+    ]
+
     static func conversationId(_ binding: AuthorityMlsBinding) throws -> String {
         let canonical = try canonicalBinding(binding)
-        return "am2_" + hash([
-            "cc-authority-mls-conversation:v7",
+        return conversationId(canonical, context: binding.resilient ? "cc-authority-mls-conversation:v11" : conversationContexts[0])
+    }
+
+    /// Read-only migration ids, newest first. New writes always use `conversationId`.
+    static func legacyConversationIds(_ binding: AuthorityMlsBinding) throws -> [String] {
+        let canonical = try canonicalBinding(binding)
+        // Independent sessions keep the compatibility outbox and history in their original lane.
+        if binding.resilient { return [] }
+        return conversationContexts.dropFirst().map { conversationId(canonical, context: $0) }
+    }
+
+    private static func conversationId(_ canonical: AuthorityMlsBinding, context: String) -> String {
+        "am2_" + hash([
+            context,
             canonical.scopeType.rawValue,
             canonical.channelId,
             String(canonical.participants.count)
@@ -111,7 +136,7 @@ enum AuthorityMlsIdentifiers {
         return AuthorityMlsBinding(
             scopeType: binding.scopeType,
             channelId: channelId,
-            participants: participants
+            participants: participants, resilient: binding.resilient, routeResolved: binding.routeResolved
         )
     }
 
@@ -155,10 +180,17 @@ final class AuthorityMlsControlSubscription: @unchecked Sendable {
 final class AuthorityMlsTransport: @unchecked Sendable {
     private static let root = "authorityMlsV2"
     private static let maxControlPayloadBytes = 256 * 1024
-    private let db: Firestore
+    private var db: Firestore
+    let usesApplicationRouting: Bool
 
-    init(db: Firestore = Firestore.firestore()) {
-        self.db = db
+    init(db: Firestore? = nil) {
+        self.usesApplicationRouting = db == nil
+        self.db = db ?? Firestore.firestore()
+    }
+
+    func configure(_ binding: AuthorityMlsBinding) {
+        guard usesApplicationRouting else { return }
+        db = binding.resilient ? ResilientApplicationStore.profiles() : Firestore.firestore()
     }
 
     func ensureConversation(
@@ -414,7 +446,10 @@ final class AuthorityMlsTransport: @unchecked Sendable {
         }
         let parent = db.collection(Self.root).document(conversationId)
         let reference = parent.collection("messages").document(message.messageId)
-        let value = try await db.runTransaction { transaction, errorPointer -> Any? in
+        for retry in 0..<3 {
+            let publication = AuthorityMlsPublicationAttempt()
+            do {
+                let value = try await db.runTransaction { transaction, errorPointer -> Any? in
             do {
                 let parentSnapshot = try transaction.getDocument(parent)
                 let existing = try transaction.getDocument(reference)
@@ -432,6 +467,7 @@ final class AuthorityMlsTransport: @unchecked Sendable {
                 } else {
                     let sequence = try exactInt64(parentSnapshot.get("nextApplicationSequence"))
                     try validateSequence(sequence)
+                    publication.record(sequence)
                     transaction.setData([
                         "senderUid": message.senderUid,
                         "senderDeviceId": message.senderDeviceId,
@@ -453,7 +489,42 @@ final class AuthorityMlsTransport: @unchecked Sendable {
                 return nil
             }
         }
-        return try exactInt64(value)
+                return try exactInt64(value)
+            } catch {
+                try Task.checkCancellation()
+                let ns = error as NSError
+                guard retry < 2, ns.domain == FirestoreErrorDomain,
+                      ns.code == FirestoreErrorCode.permissionDenied.rawValue,
+                      let attempted = publication.sequence,
+                      let current = try? await parent.getDocument(source: .server),
+                      let latest = try? exactInt64(current.get("nextApplicationSequence")), latest > attempted,
+                      let device = try? await parent.collection("devices").document(message.senderDeviceId).getDocument(source: .server),
+                      device.get("uid") as? String == message.senderUid,
+                      device.get("credential") as? String == message.senderCredential else { throw error }
+                // A stale sequence can fail Rules before the SDK reports contention. Re-submit
+                // the SAME id/ciphertext only after authorized server reads prove advancement.
+                try await Task.sleep(nanoseconds: UInt64(50_000_000 * (retry + 1)))
+            }
+        }
+        throw AuthorityMlsTransportError.sequenceViolation
+    }
+
+    func isCiphertextPublished(
+        conversationId: String,
+        messageId: String,
+        senderUid: String
+    ) async throws -> Bool {
+        _ = try validateDocumentId(conversationId, label: "conversation ID")
+        _ = try validateDocumentId(messageId, label: "message ID")
+        let snapshot = try await db.collection(Self.root).document(conversationId)
+            .collection("messages").document(messageId).getDocument()
+        guard snapshot.exists else { return false }
+        guard snapshot.get("messageId") as? String == messageId,
+              snapshot.get("senderUid") as? String == senderUid,
+              try exactInt64(snapshot.get("contentVersion")) == 2 else {
+            throw AuthorityMlsTransportError.identifierCollision
+        }
+        return true
     }
 
     func listenCiphertexts(
@@ -744,4 +815,12 @@ private func decodeBase64url(_ value: String) throws -> Data {
 
 private func compareUtf8(_ left: String, _ right: String) -> Bool {
     Array(left.utf8).lexicographicallyPrecedes(Array(right.utf8))
+}
+
+/// Transaction callbacks may run on a worker queue and repeat after contention.
+private final class AuthorityMlsPublicationAttempt: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int64?
+    var sequence: Int64? { lock.withLock { value } }
+    func record(_ sequence: Int64) { lock.withLock { value = sequence } }
 }

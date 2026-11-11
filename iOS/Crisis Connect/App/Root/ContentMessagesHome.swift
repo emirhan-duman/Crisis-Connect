@@ -174,6 +174,22 @@ struct MessagesHomeView: View {
     }
 
     private var profileToolbarLink: some View {
+        Group {
+            if ProcessInfo.processInfo.isiOSAppOnMac {
+                // The iOS-on-Mac toolbar templates the native button image, turning
+                // the photo into a solid square. Host the avatar as custom content.
+                profileNavigationLink
+                    .buttonStyle(.plain)
+            } else {
+                // Keep the native Liquid Glass platter on iPhone and iPad.
+                profileNavigationLink
+            }
+        }
+        .tint(Color.primary)
+        .accessibilityLabel("Profile")
+    }
+
+    private var profileNavigationLink: some View {
         NavigationLink(destination: LazyNavigationDestination {
             ProfileView()
         }) {
@@ -183,10 +199,6 @@ struct MessagesHomeView: View {
                 ProfileToolbarLabelView()
             }
         }
-        // No `.buttonStyle(.plain)`: that opts the item out of iOS 26's native
-        // Liquid Glass platter. Keep the system glass and just pin the tint so
-        // the avatar/name stay neutral instead of accent-blue.
-        .tint(Color.primary)
     }
 
     private var sessionBuckets: MessagesSessionBuckets {
@@ -198,20 +210,11 @@ struct MessagesHomeView: View {
     }
 
     private var messagesHeroHeader: some View {
-        VStack(alignment: .leading, spacing: isMessagesSearchFocused ? 12 : 16) {
-            VStack(alignment: .leading, spacing: isMessagesSearchFocused ? 4 : 6) {
-                Text("Messages")
-                    .font(.system(size: isMessagesSearchFocused ? 30 : 34, weight: .bold, design: .rounded))
-                    .tracking(isMessagesSearchFocused ? -0.7 : -0.9)
-                    .foregroundStyle(.primary)
-
-                Text("MESSAGES_HEADER_SUBTITLE")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.appTextSecondary)
-                    .opacity(isMessagesSearchFocused ? 0.72 : 1)
-            }
-            .offset(y: isMessagesSearchFocused ? -3 : 0)
-            .scaleEffect(isMessagesSearchFocused ? 0.97 : 1, anchor: .topLeading)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Messages")
+                .font(.largeTitle.weight(.bold))
+                .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
 
             HStack(alignment: .center, spacing: 10) {
                 HStack(spacing: 10) {
@@ -219,7 +222,11 @@ struct MessagesHomeView: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Color.appTextSecondary)
 
-                    TextField("Search chats", text: $searchText)
+                    TextField(
+                        "Search chats",
+                        text: $searchText,
+                        prompt: Text("Search chats").foregroundStyle(Color.appTextSecondary)
+                    )
                         .focused($isMessagesSearchFocused)
                         .submitLabel(.search)
                         .textInputAutocapitalization(.never)
@@ -231,20 +238,22 @@ struct MessagesHomeView: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(Color.appTextSecondary.opacity(0.75))
+                                .foregroundStyle(Color.appTextSecondary)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Clear search")
                     }
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .frame(minHeight: 48)
                 .background(
-                    RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous)
                         .fill(Color.appSurfaceElevated)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppTheme.cornerMedium, style: .continuous)
                         .stroke(isMessagesSearchFocused ? Color.appPrimary.opacity(0.55) : Color.appBorder, lineWidth: 1)
                 )
                 .shadow(color: Color.black.opacity(isMessagesSearchFocused ? 0.06 : 0), radius: 12, y: 4)
@@ -346,7 +355,7 @@ struct MessagesHomeView: View {
                     Text("CRISIS_SENTINEL_TITLE")
                         .font(.headline)
                         .foregroundStyle(.primary)
-                    Text("CRISIS_SENTINEL_MAIN_ENTRY_PREVIEW")
+                    Text("CRISIS_SENTINEL_TOOL_SUBTITLE")
                         .font(.footnote)
                         .foregroundStyle(Color.appTextSecondary)
                         .multilineTextAlignment(.leading)
@@ -583,24 +592,24 @@ struct MessagesHomeView: View {
 
     private var messageSessionsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("MESSAGES_SECTION_TITLE")
-                    .font(.headline)
-                Spacer()
-                if selectedMessagesFilter != .all {
+            if selectedMessagesFilter != .all {
+                HStack {
+                    Spacer()
                     Button("MESSAGES_CLEAR_FILTER") {
                         selectedMessagesFilter = .all
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.appPrimary)
+                    .frame(minHeight: 44)
                     .buttonStyle(.plain)
                 }
             }
 
-            LazyVStack(spacing: 14) {
+            LazyVStack(spacing: 18) {
                 ForEach(sessionBuckets.sections) { section in
                     MessagesSessionSectionCard(
                         section: section,
+                        showsHeader: sessionBuckets.sections.count > 1 || section.kind != .recent,
                         onMarkRead: { sessionId in
                             sosChatStore.markRemoteRead(sessionId: sessionId)
                         }
@@ -628,16 +637,11 @@ struct MessagesHomeView: View {
                             Text("\(count(for: filter))")
                                 .font(.caption.weight(.bold))
                                 .monospacedDigit()
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 4)
-                                .background(
-                                    Capsule(style: .continuous)
-                                        .fill(filterBadgeFill(for: filter))
-                                )
+                                .foregroundStyle(Color.appTextSecondary)
                         }
                         .foregroundStyle(filterForeground(for: filter))
                         .padding(.horizontal, 14)
-                        .padding(.vertical, 11)
+                        .frame(minHeight: 44)
                         .background(
                             Capsule(style: .continuous)
                                 .fill(filterBackground(for: filter))
@@ -648,6 +652,7 @@ struct MessagesHomeView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(selectedMessagesFilter == filter ? [.isSelected] : [])
                 }
             }
             .padding(.vertical, 2)
@@ -1034,34 +1039,25 @@ private struct MessagesSessionSection: Identifiable {
 
 private struct MessagesSessionSectionCard: View {
     let section: MessagesSessionSection
+    let showsHeader: Bool
     let onMarkRead: (UUID) -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(section.kind.titleKey)
-                    .font(.headline)
-
-                Text(section.kind.subtitleKey)
-                    .font(.footnote)
-                    .foregroundStyle(Color.appTextSecondary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Text("\(section.items.count)")
-                    .font(.caption.weight(.bold))
-                    .monospacedDigit()
-                    .foregroundStyle(Color.appTextSecondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(Color.appPrimarySoft)
-                    )
+            if showsHeader {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(section.kind.titleKey)
+                        .font(.subheadline.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                    Text("\(section.items.count)")
+                        .font(.caption.weight(.medium))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.appTextSecondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 4)
             }
-            .padding(.horizontal, 4)
 
             VStack(spacing: 0) {
                 ForEach(section.items.indices, id: \.self) { index in

@@ -47,14 +47,12 @@ extension InternetMessagingClient {
             "preKeys": preKeys.map { $0.toMap() },
             "kyberPreKeys": kyberPreKeys.map { $0.toMap() },
         ]
-        _ = try await Functions.functions(region: Self.region)
-            .httpsCallable("publishSignalPreKeys").call(payload)
+        _ = try await callRouted("publishSignalPreKeys", payload)
     }
 
     func checkSignalPreKeys() async throws -> SignalPreKeyInventory {
-        let result = try await Functions.functions(region: Self.region)
-            .httpsCallable("checkSignalPreKeys").call([:])
-        let data = result.data as? [String: Any] ?? [:]
+        let result = try await callRouted("checkSignalPreKeys")
+        let data = result as? [String: Any] ?? [:]
         return SignalPreKeyInventory(
             published: data["published"] as? Bool ?? false,
             ecCount: (data["ecCount"] as? NSNumber)?.intValue ?? 0,
@@ -64,10 +62,9 @@ extension InternetMessagingClient {
 
     /// Returns nil when the target never published Signal prekeys (caller falls back to v2).
     func fetchSignalPreKeyBundle(targetUid: String) async throws -> SignalPreKeyBundleWire? {
-        let result: HTTPSCallableResult
+        let result: Any
         do {
-            result = try await Functions.functions(region: Self.region)
-                .httpsCallable("fetchSignalPreKeyBundle").call(["targetUid": targetUid])
+            result = try await callRouted("fetchSignalPreKeyBundle", ["targetUid": targetUid])
         } catch {
             let nsError = error as NSError
             if nsError.domain == FunctionsErrorDomain,
@@ -76,7 +73,7 @@ extension InternetMessagingClient {
             }
             throw error
         }
-        guard let data = result.data as? [String: Any],
+        guard let data = result as? [String: Any],
               let registrationId = (data["registrationId"] as? NSNumber)?.intValue,
               let identityKey = data["identityKey"] as? String,
               let signed = data["signedPreKey"] as? [String: Any],
