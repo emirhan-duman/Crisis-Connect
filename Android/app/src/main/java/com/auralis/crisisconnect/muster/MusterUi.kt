@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -177,7 +178,6 @@ private fun MusterResponseContent(row: MusterCardModel, refreshing: Boolean, sav
     var expanded by remember(row.key) { mutableStateOf(false) }
     var overflow by remember(row.key) { mutableStateOf(false) }
     val palette = musterPalette()
-    val context = LocalContext.current
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -193,8 +193,10 @@ private fun MusterResponseContent(row: MusterCardModel, refreshing: Boolean, sav
                     }
                 }
                 if (row.deadlineAt > 0) {
-                    val formatted = remember(row.deadlineAt, context.resources.configuration.locales[0]) {
-                        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, context.resources.configuration.locales[0]).format(Date(row.deadlineAt))
+                    val locale = LocalConfiguration.current.locales[0]
+                    val formatted = remember(row.deadlineAt, locale) {
+                        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale)
+                            .format(Date(row.deadlineAt))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.Schedule, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
