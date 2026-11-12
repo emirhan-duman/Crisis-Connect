@@ -13,6 +13,15 @@ struct AdvancedSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                AdvancedLinkCard(
+                    titleKey: "WATCH_SETTINGS_TITLE",
+                    descriptionKey: "WATCH_SETTINGS_SUBTITLE",
+                    iconName: "applewatch",
+                    tint: .appPrimary
+                ) {
+                    IndependentMessagingSettingsView()
+                }
+
                 AdvancedPublicMeshCard(
                     publicMeshEnabled: $settings.publicMeshEnabled,
                     notificationsEnabled: $settings.gattMeshNotificationsEnabled,
@@ -191,6 +200,43 @@ private struct AdvancedToggleRow: View {
                 .disabled(!enabled)
         }
         .opacity(enabled ? 1 : 0.74)
+    }
+}
+
+private struct AdvancedLinkCard<Destination: View>: View {
+    let titleKey: String
+    let descriptionKey: String
+    let iconName: String
+    let tint: Color
+    @ViewBuilder let destination: () -> Destination
+
+    var body: some View {
+        NavigationLink {
+            destination()
+        } label: {
+            HStack(alignment: .center, spacing: 12) {
+                AppIconBadge(systemName: iconName, tint: tint, size: 44)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(LocalizedStringKey(titleKey))
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+
+                    Text(LocalizedStringKey(descriptionKey))
+                        .font(.footnote)
+                        .foregroundStyle(Color.appTextSecondary)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.appTextSecondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .appSurface(style: .regular, padding: 18)
     }
 }
 

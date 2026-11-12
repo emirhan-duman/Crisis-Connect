@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Di mîhengên Android de dengek agahdarkirinê, lerzîn û xuyangiya kilîtkirî hilbijêrin. Hişyariyên tam-ekran destûra we hewce dike û dibe ku ji hêla Tehlûkê Nekin, mîhengên bateriyê an serîlêdana bi zorê ve were sînordar kirin.</string>
+    <string name="muster_alert_settings_title">Deng, lerzîn û ekrana kilîtkirinê</string>
+    <string name="muster_alerts_blocked">Agahiyên sepanê di mîhengên Android de neçalak in</string>
+    <string name="muster_alerts_quiet">Ev kanala ragihandinê bêdeng an pêşanî kêm e; di mîhengên Android de hişyariyên pop-up çalak bikin</string>
+    <string name="muster_locked_screen_note">Dema ku têlefona we girtî be an dîmendera wê qut be, heke Android destûrê bide wan, hişyariyên tevahî-screen xuya dibin. Dema ku hûn têlefonê bikar tînin, dibe ku Android di şûna wê de agahdariyek serşûştinê nîşan bide.</string>
+    <string name="muster_urgent_sound">Di moda bêdeng de deng</string>
+    <string name="muster_urgent_sound_help">Tenê ji bo kontrolên karesata lezgîn. Dema ku dîmendera kontrolê xuya dibe, dengê alarma weya heyî ji bo demek sînordar bikar tîne. Dema ku hûn dest bi ekranê dikin disekine.</string>
+    <string name="muster_urgent_ready">Di nav destûrên pergalê de peyda dibe. Xemgîn nekin û dengê alarmê di bin kontrola we de bimîne.</string>
+    <string name="muster_urgent_not_ready">Dengê alarmê, destûrnameyên ragihandinê û Tehlûkê Nekin. Sînorên pergalê têne rêz kirin.</string>
+    <string name="muster_urgent_seconds">%1$d çirke</string>
+    <string name="muster_flash_settings">Mîhengên hişyariya Flashê</string>
+    <string name="muster_flash_help">Heke têlefona we piştgirî bike, di mîhengên gihîştinê yên Android de agahiyên bi flaşê çalak bikin. Android van hişyariyan birêve dibe, dema ku sepan girtî be jî.</string>
+</resources>

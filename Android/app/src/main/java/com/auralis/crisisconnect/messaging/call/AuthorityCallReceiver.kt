@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.messaging.call
 
+import com.auralis.crisisconnect.messaging.ResilientApplicationStore
 import android.content.Context
 import android.util.Log
 import com.auralis.crisisconnect.R
@@ -110,7 +111,7 @@ object AuthorityCallReceiver {
 
     private suspend fun resolveAgencySlug(context: Context, uid: String): String? {
         val fromDoc = runCatching {
-            FirebaseFirestore.getInstance().document("users/$uid").get().await().getString("agencySlug")
+            ResilientApplicationStore.profiles().document("users/$uid").get().await().getString("agencySlug")
         }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
         return fromDoc ?: runCatching {
             SecurityRepository(context).getUsableStoredCertificateAgency()

@@ -1,6 +1,8 @@
 package com.auralis.crisisconnect.data
 
 import android.content.Context
+import android.database.sqlite.SQLiteConstraintException
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -36,10 +38,39 @@ data class ChatMessage(
     val senderDisplayName: String? = null,
     val senderAddress: String? = null,
     val originVerifiedRole: String? = null,
-    val originVerifiedAtMillis: Long? = null
+    val originVerifiedAtMillis: Long? = null,
+    val deliveredAtMillis: Long? = null,
+    val readAtMillis: Long? = null
 )
 
 private fun messageDao(context: Context) = AppDatabase.getInstance(context).messageDao()
+
+private const val TAG = "MessageRepository"
+
+private fun ensureContactStubExists(
+    context: Context,
+    sessionCode: String,
+    displayName: String? = null,
+    address: String? = null
+) {
+    val safeSessionCode = sessionCode.trim()
+    if (safeSessionCode.isEmpty()) return
+    val contactDao = AppDatabase.getInstance(context).contactDao()
+    if (contactDao.getContactBySessionCode(safeSessionCode) == null) {
+        val name = displayName?.trim()?.takeIf { it.isNotEmpty() } ?: safeSessionCode.take(8)
+        val stubContact = ContactEntity(
+            sessionCode = safeSessionCode,
+            name = name,
+            aesKey = "",
+            address = address?.trim().orEmpty()
+        )
+        runCatching {
+            contactDao.saveContact(stubContact)
+        }.onFailure {
+            Log.w(TAG, "Failed to save stub contact for $safeSessionCode", it)
+        }
+    }
+}
 
 private const val VOICE_MESSAGES_DIR = "voice_messages"
 private const val IMAGE_MESSAGES_DIR = "image_messages"
@@ -182,7 +213,12 @@ suspend fun saveLocalSosMessage(context: Context, sessionCode: String, uuid: Str
         deliveryStatus = MessageDeliveryStatus.SENT
     )
     withContext(Dispatchers.IO) {
-        messageDao(context).insertIgnore(entity)
+        runCatching { ensureContactStubExists(context, sessionCode) }
+        try {
+            messageDao(context).insertIgnore(entity)
+        } catch (e: SQLiteConstraintException) {
+            Log.w(TAG, "Foreign key constraint failure in saveLocalTextMessage for $sessionCode", e)
+        }
     }
 }
 
@@ -209,19 +245,24 @@ suspend fun upsertLocalTextMessage(
     outboundRoute: String? = null
 ) {
     withContext(Dispatchers.IO) {
-        messageDao(context).upsertLocalTextMessageAtomic(
-            sessionCode = sessionCode,
-            messageUuid = uuid,
-            text = text,
-            timestampMillis = System.currentTimeMillis(),
-            originalTimestampMillis = null,
-            deliveryStatus = deliveryStatus,
-            retryCount = retryCount,
-            nextRetryAtMillis = nextRetryAtMillis,
-            lastAttemptAtMillis = lastAttemptAtMillis,
-            lastError = lastError,
-            outboundRoute = outboundRoute
-        )
+        runCatching { ensureContactStubExists(context, sessionCode) }
+        try {
+            messageDao(context).upsertLocalTextMessageAtomic(
+                sessionCode = sessionCode,
+                messageUuid = uuid,
+                text = text,
+                timestampMillis = System.currentTimeMillis(),
+                originalTimestampMillis = null,
+                deliveryStatus = deliveryStatus,
+                retryCount = retryCount,
+                nextRetryAtMillis = nextRetryAtMillis,
+                lastAttemptAtMillis = lastAttemptAtMillis,
+                lastError = lastError,
+                outboundRoute = outboundRoute
+            )
+        } catch (e: SQLiteConstraintException) {
+            Log.w(TAG, "Foreign key constraint failure in upsertLocalTextMessage for $sessionCode", e)
+        }
     }
 }
 
@@ -229,11 +270,11 @@ suspend fun updateLocalMessageDeliveryState(
     context: Context,
     uuid: String,
     deliveryStatus: MessageDeliveryStatus,
-    retryCount: Int,
-    nextRetryAtMillis: Long?,
-    lastAttemptAtMillis: Long?,
-    lastError: String?,
-    outboundRoute: String?
+    retryCount: Int = 0,
+    nextRetryAtMillis: Long? = null,
+    lastAttemptAtMillis: Long? = null,
+    lastError: String? = null,
+    outboundRoute: String? = null
 ) {
     withContext(Dispatchers.IO) {
         messageDao(context).updateDeliveryState(
@@ -251,13 +292,14 @@ suspend fun updateLocalMessageDeliveryState(
 suspend fun markLocalMessagesDelivered(
     context: Context,
     sessionCode: String,
-    messageUuids: Collection<String>
+    messageUuids: Collection<String>,
+    deliveredAtMillis: Long = System.currentTimeMillis()
 ) {
     if (messageUuids.isEmpty()) {
         return
     }
     withContext(Dispatchers.IO) {
-        messageDao(context).markLocalMessagesDelivered(messageUuids.toList())
+        messageDao(context).markLocalMessagesDelivered(sessionCode, messageUuids.toList(), deliveredAtMillis)
     }
 }
 
@@ -265,7 +307,8 @@ suspend fun markLocalMessagesDeliveredWithRecipient(
     context: Context,
     sessionCode: String,
     messageUuids: Collection<String>,
-    recipientLabel: String?
+    recipientLabel: String?,
+    deliveredAtMillis: Long = System.currentTimeMillis()
 ) {
     if (messageUuids.isEmpty()) {
         return
@@ -276,7 +319,7 @@ suspend fun markLocalMessagesDeliveredWithRecipient(
     }
     withContext(Dispatchers.IO) {
         val dao = messageDao(context)
-        dao.markLocalMessagesDelivered(normalizedUuids)
+        dao.markLocalMessagesDelivered(sessionCode, normalizedUuids, deliveredAtMillis)
         val normalizedRecipient = normalizeTrackedRecipient(recipientLabel) ?: return@withContext
         normalizedUuids.forEach { messageUuid ->
             val existing = dao.getMessageByUuid(messageUuid) ?: return@forEach
@@ -301,13 +344,14 @@ suspend fun markLocalMessagesDeliveredWithRecipient(
 suspend fun markLocalMessagesRead(
     context: Context,
     sessionCode: String,
-    messageUuids: Collection<String>
+    messageUuids: Collection<String>,
+    readAtMillis: Long = System.currentTimeMillis()
 ) {
     if (messageUuids.isEmpty()) {
         return
     }
     withContext(Dispatchers.IO) {
-        messageDao(context).markLocalMessagesRead(messageUuids.toList())
+        messageDao(context).markLocalMessagesRead(sessionCode, messageUuids.toList(), readAtMillis)
     }
 }
 
@@ -315,7 +359,8 @@ suspend fun markLocalMessagesReadWithRecipient(
     context: Context,
     sessionCode: String,
     messageUuids: Collection<String>,
-    recipientLabel: String?
+    recipientLabel: String?,
+    readAtMillis: Long = System.currentTimeMillis()
 ) {
     if (messageUuids.isEmpty()) {
         return
@@ -326,7 +371,7 @@ suspend fun markLocalMessagesReadWithRecipient(
     }
     withContext(Dispatchers.IO) {
         val dao = messageDao(context)
-        dao.markLocalMessagesRead(normalizedUuids)
+        dao.markLocalMessagesRead(sessionCode, normalizedUuids, readAtMillis)
         val normalizedRecipient = normalizeTrackedRecipient(recipientLabel) ?: return@withContext
         normalizedUuids.forEach { messageUuid ->
             val existing = dao.getMessageByUuid(messageUuid) ?: return@forEach
@@ -404,7 +449,8 @@ suspend fun saveRemoteMessage(
     senderAddress: String? = null,
     originVerifiedRole: String? = null,
     originVerifiedAtMillis: Long? = null,
-    messageType: MessageType = MessageType.TEXT
+    messageType: MessageType = MessageType.TEXT,
+    route: String? = null
 ): Boolean {
     val safeReceivedAtMillis = receivedAtMillis.takeIf { it > 0L } ?: System.currentTimeMillis()
     val entity = MessageEntity(
@@ -427,13 +473,21 @@ suspend fun saveRemoteMessage(
             receivedTimestampMillis = safeReceivedAtMillis
         ),
         deliveryStatus = MessageDeliveryStatus.DELIVERED,
+        outboundRoute = route,
         senderDisplayName = normalizeStoredSenderDisplayName(senderDisplayName),
         senderAddress = normalizeStoredSenderAddress(senderAddress),
         originVerifiedRole = normalizeStoredVerifiedRole(originVerifiedRole),
-        originVerifiedAtMillis = normalizeStoredVerifiedAtMillis(originVerifiedAtMillis)
+        originVerifiedAtMillis = normalizeStoredVerifiedAtMillis(originVerifiedAtMillis),
+        deliveredAtMillis = safeReceivedAtMillis
     )
     return withContext(Dispatchers.IO) {
-        messageDao(context).insertIgnore(entity) != -1L
+        runCatching { ensureContactStubExists(context, sessionCode, senderDisplayName, senderAddress) }
+        try {
+            messageDao(context).insertIgnore(entity) != -1L
+        } catch (e: SQLiteConstraintException) {
+            Log.w(TAG, "Foreign key constraint failure in saveRemoteMessage for $sessionCode", e)
+            false
+        }
     }
 }
 
@@ -474,13 +528,14 @@ suspend fun saveLocalAudioMessage(
     uuid: String,
     fileName: String,
     audioDurationMillis: Long?,
-    deliveryStatus: MessageDeliveryStatus = MessageDeliveryStatus.SENT
+    deliveryStatus: MessageDeliveryStatus = MessageDeliveryStatus.SENT,
+    text: String = ""
 ) {
     val audioPath = voiceMessageFile(context, fileName).absolutePath
     val entity = MessageEntity(
         sessionCode = sessionCode,
         messageUuid = uuid,
-        text = "",
+        text = text,
         messageType = MessageType.AUDIO,
         audioFilePath = audioPath,
         audioDurationMillis = audioDurationMillis,
@@ -495,7 +550,12 @@ suspend fun saveLocalAudioMessage(
         deliveryStatus = deliveryStatus
     )
     withContext(Dispatchers.IO) {
-        messageDao(context).insert(entity)
+        runCatching { ensureContactStubExists(context, sessionCode) }
+        try {
+            messageDao(context).insert(entity)
+        } catch (e: SQLiteConstraintException) {
+            Log.w(TAG, "Foreign key constraint failure in saveLocalAudioMessage for $sessionCode", e)
+        }
     }
 }
 
@@ -525,7 +585,12 @@ suspend fun saveRemoteAudioMessage(
         deliveryStatus = MessageDeliveryStatus.DELIVERED
     )
     withContext(Dispatchers.IO) {
-        messageDao(context).insert(entity)
+        runCatching { ensureContactStubExists(context, sessionCode) }
+        try {
+            messageDao(context).insert(entity)
+        } catch (e: SQLiteConstraintException) {
+            Log.w(TAG, "Foreign key constraint failure in saveRemoteAudioMessage for $sessionCode", e)
+        }
     }
 }
 
@@ -538,12 +603,13 @@ suspend fun saveLocalImageMessage(
     width: Int?,
     height: Int?,
     mimeType: String?,
-    deliveryStatus: MessageDeliveryStatus = MessageDeliveryStatus.SENT
+    deliveryStatus: MessageDeliveryStatus = MessageDeliveryStatus.SENT,
+    text: String = ""
 ) {
     val entity = MessageEntity(
         sessionCode = sessionCode,
         messageUuid = uuid,
-        text = "",
+        text = text,
         messageType = MessageType.IMAGE,
         imageFilePath = imageMessageFile(context, fileName).absolutePath,
         imageThumbnailPath = thumbnailName?.let { imageThumbnailFile(context, it).absolutePath },
@@ -556,7 +622,12 @@ suspend fun saveLocalImageMessage(
         deliveryStatus = deliveryStatus
     )
     withContext(Dispatchers.IO) {
-        messageDao(context).insert(entity)
+        runCatching { ensureContactStubExists(context, sessionCode) }
+        try {
+            messageDao(context).insert(entity)
+        } catch (e: SQLiteConstraintException) {
+            Log.w(TAG, "Foreign key constraint failure in saveLocalImageMessage for $sessionCode", e)
+        }
     }
 }
 
@@ -586,7 +657,12 @@ suspend fun saveRemoteImageMessage(
         deliveryStatus = MessageDeliveryStatus.DELIVERED
     )
     withContext(Dispatchers.IO) {
-        messageDao(context).insert(entity)
+        runCatching { ensureContactStubExists(context, sessionCode) }
+        try {
+            messageDao(context).insert(entity)
+        } catch (e: SQLiteConstraintException) {
+            Log.w(TAG, "Foreign key constraint failure in saveRemoteImageMessage for $sessionCode", e)
+        }
     }
 }
 

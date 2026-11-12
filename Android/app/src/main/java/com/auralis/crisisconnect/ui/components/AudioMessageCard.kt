@@ -108,7 +108,10 @@ fun AudioMessageCard(
     fun ensurePlayer(): ExoPlayer {
         val existing = player
         if (existing != null) return existing
-        val newPlayer = ExoPlayer.Builder(context).build().apply {
+        val newPlayer = ExoPlayer.Builder(context)
+            .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                com.auralis.crisisconnect.core.media.LocalMediaDataSourceFactory(context)))
+            .build().apply {
             val mediaItem = MediaItem.fromUri(uri)
             setMediaItem(mediaItem)
             setAudioAttributes(

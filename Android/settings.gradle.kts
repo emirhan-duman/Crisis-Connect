@@ -27,3 +27,4 @@ rootProject.name = "Disaster Communication System"
 include(":app")
 include(":feature_rescue")
 include(":baselineprofile")
+include(":wear")

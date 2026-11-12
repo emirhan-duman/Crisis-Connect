@@ -192,6 +192,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
     private var disconnectWork: DispatchWorkItem?
     private var shouldStayConnected = false
     private var validatedIdentity = false
+    private var privacyChallenge: P2pPrivacyWire.Challenge?
     private var authenticatedName: String?
     private var transientConnectFailures: [UUID: Int] = [:]
     private var incomingVoiceTransfers: [String: P2pIncomingVoiceTransfer] = [:]
@@ -389,7 +390,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
         }
         let outerPayload: [String: Any] = [
             "type": P2pBleProtocol.typeChatEnvelope,
-            "fromDeviceId": localDeviceId(),
+            "fromDeviceId": P2pPrivacyWire.alias(key: key, packet: encryptedPacket),
             "payload": encryptedPacket.base64EncodedString()
         ]
         guard let outerData = try? JSONSerialization.data(withJSONObject: outerPayload, options: []),
@@ -637,14 +638,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
             disconnectAndRetry()
             return
         }
-        validatedIdentity = true
-        updateStatus(.ready)
-        ContactStore.shared.updateBleAddress(sessionId: sessionId, address: peripheral.identifier.uuidString.uppercased())
-        flushPendingEvents()
-        // The link just came up: hand any queued texts for this conversation to it. Android drains
-        // its queue on exactly this transition; without the kick a pending message sat unsent next
-        // to a live Bluetooth link until the user happened to foreground the app.
-        Task { @MainActor in InternetSendRetryQueue.shared.kick(reason: "bt-ready") }
+        beginPrivateAuthentication(on: peripheral)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
@@ -658,8 +652,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
     }
 
     private func verifiedIdentityKey(envelopeDeviceId: String? = nil) -> String? {
-        envelopeDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            ?? currentContact?.verifiedIdentityKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        currentContact?.verifiedIdentityKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             ?? currentContact?.remoteDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
@@ -746,6 +739,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
         connectWork = nil
         activePeripheral = peripheral
         validatedIdentity = false
+        privacyChallenge = nil
         authenticatedName = nil
         outputReceiver.reset()
         peripheral.delegate = self
@@ -763,86 +757,45 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
     }
 
     private func handleIdentityValue(_ value: Data, on peripheral: CBPeripheral) {
-        let identity = String(decoding: value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        let lowercased = identity.lowercased()
-        if lowercased.hasPrefix("device:") {
-            let remoteDeviceId = String(identity.dropFirst("device:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard identityMatches(deviceId: remoteDeviceId, shareId: nil) else {
-                disconnectAndRetry()
-                return
-            }
-            enableMessageNotifications(on: peripheral)
-            return
+        guard value == P2pPrivacyWire.privateIdentity || String(decoding: value, as: UTF8.self).lowercased().hasPrefix("share:") else {
+            disconnectAndRetry(); return
         }
-
-        if lowercased.hasPrefix("share:") {
-            if let bootstrapCharacteristic {
-                peripheral.readValue(for: bootstrapCharacteristic)
-            } else {
-                disconnectAndRetry()
-            }
-            return
-        }
-
-        if let bootstrapCharacteristic {
-            peripheral.readValue(for: bootstrapCharacteristic)
-        } else {
-            disconnectAndRetry()
-        }
-    }
-
-    private func handleBootstrapValue(_ value: Data, on peripheral: CBPeripheral) {
-        guard let identity = parseBootstrapIdentity(from: value) else {
-            disconnectAndRetry()
-            return
-        }
-        guard identityMatches(deviceId: identity.deviceId, shareId: identity.shareId) else {
-            disconnectAndRetry()
-            return
-        }
-        authenticatedName = identity.displayName
         enableMessageNotifications(on: peripheral)
     }
 
+    private func handleBootstrapValue(_ value: Data, on peripheral: CBPeripheral) {
+        disconnectAndRetry()
+    }
+
     private func enableMessageNotifications(on peripheral: CBPeripheral) {
-        guard let messageOutCharacteristic else {
-            disconnectAndRetry()
-            return
-        }
+        guard let messageOutCharacteristic else { disconnectAndRetry(); return }
         if messageOutCharacteristic.isNotifying {
-            validatedIdentity = true
-            updateStatus(.ready)
-            flushPendingEvents()
-            return
+            beginPrivateAuthentication(on: peripheral)
+        } else {
+            peripheral.setNotifyValue(true, for: messageOutCharacteristic)
         }
-        peripheral.setNotifyValue(true, for: messageOutCharacteristic)
     }
 
-    private func identityMatches(deviceId: String?, shareId: String?) -> Bool {
-        let expectedDeviceId = currentContact?.remoteDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let expectedShareId = currentContact?.bleShareId?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let expectedDeviceId, !expectedDeviceId.isEmpty {
-            guard let deviceId, deviceId.caseInsensitiveCompare(expectedDeviceId) == .orderedSame else {
-                return false
-            }
+    private func beginPrivateAuthentication(on peripheral: CBPeripheral) {
+        guard let characteristic = messageInCharacteristic else { disconnectAndRetry(); return }
+        let challenge = P2pPrivacyWire.Challenge()
+        let nonce = challenge.nonce
+        privacyChallenge = challenge
+        guard let wire = makeCallEnvelope(["kind": "privacy_ping", "messageId": nonce]) else { disconnectAndRetry(); return }
+        enqueueWrite(wire, to: characteristic)
+        queue.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self, self.privacyChallenge === challenge else { return }
+            self.disconnectAndRetry()
         }
-        if let expectedShareId, !expectedShareId.isEmpty, let shareId, !shareId.isEmpty {
-            if P2pBleProtocol.normalizeShareId(shareId) != P2pBleProtocol.normalizeShareId(expectedShareId) {
-                return false
-            }
-        }
-        return true
     }
 
-    private func parseBootstrapIdentity(from data: Data) -> P2pBootstrapIdentity? {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-        let shareId = (object["shareId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        let deviceId = (object["serverDeviceId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        let displayName = (object["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        return P2pBootstrapIdentity(shareId: shareId, deviceId: deviceId, displayName: displayName)
+    private func finishPrivateAuthentication(on peripheral: CBPeripheral) {
+        privacyChallenge = nil
+        validatedIdentity = true
+        updateStatus(.ready)
+        ContactStore.shared.updateBleAddress(sessionId: sessionId, address: peripheral.identifier.uuidString.uppercased())
+        flushPendingEvents()
+        Task { @MainActor in InternetSendRetryQueue.shared.kick(reason: "bt-ready") }
     }
 
     private func flushPendingEvents() {
@@ -993,7 +946,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
 
         let outerPayload: [String: Any] = [
             "type": P2pBleProtocol.typeChatEnvelope,
-            "fromDeviceId": localDeviceId(),
+            "fromDeviceId": P2pPrivacyWire.alias(key: key, packet: encryptedPacket),
             "payload": encryptedPacket.base64EncodedString()
         ]
         guard let outerData = try? JSONSerialization.data(withJSONObject: outerPayload, options: []),
@@ -1073,10 +1026,13 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
                 return
             }
 
-            if let expectedRemoteDeviceId = contact.remoteDeviceId?.nilIfEmpty,
-               envelope.fromDeviceId.caseInsensitiveCompare(expectedRemoteDeviceId) != .orderedSame {
+            guard P2pPrivacyWire.matches(envelope.fromDeviceId, key: key, packet: envelope.encryptedPacket) else { return }
+            if payload.kind == "privacy_pong" {
+                guard let challenge = privacyChallenge, challenge.accept(payload.messageId), let peripheral = activePeripheral else { return }
+                finishPrivateAuthentication(on: peripheral)
                 return
             }
+            guard validatedIdentity else { return }
 
             if P2pCallProtocol.isCallSignalKind(payload.kind) {
                 if let rawPayload = (try? JSONSerialization.jsonObject(with: payloadData)) as? [String: Any] {
@@ -1115,16 +1071,8 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
                 switch payload.kind {
                 case P2pBleProtocol.chatKindDecryptFail:
                     let messageId = payload.messageId?.nilIfEmpty
-                    NSLog("[P2pGattChatManager] Remote peer failed to decrypt message \(messageId ?? "(unknown)") — clearing AES key for plaintext fallback")
-                    if let contact = self.currentContact {
-                        ContactStore.shared.clearAesKey(for: contact)
-                        if let messageId {
-                            SOSChatStore.shared.requeueMessage(
-                                sessionId: self.sessionId,
-                                transportMessageId: messageId
-                            )
-                        }
-                    }
+                    // Peer diagnostics cannot revoke our key or authorize plaintext retry.
+                    break
                 case P2pBleProtocol.chatKindDelivered:
                     SOSChatStore.shared.markDelivered(
                         sessionId: self.sessionId,
@@ -1611,6 +1559,7 @@ final class P2pGattChatManager: NSObject, ObservableObject, CBCentralManagerDele
         messageInCharacteristic = nil
         messageOutCharacteristic = nil
         validatedIdentity = false
+        privacyChallenge = nil
         authenticatedName = nil
         outputReceiver.reset()
         writeQueue.removeAll()

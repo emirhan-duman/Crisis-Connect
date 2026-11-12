@@ -187,7 +187,7 @@
     <string name="advanced_settings_title">Mîhengên pêşketî</string>
     <string name="advanced_settings_screen_description">Ji bo teşhîs û gihandina peyaman tevgera sepanê xweş saz bike.</string>
     <string name="advanced_setting_public_mesh_title">Moda mesha giştî</string>
-    <string name="advanced_setting_public_mesh_description">Ji bo ceribandinên hevrêzkirinê yên berfirehtir vê girêkê di hawîrdorên mesha vekirî de kifşbar bike.</string>
+    <string name="advanced_setting_public_mesh_description">Sohbeta giştî: her kesê nêzîk dikare peyaman bixwîne û beşdar bibe. Agahiyên hestiyar parve nekin.</string>
     <string name="advanced_setting_gatt_mesh_notifications_title">Agahdariyên girêka mesha vekirî</string>
     <string name="advanced_setting_gatt_mesh_notifications_description">Tenê ji bo peyamên nû yên ji girêka chata giştî ya mesha GATT ya giştî agahdar dike.</string>
     <string name="advanced_setting_high_range_title">Moda dûrahiya bilind</string>
@@ -480,7 +480,6 @@
     <string name="gatt_mesh_action_message_info">Agahiya peyamê</string>
     <string name="gatt_mesh_message_info_sender">Şander</string>
     <string name="gatt_mesh_message_info_origin">Çavkaniya peyamê</string>
-    <string name="gatt_mesh_message_info_direct_peer">Hevta rasterast</string>
     <string name="gatt_mesh_message_info_time">Dem</string>
     <string name="gatt_mesh_message_info_you">Tu</string>
     <string name="gatt_mesh_message_info_sent_to">Şandin bo</string>
@@ -608,7 +607,7 @@
     <string name="add_from_contacts_empty">Hê tu kes ji têkiliyên te li ser Crisis Connect nîne.</string>
     <string name="add_from_contacts_permission_needed">Ji bo dîtina kesên ku tu nas dikî destûra têkiliyan pêwîst e.</string>
     <string name="add_from_contacts_sign_in_required">Ji bo dîtina têkiliyan li ser Crisis Connect têkeve.</string>
-    <string name="add_from_contacts_privacy_note">Hejmarên te bi hash tên lihevanîn û tu carî li ser serverê nayên tomarkirin. Tenê kesên ku hilbijartine kifşbar bin xuya dibin.</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect nav û hejmarên telefonê yên rehbera te dixwîne da kesên ku sepanê bi kar tînin bibîne. Ji bo lihevanînê hejmaran dişîne serverên Crisis Connect ku li Dewletên Yekbûyî ji aliyê Google Firebase ve tên mazûvankirin. Nav li ser cîhaza te dimînin. Hejmarên lêgerînê bê tomarkirina daîmî tên xebitandin; encam li ser cîhaza te dimînin. Dema ev ekran vekirî ye, nûkirin an vegera wê dikare hejmaran dîsa bişîne. Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.</string>
     <string name="add_from_contacts_found_count">%1$d li ser Crisis Connect</string>
     <string name="add_from_contacts_empty_hint">Dema ku ew hejmara telefonê xwe di sepanê de bipejirînin wê li vir xuya bibin.</string>
     <string name="add_from_contacts_search_hint">Li nav an hejmarê bigere</string>
@@ -637,7 +636,6 @@
     <string name="nearby_match_notification_text">Ji bo girêdana bi Bluetooth bitikîne</string>
     <string name="nearby_pairing_channel_name">Daxwazên girêdana nêzîk</string>
     <string name="nearby_pairing_request_title">%1$s dixwaze li nêzîk girêbide</string>
-    <string name="nearby_pairing_request_text">Ji bo chata bi Bluetooth qebûl bike.</string>
     <string name="nearby_pairing_accept">Qebûl bike</string>
     <string name="nearby_pairing_decline">Red bike</string>
     <string name="manual_connect_button">Bi amûrê re girêbide</string>
@@ -1199,6 +1197,7 @@
     <string name="chat_status_connected">Girêdayî</string>
     <string name="chat_status_connected_bluetooth">Bi Bluetooth girêdayî</string>
     <string name="chat_status_connected_internet">Bi înternetê girêdayî</string>
+    <string name="chat_status_connected_satellite">Bi peykê ve girêdayî</string>
     <string name="internet_message_channel_name">Peyamên înternetê</string>
     <string name="internet_message_notification_title">Peyama nû</string>
     <string name="channel_message_notification_body">Peyama nû</string>
@@ -1327,7 +1326,6 @@
     <string name="notification_photo_message_body">Peyama wêneyê</string>
     <string name="chat_encryption_setup_title">Vê chatê ewle bike</string>
     <string name="chat_encryption_setup_instruction">Ji bo anîna kilîta şîfrekirinê ya parvekirî koda QR ya li ser dîmena Chata Nû ya amûra din bişopîne.</string>
-    <string name="chat_encryption_setup_session_mismatch">Ev QR ya danişîneke chatê ya cuda ye.</string>
     <string name="chat_encryption_setup_invalid_qr">Formata QR ya nepiştgirîkirî.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Kilîta şîfrekirinê tê pejirandin…</string>
     <string name="chat_encryption_setup_handshake_failed">Kilîta şîfrekirinê nehat pejirandin. Dîsa biceribîne.</string>
@@ -1781,4 +1779,20 @@
     <string name="profile_delete_account_error_verification">Jêbirin li vê cîhazê nehat pesendkirin. Girêdana xwe kontrol bike û dîsa biceribîne.</string>
     <string name="profile_delete_account_error_signed_out">Ji bo jêbirina hesab divê tu têketî bî.</string>
     <string name="profile_delete_account_reauth_needed">Ji bo ewlehiya te, berî jêbirinê divê em piştrast bikin ku ev tu yî. Derkeve, dîsa têkeve û paşê dîsa biceribîne.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">Kesên di rehbera xwe de li ser înternetê bibîne</string>
+    <string name="contacts_disclosure_body">Crisis Connect nav û hejmarên telefonê yên rehbera te dixwîne da kesên ku sepanê bi kar tînin bibîne. Ji bo lihevanînê hejmaran dişîne serverên Crisis Connect ku li Dewletên Yekbûyî ji aliyê Google Firebase ve tên mazûvankirin. Nav li ser cîhaza te dimînin. Hejmarên lêgerînê bê tomarkirina daîmî tên xebitandin; encam li ser cîhaza te dimînin. Dema ev ekran vekirî ye, nûkirin an vegera wê dikare hejmaran dîsa bişîne. Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.</string>
+    <string name="contacts_local_disclosure_title">Kesên nêzîk bibîne</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect tenê nav û hejmara ku tu bi hilbijêra têkiliyan a pergalê parve dikî dixwîne da kesekî li nêzîkê bibîne. Hejmara hilbijartî ji bo piştrastkirina nasnameyê bi Bluetooth tê bikaranîn. Ev taybetmendî rehbera te naşîne serverê. Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.</string>
+    <string name="contacts_disclosure_accept">Dipejirînim</string>
+    <string name="contacts_disclosure_decline">Ne niha</string>
+    <string name="contacts_consent_settings_title">Gihîştina rehberê</string>
+    <string name="contacts_consent_settings_hint">Hilbijartina te ji bo vê hesabê li ser vê cîhazê tê bibîranîn. Tu dikarî di Mîhengan de, di Gihîştina rehberê de, pejirandina xwe paşde bigirî.</string>
+    <string name="contacts_consent_revoke_online">Pejirandina lihevanîna înternetê rake</string>
+    <string name="contacts_consent_revoke_nearby">Pejirandina kesên nêzîk rake</string>
+    <string name="nearby_choose_contact">Kesekî hilbijêre</string>
+    <string name="nearby_contact_selection_failed">Hejmara hilbijartî nehat xwendin. Ji kerema xwe kesekî din hilbijêre.</string>
+    <string name="chat_status_internet_available">Înternet berdest e</string>
+    <string name="chat_status_satellite_available">Girêdana peykê berdest e</string>
 </resources>

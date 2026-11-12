@@ -39,6 +39,7 @@ import com.auralis.crisisconnect.data.BleSessionResolver
 import com.auralis.crisisconnect.data.updateContactAddress
 import com.auralis.crisisconnect.security.CertificateProvisioningNotifier
 import com.auralis.crisisconnect.security.SecurityRepository
+import com.auralis.crisisconnect.security.AuthorityMeshKeyAccess
 import com.auralis.crisisconnect.service.BleRadioPolicy
 import com.auralis.crisisconnect.service.RemoteSosSignals
 import com.auralis.crisisconnect.service.client.RescueClientServiceBinding
@@ -307,13 +308,12 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
                 // self-stops at its key-guard when the key is missing, so if the async fetch hasn't
                 // landed yet the toggle silently bounces back — which is exactly why it used to take
                 // several taps. ensureAuthorityMeshGroupKey() is idempotent and caches the key.
-                val hasKey = runCatching { securityRepository.ensureAuthorityMeshGroupKey() }
-                    .getOrDefault(false)
-                if (!hasKey) {
+                val keyAccess = securityRepository.requestAuthorityMeshGroupKey()
+                if (keyAccess != AuthorityMeshKeyAccess.Available) {
                     _uiState.update {
                         it.copy(
                             isMeshBusy = false,
-                            meshErrorMessage = R.string.rescue_mesh_error_unauthorized,
+                            meshErrorMessage = keyAccess.errorMessageResource(),
                         )
                     }
                     return@launch
@@ -965,7 +965,7 @@ class RescueScreenViewModel(application: Application) : AndroidViewModel(applica
 
     private suspend fun storedRescueRole(): String? {
         return withContext(Dispatchers.IO) {
-            securityRepository.getUsableStoredCertificateRole(allowExpired = true)
+            securityRepository.getUsableStoredCertificateRole(allowExpired = false)
         }?.trim()?.lowercase(Locale.US)
     }
 

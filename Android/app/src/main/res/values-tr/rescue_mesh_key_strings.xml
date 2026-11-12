@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rescue_mesh_key_sign_in_required">Mesh anahtarını almak için hesabınıza tekrar giriş yapın.</string>
+    <string name="rescue_mesh_key_not_enabled">Güvenli mesh henüz bu hesap için etkinleştirilmemiş. Yöneticinizle iletişime geçin.</string>
+    <string name="rescue_mesh_key_service_unavailable">Mesh anahtar servisi sunucuda kullanılamıyor. Yöneticinizle iletişime geçin.</string>
+    <string name="rescue_mesh_key_network_error">Mesh anahtar servisine ulaşılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin.</string>
+    <string name="rescue_mesh_key_fetch_failed">Mesh anahtarı alınamadı. Lütfen tekrar deneyin.</string>
+</resources>

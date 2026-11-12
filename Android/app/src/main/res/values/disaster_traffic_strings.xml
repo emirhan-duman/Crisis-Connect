@@ -1,0 +1,9 @@
+<resources>
+    <string name="chat_automatic_disaster_mode">Automatic data saving</string>
+    <string name="chat_disaster_mode_detail">SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.</string>
+    <string name="traffic_local_sos">Your status: SOS active</string>
+    <string name="traffic_local_offline">Your connection: offline · messages queued</string>
+    <string name="traffic_local_limited">Your connection: limited · saving data</string>
+    <string name="traffic_feed_deferred">Automatic refresh paused to save data. You can refresh manually.</string>
+    <string name="traffic_delivery_explanation">Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.</string>
+</resources>

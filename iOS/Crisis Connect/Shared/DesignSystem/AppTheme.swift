@@ -345,19 +345,24 @@ struct CrisisSentinelSparklesIcon: Shape {
         }
 
         var path = Path()
-        path.move(to: point(10, 2))
-        path.addCurve(to: point(2, 10), control1: point(10, 6.418), control2: point(6.418, 10))
-        path.addCurve(to: point(10, 18), control1: point(6.418, 10), control2: point(10, 13.582))
-        path.addCurve(to: point(18, 10), control1: point(10, 13.582), control2: point(13.582, 10))
-        path.addCurve(to: point(10, 2), control1: point(13.582, 10), control2: point(10, 6.418))
-        path.closeSubpath()
 
-        path.move(to: point(19, 14))
-        path.addCurve(to: point(15.5, 17.5), control1: point(19, 15.933), control2: point(17.433, 17.5))
-        path.addCurve(to: point(19, 21), control1: point(17.433, 17.5), control2: point(19, 19.067))
-        path.addCurve(to: point(22.5, 17.5), control1: point(19, 19.067), control2: point(20.567, 17.5))
-        path.addCurve(to: point(19, 14), control1: point(20.567, 17.5), control2: point(19, 15.933))
-        path.closeSubpath()
+        // Outer glass orb ring
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) * 0.44
+        path.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+
+        // Upper pinched ribbon strand
+        path.move(to: point(4.5, 8.5))
+        path.addCurve(to: point(12, 12), control1: point(8, 13), control2: point(10, 13))
+        path.addCurve(to: point(19.5, 15.5), control1: point(14, 11), control2: point(16, 11))
+
+        // Lower pinched ribbon strand
+        path.move(to: point(4.5, 15.5))
+        path.addCurve(to: point(12, 12), control1: point(8, 11), control2: point(10, 11))
+        path.addCurve(to: point(19.5, 8.5), control1: point(14, 13), control2: point(16, 13))
+
+        // Incandescent central convergence core
+        path.addEllipse(in: CGRect(x: point(11.2, 11.2).x, y: point(11.2, 11.2).y, width: (1.6 / 24) * rect.width, height: (1.6 / 24) * rect.height))
 
         return path
     }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Wählen Sie in den Android-Einstellungen einen Benachrichtigungston, eine Vibration und die Sichtbarkeit des Sperrbildschirms. Vollbildwarnungen erfordern Ihre Zustimmung und können durch „Bitte nicht stören“, Akkueinstellungen oder eine erzwungene Stopp-App eingeschränkt werden.</string>
+    <string name="muster_alert_settings_title">Ton, Vibration und Sperrbildschirm</string>
+    <string name="muster_alerts_blocked">App-Benachrichtigungen sind in den Android-Einstellungen deaktiviert</string>
+    <string name="muster_alerts_quiet">Dieser Benachrichtigungskanal ist still oder hat eine niedrige Priorität. Aktivieren Sie Popup-Benachrichtigungen in den Android-Einstellungen</string>
+    <string name="muster_locked_screen_note">Vollbildwarnungen werden angezeigt, wenn Ihr Telefon gesperrt oder sein Bildschirm ausgeschaltet ist, sofern Android dies zulässt. Während Sie das Telefon verwenden, zeigt Android möglicherweise stattdessen eine Heads-up-Benachrichtigung an.</string>
+    <string name="muster_urgent_sound">Ton im lautlosen Modus</string>
+    <string name="muster_urgent_sound_help">Nur für dringende Katastrophen-Sicherheitsabfragen. Nutzt für eine begrenzte Zeit Ihre vorhandene Alarmlautstärke, während der Sicherheitsabfrage-Bildschirm sichtbar ist. Stoppt, wenn Sie den Bildschirm berühren.</string>
+    <string name="muster_urgent_ready">Verfügbar innerhalb der Systemberechtigungen. Die Funktion „Bitte nicht stören“ und die Alarmlautstärke bleiben unter Ihrer Kontrolle.</string>
+    <string name="muster_urgent_not_ready">Überprüfen Sie die Alarmlautstärke, Benachrichtigungsberechtigungen und „Bitte nicht stören“. Systembeschränkungen werden respektiert.</string>
+    <string name="muster_urgent_seconds">%1$d Sekunden</string>
+    <string name="muster_flash_settings">Blitzalarmeinstellungen</string>
+    <string name="muster_flash_help">Aktivieren Sie Blitzbenachrichtigungen in den Android-Einstellungen für Bedienungshilfen, sofern Ihr Telefon diese unterstützt. Android steuert die Blitzwarnungen auch bei geschlossener App.</string>
+</resources>

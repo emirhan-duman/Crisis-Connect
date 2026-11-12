@@ -9,8 +9,6 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothManager
-import android.bluetooth.le.BluetoothLeScanner
-import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
@@ -19,6 +17,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.auralis.crisisconnect.data.BleBroadcastDirectory
@@ -30,7 +29,11 @@ import java.nio.charset.StandardCharsets
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
@@ -63,16 +66,10 @@ private enum class ControlStage {
 
 private const val P2P_SCAN_TIMEOUT_MS = 20_000L
 private const val P2P_BOOTSTRAP_TIMEOUT_MS = 10_000L
+private const val IOS_SERVICE_ONLY_GRACE_MS = 750L
 private const val P2P_REQUESTED_MTU = 247
 private const val P2P_SERVICE_DISCOVERY_RETRY_DELAY_MS = 700L
 private const val DEFAULT_ATT_MTU = 23
-
-private data class P2pScanCandidate(
-    val device: BluetoothDevice,
-    val rssi: Int
-)
-
-private const val MAX_P2P_LOCAL_NAME_LENGTH = 8
 
 private fun hasBleScanPermission(context: Context): Boolean {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -108,7 +105,8 @@ suspend fun resolveP2pShare(
     context: Context,
     shareId: String,
     aesKeyBase64: String,
-    timeoutMs: Long = P2P_SCAN_TIMEOUT_MS
+    timeoutMs: Long = P2P_SCAN_TIMEOUT_MS,
+    allowEarlyServiceFallback: Boolean = false
 ): P2pResolvedShare? {
     val appContext = context.applicationContext
     val normalizedShareId = P2pBleProtocol.normalizeShareId(shareId)
@@ -133,191 +131,121 @@ suspend fun resolveP2pShare(
         ?.trim()
         ?.takeIf { it.isNotBlank() }
 
+    suspend fun authenticate(device: BluetoothDevice): P2pResolvedShare? = readBootstrapFromDevice(
+        context = appContext,
+        device = device,
+        expectedShareId = normalizedShareId,
+        aesKey = keyBytes,
+        localSessionCode = localSessionCode,
+        localUserName = localUserName,
+        localAvatarBase64 = localAvatarBase64,
+        localDeviceId = localDeviceId
+    )
+
     val cachedAddress = BleBroadcastDirectory.resolveAddress(normalizedShareId)
     if (!cachedAddress.isNullOrBlank()) {
         val cachedDevice = runCatching { adapter.getRemoteDevice(cachedAddress) }.getOrNull()
         if (cachedDevice != null) {
-            readBootstrapFromDevice(
-                context = appContext,
-                device = cachedDevice,
-                expectedShareId = normalizedShareId,
-                aesKey = keyBytes,
-                localSessionCode = localSessionCode,
-                localUserName = localUserName,
-                localAvatarBase64 = localAvatarBase64,
-                localDeviceId = localDeviceId
-            )?.let { resolved ->
-                return resolved
-            }
+            authenticate(cachedDevice)?.let { return it }
         }
     }
 
-    val candidates = scanForShareDevices(appContext, adapter, normalizedShareId, timeoutMs)
-    for (candidate in candidates) {
-        readBootstrapFromDevice(
-            context = appContext,
-            device = candidate,
-            expectedShareId = normalizedShareId,
-            aesKey = keyBytes,
-            localSessionCode = localSessionCode,
-            localUserName = localUserName,
-            localAvatarBase64 = localAvatarBase64,
-            localDeviceId = localDeviceId
-        )?.let { resolved ->
-            BleBroadcastDirectory.update(
-                broadcastId = normalizedShareId,
-                address = candidate.address,
-                lastSeen = System.currentTimeMillis()
-            )
-            return resolved
-        }
-    }
-    return null
+    return resolveDiscoveredShare(
+        context = appContext,
+        adapter = adapter,
+        shareId = normalizedShareId,
+        timeoutMs = timeoutMs,
+        serviceFallbackGraceMs = IOS_SERVICE_ONLY_GRACE_MS.takeIf { allowEarlyServiceFallback },
+        authenticate = ::authenticate
+    )
 }
 
 @SuppressLint("MissingPermission")
-private suspend fun scanForShareDevices(
+private suspend fun resolveDiscoveredShare(
     context: Context,
     adapter: BluetoothAdapter,
     shareId: String,
-    timeoutMs: Long
-): List<BluetoothDevice> {
-    if (!hasBleScanPermission(context)) {
-        return emptyList()
-    }
-    val scanner: BluetoothLeScanner = adapter.bluetoothLeScanner ?: return emptyList()
+    timeoutMs: Long,
+    serviceFallbackGraceMs: Long?,
+    authenticate: suspend (BluetoothDevice) -> P2pResolvedShare?
+): P2pResolvedShare? = coroutineScope {
+    if (!hasBleScanPermission(context) || timeoutMs <= 0) return@coroutineScope null
+    val scanner = adapter.bluetoothLeScanner ?: return@coroutineScope null
     val serviceParcelUuid = ParcelUuid(P2pBleProtocol.SERVICE_UUID)
-    val fallbackCandidates = linkedMapOf<String, P2pScanCandidate>()
-
-    val exactMatch = withTimeoutOrNull(timeoutMs) {
-        suspendCancellableCoroutine<BluetoothDevice?> { continuation ->
-            val completed = AtomicBoolean(false)
-            val owner = "p2p-share-resolver-$shareId-${System.identityHashCode(continuation)}"
-
-            fun finish(device: BluetoothDevice?) {
-                if (!completed.compareAndSet(false, true)) {
-                    return
-                }
-                BleScanCoordinator.unregister(owner)
-                if (continuation.isActive) {
-                    continuation.resume(device)
-                }
+    val candidates = P2pShareCandidates<BluetoothDevice>(serviceFallbackGraceMs)
+    val scanFailed = CompletableDeferred<Unit>()
+    val owner = "p2p-share-resolver-${System.identityHashCode(candidates)}"
+    val listener = object : BleScanCoordinator.Listener {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            val device = result.device ?: return
+            val record = result.scanRecord ?: return
+            val advertisedShareId = record.getServiceData(serviceParcelUuid)?.toString(StandardCharsets.UTF_8)
+            val advertisement = classifyP2pShareAdvertisement(
+                expectedShareId = shareId,
+                advertisedShareId = advertisedShareId,
+                advertisedName = record.deviceName,
+                hasServiceUuid = record.serviceUuids?.contains(serviceParcelUuid) == true
+            ) ?: P2pShareAdvertisement.CACHED_NAME.takeIf {
+                advertisedShareId == null && record.deviceName.isNullOrBlank() &&
+                    matchesCachedP2pShareName(shareId, runCatching { device.name }.getOrNull())
             }
-
-            val listener = object : BleScanCoordinator.Listener {
-                override fun onScanResult(callbackType: Int, result: ScanResult) {
-                    val device = result.device ?: return
-                    val advertisedShareId = result.scanRecord
-                        ?.serviceData
-                        ?.get(serviceParcelUuid)
-                        ?.toString(StandardCharsets.UTF_8)
-                        ?.trim()
-                        ?.uppercase(Locale.US)
-                    if (advertisedShareId != null) {
-                        if (advertisedShareId != shareId) {
-                            return
-                        }
-                        Log.d(TAG, "Resolved P2P share via service data for $shareId from ${device.address}")
-                        BleBroadcastDirectory.update(
-                            broadcastId = shareId,
-                            address = device.address,
-                            lastSeen = System.currentTimeMillis()
-                        )
-                        finish(device)
-                        return
-                    }
-                    if (!advertisesP2pService(result, serviceParcelUuid)) {
-                        if (!advertisesExpectedShareName(result, shareId)) {
-                            return
-                        }
-                    }
-                    val current = fallbackCandidates[device.address]
-                    if (current == null || result.rssi > current.rssi) {
-                        Log.d(
-                            TAG,
-                            "Queued fallback P2P candidate for $shareId from ${device.address} rssi=${result.rssi}"
-                        )
-                        fallbackCandidates[device.address] = P2pScanCandidate(
-                            device = device,
-                            rssi = result.rssi
-                        )
-                    }
-                }
-
-                override fun onScanFailed(errorCode: Int) {
-                    Log.w(TAG, "P2P share scan failed: $errorCode")
-                    finish(null)
-                }
+            if (advertisement == null) {
+                if (advertisedShareId != null) candidates.discardWeakCandidate(device.address)
+                return
             }
+            candidates.offer(
+                address = device.address,
+                candidate = P2pShareCandidates.Candidate(
+                    device = device,
+                    advertisement = advertisement,
+                    rssi = result.rssi,
+                    firstSeenMs = SystemClock.elapsedRealtime()
+                )
+            )
+        }
 
-            val settings = ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-                .build()
-
+        override fun onScanFailed(errorCode: Int) {
+            Log.w(TAG, "P2P share scan failed: $errorCode")
+            scanFailed.complete(Unit)
+        }
+    }
+    val scanJob = launch(start = CoroutineStart.UNDISPATCHED) {
+        try {
+            // iOS can advertise only the service UUID. Authenticate matches in-process.
             val started = runCatching {
-                // iOS advertisements can be inconsistent with hardware-level service-data filtering.
-                // Run this user-initiated scan unfiltered and verify candidates in-process instead.
                 BleScanCoordinator.registerOrUpdate(
                     owner = owner,
                     scanner = scanner,
-                    mode = settings.scanMode,
+                    mode = ScanSettings.SCAN_MODE_LOW_LATENCY,
                     filters = null,
                     listener = listener
                 )
-            }.getOrElse { throwable ->
-                Log.w(TAG, "Unable to start coordinated P2P share scan", throwable)
+            }.getOrElse {
+                Log.w(TAG, "Unable to start coordinated P2P share scan")
                 false
             }
-            if (!started) {
-                finish(null)
-                return@suspendCancellableCoroutine
-            }
-
-            continuation.invokeOnCancellation {
-                finish(null)
-            }
+            if (started) withTimeoutOrNull(timeoutMs) { scanFailed.await() }
+        } finally {
+            BleScanCoordinator.unregister(owner)
+            candidates.finishScan()
         }
     }
-    if (exactMatch != null) {
-        return listOf(exactMatch)
+    try {
+        val authenticateCandidate: suspend (P2pShareCandidates.Candidate<BluetoothDevice>) -> P2pResolvedShare? = { candidate ->
+            val waitMs = SystemClock.elapsedRealtime() - candidate.firstSeenMs
+            Log.d(TAG, "Starting QR GATT authentication via ${candidate.advertisement} after ${waitMs}ms")
+            authenticate(candidate.device)
+        }
+        if (serviceFallbackGraceMs == null) {
+            candidates.firstAuthenticated(authenticateCandidate)
+        } else {
+            withTimeoutOrNull(timeoutMs + P2P_BOOTSTRAP_TIMEOUT_MS) {
+                candidates.firstAuthenticated(authenticateCandidate)
+            }
+        }
+    } finally {
+        scanJob.cancel()
     }
-    return fallbackCandidates.values
-        .sortedByDescending { it.rssi }
-        .map { it.device }
-}
-
-private fun advertisesP2pService(
-    result: ScanResult,
-    expectedServiceUuid: ParcelUuid
-): Boolean {
-    val advertisedUuids = result.scanRecord?.serviceUuids ?: return false
-    return advertisedUuids.any { advertised ->
-        advertised.uuid == expectedServiceUuid.uuid
-    }
-}
-
-private fun advertisesExpectedShareName(
-    result: ScanResult,
-    expectedShareId: String
-): Boolean {
-    val expectedName = expectedShareId.take(MAX_P2P_LOCAL_NAME_LENGTH)
-    val advertisedName = result.scanRecord?.deviceName
-        ?.trim()
-        ?.uppercase(Locale.US)
-        ?.takeIf { it.isNotBlank() }
-        ?: remoteDeviceName(result)
-        ?: return false
-    return advertisedName == expectedName
-}
-
-@SuppressLint("MissingPermission")
-private fun remoteDeviceName(result: ScanResult): String? {
-    return runCatching {
-        result.device?.name
-            ?.trim()
-            ?.uppercase(Locale.US)
-            ?.takeIf { it.isNotBlank() }
-    }.getOrNull()
 }
 
 @SuppressLint("MissingPermission")
@@ -349,6 +277,7 @@ private suspend fun readBootstrapFromDevice(
             var gatt: BluetoothGatt? = null
             var bootstrapPayload: P2pBootstrapPayload? = null
             var controlCharacteristic: BluetoothGattCharacteristic? = null
+            val privateControlChunks = java.util.ArrayDeque<ByteArray>()
             var controlStage: ControlStage? = null
             var authenticatedServerName: String? = null
             var authenticatedServerAvatarBase64: String? = null
@@ -516,7 +445,7 @@ private suspend fun readBootstrapFromDevice(
                         put("proof", helloProof)
                     }
                     val bytes = frame.toString().toByteArray(Charsets.UTF_8)
-                    if (bytes.size <= maxControlPayloadBytes) {
+                    if (bytes.size <= P2pPrivacyWire.MAX_CONTROL_BYTES - 32) {
                         if (!option.includeAvatar || !option.includeName) {
                             Log.d(
                                 TAG,
@@ -543,7 +472,12 @@ private suspend fun readBootstrapFromDevice(
 
             fun startControlWrite(gatt: BluetoothGatt, payloadBytes: ByteArray): Boolean {
                 val control = controlCharacteristic ?: return false
-                control.value = payloadBytes
+                val sealed = P2pPrivacyWire.seal(payloadBytes, aesKey, P2pPrivacyWire.Purpose.CONTROL) ?: return false
+                val framed = P2pPrivacyWire.frameControl(sealed) ?: return false
+                privateControlChunks.clear()
+                val size = (negotiatedMtu - 3).coerceIn(20, 512)
+                framed.asList().chunked(size).forEach { privateControlChunks.add(it.toByteArray()) }
+                control.value = privateControlChunks.removeFirst()
                 val started = runCatching { gatt.writeCharacteristic(control) }.getOrDefault(false)
                 if (!started) {
                     Log.w(
@@ -753,7 +687,7 @@ private suspend fun readBootstrapFromDevice(
 
                         P2pBleProtocol.BOOTSTRAP_CHARACTERISTIC_UUID -> {
                             val payload = parseBootstrapPayload(
-                                bytes = value,
+                                bytes = P2pPrivacyWire.open(value, aesKey, P2pPrivacyWire.Purpose.BOOTSTRAP) ?: run { finish(null); return },
                                 expectedShareId = expectedShareId
                             ) ?: run {
                                 Log.w(TAG, "Invalid P2P bootstrap payload from ${device.address}")
@@ -822,7 +756,8 @@ private suspend fun readBootstrapFromDevice(
                                 finish(null)
                                 return
                             }
-                            val controlRaw = controlBytes.toString(Charsets.UTF_8)
+                            val plaintext = P2pPrivacyWire.open(controlBytes, aesKey, P2pPrivacyWire.Purpose.CONTROL) ?: run { finish(null); return }
+                            val controlRaw = plaintext.toString(Charsets.UTF_8)
                             val controlPayload = runCatching {
                                 JSONObject(controlRaw)
                             }.getOrNull() ?: run {
@@ -1004,6 +939,11 @@ private suspend fun readBootstrapFromDevice(
                     }
                     val control = controlCharacteristic ?: run {
                         finish(null)
+                        return
+                    }
+                    if (privateControlChunks.isNotEmpty()) {
+                        control.value = privateControlChunks.removeFirst()
+                        if (!runCatching { gatt.writeCharacteristic(control) }.getOrDefault(false)) finish(null)
                         return
                     }
                     if (!startCharacteristicRead(

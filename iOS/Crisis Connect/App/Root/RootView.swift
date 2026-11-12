@@ -841,9 +841,7 @@ private struct OnboardingView: View {
             // iOS never re-shows the system prompt after a denial — without a Settings shortcut
             // the user is stuck permissionless. Mirrors Android's open-app-settings routing.
             Button {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
+                PlatformRuntime.openSystemSettings()
             } label: {
                 Label(NSLocalizedString("Open Settings", comment: ""), systemImage: "exclamationmark.triangle.fill")
                     .labelStyle(.titleAndIcon)
@@ -897,48 +895,31 @@ private struct OnboardingView: View {
         }
     }
 
-    /// GIF display width scaled to ~45% of screen width, capped for large screens.
-    private var gifDisplayWidth: CGFloat {
-        min(UIScreen.main.bounds.width * 0.45, 220)
-    }
-
-    private var gifDisplayHeight: CGFloat {
-        gifDisplayWidth * (284.0 / 131.0)
-    }
-
-    /// Corner radius proportional to GIF width to match the iPhone display shape.
-    private var gifCornerRadius: CGFloat {
-        gifDisplayWidth * 0.16
-    }
-
     private var appSwitcherGuideCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.appPrimary.opacity(0.14),
-                                Color.appPrimary.opacity(0.04),
-                                Color.appSuccess.opacity(0.08)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+            AnimatedGIFView(assetName: "AppSwitcherGuide")
+                .aspectRatio(131.0 / 284.0, contentMode: .fit)
+                .frame(maxWidth: 220)
+                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .shadow(color: Color.black.opacity(0.14), radius: 12, y: 8)
+                .padding(.vertical, 16)
+                .frame(maxWidth: .infinity)
+                .background(
+                    LinearGradient(
+                        colors: [
+                            Color.appPrimary.opacity(0.14),
+                            Color.appPrimary.opacity(0.04),
+                            Color.appSuccess.opacity(0.08)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
-
-                AnimatedGIFView(assetName: "AppSwitcherGuide")
-                    .frame(width: gifDisplayWidth, height: gifDisplayHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: gifCornerRadius, style: .continuous))
-                    .shadow(color: Color.black.opacity(0.14), radius: 12, y: 8)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: gifDisplayHeight + 32)
-            .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
-                    .stroke(Color.appBorder, lineWidth: 1)
-            )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.cornerLarge, style: .continuous)
+                        .stroke(Color.appBorder, lineWidth: 1)
+                )
 
             ViewThatFits {
                 HStack(spacing: 8) {

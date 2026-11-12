@@ -46,6 +46,14 @@ enum ScreenShareQualityPreset: String, CaseIterable, Identifiable {
         }
     }
     var displayName: String { rawValue.capitalized }
+
+    func resolutionScale(for size: CGSize) -> Double {
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return 1 }
+        let portrait = size.height > size.width
+        let widthLimit = CGFloat(portrait ? maxHeight : maxWidth)
+        let heightLimit = CGFloat(portrait ? maxWidth : maxHeight)
+        return Double(max(1, max(size.width / widthLimit, size.height / heightLimit)))
+    }
 }
 
 @MainActor
@@ -106,6 +114,7 @@ final class SfuCallManager: NSObject, ObservableObject {
     private var screenSender: RTCRtpSender?
     private var broadcastServer: BroadcastFrameServer?
     private var publishingScreen = false
+    private var screenCaptureSize: CGSize?
 
     private var mlsSession: MlsSession?
     private var rosterRegistration: ListenerRegistration?
@@ -462,7 +471,9 @@ final class SfuCallManager: NSObject, ObservableObject {
     private func startCameraCapture() {
         guard let capturer = cameraCapturer else { return }
         let position: AVCaptureDevice.Position = usingFrontCamera ? .front : .back
-        guard let device = RTCCameraVideoCapturer.captureDevices().first(where: { $0.position == position })
+        // Prefer the logical camera, which follows the active display on Duo.
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
+            ?? RTCCameraVideoCapturer.captureDevices().first(where: { $0.position == position })
             ?? RTCCameraVideoCapturer.captureDevices().first else { return }
         let format = RTCCameraVideoCapturer.supportedFormats(for: device).min { lhs, rhs in
             func score(_ f: AVCaptureDevice.Format) -> Int {
@@ -493,7 +504,17 @@ final class SfuCallManager: NSObject, ObservableObject {
         let server = BroadcastFrameServer()
         server.setTargetFps(screenShareQuality.maxFps)
         var attached = false // accessed only on BroadcastFrameServer's serial delivery queue
-        server.onFrame = { [weak self] pixelBuffer, rotationDegrees, timestampNs in
+        var lastFrameSize: CGSize?
+        server.onFrame = { [weak self, weak server] pixelBuffer, rotationDegrees, timestampNs in
+            let size = CGSize(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer))
+            if lastFrameSize != size {
+                lastFrameSize = size
+                Task { @MainActor [weak self, weak server] in
+                    guard let self, let server, self.broadcastServer === server else { return }
+                    self.screenCaptureSize = size
+                    if let sender = self.screenSender { self.applyScreenSenderParams(sender) }
+                }
+            }
             let rotation: RTCVideoRotation
             switch rotationDegrees {
             case 90: rotation = ._90
@@ -511,12 +532,18 @@ final class SfuCallManager: NSObject, ObservableObject {
             )
             if !attached {
                 attached = true
-                Task { @MainActor [weak self] in await self?.attachScreenTrackToSfu() }
+                Task { @MainActor [weak self, weak server] in
+                    guard let self, let server, self.broadcastServer === server else { return }
+                    await self.attachScreenTrackToSfu()
+                }
             }
         }
-        server.onClientDisconnected = { [weak self] in
+        server.onClientDisconnected = { [weak self, weak server] in
             attached = false
-            Task { @MainActor [weak self] in self?.detachScreenTrackFromSfu() }
+            Task { @MainActor [weak self, weak server] in
+                guard let self, let server, self.broadcastServer === server else { return }
+                self.detachScreenTrackFromSfu()
+            }
         }
         server.start()
         broadcastServer = server
@@ -590,15 +617,12 @@ final class SfuCallManager: NSObject, ObservableObject {
         screenTrack = nil
         screenSource = nil
         screenCaptureShim = nil
+        screenCaptureSize = nil
     }
 
     private func applyScreenSenderParams(_ sender: RTCRtpSender) {
         let profile = screenShareQuality
-        let native = UIScreen.main.nativeBounds.size
-        let portrait = native.height > native.width
-        let widthLimit = CGFloat(portrait ? profile.maxHeight : profile.maxWidth)
-        let heightLimit = CGFloat(portrait ? profile.maxWidth : profile.maxHeight)
-        let scale = max(1, max(native.width / widthLimit, native.height / heightLimit))
+        let scale = screenCaptureSize.map { profile.resolutionScale(for: $0) } ?? 1
         let params = sender.parameters
         params.encodings.first?.maxBitrateBps = NSNumber(value: profile.maxBitrate)
         params.encodings.first?.maxFramerate = NSNumber(value: profile.maxFps)

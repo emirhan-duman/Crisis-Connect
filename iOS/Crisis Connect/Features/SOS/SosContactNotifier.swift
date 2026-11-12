@@ -52,10 +52,14 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
     private static let maxRecipients = 3
     private static let initialLocationWait: TimeInterval = 12
     private static let loopTick: TimeInterval = 15
+    private static let constrainedLoopTick: TimeInterval = 60
     private static let initialRetryInterval: TimeInterval = 30
+    private static let constrainedInitialRetryInterval: TimeInterval = 120
     private static let locationRefreshInterval: TimeInterval = 60
+    private static let constrainedLocationRefreshInterval: TimeInterval = 600
     private static let liveUpdateMinInterval: TimeInterval = 60
-    private static let liveUpdateMinMoveMeters: CLLocationDistance = 25
+    private static let activeAlertsKey = "sos.contactNotifier.activeAlerts.v1"
+    private static let pendingAlertIdsKey = "sos.contactNotifier.pendingAlertIds.v1"
     private static let pendingAllClearKey = "sos.contactNotifier.pendingAllClearSessions"
 
     private struct AlertedRecipient {
@@ -89,32 +93,60 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
         recipients[index].status = status
     }
 
-    func onSosStarted() {
+    func onSosStarted(resuming: Bool = false) {
         guard !PlatformRuntime.isRunningTests else { return }
+        DisasterTrafficController.shared.setEmergency(true)
         job?.cancel()
         alerted = [:]
         // A fresh SOS supersedes any all-clear still waiting from the previous session.
-        UserDefaults.standard.removeObject(forKey: Self.pendingAllClearKey)
+        if !resuming {
+            UserDefaults.standard.removeObject(forKey: Self.pendingAllClearKey)
+            UserDefaults.standard.removeObject(forKey: Self.activeAlertsKey)
+            UserDefaults.standard.removeObject(forKey: Self.pendingAlertIdsKey)
+        }
 
         job = Task { [weak self] in
             guard let self else { return }
             await self.resetRecipientState()
             let selection = await MainActor.run { Self.selectRecipients() }
-            let targets = selection.contacts
+            guard !Task.isCancelled else { return }
+            let stored = UserDefaults.standard.dictionary(forKey: Self.activeAlertsKey) as? [String: String] ?? [:]
+            let savedIDs = UserDefaults.standard.dictionary(forKey: Self.pendingAlertIdsKey) as? [String: String] ?? [:]
+            var delivery = SosContactDeliveryState(
+                resuming: resuming, selectedIDs: selection.contacts.map { $0.id.uuidString },
+                messageIDs: savedIDs, sentMessageIDs: stored
+            )
+            // Save EVERY selected recipient before waiting for GPS or internet, including those
+            // whose first send has never been attempted. Keep the same IDs for safe relay retries.
+            UserDefaults.standard.set(delivery.messageIDs, forKey: Self.pendingAlertIdsKey)
+            let targetIDs = Set(delivery.messageIDs.keys)
+            let targets = await MainActor.run {
+                ContactStore.shared.contacts.filter {
+                    targetIDs.contains($0.id.uuidString) && $0.supportsInternet
+                }
+            }
+            guard !Task.isCancelled else { return }
+            for contact in targets {
+                if let messageID = delivery.sentMessageIDs[contact.id.uuidString] {
+                    self.alerted[contact.id] = AlertedRecipient(contact: contact, alertMessageId: messageID)
+                }
+            }
             await self.publishSelection(targets, source: selection.source)
+            for contact in targets where !delivery.isPending(contact.id.uuidString) {
+                await self.publishStatus(contact.id, .sent)
+            }
             guard !targets.isEmpty else {
                 NSLog("SosContactNotifier: no internet-capable contacts to notify")
                 return
             }
             var pending: [UUID: ContactRecord] = Dictionary(
-                targets.map { ($0.id, $0) },
+                targets.filter { delivery.isPending($0.id.uuidString) }.map { ($0.id, $0) },
                 uniquingKeysWith: { first, _ in first }
             )
 
             // A fix makes the first alert far more useful; wait briefly, then run with what we have.
             var lastFix = await Self.waitForFix(timeout: Self.initialLocationWait)
             var lastFixFetchedAt = Date()
-            var lastSentFix: SOSSignalLocationPayload.GPSPayload?
             var lastInitialAttemptAt = Date.distantPast
             var lastLiveUpdateAt = Date.distantPast
 
@@ -122,9 +154,15 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
                 let sessionActive = await MainActor.run { SOSBroadcastManager.shared.isSessionActive }
                 guard sessionActive else { break }
                 let now = Date()
+                let constrained = DisasterTrafficController.shared.isSaving
+                let currentLoopTick = constrained ? Self.constrainedLoopTick : Self.loopTick
+                let currentRetryInterval = constrained
+                    ? Self.constrainedInitialRetryInterval : Self.initialRetryInterval
+                let currentLocationRefreshInterval = constrained
+                    ? Self.constrainedLocationRefreshInterval : Self.locationRefreshInterval
 
                 // Refresh the fix on its own cadence so the GPS isn't hammered every tick.
-                if now.timeIntervalSince(lastFixFetchedAt) >= Self.locationRefreshInterval {
+                if now.timeIntervalSince(lastFixFetchedAt) >= currentLocationRefreshInterval {
                     if let fix = await MainActor.run(body: {
                         SOSSignalLocationCoordinator.shared.currentVictimLocationPayload()
                     }) {
@@ -133,18 +171,19 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
                     lastFixFetchedAt = now
                 }
 
-                guard InternetChatTransport.shared.isAvailable() else {
-                    try? await Task.sleep(nanoseconds: UInt64(Self.loopTick * 1_000_000_000))
+                guard InternetChatTransport.shared.isAvailable(allowUltraConstrained: true) else {
+                    try? await Task.sleep(nanoseconds: UInt64(currentLoopTick * 1_000_000_000))
                     continue
                 }
 
                 // Initial alerts — rebuilt each attempt so a late send still ships a fresh fix.
-                if !pending.isEmpty, now.timeIntervalSince(lastInitialAttemptAt) >= Self.initialRetryInterval {
+                if !pending.isEmpty, now.timeIntervalSince(lastInitialAttemptAt) >= currentRetryInterval {
                     lastInitialAttemptAt = now
                     let text = Self.buildSosMessage(location: lastFix)
                     for contact in Array(pending.values) {
+                        guard !Task.isCancelled else { return }
                         await self.publishStatus(contact.id, .sending)
-                        let messageId = UUID().uuidString
+                        guard let messageId = delivery.messageIDs[contact.id.uuidString] else { continue }
                         let sent = await InternetChatTransport.shared.sendText(
                             messageId: messageId,
                             text: text,
@@ -152,12 +191,16 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
                             priority: "high",
                             templateCode: InternetChatTransport.sosAlertTemplate
                         )
+                        guard !Task.isCancelled else { return }
                         if sent {
                             pending.removeValue(forKey: contact.id)
                             self.alerted[contact.id] = AlertedRecipient(
                                 contact: contact, alertMessageId: messageId
                             )
-                            lastSentFix = lastFix
+                            delivery.markAlertSent(contact.id.uuidString, location: lastFix.map {
+                                CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+                            })
+                            UserDefaults.standard.set(delivery.sentMessageIDs, forKey: Self.activeAlertsKey)
                             await MainActor.run {
                                 SOSChatStore.shared.ensureSession(
                                     id: contact.id, displayName: contact.name, role: .unknown
@@ -178,14 +221,16 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
                 }
 
                 // Live location updates — rewrite the delivered bubbles when the victim has moved.
-                if let fix = lastFix,
+                if !InternetChatTransport.shared.isOnUltraConstrainedPath(),
+                   let fix = lastFix,
                    !self.alerted.isEmpty,
-                   now.timeIntervalSince(lastLiveUpdateAt) >= Self.liveUpdateMinInterval,
-                   Self.hasMovedEnough(from: lastSentFix, to: fix) {
+                   now.timeIntervalSince(lastLiveUpdateAt) >= (constrained ? 600 : Self.liveUpdateMinInterval) {
                     lastLiveUpdateAt = now
                     let newText = Self.buildSosMessage(location: fix)
-                    var anySent = false
+                    let coordinates = CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude)
                     for recipient in self.alerted.values {
+                        guard !Task.isCancelled else { return }
+                        guard delivery.needsLocationUpdate(recipient.contact.id.uuidString, location: coordinates) else { continue }
                         guard let payload = try? JSONSerialization.data(withJSONObject: [
                             "ref": recipient.alertMessageId,
                             "text": newText
@@ -197,8 +242,9 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
                             priority: "normal",
                             templateCode: InternetChatTransport.sosLocationUpdateTemplate
                         )
+                        guard !Task.isCancelled else { return }
                         if sent {
-                            anySent = true
+                            delivery.markLocationSent(recipient.contact.id.uuidString, location: coordinates)
                             await MainActor.run {
                                 _ = SOSChatStore.shared.updateLocalMessageText(
                                     sessionId: recipient.contact.id,
@@ -208,10 +254,9 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
                             }
                         }
                     }
-                    if anySent { lastSentFix = fix }
                 }
 
-                try? await Task.sleep(nanoseconds: UInt64(Self.loopTick * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: UInt64(currentLoopTick * 1_000_000_000))
             }
         }
     }
@@ -221,16 +266,20 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
     /// nobody should keep worrying after a false alarm.
     func onSosStopped() {
         guard !PlatformRuntime.isRunningTests else { return }
+        DisasterTrafficController.shared.setEmergency(false)
         job?.cancel()
         job = nil
         Task { [weak self] in await self?.resetRecipientState() }
-        let toNotify = alerted.values.map(\.contact)
+        let stored = UserDefaults.standard.dictionary(forKey: Self.activeAlertsKey) as? [String: String] ?? [:]
+        let toNotify = Set(stored.keys).union(alerted.keys.map(\.uuidString))
         alerted = [:]
+        UserDefaults.standard.removeObject(forKey: Self.pendingAlertIdsKey)
         guard !toNotify.isEmpty else { return }
         UserDefaults.standard.set(
-            toNotify.map { $0.id.uuidString },
+            Array(toNotify),
             forKey: Self.pendingAllClearKey
         )
+        UserDefaults.standard.removeObject(forKey: Self.activeAlertsKey)
         Task { [weak self] in
             _ = await self?.deliverPendingAllClear()
             // An offline stop leaves the all-clear persisted; hand it to the network-gated
@@ -255,7 +304,7 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
         }
         let sessionActive = await MainActor.run { SOSBroadcastManager.shared.isSessionActive }
         if sessionActive { return true }
-        guard InternetChatTransport.shared.isAvailable() else { return false }
+        guard InternetChatTransport.shared.isAvailable(allowUltraConstrained: true) else { return false }
 
         let text = NSLocalizedString("SOS_CONTACT_MESSAGE_ENDED", comment: "")
         for idString in pendingIds {
@@ -358,20 +407,10 @@ final class SosContactNotifier: ObservableObject, @unchecked Sendable {
         return NSLocalizedString("SOS_CONTACT_MESSAGE_NO_LOCATION", comment: "")
     }
 
-    private static func hasMovedEnough(
-        from: SOSSignalLocationPayload.GPSPayload?,
-        to: SOSSignalLocationPayload.GPSPayload
-    ) -> Bool {
-        // The very first update after an alert that shipped WITHOUT a fix should always go out.
-        guard let from else { return true }
-        let distance = CLLocation(latitude: from.latitude, longitude: from.longitude)
-            .distance(from: CLLocation(latitude: to.latitude, longitude: to.longitude))
-        return distance >= liveUpdateMinMoveMeters
-    }
-
     private static func waitForFix(timeout: TimeInterval) async -> SOSSignalLocationPayload.GPSPayload? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
+            guard !Task.isCancelled else { return nil }
             if let fix = await MainActor.run(body: {
                 SOSSignalLocationCoordinator.shared.currentVictimLocationPayload()
             }) {

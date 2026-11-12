@@ -2,6 +2,8 @@
 
 package com.auralis.crisisconnect.screens.Chat
 
+import com.auralis.crisisconnect.core.media.LocalMedia
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -1500,6 +1502,9 @@ private fun BleChatBubble(
                         }
                     }
                     Spacer(modifier = Modifier.height(6.dp))
+                    if (message.outboundRoute == com.auralis.crisisconnect.watch.WatchReplyChat.ROUTE && message.status.name !in listOf("DELIVERED", "READ")) {
+                        Text(stringResource(if (message.status.name == "SENT") R.string.watch_reply_chat_handoff else if (message.lastError == "watch_noPeer") R.string.watch_reply_chat_failed else R.string.watch_reply_chat_uncertain), style = MaterialTheme.typography.labelSmall, color = contentColor.copy(alpha = 0.8f))
+                    }
                     Row(
                         modifier = Modifier.align(if (message.isLocal) Alignment.End else Alignment.Start),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1511,51 +1516,59 @@ private fun BleChatBubble(
                             color = contentColor.copy(alpha = 0.7f),
                             textAlign = if (message.isLocal) TextAlign.End else TextAlign.Start,
                         )
-                        if (message.isLocal) {
+                        if (message.isLocal && (message.outboundRoute != com.auralis.crisisconnect.watch.WatchReplyChat.ROUTE || message.status.name in listOf("DELIVERED", "READ"))) {
                             val readIndicatorColor = MaterialTheme.colorScheme.primary
-                            val (icon, statusLabel, tint) = when (message.status) {
-                                BleMessageStatus.QUEUED -> Triple(
-                                    Icons.Outlined.Schedule,
-                                    R.string.chat_message_status_pending,
-                                    contentColor.copy(alpha = 0.6f)
+                            if (message.status == BleMessageStatus.SENDING) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(13.dp),
+                                    strokeWidth = 1.6.dp,
+                                    color = contentColor.copy(alpha = 0.65f)
                                 )
+                            } else {
+                                val (icon, statusLabel, tint) = when (message.status) {
+                                    BleMessageStatus.QUEUED -> Triple(
+                                        Icons.Outlined.Schedule,
+                                        R.string.chat_message_status_pending,
+                                        contentColor.copy(alpha = 0.6f)
+                                    )
 
-                                BleMessageStatus.SENDING -> Triple(
-                                    Icons.Filled.MoreVert,
-                                    R.string.chat_message_status_sending,
-                                    contentColor.copy(alpha = 0.6f)
-                                )
+                                    BleMessageStatus.SENDING -> Triple(
+                                        Icons.Filled.Done,
+                                        R.string.chat_message_status_sending,
+                                        contentColor.copy(alpha = 0.6f)
+                                    )
 
-                                BleMessageStatus.SENT -> Triple(
-                                    Icons.Filled.Done,
-                                    R.string.chat_message_status_sent,
-                                    contentColor.copy(alpha = 0.6f)
-                                )
+                                    BleMessageStatus.SENT -> Triple(
+                                        Icons.Filled.Done,
+                                        R.string.chat_message_status_sent,
+                                        contentColor.copy(alpha = 0.6f)
+                                    )
 
-                                BleMessageStatus.DELIVERED -> Triple(
-                                    Icons.Filled.DoneAll,
-                                    R.string.chat_message_status_delivered,
-                                    contentColor.copy(alpha = 0.6f)
-                                )
+                                    BleMessageStatus.DELIVERED -> Triple(
+                                        Icons.Filled.DoneAll,
+                                        R.string.chat_message_status_delivered,
+                                        contentColor.copy(alpha = 0.6f)
+                                    )
 
-                                BleMessageStatus.READ -> Triple(
-                                    Icons.Filled.DoneAll,
-                                    R.string.chat_message_status_read,
-                                    readIndicatorColor
-                                )
+                                    BleMessageStatus.READ -> Triple(
+                                        Icons.Filled.DoneAll,
+                                        R.string.chat_message_status_read,
+                                        readIndicatorColor
+                                    )
 
-                                BleMessageStatus.FAILED -> Triple(
-                                    Icons.Filled.Close,
-                                    R.string.chat_message_status_failed,
-                                    MaterialTheme.colorScheme.error
+                                    BleMessageStatus.FAILED -> Triple(
+                                        Icons.Filled.Close,
+                                        R.string.chat_message_status_failed,
+                                        MaterialTheme.colorScheme.error
+                                    )
+                                }
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = stringResource(id = statusLabel),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = tint
                                 )
                             }
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = stringResource(id = statusLabel),
-                                modifier = Modifier.size(16.dp),
-                                tint = tint
-                            )
                         }
                     }
                 }
@@ -1993,7 +2006,7 @@ private fun BleAudioMessageContent(
                     val retriever = MediaMetadataRetriever()
                     try {
                         if (message.audioFilePath != null) {
-                            retriever.setDataSource(message.audioFilePath)
+                            retriever.setDataSource(LocalMedia.dataSource(File(message.audioFilePath)))
                         } else {
                             retriever.setDataSource(context, audioUri)
                         }

@@ -15,7 +15,7 @@ struct RoleProofVerifier {
 
     init(
         maxClockSkewMillis: Int64 = 60_000,
-        maxExpiredCertificateGraceMillis: Int64 = 7 * 24 * 60 * 60 * 1000,
+        maxExpiredCertificateGraceMillis: Int64 = 0,
         timeProvider: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
     ) {
         self.maxClockSkewMillis = maxClockSkewMillis
@@ -73,8 +73,8 @@ struct RoleProofVerifier {
         }
         guard roleCertificate.isUsable(
             at: now,
-            allowOfflineGrace: true,
-            maxClockSkewMillis: maxClockSkewMillis,
+            allowOfflineGrace: false,
+            maxClockSkewMillis: 0,
             offlineGraceMillis: maxExpiredCertificateGraceMillis
         ) else {
             throw RoleProofVerificationError.expiredCertificate

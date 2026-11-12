@@ -1339,7 +1339,7 @@ private fun MeshChatImageContent(message: MeshChatMessage) {
                 ?: message.imageFileName
                     ?.let { imageMessageFile(context, it) }
                     ?.takeIf { it.exists() }
-            file?.let { decodeSampledImage(it.absolutePath, reqWidth = 660, reqHeight = 780) }
+            file?.let { com.auralis.crisisconnect.core.media.LocalMedia.decodeSampledImage(it, reqWidth = 660, reqHeight = 780) }
                 ?.asImageBitmap()
         }
     }
@@ -1360,23 +1360,6 @@ private fun MeshChatImageContent(message: MeshChatMessage) {
             style = MaterialTheme.typography.headlineMedium
         )
     }
-}
-
-/** Decodes [path] with an inSampleSize that targets [reqWidth]x[reqHeight] — bubble-size, not full-size. */
-private fun decodeSampledImage(path: String, reqWidth: Int, reqHeight: Int): android.graphics.Bitmap? {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeFile(path, bounds)
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-    var sampleSize = 1
-    while (bounds.outWidth / (sampleSize * 2) >= reqWidth &&
-        bounds.outHeight / (sampleSize * 2) >= reqHeight
-    ) {
-        sampleSize *= 2
-    }
-    return BitmapFactory.decodeFile(
-        path,
-        BitmapFactory.Options().apply { inSampleSize = sampleSize }
-    )
 }
 
 @Composable

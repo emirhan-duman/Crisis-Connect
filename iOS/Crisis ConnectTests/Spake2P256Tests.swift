@@ -33,9 +33,9 @@ final class Spake2P256Tests: XCTestCase {
         XCTAssertEqual(hex(Spake2P256.shareB(w: w, y: y)), pB)
     }
 
-    func testSharedPointMatchesFromBothSides() {
-        XCTAssertEqual(hex(Spake2P256.keyA(w: w, x: x, pB: bytes(pB))), kHex)
-        XCTAssertEqual(hex(Spake2P256.keyB(w: w, y: y, pA: bytes(pA))), kHex)
+    func testSharedPointMatchesFromBothSides() throws {
+        XCTAssertEqual(hex(try Spake2P256.keyA(w: w, x: x, pB: bytes(pB))), kHex)
+        XCTAssertEqual(hex(try Spake2P256.keyB(w: w, y: y, pA: bytes(pA))), kHex)
     }
 
     func testTranscriptAndKeysMatchRfcVector() {
@@ -49,14 +49,14 @@ final class Spake2P256Tests: XCTestCase {
         XCTAssertEqual(hex(Spake2P256.confirm(confirmKey: keys.confirmKeyB, tt: tt)), "d3e2e547f1ae04f2dbdbf0fc4b79f8ecff2dff314b5d32fe9fcef2fb26dc459b")
     }
 
-    func testEndToEndBothSidesAgree() {
+    func testEndToEndBothSidesAgree() throws {
         let secret = Spake2P256.randomScalar()
         let xa = Spake2P256.randomScalar(), yb = Spake2P256.randomScalar()
         let sA = Spake2P256.shareA(w: secret, x: xa)
         let sB = Spake2P256.shareB(w: secret, y: yb)
         XCTAssertEqual(
-            hex(Spake2P256.keyA(w: secret, x: xa, pB: sB)),
-            hex(Spake2P256.keyB(w: secret, y: yb, pA: sA))
+            hex(try Spake2P256.keyA(w: secret, x: xa, pB: sB)),
+            hex(try Spake2P256.keyB(w: secret, y: yb, pA: sA))
         )
     }
 }

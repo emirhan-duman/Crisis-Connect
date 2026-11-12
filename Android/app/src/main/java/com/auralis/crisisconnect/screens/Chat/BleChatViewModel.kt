@@ -1,5 +1,7 @@
 package com.auralis.crisisconnect.screens.Chat
 
+import com.auralis.crisisconnect.core.media.LocalMedia
+
 import android.Manifest
 import android.app.Application
 import android.content.Context
@@ -854,7 +856,7 @@ class BleChatViewModel(application: Application) : AndroidViewModel(application)
                 runCatching {
                     val destination = voiceMessageFile(getApplication<Application>(), fileName)
                     destination.parentFile?.mkdirs()
-                    file.copyTo(destination, overwrite = true)
+                    LocalMedia.copy(file, destination)
                     saveLocalAudioMessage(
                         getApplication<Application>(),
                         code,

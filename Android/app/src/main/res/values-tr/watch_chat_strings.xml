@@ -1,0 +1,5 @@
+<resources>
+    <string name="watch_reply_chat_handoff">Saat · Bağlantıya verildi; teslim doğrulanmadı</string>
+    <string name="watch_reply_chat_uncertain">Saat · Doğrulanmadı; otomatik tekrar gönderilmez</string>
+    <string name="watch_reply_chat_failed">Saat · Gönderilemedi</string>
+</resources>

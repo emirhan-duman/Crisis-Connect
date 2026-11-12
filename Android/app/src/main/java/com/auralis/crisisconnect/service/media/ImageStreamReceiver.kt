@@ -1,5 +1,7 @@
 package com.auralis.crisisconnect.service.media
 
+import com.auralis.crisisconnect.core.media.LocalMedia
+
 import android.content.Context
 import android.util.Log
 import com.auralis.crisisconnect.core.crypto.AesGcm
@@ -246,10 +248,7 @@ class ImageStreamReceiver(
         val targetDir = imageMessageDirectory(context)
         val targetFile = File(targetDir, fileName)
         try {
-            FileOutputStream(targetFile).use { output ->
-                output.write(resolvedBytes)
-                output.flush()
-            }
+            LocalMedia.write(targetFile, resolvedBytes)
         } catch (ioException: IOException) {
             Log.e(TAG, "Failed to persist final image", ioException)
             sendVerify(false)

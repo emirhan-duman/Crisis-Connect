@@ -151,7 +151,7 @@ internal class PttController(
                     return
                 }
                 PttFloorState.IDLE -> {
-                    val id = Random.nextLong()
+                    val id = Random.nextLong(0, 0x1_0000_0000L)
                     localTalkTag = Random.nextInt(0x10000).toString(16).padStart(4, '0')
                     if (!engine.startCapture { opus -> broadcastAudioFrame(opus) }) {
                         MeshDiagnostics.log(profileId, "ptt capture failed (mic permission/route)")
@@ -535,7 +535,7 @@ internal class PttController(
         private const val HEARTBEAT_MS = 3_000L
         private const val PRESENCE_TIMEOUT_MS = 10_000L
         // Opus frames bundled into one BLE packet (halves the on-air packet rate).
-        private const val FRAMES_PER_PACKET = 2
+        private const val FRAMES_PER_PACKET = 1
         // Flush a partial bundle if no new frame arrives within this window (end of a transmission).
         private const val BUNDLE_FLUSH_TIMEOUT_MS = 30L
     }

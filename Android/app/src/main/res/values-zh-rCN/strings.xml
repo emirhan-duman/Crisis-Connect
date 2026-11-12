@@ -205,7 +205,7 @@
     <string name="advanced_settings_title">高级设置</string>
     <string name="advanced_settings_screen_description">针对诊断和消息传递微调应用行为。</string>
     <string name="advanced_setting_public_mesh_title">公共网状模式</string>
-    <string name="advanced_setting_public_mesh_description">使此节点在开放网状环境中可被发现，以进行更广泛的协调测试。</string>
+    <string name="advanced_setting_public_mesh_description">公开聊天：附近任何人都可以阅读消息并参与。请勿分享敏感信息。</string>
     <string name="advanced_setting_gatt_mesh_notifications_title">开放网状节点通知</string>
     <string name="advanced_setting_gatt_mesh_notifications_description">仅对来自公共 GATT 网状常规聊天节点的新消息发出通知。</string>
     <string name="advanced_setting_high_range_title">高范围模式</string>
@@ -503,7 +503,6 @@ Android：%3$s</string>
     <string name="gatt_mesh_action_message_info">消息信息</string>
     <string name="gatt_mesh_message_info_sender">发送者</string>
     <string name="gatt_mesh_message_info_origin">消息来源</string>
-    <string name="gatt_mesh_message_info_direct_peer">直接对等方</string>
     <string name="gatt_mesh_message_info_time">时间</string>
     <string name="gatt_mesh_message_info_you">您</string>
     <string name="gatt_mesh_message_info_sent_to">已发送至</string>
@@ -631,7 +630,7 @@ Android：%3$s</string>
     <string name="add_from_contacts_empty">您的联系人中还没有人使用 Crisis Connect。</string>
     <string name="add_from_contacts_permission_needed">需要联系人权限才能找到您认识的人。</string>
     <string name="add_from_contacts_sign_in_required">登录以在 Crisis Connect 上查找联系人。</string>
-    <string name="add_from_contacts_privacy_note">您的号码通过哈希匹配，绝不存储在服务器上。只有选择可被发现的人才会出现。</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect 会读取通讯录中的姓名和电话号码，以查找使用此应用的人。电话号码会发送至由 Google Firebase 在美国托管的 Crisis Connect 服务器进行匹配。联系人姓名保留在设备上。查询的号码仅作处理，不会永久存储；匹配结果保留在设备上。此页面打开期间，刷新或返回页面可能会再次发送号码。你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。</string>
     <string name="add_from_contacts_found_count">%1$d 人在 Crisis Connect 上</string>
     <string name="add_from_contacts_empty_hint">当他们在应用中验证电话号码后，就会显示在这里。</string>
     <string name="add_from_contacts_search_hint">搜索姓名或号码</string>
@@ -660,7 +659,6 @@ Android：%3$s</string>
     <string name="nearby_match_notification_text">点击以通过蓝牙连接</string>
     <string name="nearby_pairing_channel_name">附近配对请求</string>
     <string name="nearby_pairing_request_title">%1$s 想在附近连接</string>
-    <string name="nearby_pairing_request_text">接受以通过蓝牙聊天。</string>
     <string name="nearby_pairing_accept">接受</string>
     <string name="nearby_pairing_decline">拒绝</string>
     <string name="manual_connect_button">与设备配对</string>
@@ -1227,6 +1225,7 @@ Android：%3$s</string>
     <string name="chat_status_connected">已连接</string>
     <string name="chat_status_connected_bluetooth">已通过蓝牙连接</string>
     <string name="chat_status_connected_internet">已通过互联网连接</string>
+    <string name="chat_status_connected_satellite">已通过卫星连接</string>
     <string name="internet_message_channel_name">互联网消息</string>
     <string name="internet_message_notification_title">新消息</string>
     <string name="channel_message_notification_body">新消息</string>
@@ -1355,7 +1354,6 @@ Android：%3$s</string>
     <string name="notification_photo_message_body">照片消息</string>
     <string name="chat_encryption_setup_title">保护此聊天</string>
     <string name="chat_encryption_setup_instruction">扫描对方设备新建聊天屏幕上显示的二维码，以导入共享的加密密钥。</string>
-    <string name="chat_encryption_setup_session_mismatch">此二维码属于不同的聊天会话。</string>
     <string name="chat_encryption_setup_invalid_qr">不支持的二维码格式。</string>
     <string name="chat_encryption_setup_handshake_in_progress">正在验证加密密钥…</string>
     <string name="chat_encryption_setup_handshake_failed">无法验证加密密钥。请重试。</string>
@@ -1789,4 +1787,20 @@ Android：%3$s</string>
     <string name="profile_delete_account_error_verification">无法在此设备上验证删除。请检查网络连接后重试。</string>
     <string name="profile_delete_account_error_signed_out">需要登录后才能删除账号。</string>
     <string name="profile_delete_account_reauth_needed">为保障安全，删除前需要确认是你本人。请退出登录后重新登录，然后再试一次。</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">在线查找联系人</string>
+    <string name="contacts_disclosure_body">Crisis Connect 会读取通讯录中的姓名和电话号码，以查找使用此应用的人。电话号码会发送至由 Google Firebase 在美国托管的 Crisis Connect 服务器进行匹配。联系人姓名保留在设备上。查询的号码仅作处理，不会永久存储；匹配结果保留在设备上。此页面打开期间，刷新或返回页面可能会再次发送号码。你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。</string>
+    <string name="contacts_local_disclosure_title">查找附近的联系人</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect 仅读取你通过系统联系人选择器分享的姓名和电话号码，以查找附近的人。所选号码用于通过蓝牙验证身份。此功能不会将你的通讯录发送至服务器。你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。</string>
+    <string name="contacts_disclosure_accept">我同意</string>
+    <string name="contacts_disclosure_decline">暂不</string>
+    <string name="contacts_consent_settings_title">通讯录访问</string>
+    <string name="contacts_consent_settings_hint">你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。</string>
+    <string name="contacts_consent_revoke_online">撤回在线匹配同意</string>
+    <string name="contacts_consent_revoke_nearby">撤回附近联系人访问同意</string>
+    <string name="nearby_choose_contact">选择联系人</string>
+    <string name="nearby_contact_selection_failed">无法读取所选电话号码。请选择其他联系人。</string>
+    <string name="chat_status_internet_available">互联网可用</string>
+    <string name="chat_status_satellite_available">卫星连接可用</string>
 </resources>

@@ -503,7 +503,7 @@
 "ADVANCED_SETTINGS_DESCRIPTION" = "Tinh chỉnh hành vi của ứng dụng cho chẩn đoán và gửi tin nhắn.";
 "ADVANCED_SETTINGS_LINK_SUBTITLE" = "Hành vi bộ thu phát, chẩn đoán và điều khiển gửi.";
 "ADVANCED_SETTING_PUBLIC_MESH_TITLE" = "Trò chuyện chung";
-"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Hiển thị điện thoại này trong trò chuyện chung được chia sẻ gần đây.";
+"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Trò chuyện công khai: bất kỳ ai ở gần đều có thể đọc tin nhắn và tham gia. Không chia sẻ thông tin nhạy cảm.";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_TITLE" = "Thông báo trò chuyện chung";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_DESCRIPTION" = "Chỉ cảnh báo tin nhắn mới từ trò chuyện chung được chia sẻ.";
 "ADVANCED_SETTING_HIGH_RANGE_TITLE" = "Chế độ tầm xa cao";
@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Mã nguồn mở — bất kỳ ai cũng có thể kiểm tra mã";
 "ONBOARDING_TRUST_NO_ADS" = "Không quảng cáo — dữ liệu cá nhân của bạn không bao giờ bị bán";
 "ONBOARDING_TRUST_EMERGENCY" = "Chỉ được xây dựng cho liên lạc khẩn cấp";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Báo cáo sự cố luôn tắt cho đến khi bạn bật dữ liệu chẩn đoán.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Chỉ thu thập báo cáo sự cố ẩn danh để giữ ứng dụng ổn định.";
 "ONBOARDING_FINISH" = "Khởi động Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Đám mây";
@@ -1452,3 +1452,44 @@
 "guide_redesign_subtitle_now" = "Chọn tình huống và xem hành động đúng đầu tiên trong vài giây.";
 "guide_redesign_subtitle_prepare" = "Hoàn thành kế hoạch và danh sách kiểm tra ngoại tuyến.";
 "guide_redesign_unknown_region" = "Không rõ khu vực";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Tìm liên hệ trực tuyến";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect đọc tên và số điện thoại trong danh bạ để tìm người dùng ứng dụng. Số điện thoại được gửi để đối chiếu đến máy chủ Crisis Connect do Google Firebase lưu trữ tại Hoa Kỳ. Tên vẫn ở trên thiết bị. Các số được tra cứu được xử lý mà không lưu trữ vĩnh viễn; kết quả đối chiếu nằm trên thiết bị. Làm mới hoặc quay lại màn hình này khi màn hình còn mở có thể gửi lại các số. Lựa chọn được ghi nhớ cho tài khoản này trên thiết bị này. Bạn có thể rút lại sự đồng ý trong Cài đặt, mục Quyền truy cập danh bạ.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Tìm liên hệ ở gần";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect đọc tên và số điện thoại trên thiết bị để bạn chọn người cần tìm ở gần. Số được chọn dùng để xác minh danh tính qua Bluetooth. Tính năng này không gửi danh bạ đến máy chủ. Lựa chọn được ghi nhớ cho tài khoản này trên thiết bị này. Bạn có thể rút lại sự đồng ý trong Cài đặt, mục Quyền truy cập danh bạ.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "Tôi đồng ý";
+"CONTACTS_DISCLOSURE_DECLINE" = "Để sau";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Quyền truy cập danh bạ";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Lựa chọn được ghi nhớ cho tài khoản này trên thiết bị này. Bạn có thể rút lại sự đồng ý trong Cài đặt, mục Quyền truy cập danh bạ.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "Rút lại đồng ý đối chiếu trực tuyến";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Rút lại đồng ý truy cập liên hệ ở gần";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "Có kết nối Internet";
+
+// Two-step verification
+"PROFILE_MFA_TITLE" = "Xác minh hai bước";
+"PROFILE_MFA_TOTP_MESSAGE" = "Nhập mã gồm 6 chữ số từ ứng dụng xác thực của bạn.";
+"PROFILE_MFA_SMS_MESSAGE" = "Gửi mã xác minh đến điện thoại đã đăng ký, sau đó nhập mã trong tin nhắn SMS.";
+"PROFILE_MFA_UNSUPPORTED" = "Phương thức xác minh này không được hỗ trợ. Hãy dùng phương thức đã đăng ký khác hoặc hủy và đăng nhập trên web.";
+"PROFILE_MFA_AUTHENTICATOR" = "Ứng dụng xác thực";
+"PROFILE_MFA_SMS" = "SMS";
+"PROFILE_MFA_CODE" = "Mã xác minh";
+"PROFILE_MFA_SEND" = "Gửi mã SMS";
+"PROFILE_MFA_RESEND" = "Gửi lại mã SMS";
+"PROFILE_MFA_VERIFY" = "Xác minh";
+"PROFILE_MFA_METHOD_TITLE" = "Phương thức xác minh";
+"PROFILE_MFA_SMS_SENT_MESSAGE" = "Nhập mã gồm 6 chữ số được gửi đến điện thoại đã đăng ký của bạn.";

@@ -99,6 +99,13 @@ struct ChatInfoView: View {
             VStack(spacing: 20) {
                 profileCard
 
+                if liveContact?.offlineRepairRequired == true {
+                    Text("OFFLINE_PAIRING_UPGRADE_REQUIRED")
+                        .font(.callout)
+                        .foregroundStyle(Color.appTextSecondary)
+                        .padding()
+                }
+
                 if let sessionCode = liveContact?.sessionCode.trimmingCharacters(in: .whitespacesAndNewlines),
                    !sessionCode.isEmpty {
                     sessionCard(sessionCode: sessionCode)
@@ -207,6 +214,10 @@ private struct SafetyNumberCardView: View {
     @State private var forwardSecret = false
 
     private var keyChanged: Bool { contact.peerKeyChanged == true }
+    private var rePairRequired: Bool {
+        guard keyChanged, let peer = contact.peerUid else { return false }
+        return SignalSessionGate.shared.identityChangePending(peer)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -219,7 +230,7 @@ private struct SafetyNumberCardView: View {
             }
 
             if keyChanged {
-                Text("SAFETY_NUMBER_CHANGED_DESCRIPTION")
+                Text(rePairRequired ? "SAFETY_NUMBER_REPAIR_REQUIRED" : "SAFETY_NUMBER_CHANGED_DESCRIPTION")
                     .font(.subheadline)
             }
 
@@ -248,7 +259,7 @@ private struct SafetyNumberCardView: View {
                 .font(.footnote)
                 .foregroundStyle(Color.appTextSecondary)
 
-            if keyChanged {
+            if keyChanged && !rePairRequired {
                 Button {
                     ContactStore.shared.acknowledgePeerKeyChange(contactId: contact.id)
                 } label: {

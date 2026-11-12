@@ -47,8 +47,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.with
 import androidx.compose.foundation.Canvas
@@ -119,6 +121,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -336,6 +339,8 @@ fun ChatScreen(
         }
     }
     val timelineListOffset = 1
+    val offlineRepairRequired by viewModel.offlineRepairRequired.collectAsStateWithLifecycle()
+    val peerSecurityUpgradeRequired by viewModel.peerSecurityUpgradeRequired.collectAsStateWithLifecycle()
     val contactName by viewModel.contactName.collectAsStateWithLifecycle()
     val displayName = remember(contactName, preferredDisplayName, sessionCode) {
         resolveChatDisplayName(
@@ -387,8 +392,19 @@ fun ChatScreen(
     }
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val timelineItems by viewModel.timelineItems.collectAsStateWithLifecycle()
+    val pinnedMessageUuid by viewModel.pinnedMessageUuid.collectAsStateWithLifecycle()
+    val safetyNumber by viewModel.safetyNumber.collectAsStateWithLifecycle()
+    val isSafetyNumberVerified by viewModel.isSafetyNumberVerified.collectAsStateWithLifecycle()
+    val peerKeyChanged by viewModel.peerKeyChanged.collectAsStateWithLifecycle()
+    val safetyNumberForwardSecret by viewModel.safetyNumberForwardSecret.collectAsStateWithLifecycle()
+    var showSecurityCodeSheet by rememberSaveable { mutableStateOf(false) }
+    val pinnedMessage = remember(messages, pinnedMessageUuid) {
+        if (pinnedMessageUuid != null) messages.firstOrNull { it.messageUuid == pinnedMessageUuid } else null
+    }
     val isPeerTyping by viewModel.isPeerTyping.collectAsStateWithLifecycle()
     val peerPresence by viewModel.peerPresence.collectAsStateWithLifecycle()
+    val trafficPresence by com.auralis.crisisconnect.connectivity.DisasterTrafficController.presence.collectAsStateWithLifecycle()
+    val trafficSaving by com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.collectAsStateWithLifecycle()
     val hasSharedLocationMessages = remember(timelineItems) {
         timelineItems.any { item ->
             val message = (item as? ChatTimelineItem.Msg)?.message ?: return@any false
@@ -407,15 +423,15 @@ fun ChatScreen(
             }
             .firstOrNull()
     }
-    val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
-    // Broad-scope consumers only need the Connected/not-Connected boolean; derivedStateOf keeps
-    // Connecting↔Disconnected reconnect churn from invalidating them.
-    val isBluetoothConnected by remember { derivedStateOf { connectionState == ChatConnectionState.Connected } }
-    val transport by viewModel.transport.collectAsStateWithLifecycle()
+    val connectionStatus by viewModel.connectionStatus.collectAsStateWithLifecycle()
+    val connectionState = connectionStatus.state
+    val transport = connectionStatus.transport
+    val isBluetoothConnected = connectionStatus.bluetoothReady
+    val canTrackLocation = connectionStatus.allowsLocationUpdates(trafficSaving)
     val contactPhotoUrl by viewModel.contactPhotoUrl.collectAsStateWithLifecycle()
     val ownLocationSnapshot = rememberOwnLocationSnapshot(
         enabled = hasSharedLocationMessages && hasLocationPermission(context),
-        liveTracking = isBluetoothConnected
+        liveTracking = canTrackLocation
     )
     val signalInfo by viewModel.signalInfo.collectAsStateWithLifecycle()
     // Stable deferred-read provider: bubbles take a lambda instead of the value, so an RSSI hit no
@@ -447,6 +463,9 @@ fun ChatScreen(
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var replyTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var infoTargetMessageUuid by remember { mutableStateOf<String?>(null) }
+    var forwardTargetMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    val allContacts by remember(context) { com.auralis.crisisconnect.data.observeContacts(context) }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
     val scope = rememberCoroutineScope()
     val availableAttachmentActions = remember(canSendAttachments, canShareLocation) {
         when {
@@ -461,7 +480,7 @@ fun ChatScreen(
             else -> emptyList()
         }
     }
-    val canOpenAttachmentMenu = availableAttachmentActions.isNotEmpty()
+    val canOpenAttachmentMenu = availableAttachmentActions.isNotEmpty() && (!trafficSaving || isBluetoothConnected)
     var pendingUnreadMessageIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val messageLookup = remember(messages) { messages.associateBy(ChatMessage::messageUuid) }
     val infoTargetMessage = remember(messages, infoTargetMessageUuid) {
@@ -825,7 +844,7 @@ fun ChatScreen(
                     val locationEstimate = fetchCurrentLocationEstimateForChatSend(
                         context = context,
                         bleRssi = signalInfo?.rssi,
-                        preferFreshFix = connectionState == ChatConnectionState.Connected
+                        preferFreshFix = canTrackLocation
                     )
                     if (locationEstimate == null) {
                         isSharingLocation = false
@@ -1026,7 +1045,7 @@ fun ChatScreen(
                                     displayName = displayName,
                                     stableKey = sessionCode,
                                     bitmap = remoteProfileBitmap,
-                                    photoUrl = contactPhotoUrl,
+                                    photoUrl = if (trafficSaving) null else contactPhotoUrl,
                                     modifier = Modifier.size(40.dp),
                                     textStyle = MaterialTheme.typography.titleMedium
                                 )
@@ -1047,7 +1066,7 @@ fun ChatScreen(
                                     var badgeCompact by remember { mutableStateOf(false) }
                                     LaunchedEffect(connectionState, transport) {
                                         badgeCompact = false
-                                        if (connectionState == ChatConnectionState.Connected) {
+                                        if (connectionState == ChatConnectionState.Connected || connectionState == ChatConnectionState.Available) {
                                             delay(2_500)
                                             badgeCompact = true
                                         }
@@ -1061,36 +1080,44 @@ fun ChatScreen(
                                             transport,
                                             compact = badgeCompact
                                         )
-                                        when {
-                                            isPeerTyping -> Text(
-                                                text = stringResource(R.string.chat_typing),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                maxLines = 1
-                                            )
-                                            peerPresence.online -> Text(
-                                                text = stringResource(R.string.chat_presence_online),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                maxLines = 1
-                                            )
-                                            peerPresence.lastSeenMillis != null -> Text(
-                                                text = stringResource(
-                                                    R.string.chat_presence_last_seen,
-                                                    DateUtils.getRelativeTimeSpanString(
-                                                        peerPresence.lastSeenMillis ?: 0L
-                                                    ).toString()
-                                                ),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                // The TIME is the payload and it sits at the END of
-                                                // "son görülme <time>" — when space is tight (badge
-                                                // expanded), drop the label from the START and keep
-                                                // the time visible (WhatsApp behavior).
-                                                overflow = TextOverflow.StartEllipsis,
-                                                modifier = Modifier.weight(1f, fill = false)
-                                            )
+                                        if (badgeCompact || isPeerTyping) {
+                                            when {
+                                                trafficPresence != com.auralis.crisisconnect.connectivity.TrafficPresence.NORMAL -> Text(
+                                                    text = stringResource(when (trafficPresence) {
+                                                        com.auralis.crisisconnect.connectivity.TrafficPresence.SOS -> R.string.traffic_local_sos
+                                                        com.auralis.crisisconnect.connectivity.TrafficPresence.OFFLINE -> R.string.traffic_local_offline
+                                                        else -> R.string.traffic_local_limited
+                                                    }),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    maxLines = 1
+                                                )
+                                                isPeerTyping -> Text(
+                                                    text = stringResource(R.string.chat_typing),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    maxLines = 1
+                                                )
+                                                peerPresence.online -> Text(
+                                                    text = stringResource(R.string.chat_presence_online),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    maxLines = 1
+                                                )
+                                                peerPresence.lastSeenMillis != null -> Text(
+                                                    text = stringResource(
+                                                        R.string.chat_presence_last_seen,
+                                                        DateUtils.getRelativeTimeSpanString(
+                                                            peerPresence.lastSeenMillis ?: 0L
+                                                        ).toString()
+                                                    ),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.StartEllipsis,
+                                                    modifier = Modifier.weight(1f, fill = false)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -1122,7 +1149,7 @@ fun ChatScreen(
                                             viewModel.startCall()
                                         }
                                     },
-                                    enabled = canPlaceCall
+                                    enabled = canPlaceCall && (!trafficSaving || isBluetoothConnected)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.Phone,
@@ -1156,6 +1183,19 @@ fun ChatScreen(
                                             showSearchDialog = true
                                         }
                                     )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.chat_verify_security_code)) },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Filled.Shield,
+                                                contentDescription = null
+                                            )
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            showSecurityCodeSheet = true
+                                        }
+                                    )
                                 }
                             }
                         },
@@ -1165,6 +1205,14 @@ fun ChatScreen(
                             scrolledContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
                         )
                     )
+                    if (trafficSaving) {
+                        Text(
+                            stringResource(R.string.chat_disaster_mode_detail),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
                     AnimatedVisibility(
                         visible = minimizedCall != null,
                         enter = slideInVertically(
@@ -1252,7 +1300,7 @@ fun ChatScreen(
                         hasRecordedVoice = hasRecordedVoice,
                         isSendingVoice = isSendingVoice,
                         recordingDurationMillis = { recordingDuration },
-                        canRecordVoice = canSendVoiceMessages,
+                        canRecordVoice = canSendVoiceMessages && (!trafficSaving || isBluetoothConnected),
                         onAttachmentClick = {
                             if (!canOpenAttachmentMenu) {
                                 return@MessageComposer
@@ -1303,19 +1351,50 @@ fun ChatScreen(
                     modifier = Modifier.matchParentSize()
                 )
 
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    state = listState
-                ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    AnimatedVisibility(
+                        visible = pinnedMessage != null,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut()
+                    ) {
+                        pinnedMessage?.let { pinMsg ->
+                            PinnedMessageBanner(
+                                message = pinMsg,
+                                conversationDisplayName = displayName,
+                                onClick = {
+                                    navigateToMessage(pinMsg.messageUuid)
+                                },
+                                onUnpin = {
+                                    viewModel.unpinMessage()
+                                    Toast.makeText(
+                                        context,
+                                        context.getString(R.string.chat_message_unpinned),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            )
+                        }
+                    }
+
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(horizontal = 16.dp),
+                        contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        state = listState
+                    ) {
                     item(
                         key = "chat_e2ee_notice",
                         contentType = "system_notice"
                     ) {
                         ChatEncryptionNoticeCard()
+                        if (offlineRepairRequired || peerSecurityUpgradeRequired) {
+                            Text(text = stringResource(if (peerSecurityUpgradeRequired) R.string.peer_security_upgrade_required else R.string.offline_pairing_upgrade_required),
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 8.dp))
+                        }
                     }
                     itemsIndexed(
                         timelineItems,
@@ -1383,7 +1462,30 @@ fun ChatScreen(
                                     remoteProfileBitmap = remoteProfileBitmap,
                                     currentOwnLocation = ownLocationSnapshot,
                                     latestRemoteSharedLocation = latestRemoteSharedLocation,
-                                    highlight = highlightedMessageIds[message.messageUuid] == true
+                                    highlight = highlightedMessageIds[message.messageUuid] == true,
+                                    isPinned = message.messageUuid == pinnedMessageUuid,
+                                    onPinMessage = { uuid ->
+                                        viewModel.pinMessage(uuid)
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.chat_message_pinned),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    onUnpinMessage = {
+                                        viewModel.unpinMessage()
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.chat_message_unpinned),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    onVerifySecurityCode = {
+                                        showSecurityCodeSheet = true
+                                    },
+                                    onForwardMessage = { msg ->
+                                        forwardTargetMessage = msg
+                                    }
                                 )
                             }
 
@@ -1395,11 +1497,12 @@ fun ChatScreen(
                             }
                         }
                     }
-                    if (isPeerTyping) {
+                    if (isPeerTyping && !trafficSaving) {
                         item(key = "typing_indicator", contentType = "typing_indicator") {
                             TypingIndicatorBubble()
                         }
                     }
+                }
                 }
 
                 AnimatedVisibility(
@@ -1490,6 +1593,44 @@ fun ChatScreen(
                 onDismiss = { infoTargetMessageUuid = null }
             )
         }
+    }
+
+    if (showSecurityCodeSheet) {
+        VerifySecurityCodeSheet(
+            contactName = displayName,
+            safetyNumber = safetyNumber,
+            isVerified = isSafetyNumberVerified,
+            keyChanged = peerKeyChanged,
+            forwardSecret = safetyNumberForwardSecret,
+            onVerify = {
+                viewModel.verifySafetyNumber()
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.chat_security_code_marked_verified),
+                    Toast.LENGTH_SHORT
+                ).show()
+            },
+            onDismiss = { showSecurityCodeSheet = false }
+        )
+    }
+
+    forwardTargetMessage?.let { msg ->
+        ForwardMessageSheet(
+            message = msg,
+            contacts = allContacts,
+            onForward = { selectedList ->
+                forwardTargetMessage = null
+                viewModel.forwardMessage(msg, selectedList) { sentCount ->
+                    val toastMsg = if (sentCount == 1) {
+                        context.getString(R.string.chat_forward_success_single)
+                    } else {
+                        context.getString(R.string.chat_forward_success_multiple, sentCount)
+                    }
+                    Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
+                }
+            },
+            onDismiss = { forwardTargetMessage = null }
+        )
     }
 
     activeCall?.takeIf { it.state != CallState.Ended && isCallScreenVisible }?.let { callState ->

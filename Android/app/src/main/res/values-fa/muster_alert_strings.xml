@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">در تنظیمات Android، صدای اعلان، لرزش و قابلیت مشاهده قفل صفحه را انتخاب کنید. هشدارهای تمام صفحه به اجازه شما نیاز دارند و ممکن است توسط «مزاحم نشوید»، تنظیمات باتری یا برنامه توقف اجباری محدود شوند.</string>
+    <string name="muster_alert_settings_title">صدا، لرزش و صفحه قفل</string>
+    <string name="muster_alerts_blocked">اعلان‌های برنامه در تنظیمات Android غیرفعال هستند</string>
+    <string name="muster_alerts_quiet">این کانال اطلاع رسانی بی صدا یا با اولویت پایین است. هشدارهای پاپ آپ را در تنظیمات Android فعال کنید</string>
+    <string name="muster_locked_screen_note">اگر Android اجازه دهد، هشدارهای تمام صفحه زمانی ظاهر می شوند که تلفن شما قفل است یا صفحه آن خاموش است. در حالی که از تلفن استفاده می کنید، Android ممکن است به جای آن یک اعلان heads-up نشان دهد.</string>
+    <string name="muster_urgent_sound">صدا در حالت بی صدا</string>
+    <string name="muster_urgent_sound_help">فقط برای بررسی بلایای فوری. از صدای زنگ موجود شما برای مدت محدودی استفاده می‌کند، در حالی که صفحه اعلام حضور قابل مشاهده است. وقتی صفحه را لمس می کنید متوقف می شود.</string>
+    <string name="muster_urgent_ready">در مجوزهای سیستم موجود است. مزاحم نشوید و صدای زنگ هشدار تحت کنترل شما باقی می ماند.</string>
+    <string name="muster_urgent_not_ready">صدای زنگ هشدار، مجوزهای اعلان و مزاحم نشوید را بررسی کنید. محدودیت های سیستم رعایت می شود.</string>
+    <string name="muster_urgent_seconds">%1$d ثانیه</string>
+    <string name="muster_flash_settings">تنظیمات هشدار فلش</string>
+    <string name="muster_flash_help">اگر تلفنتان پشتیبانی می‌کند، اعلان‌های فلاش را در تنظیمات دسترس‌پذیری Android فعال کنید. Android این هشدارها را حتی هنگام بسته بودن برنامه مدیریت می‌کند.</string>
+</resources>

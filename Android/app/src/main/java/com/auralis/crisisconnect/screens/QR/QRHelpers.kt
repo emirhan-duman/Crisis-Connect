@@ -21,7 +21,6 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.lifecycleScope
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.Contact
 import com.auralis.crisisconnect.messaging.InternetConversation
@@ -315,8 +314,11 @@ data class QrData(
     val peerUid: String? = null,
     val peerPublicKey: String? = null,
     // Whether the QR owner's device was in child profile mode when the QR was rendered.
-    val peerIsChild: Boolean = false
-)
+    val peerIsChild: Boolean = false,
+    val offlineProtocolVersion: Int = 1
+) {
+    val supportsSecureOfflinePairing: Boolean get() = offlineProtocolVersion == 2
+}
 
 private fun candidateDiscoveryNames(data: QrData, overrideName: String? = null): List<String> {
     return buildList {
@@ -488,7 +490,8 @@ private suspend fun tryBleShareQrFallback(
     val resolved = resolveP2pShare(
         context = context,
         shareId = shareId,
-        aesKeyBase64 = data.aesKey
+        aesKeyBase64 = data.aesKey,
+        allowEarlyServiceFallback = data.platform.equals(REMOTE_PLATFORM_IOS, ignoreCase = true)
     )
         ?: return DeviceResult.Error(DeviceError.DEVICE_NOT_FOUND)
     if (!resolved.sessionCode.equals(data.sessionCode, ignoreCase = true)) {
@@ -717,6 +720,7 @@ private fun parseQrJsonPayload(json: String): QrData? {
                 obj,
                 listOf("peerPublicKey", "peerPubKey", "publicKey", "idKey", "identityKey")
             ),
+            offlineProtocolVersion = if (obj.opt("offlineProtocolVersion") == 2) 2 else 1,
             peerIsChild = readJsonBooleanField(
                 obj,
                 listOf("isChild", "childProfile", "child_profile")
@@ -766,6 +770,13 @@ internal fun normalizeQrFailureCodeAfterHandshakeAttempt(
     } else {
         code
     }
+}
+
+/** Shared strict admission for alternate encryption-setup entry points. */
+internal fun parseSecurePairingQr(raw: String): QrData? {
+    val text = raw.trim()
+    val json = if (text.startsWith("dcs://", ignoreCase = true)) decodeUriPayload(text.substring(6)) else text
+    return parseQrJsonPayload(json)?.takeIf { it.supportsSecureOfflinePairing }
 }
 
 fun parseQrPayload(raw: String): QrData {
@@ -1004,7 +1015,8 @@ private fun saveInternetContactFromQr(
             name = name ?: existing.name,
             peerUid = peerUid,
             peerPublicKey = peerKey,
-            peerIsChild = data.peerIsChild
+            peerIsChild = data.peerIsChild,
+            aesKey = existing.aesKey.ifBlank { data.aesKey.trim() }
         )
     } else {
         val myUid = FirebaseAuth.getInstance().currentUser?.uid?.trim().orEmpty()
@@ -1015,7 +1027,8 @@ private fun saveInternetContactFromQr(
         }
         Contact(
             name = name ?: context.getString(R.string.qr_contact_fallback_name),
-            aesKey = data.aesKey,
+            aesKey = data.aesKey.trim(),
+            offlineKeyVersion = 1,
             sessionCode = conversationId,
             peerUid = peerUid,
             peerPublicKey = peerKey,
@@ -1036,7 +1049,7 @@ private fun saveInternetContactFromQr(
 // the pairing coroutine (the Firestore write can hang indefinitely offline — audit root cause F).
 private val announceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-private fun announceOurIdentity(context: Context, savedSessionCode: String) {
+private fun announceOurIdentity(context: Context, savedSessionCode: String, qrKey: String) {
     val appContext = context.applicationContext
     announceScope.launch {
         runCatching {
@@ -1050,19 +1063,26 @@ private fun announceOurIdentity(context: Context, savedSessionCode: String) {
                 com.auralis.crisisconnect.getSavedUserName(appContext).first().trim()
             }.getOrNull()?.takeIf { it.isNotBlank() }
             val sent = com.auralis.crisisconnect.messaging.InternetChatTransport(appContext)
-                .sendIdentityAnnounce(contact, mySessionCode, myName)
+                // Internet-only contacts deliberately do not retain a usable offline key.
+                // Sign this introduction with the scanned QR capability, not that empty field.
+                .sendIdentityAnnounce(contact.copy(aesKey = qrKey), mySessionCode, myName)
             Log.i("QRHelpers", "Identity announce after QR sent=$sent to ${contact.sessionCode}")
         }.onFailure { Log.w("QRHelpers", "Identity announce after QR failed", it) }
     }
 }
 
 fun connectUsingQr(
-    context: Context,
+    requestContext: Context,
     rawQrText: String,
     overrideName: String? = null,
+    operationScope: CoroutineScope,
     onStatus: ((QrConnectionStage) -> Unit)? = null,
+    recoveringSession: String? = null,
+    isRecovery: Boolean = false,
     onResult: (QrConnectResult) -> Unit
 ) {
+    val context = requestContext.applicationContext
+    val uiActivity = java.lang.ref.WeakReference(requestContext.findActivity())
     val data = runCatching { parseQrPayload(rawQrText) }.onFailure {
         Log.e("QRHelpers", "Failed to parse QR payload", it)
     }.getOrElse {
@@ -1088,15 +1108,30 @@ fun connectUsingQr(
         }
     }
 
-    val activity = context.findActivity()
-    val lifecycleOwner = activity as? LifecycleOwner
-    if (activity == null || lifecycleOwner == null) {
-        Log.e("QRHelpers", "Failed to resolve lifecycle owner from context", IllegalStateException("Missing activity"))
-        onResult(QrConnectResult.Failure(DeviceError.DEVICE_NOT_FOUND))
-        return
-    }
-
-    lifecycleOwner.lifecycleScope.launch {
+    operationScope.launch {
+        // A process may die after Room committed the contact but before publishing success.
+        // Resolve by the scanned identity/key, never by display name, before any new handshake.
+        if (isRecovery && data.supportsSecureOfflinePairing) {
+            val saved = withContext(Dispatchers.IO) {
+                val candidates = listOfNotNull(
+                    recoveringSession?.let { getContact(context, it) },
+                    getContact(context, data.sessionCode),
+                    getContactByRemoteSessionCode(context, data.sessionCode),
+                    data.peerUid?.takeIf { it.isNotBlank() }?.let { getContactByPeerUid(context, it) }
+                )
+                candidates.firstOrNull { contact ->
+                    contact.aesKey.trim() == data.aesKey.trim() &&
+                        (data.peerUid.isNullOrBlank() || contact.peerUid == data.peerUid?.trim()) &&
+                        (data.peerPublicKey.isNullOrBlank() || contact.peerPublicKey == data.peerPublicKey?.trim()) &&
+                        (contact.verified || (contact.supportsInternet && data.shareId.isNullOrBlank()))
+                }
+            }
+            if (saved != null) {
+                announceOurIdentity(context, saved.sessionCode, data.aesKey)
+                onResult(QrConnectResult.Saved(saved.sessionCode))
+                return@launch
+            }
+        }
         fun finishFailure(code: DeviceError) {
             // Internet-first fallback: the Bluetooth pairing couldn't complete (out of range / BT off),
             // but if the QR carries the peer's internet identity we still register/refresh the contact
@@ -1105,13 +1140,13 @@ fun connectUsingQr(
             val peerUid = data.peerUid?.trim().orEmpty()
             val peerKey = data.peerPublicKey?.trim().orEmpty()
             if (peerUid.isNotEmpty() && peerKey.isNotEmpty()) {
-                lifecycleOwner.lifecycleScope.launch {
+                operationScope.launch {
                     val saved = withContext(Dispatchers.IO) {
                         saveInternetContactFromQr(context, data, overrideName)
                     }
                     if (saved != null) {
                         val (sessionCode, wasExisting) = saved
-                        announceOurIdentity(context, sessionCode)
+                        announceOurIdentity(context, sessionCode, data.aesKey)
                         onResult(
                             if (wasExisting) QrConnectResult.AlreadyRegistered(sessionCode)
                             else QrConnectResult.Saved(sessionCode)
@@ -1137,7 +1172,17 @@ fun connectUsingQr(
             withContext(Dispatchers.IO) {
                 saveContact(context, withInternet)
             }
-            announceOurIdentity(context, withInternet.sessionCode)
+            announceOurIdentity(context, withInternet.sessionCode, data.aesKey)
+        }
+
+        if (!data.supportsSecureOfflinePairing) {
+            finishFailure(DeviceError.HANDSHAKE_FAILED)
+            return@launch
+        }
+
+        if (!data.supportsSecureOfflinePairing) {
+            finishFailure(DeviceError.HANDSHAKE_FAILED)
+            return@launch
         }
 
         val adapter = BluetoothAdapter.getDefaultAdapter()
@@ -1163,7 +1208,7 @@ fun connectUsingQr(
                     val (sessionCode, wasExisting) = saved
                     // Reciprocal announce here too (no BLE hello happened at all, so this relay-borne
                     // announce is the ONLY channel that can heal the displayer's side).
-                    announceOurIdentity(context, sessionCode)
+                    announceOurIdentity(context, sessionCode, data.aesKey)
                     onResult(
                         if (wasExisting) QrConnectResult.AlreadyRegistered(sessionCode)
                         else QrConnectResult.Saved(sessionCode)
@@ -1226,9 +1271,13 @@ fun connectUsingQr(
                 "QRHelpers",
                 "QR belongs to an already registered contact: ${existingContact.sessionCode}"
             )
-            announceOurIdentity(context, existingContact.sessionCode)
-            onResult(QrConnectResult.AlreadyRegistered(existingContact.sessionCode))
-            return@launch
+            if (data.shareId.isNullOrBlank()) {
+                announceOurIdentity(context, existingContact.sessionCode, data.aesKey)
+                onResult(QrConnectResult.AlreadyRegistered(existingContact.sessionCode))
+                return@launch
+            }
+            // Re-scanning must repair an earlier one-sided add too. Complete the
+            // fresh mutual handshake even when this phone already has the peer.
         }
         val forceFinalName = overrideName?.trim()?.isNotBlank() == true
         suspend fun ensureFinalContactName(
@@ -1259,7 +1308,7 @@ fun connectUsingQr(
         }
         fun finishSuccess(savedSessionCode: String = data.sessionCode) {
             onStatus?.invoke(QrConnectionStage.SAVING)
-            lifecycleOwner.lifecycleScope.launch {
+            operationScope.launch {
                 withContext(Dispatchers.IO) {
                     markContactVerified(context, savedSessionCode)
                 }
@@ -1271,7 +1320,7 @@ fun connectUsingQr(
                 // the contact WITHOUT going through persistContact, so hook the announce here too —
                 // otherwise the displayer never learns our internet identity when the BLE client-hello
                 // dropped it, and their side stays BLE-only.
-                announceOurIdentity(context, savedSessionCode)
+                announceOurIdentity(context, savedSessionCode, data.aesKey)
                 onResult(QrConnectResult.Saved(savedSessionCode))
             }
         }
@@ -1282,7 +1331,7 @@ fun connectUsingQr(
                 context = context,
                 data = data,
                 finalName = finalName,
-                originalSessionContact = originalSessionContact,
+                originalSessionContact = existingContact ?: originalSessionContact,
                 onStatus = onStatus
             )
         }
@@ -1308,8 +1357,10 @@ fun connectUsingQr(
             }
         }
 
-        if (data.platform.equals("ios", ignoreCase = true)) {
-            finishWithBleFallbackOrFailure("ios_direct")
+        if (data.platform.equals("ios", ignoreCase = true) || !data.shareId.isNullOrBlank()) {
+            // The authenticated QR handshake commits the scanner on the displaying phone
+            // before server_finish. Classic discovery alone cannot provide that guarantee.
+            finishWithBleFallbackOrFailure("qr_share_direct")
             return@launch
         }
 
@@ -1328,10 +1379,10 @@ fun connectUsingQr(
             )
             if (!locationEnabled) {
                 runCatching {
-                    activity.let {
-                        val settingsIntent = Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
-                        it.startActivity(settingsIntent)
-                    }
+                    uiActivity.get()?.takeIf { activity ->
+                        !activity.isDestroyed && (activity as? LifecycleOwner)?.lifecycle?.currentState
+                            ?.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) == true
+                    }?.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                 }.onFailure {
                     Log.e("QRHelpers", "Failed to open location settings", it)
                 }
@@ -1370,7 +1421,7 @@ fun connectUsingQr(
                     if (verified) {
                         finishSuccess()
                     } else {
-                        lifecycleOwner.lifecycleScope.launch {
+                        operationScope.launch {
                             when (val fallback = tryBleFallbackIfAvailable("qra_bonded_handshake_failed")) {
                                 is DeviceResult.Success -> finishSuccess(fallback.data)
                                 else -> {
@@ -1386,7 +1437,7 @@ fun connectUsingQr(
                 pairDevice(context, resolvedAddressFromQraId) { res ->
                     when (res) {
                         is DeviceResult.Success -> {
-                            lifecycleOwner.lifecycleScope.launch {
+                            operationScope.launch {
                                 persistContact(
                                     Contact(
                                         name = finalName,
@@ -1404,7 +1455,7 @@ fun connectUsingQr(
                                     if (verified) {
                                         finishSuccess()
                                     } else {
-                                        lifecycleOwner.lifecycleScope.launch {
+                                        operationScope.launch {
                                             when (val fallback = tryBleFallbackIfAvailable("qra_paired_handshake_failed")) {
                                                 is DeviceResult.Success -> finishSuccess(fallback.data)
                                                 else -> {
@@ -1425,7 +1476,7 @@ fun connectUsingQr(
                                 "Pairing via QRA-resolved address failed with error: ${res.code}",
                                 IllegalStateException("Pairing failure")
                             )
-                            lifecycleOwner.lifecycleScope.launch {
+                            operationScope.launch {
                                 finishWithBleFallbackOrFailure(
                                     reason = "qra_pairing_failed",
                                     failureCode = res.code
@@ -1504,7 +1555,7 @@ fun connectUsingQr(
                 if (verified) {
                     finishSuccess()
                 } else {
-                    lifecycleOwner.lifecycleScope.launch {
+                    operationScope.launch {
                         when (val fallback = tryBleFallbackIfAvailable("stored_contact_handshake_failed")) {
                             is DeviceResult.Success -> finishSuccess(fallback.data)
                             else -> {
@@ -1552,7 +1603,7 @@ fun connectUsingQr(
                 if (verified) {
                     finishSuccess()
                 } else {
-                    lifecycleOwner.lifecycleScope.launch {
+                    operationScope.launch {
                         when (val fallback = tryBleFallbackIfAvailable("bonded_device_handshake_failed")) {
                             is DeviceResult.Success -> finishSuccess(fallback.data)
                             else -> {
@@ -1740,7 +1791,7 @@ fun connectUsingQr(
             pairDevice(context, deviceAddress) { res ->
                 when (res) {
                     is DeviceResult.Success -> {
-                        lifecycleOwner.lifecycleScope.launch {
+                        operationScope.launch {
                             Log.d("QRHelpers", "Pairing successful, proceeding to save contact")
                             persistContact(
                                 Contact(
@@ -1760,7 +1811,7 @@ fun connectUsingQr(
                                 if (verified) {
                                     finishSuccess()
                                 } else {
-                                    lifecycleOwner.lifecycleScope.launch {
+                                    operationScope.launch {
                                         when (val fallback = tryBleFallbackIfAvailable("post_pair_handshake_failed")) {
                                             is DeviceResult.Success -> finishSuccess(fallback.data)
                                             else -> {
@@ -1781,7 +1832,7 @@ fun connectUsingQr(
                             "Pairing failed with error: ${res.code}",
                             IllegalStateException("Pairing failure")
                         )
-                        lifecycleOwner.lifecycleScope.launch {
+                        operationScope.launch {
                             finishWithBleFallbackOrFailure(
                                 reason = "classic_pairing_failed",
                                 failureCode = res.code
@@ -1810,7 +1861,7 @@ fun connectUsingQr(
                 if (verified) {
                     finishSuccess()
                 } else {
-                    lifecycleOwner.lifecycleScope.launch {
+                    operationScope.launch {
                         when (val fallback = tryBleFallbackIfAvailable("bonded_handshake_failed")) {
                             is DeviceResult.Success -> finishSuccess(fallback.data)
                             else -> {

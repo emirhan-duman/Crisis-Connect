@@ -37,6 +37,12 @@ struct CertificateUiState {
     var errorMessage: String?
 }
 
+struct ProfileSecondFactorOption: Identifiable {
+    let id: String
+    let name: String?
+    let isPhone: Bool
+}
+
 final class ProfileViewModel: ObservableObject {
     @Published var pickerItem: PhotosPickerItem?
     @Published var avatarImage: UIImage?
@@ -62,9 +68,22 @@ final class ProfileViewModel: ObservableObject {
     @Published var phoneVerificationCode: String = ""
     @Published var isAwaitingPhoneCode: Bool = false
 
+    @Published private(set) var isAwaitingSecondFactor = false
+    @Published private(set) var secondFactors: [ProfileSecondFactorOption] = []
+    @Published private(set) var selectedSecondFactorID = ""
+    @Published private(set) var secondFactorCodeSent = false
+    private var secondFactorResolver: MultiFactorResolver?
+    private var secondFactorVerificationID: String?
+    private var secondFactorSmsRequest = UUID()
+
+    var selectedSecondFactorIsPhone: Bool {
+        secondFactors.first { $0.id == selectedSecondFactorID }?.isPhone == true
+    }
+
     // Firebase requires the OAuth provider to stay alive for the whole web sign-in flow.
     private var pendingOAuthProvider: OAuthProvider?
     private var ssoWebAuthSession: ASWebAuthenticationSession?
+    private var ssoPendingState: String?
     private let ssoPresentationProvider = SsoPresentationContextProvider()
     private var saveTask: Task<Void, Never>?
     private var profile: Profile?
@@ -82,7 +101,7 @@ final class ProfileViewModel: ObservableObject {
     }()
     private lazy var firestore: Firestore = {
         FirebaseRuntime.ensureConfigured()
-        return Firestore.firestore()
+        return ResilientApplicationStore.profiles()
     }()
     private lazy var functions: Functions = {
         FirebaseRuntime.ensureConfigured()
@@ -321,6 +340,18 @@ final class ProfileViewModel: ObservableObject {
         // there — exactly like the web sign-in — and the web resolves the tenant + redirects to the
         // IdP. The callback returns a one-time code on the crisisconnect:// deep link.
         let base = Self.crisisConnectWebURL
+        func randomToken() -> String {
+            SymmetricKey(size: .bits256).withUnsafeBytes { Data($0).base64EncodedString() }
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
+        }
+        let state = randomToken()
+        let verifier = randomToken()
+        let startedAt = Date()
+        let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        ssoPendingState = state
         clearAuthError()
         isAuthLoading = true
 
@@ -332,6 +363,10 @@ final class ProfileViewModel: ObservableObject {
         components?.queryItems = [
             URLQueryItem(name: "client", value: "mobile"),
             URLQueryItem(name: "locale", value: localeCode),
+            URLQueryItem(name: "mobileProtocol", value: "2"),
+            URLQueryItem(name: "mobilePlatform", value: "ios"),
+            URLQueryItem(name: "mobileState", value: state),
+            URLQueryItem(name: "mobileChallenge", value: challenge),
         ]
         guard let startURL = components?.url else {
             isAuthLoading = false
@@ -345,6 +380,8 @@ final class ProfileViewModel: ObservableObject {
             // The session completion may fire off the main thread; @Published mutations need main.
             DispatchQueue.main.async {
                 guard let self else { return }
+                guard self.ssoPendingState == state else { return }
+                self.ssoPendingState = nil
                 if let error = error as? ASWebAuthenticationSessionError,
                    error.code == .canceledLogin {
                     self.isAuthLoading = false
@@ -355,7 +392,12 @@ final class ProfileViewModel: ObservableObject {
                     return
                 }
                 guard let callbackURL,
-                      let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems else {
+                      callbackURL.scheme == "crisisconnect", callbackURL.host == "sso", callbackURL.path == "/v2/callback",
+                      startedAt.timeIntervalSinceNow >= -600,
+                      let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems,
+                      items.filter({ $0.name == "state" }).count == 1,
+                      items.first(where: { $0.name == "state" })?.value == state,
+                      items.filter({ $0.name == "code" }).count <= 1 else {
                     self.isAuthLoading = false
                     return
                 }
@@ -371,7 +413,7 @@ final class ProfileViewModel: ObservableObject {
                     self.isAuthLoading = false
                     return
                 }
-                self.exchangeSsoCode(code, base: base)
+                self.exchangeSsoCode(code, base: base, state: state, verifier: verifier)
             }
         }
         session.presentationContextProvider = ssoPresentationProvider
@@ -380,14 +422,14 @@ final class ProfileViewModel: ObservableObject {
         session.start()
     }
 
-    private func exchangeSsoCode(_ code: String, base: URL) {
+    private func exchangeSsoCode(_ code: String, base: URL, state: String, verifier: String) {
         Task { [weak self] in
             guard let self else { return }
             do {
-                var request = URLRequest(url: base.appendingPathComponent("/api/auth/sso/mobile-token"))
+                var request = URLRequest(url: base.appendingPathComponent("/api/auth/sso/v2/mobile-token"))
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONSerialization.data(withJSONObject: ["code": code])
+                request.httpBody = try JSONSerialization.data(withJSONObject: ["code": code, "state": state, "verifier": verifier])
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200,
                       let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -707,6 +749,7 @@ final class ProfileViewModel: ObservableObject {
     }
 
     func signOut() {
+        cancelSecondFactor()
         do {
             NSLog("Signing out current user")
             isSigningOut = true
@@ -1213,6 +1256,7 @@ final class ProfileViewModel: ObservableObject {
             handleAuthError(error)
             return
         }
+        cancelSecondFactor()
         NSLog("Firebase Auth sign-in completed successfully")
         isAuthLoading = false
         if let user = result?.user {
@@ -1233,6 +1277,7 @@ final class ProfileViewModel: ObservableObject {
     }
 
     private func handleEmailSignInError(_ error: Error) {
+        if beginSecondFactorIfNeeded(error) { return }
         let nsError = error as NSError
         NSLog(
             "Email sign-in error [%@:%ld]: %@",
@@ -1302,6 +1347,7 @@ final class ProfileViewModel: ObservableObject {
     }
 
     private func handleAuthError(_ error: Error) {
+        if beginSecondFactorIfNeeded(error) { return }
         let nsError = error as NSError
         NSLog(
             "Auth error [%@:%ld]: %@",
@@ -1313,6 +1359,108 @@ final class ProfileViewModel: ObservableObject {
             self.authErrorMessage = error.localizedDescription
             self.isAuthLoading = false
         }
+    }
+
+    private func beginSecondFactorIfNeeded(_ error: Error) -> Bool {
+        let error = error as NSError
+        guard error.code == AuthErrorCode.secondFactorRequired.rawValue,
+              let resolver = error.userInfo[AuthErrorUserInfoMultiFactorResolverKey] as? MultiFactorResolver else {
+            return false
+        }
+        DispatchQueue.main.async {
+            self.secondFactorResolver = resolver
+            self.secondFactorVerificationID = nil
+            self.secondFactorSmsRequest = UUID()
+            self.secondFactorCodeSent = false
+            self.secondFactors = resolver.hints.compactMap { hint in
+                guard hint.factorID == TOTPMultiFactorID || hint.factorID == PhoneMultiFactorID else { return nil }
+                return ProfileSecondFactorOption(id: hint.uid, name: hint.displayName, isPhone: hint.factorID == PhoneMultiFactorID)
+            }
+            let selected = self.secondFactors.first { !$0.isPhone } ?? self.secondFactors.first
+            self.selectedSecondFactorID = selected?.id ?? ""
+            self.signInPassword = ""
+            self.authErrorMessage = nil
+            self.isAuthLoading = false
+            self.isAwaitingSecondFactor = true
+        }
+        return true
+    }
+
+    func selectSecondFactor(_ id: String) {
+        guard !isAuthLoading, secondFactors.contains(where: { $0.id == id }) else { return }
+        selectedSecondFactorID = id
+        secondFactorVerificationID = nil
+        secondFactorSmsRequest = UUID()
+        secondFactorCodeSent = false
+        authErrorMessage = nil
+    }
+
+    func sendSecondFactorSms() {
+        guard !isAuthLoading, let resolver = secondFactorResolver,
+              let hint = resolver.hints.first(where: { $0.uid == selectedSecondFactorID }) as? PhoneMultiFactorInfo else { return }
+        let request = UUID()
+        secondFactorSmsRequest = request
+        isAuthLoading = true
+        authErrorMessage = nil
+        PhoneAuthProvider.provider(auth: auth).verifyPhoneNumber(
+            with: hint, uiDelegate: nil, multiFactorSession: resolver.session
+        ) { [weak self] verificationID, error in
+            DispatchQueue.main.async {
+                guard let self, self.secondFactorResolver === resolver,
+                      self.secondFactorSmsRequest == request else { return }
+                self.isAuthLoading = false
+                if let error {
+                    self.authErrorMessage = error.localizedDescription
+                } else if let verificationID {
+                    self.secondFactorVerificationID = verificationID
+                    self.secondFactorCodeSent = true
+                }
+            }
+        }
+    }
+
+    func verifySecondFactor(code: String) {
+        guard !isAuthLoading, let resolver = secondFactorResolver, !secondFactors.isEmpty,
+              code.count == 6, code.allSatisfy({ $0 >= "0" && $0 <= "9" }) else { return }
+        let assertion: MultiFactorAssertion
+        if selectedSecondFactorIsPhone {
+            guard let verificationID = secondFactorVerificationID else { return }
+            let credential = PhoneAuthProvider.provider(auth: auth).credential(
+                withVerificationID: verificationID, verificationCode: code
+            )
+            assertion = PhoneMultiFactorGenerator.assertion(with: credential)
+        } else {
+            assertion = TOTPMultiFactorGenerator.assertionForSignIn(
+                withEnrollmentID: selectedSecondFactorID, oneTimePassword: code
+            )
+        }
+        isAuthLoading = true
+        authErrorMessage = nil
+        resolver.resolveSignIn(with: assertion) { [weak self] result, error in
+            DispatchQueue.main.async {
+                guard let self, self.secondFactorResolver === resolver else { return }
+                if let error {
+                    // Keep the resolver so an invalid/expired code can be retried.
+                    self.authErrorMessage = error.localizedDescription
+                    self.isAuthLoading = false
+                } else {
+                    self.handleAuthResult(result: result, error: nil)
+                }
+            }
+        }
+    }
+
+    func cancelSecondFactor() {
+        secondFactorResolver = nil
+        secondFactorVerificationID = nil
+        secondFactorSmsRequest = UUID()
+        secondFactors = []
+        selectedSecondFactorID = ""
+        secondFactorCodeSent = false
+        isAwaitingSecondFactor = false
+        isAuthLoading = false
+        signInPassword = ""
+        authErrorMessage = nil
     }
 
     private static func sha256(_ input: String) -> String {

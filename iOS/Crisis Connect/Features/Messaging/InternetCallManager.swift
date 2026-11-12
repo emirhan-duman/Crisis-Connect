@@ -133,6 +133,7 @@ final class InternetCallManager: NSObject, ObservableObject {
     private var callId: String?
     private var isCaller = false
     private var remoteDescriptionSet = false
+    private var pendingAccept = false
     private var pendingRemoteCandidates: [RTCIceCandidate] = []
     private var restartAttempts = 0
     private var ringTimeoutTask: Task<Void, Never>?
@@ -200,7 +201,9 @@ final class InternetCallManager: NSObject, ObservableObject {
         InternetCallSignalBus.shared.onSignal = { [weak self] signal in
             self?.onSignal(signal)
         }
-        Task { await TurnCredentialsProvider.shared.refresh() }
+        if !DisasterTrafficController.shared.isSaving {
+            Task { await TurnCredentialsProvider.shared.refresh() }
+        }
     }
 
     private func callKitUUID(for id: String) -> UUID {
@@ -264,6 +267,7 @@ final class InternetCallManager: NSObject, ObservableObject {
     // MARK: - Outgoing
 
     func startCall(contact target: ContactRecord) {
+        guard !DisasterTrafficController.shared.isSaving else { return }
         MessagingDiagLog.log("InternetCall startCall: peer=\(target.peerUid?.prefix(8) ?? "nil") supportsInternet=\(target.supportsInternet) available=\(InternetChatTransport.shared.isAvailable())")
         guard peerConnection == nil else {
             NSLog("InternetCall: refusing outgoing call; another call is active")
@@ -347,7 +351,7 @@ final class InternetCallManager: NSObject, ObservableObject {
     }
 
     private func performAccept() {
-        guard let pc = peerConnection, callId != nil, call?.state == .incoming else { return }
+        guard let pc = peerConnection, let id = callId, call?.state == .incoming else { return }
         call?.state = .connecting
         // One-way latch, set here only and never cleared, so every teardown path below can tell
         // "picked up" from "still ringing" without waiting on the ICE result. The guard above is what
@@ -355,9 +359,35 @@ final class InternetCallManager: NSObject, ObservableObject {
         call?.answeredAt = Date()
         // On a VoIP cold launch CallKit may never activate the audio session; arm the fallback.
         scheduleAudioActivationFallback()
+        if !remoteDescriptionSet {
+            MessagingDiagLog.log("performAccept: remoteDescription not set yet; queuing pendingAccept")
+            pendingAccept = true
+            return
+        }
+        createAndSendAnswer(pc: pc, id: id)
+    }
+
+    private func createAndSendAnswer(pc: RTCPeerConnection, id: String) {
         pc.answer(for: Self.mediaConstraints()) { [weak self] sdp, error in
             guard let sdp, error == nil else {
-                Task { @MainActor [weak self] in self?.endCall() }
+                MessagingDiagLog.log("pc.answer failed: \(String(describing: error)); retrying in 250ms")
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    guard let self, self.callId == id, !self.isCaller, let pc = self.peerConnection else { return }
+                    pc.answer(for: Self.mediaConstraints()) { [weak self] retrySdp, retryErr in
+                        guard let retrySdp, retryErr == nil else {
+                            MessagingDiagLog.log("pc.answer retry failed: \(String(describing: retryErr))")
+                            return
+                        }
+                        pc.setLocalDescription(retrySdp) { _ in }
+                        Task { @MainActor [weak self] in
+                            guard let self, self.callId == id else { return }
+                            var signal = self.jsonOf("answer", id)
+                            signal["sdp"] = retrySdp.sdp
+                            self.sendSignal(signal)
+                        }
+                    }
+                }
                 return
             }
             pc.setLocalDescription(sdp) { _ in }
@@ -673,6 +703,7 @@ final class InternetCallManager: NSObject, ObservableObject {
         callId = id
         isCaller = false
         remoteDescriptionSet = false
+        pendingAccept = false
         restartAttempts = 0
         pendingRemoteCandidates.removeAll()
         call = CallInfo(
@@ -715,6 +746,12 @@ final class InternetCallManager: NSObject, ObservableObject {
                     self.grabVideoSendersFromRemote()
                     self.bindRemoteVideoTracks()
                     self.drainPendingCandidates()
+                    if self.pendingAccept {
+                        self.pendingAccept = false
+                        if let currentId = self.callId, !self.isCaller, let pc = self.peerConnection {
+                            self.createAndSendAnswer(pc: pc, id: currentId)
+                        }
+                    }
                 }
             }
             return
@@ -747,6 +784,12 @@ final class InternetCallManager: NSObject, ObservableObject {
                 self.grabVideoSendersFromRemote()
                 self.bindRemoteVideoTracks()
                 self.drainPendingCandidates()
+                if self.pendingAccept {
+                    self.pendingAccept = false
+                    if let currentId = self.callId, !self.isCaller, let pc = self.peerConnection {
+                        self.createAndSendAnswer(pc: pc, id: currentId)
+                    }
+                }
             }
         }
     }
@@ -1017,7 +1060,9 @@ final class InternetCallManager: NSObject, ObservableObject {
     private func startCapture() {
         guard let capturer = cameraCapturer else { return }
         let position: AVCaptureDevice.Position = usingFrontCamera ? .front : .back
-        guard let device = RTCCameraVideoCapturer.captureDevices()
+        // The logical front camera follows the active display on Duo automatically.
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
+            ?? RTCCameraVideoCapturer.captureDevices()
             .first(where: { $0.position == position })
             ?? RTCCameraVideoCapturer.captureDevices().first else { return }
         // 1280x720@30 — the same conferencing profile Android captures.
@@ -1376,6 +1421,7 @@ final class InternetCallManager: NSObject, ObservableObject {
         screenSender = nil
         callId = nil
         remoteDescriptionSet = false
+        pendingAccept = false
         restartAttempts = 0
         prevPacketsLost = 0
         prevPacketsReceived = 0

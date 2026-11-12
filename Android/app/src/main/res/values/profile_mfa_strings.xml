@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_mfa_title">Two-step verification</string>
+    <string name="profile_mfa_totp_message">Enter the 6-digit code from your authenticator app.</string>
+    <string name="profile_mfa_sms_message">Send a verification code to your registered phone, then enter the SMS code.</string>
+    <string name="profile_mfa_unsupported">This verification method is not supported. Use another enrolled method or cancel and sign in on the web.</string>
+    <string name="profile_mfa_authenticator">Authenticator</string>
+    <string name="profile_mfa_sms">SMS</string>
+    <string name="profile_mfa_code">Verification code</string>
+    <string name="profile_mfa_send">Send SMS code</string>
+    <string name="profile_mfa_resend">Resend SMS code</string>
+    <string name="profile_mfa_verify">Verify</string>
+    <string name="profile_mfa_cancel">Cancel</string>
+</resources>

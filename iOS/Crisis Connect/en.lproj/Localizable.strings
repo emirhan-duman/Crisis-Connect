@@ -106,15 +106,15 @@
 "CONTACT_BLUETOOTH_UNAUTHORIZED_MESSAGE" = "Allow Bluetooth access to verify nearby QR contacts.";
 "CONTACT_BLUETOOTH_UNSUPPORTED_MESSAGE" = "This device can't verify nearby QR contacts over Bluetooth.";
 "CONTACT_ONBOARDING_SEARCHING_TITLE" = "Searching nearby";
-"CONTACT_ONBOARDING_SEARCHING_MESSAGE" = "Looking for the contact broadcast from the other device.";
+"CONTACT_ONBOARDING_SEARCHING_MESSAGE" = "Keep the other device nearby with its QR code open.";
 "CONTACT_ONBOARDING_PAIRING_TITLE" = "Pairing securely";
-"CONTACT_ONBOARDING_PAIRING_MESSAGE" = "Checking the QR payload against the live Bluetooth handshake.";
+"CONTACT_ONBOARDING_PAIRING_MESSAGE" = "Verifying the other device to establish a secure connection.";
 "CONTACT_ONBOARDING_SAVING_TITLE" = "Saving contact";
-"CONTACT_ONBOARDING_SAVING_MESSAGE" = "Finalizing the secure contact record and chat session.";
+"CONTACT_ONBOARDING_SAVING_MESSAGE" = "Preparing your chat…";
 "CONTACT_ONBOARDING_ALREADY_REGISTERED_TITLE" = "Already registered";
-"CONTACT_ONBOARDING_ALREADY_REGISTERED_MESSAGE" = "We refreshed the existing secure contact and kept prior chat history.";
-"CONTACT_ONBOARDING_COMPLETED_TITLE" = "Contact ready";
-"CONTACT_ONBOARDING_COMPLETED_MESSAGE" = "Secure pairing is complete. You can message this contact offline.";
+"CONTACT_ONBOARDING_ALREADY_REGISTERED_MESSAGE" = "Your existing contact was updated. Your chat history is kept.";
+"CONTACT_ONBOARDING_COMPLETED_TITLE" = "Contact added";
+"CONTACT_ONBOARDING_COMPLETED_MESSAGE" = "Opening your chat…";
 "CONTACT_CAMERA_TITLE" = "Camera access";
 "CONTACT_CAMERA_MESSAGE" = "Enable camera access to scan QR codes.";
 "Close" = "Close";
@@ -503,7 +503,7 @@
 "ADVANCED_SETTINGS_DESCRIPTION" = "Fine-tune app behavior for diagnostics and message delivery.";
 "ADVANCED_SETTINGS_LINK_SUBTITLE" = "Radio behavior, diagnostics, and delivery controls.";
 "ADVANCED_SETTING_PUBLIC_MESH_TITLE" = "General chat";
-"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Show this phone in the nearby shared general chat.";
+"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Public chat: anyone nearby can read messages and participate. Do not share sensitive information.";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_TITLE" = "General chat notifications";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_DESCRIPTION" = "Only alerts for new messages from the shared general chat.";
 "ADVANCED_SETTING_HIGH_RANGE_TITLE" = "High range mode";
@@ -1230,7 +1230,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Open source — anyone can inspect the code";
 "ONBOARDING_TRUST_NO_ADS" = "No ads — your personal data is never sold";
 "ONBOARDING_TRUST_EMERGENCY" = "Built only for emergency communication";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Crash reporting stays off until you enable diagnostics.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Only anonymous crash reports are collected to keep the app stable.";
 "ONBOARDING_FINISH" = "Start Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Cloud";
@@ -1491,3 +1491,234 @@
 "guide_redesign_subtitle_now" = "Choose the situation and see the first correct action in seconds.";
 "guide_redesign_subtitle_prepare" = "Complete your plans and offline checklists.";
 "guide_redesign_unknown_region" = "Unknown region";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Find your contacts online";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect reads names and phone numbers from your contacts to find people using the app. It sends the phone numbers to Crisis Connect servers hosted by Google Firebase in the United States for matching. Contact names stay on your device. Queried numbers are processed without being permanently stored; matches are kept on your device. While this screen is open, refreshing or returning to it may send the numbers again. Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Find nearby contacts";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect reads contact names and phone numbers on your device so you can choose someone to find nearby. The selected number is used for Bluetooth identity verification. This feature does not send your contacts to a server. Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "I agree";
+"CONTACTS_DISCLOSURE_DECLINE" = "Not now";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Contact access";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Your choice is remembered for this account on this device. You can withdraw consent in Settings under Contact access.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "Withdraw online matching consent";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Withdraw nearby contacts consent";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+
+/* Contact QR scanner */
+"QR_SCANNER_HEADING" = "Scan a contact";
+"QR_SCANNER_AUTO_HINT" = "Keep the QR inside the frame. It scans automatically.";
+"QR_SCANNER_READY" = "Camera ready";
+"QR_SCANNER_STARTING" = "Starting camera…";
+"QR_SCANNER_HELP" = "Scanning help";
+"QR_SCANNER_LIGHT_ON" = "Turn light on";
+"QR_SCANNER_LIGHT_OFF" = "Turn light off";
+"QR_SCANNER_LIGHT_ERROR" = "Could not change the flashlight. Try again.";
+"QR_SCANNER_PERMISSION_TITLE" = "Allow camera to scan";
+"QR_SCANNER_PERMISSION_DETAIL" = "Enable camera access in Settings to scan a Crisis Connect QR code and add a contact.";
+"QR_SCANNER_OPEN_SETTINGS" = "Open settings";
+"QR_SCANNER_UNAVAILABLE_TITLE" = "Camera unavailable";
+"QR_SCANNER_UNAVAILABLE_DETAIL" = "No camera is available on this device. Close the scanner and choose Connect Manually to continue.";
+"QR_SCANNER_PAUSED_TITLE" = "Camera paused";
+"QR_SCANNER_PAUSED_DETAIL" = "The camera is temporarily in use or unavailable. Scanning resumes when the camera is ready.";
+"QR_SCANNER_TIP_ALIGN" = "Keep the entire QR code inside the frame.";
+"QR_SCANNER_TIP_STILL" = "Hold your phone steady for a moment. Scanning starts automatically.";
+"QR_SCANNER_TIP_LIGHT" = "Move to better light if scanning fails. Use the flashlight when available.";
+
+"CONTACT_ONBOARDING_STEP_SEARCH" = "Search";
+
+"CONTACT_ONBOARDING_STEP_PAIR" = "Pair";
+
+"CONTACT_ONBOARDING_STEP_SAVE" = "Save";
+
+"CONTACT_ONBOARDING_STEP_DONE" = "Complete";
+
+"CONTACT_ONBOARDING_STEP_ACTIVE" = "In progress";
+
+"CONTACT_ONBOARDING_STEP_WAITING" = "Waiting";
+
+// Independent resilient and legacy sessions
+"AUTHORITY_SESSION" = "Conversation";
+"AUTHORITY_RESILIENT_SESSION" = "Resilient";
+"AUTHORITY_COMPATIBILITY_SESSION" = "Compatibility";
+"AUTHORITY_RESILIENT_NOTICE" = "Separate conversation for updated apps. Messages reach only verified devices that join this session; older apps use Compatibility.";
+"AUTHORITY_COMPATIBILITY_NOTICE" = "Separate conversation with older apps. It requires the original region; resilient-session messages are not forwarded here.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "Internet available";
+
+"SAFETY_NUMBER_REPAIR_REQUIRED" = "This contact’s secure identity changed. Sending is blocked. Scan a fresh QR code together to verify and pair this contact again.";
+
+"NEARBY_PAIRING_IDENTITY_WARNING" = "This person knows your phone number. Their name and identity have not been verified. This creates a local connection only; use a fresh QR code to bind an account or pair an existing contact again.";
+
+"OFFLINE_PAIRING_UPGRADE_REQUIRED" = "Bluetooth pairing was upgraded for security. Ask this contact to update the app and generate a new QR code, then scan it again. Your conversation history is retained.";
+
+"PEER_SECURITY_UPGRADE_REQUIRED" = "Update both apps to securely verify this conversation. Messages remain queued; no weaker encryption is selected.";
+
+// Second-factor sign-in
+"PROFILE_MFA_TITLE" = "Two-step verification";
+"PROFILE_MFA_TOTP_MESSAGE" = "Enter the 6-digit code from your authenticator app.";
+"PROFILE_MFA_SMS_MESSAGE" = "Send a verification code to your registered phone, then enter the SMS code.";
+"PROFILE_MFA_UNSUPPORTED" = "This verification method is not supported. Use another enrolled method or cancel and sign in on the web.";
+"PROFILE_MFA_AUTHENTICATOR" = "Authenticator";
+"PROFILE_MFA_SMS" = "SMS";
+"PROFILE_MFA_CODE" = "Verification code";
+"PROFILE_MFA_SEND" = "Send SMS code";
+"PROFILE_MFA_RESEND" = "Resend SMS code";
+"PROFILE_MFA_VERIFY" = "Verify";
+
+// Authority mesh key delivery
+"RESCUE_MESH_KEY_SIGN_IN_REQUIRED" = "Sign in again to obtain the mesh key.";
+"RESCUE_MESH_KEY_CERTIFICATE_REQUIRED" = "No valid mesh certificate was found. Verify this device while online.";
+"RESCUE_MESH_KEY_UNAUTHORIZED" = "This device is not authorized to use mesh.";
+"RESCUE_MESH_KEY_NOT_ENABLED" = "Secure mesh has not been enabled for this account yet. Contact an administrator.";
+"RESCUE_MESH_KEY_SERVICE_UNAVAILABLE" = "The mesh key service is not available on the server. Contact an administrator.";
+"RESCUE_MESH_KEY_NETWORK_ERROR" = "Could not reach the mesh key service. Check your internet connection and try again.";
+"RESCUE_MESH_KEY_FETCH_FAILED" = "The mesh key could not be obtained. Please try again.";
+
+// Watch Settings & Standalone Messaging
+"WATCH_SETTINGS_TITLE" = "Watch Messaging";
+"WATCH_SETTINGS_SUBTITLE" = "Paired watch setup, message sync, and device approvals";
+"WATCH_SETTINGS_NOTICE" = "Encrypted messages from your watch appear in your normal chats. Authorize sender devices and contacts here.";
+"WATCH_SETTINGS_SIGN_IN_REQUIRED" = "Sign in to your account to manage watch messaging.";
+"WATCH_SETTINGS_STATUS_RECEIVER" = "Phone Receiver";
+"WATCH_SETTINGS_STATUS_WATCH" = "Paired Watch";
+"WATCH_SETTINGS_ACTIVE" = "Active";
+"WATCH_SETTINGS_INACTIVE" = "Inactive";
+"WATCH_SETTINGS_PAIRED" = "Linked";
+"WATCH_SETTINGS_NOT_PAIRED" = "Not Linked";
+"WATCH_SETTINGS_SECTION_STATUS" = "Status & Controls";
+"WATCH_SETTINGS_SECTION_ACTIONS" = "Actions";
+"WATCH_SETTINGS_SECTION_CONTACTS" = "Eligible Contacts";
+"WATCH_SETTINGS_ENABLE_PHONE" = "Enable message reception on this phone";
+"WATCH_SETTINGS_ENABLE_PHONE_SUBTITLE" = "Allows this phone to receive standalone watch messages";
+"WATCH_SETTINGS_PAIR_WATCH" = "Authorize paired watch with this account";
+"WATCH_SETTINGS_PAIR_WATCH_SUBTITLE" = "Links your Apple Watch to your account";
+"WATCH_SETTINGS_REFRESH" = "Check & sync messages";
+"WATCH_SETTINGS_REFRESH_SUBTITLE" = "Fetches pending messages and delivery confirmations";
+"WATCH_SETTINGS_DISABLE_PHONE" = "Revoke this phone's authorization";
+"WATCH_SETTINGS_DISABLE_PHONE_SUBTITLE" = "Stops receiving messages; local history is preserved";
+"WATCH_SETTINGS_CONTACTS_FOOTER" = "Select a contact to view and manage their authorized watch and phone devices.";
+"WATCH_SETTINGS_NO_CONTACTS" = "No contacts eligible for watch messaging found.";
+"WATCH_SETTINGS_NO_DEVICES" = "This contact has not registered any watch or phone devices yet.";
+"WATCH_SETTINGS_PHONE_NOT_ENABLED" = "Please enable message reception on this phone first.";
+"WATCH_SETTINGS_DEVICE_PHONE" = "Phone";
+"WATCH_SETTINGS_DEVICE_WATCH" = "Watch";
+"WATCH_SETTINGS_DEVICE_PENDING" = "Tap to review";
+"WATCH_SETTINGS_APPROVE_TITLE" = "Approve Device";
+"WATCH_SETTINGS_APPROVE_MSG" = "Allow receiving messages from this device? Reciprocal approval is also required on the other side.\n\nDevice Verification Code:\n%@";
+"WATCH_SETTINGS_BTN_APPROVE" = "Approve";
+"WATCH_SETTINGS_BTN_REVOKE" = "Revoke Authorization";
+"WATCH_SETTINGS_BTN_CANCEL" = "Cancel";
+"WATCH_SETTINGS_READY_NOTICE" = "Phone receiver is active. Select contact devices to approve.";
+"WATCH_SETTINGS_PAIRED_NOTICE" = "Watch authorized. You can now approve contact devices.";
+"WATCH_SETTINGS_REFRESHED_NOTICE" = "Messages and delivery receipts updated.";
+"WATCH_SETTINGS_REVOKED_NOTICE" = "Receiver authorization revoked; chat history preserved.";
+"WATCH_SETTINGS_CONTACT_REVOKED_NOTICE" = "Device authorization revoked.";
+"WATCH_SETTINGS_CONTACT_APPROVED_NOTICE" = "Device approved successfully.";
+"WATCH_SETTINGS_UNPAIR_WATCH" = "Unpair watch";
+"WATCH_SETTINGS_UNPAIR_WATCH_SUBTITLE" = "Unlinks this watch; phone receiver remains active";
+"WATCH_SETTINGS_UNPAIR_CONFIRM_TITLE" = "Unpair watch?";
+"WATCH_SETTINGS_UNPAIR_CONFIRM_MSG" = "This watch will no longer be authorized to send messages on behalf of your account.";
+"WATCH_SETTINGS_UNPAIRED_NOTICE" = "Watch unpaired successfully.";
+"WATCH_SETTINGS_LAST_SYNC" = "Last sync: %@";
+"WATCH_SETTINGS_NEVER_SYNCED" = "Never synced";
+"WATCH_SETTINGS_HW_TITLE" = "Apple Watch Link";
+"WATCH_SETTINGS_HW_CONNECTED" = "Connected";
+"WATCH_SETTINGS_HW_DISCONNECTED" = "Not Connected";
+"WATCH_SETTINGS_COMPANION_TITLE" = "Watch SOS & Quick Replies";
+"WATCH_SETTINGS_COMPANION_DESC" = "During emergencies, your watch counts down 5 seconds to cancel, broadcasts a BLE distress beacon, and lets you send preset encrypted replies to rescue teams.";
+"WATCH_SETTINGS_QUICK_REPLIES_TITLE" = "Preset quick replies";
+"WATCH_SETTINGS_QUICK_REPLIES_DESC" = "“I'm OK”, “Injured”, “Need help”";
+"WATCH_SETTINGS_DEVICE_ALREADY_APPROVED" = "Approved Device";
+"WATCH_SETTINGS_DEVICE_ALREADY_APPROVED_MSG" = "This device is already approved to exchange messages with your account.\n\nVerification Code:\n%@\n\nDo you want to revoke its authorization?";
+"WATCH_SETTINGS_QUICK_REPLIES_MANAGE" = "Custom Quick Replies";
+"WATCH_SETTINGS_QUICK_REPLIES_MANAGE_DESC" = "Manage presets shown on your watch during an emergency or chat.";
+"WATCH_SETTINGS_QUICK_REPLY_ADD" = "Add quick reply";
+"WATCH_SETTINGS_QUICK_REPLY_ADD_PLACEHOLDER" = "e.g. I am at the meeting point";
+"WATCH_SETTINGS_QUICK_REPLY_RESET" = "Reset to defaults";
+"WATCH_SETTINGS_QUICK_REPLY_DEFAULT_TAG" = "Default";
+"WATCH_SETTINGS_QUICK_REPLY_CUSTOM_TAG" = "Custom";
+"WATCH_SETTINGS_QUICK_REPLY_LIMIT_NOTICE" = "Quick reply cannot exceed 50 characters.";
+"WATCH_SETTINGS_SCAN_QR_TITLE" = "Pair Watch via QR Code";
+"WATCH_SETTINGS_SCAN_QR_DESC" = "Scan the one-time pairing QR code displayed on the watch screen";
+"WATCH_SETTINGS_BATTERY_TITLE" = "Watch Battery";
+"WATCH_SETTINGS_BATTERY_LEVEL" = "%d%% · %@";
+"WATCH_SETTINGS_BATTERY_UNKNOWN" = "Waiting for sync";
+"WATCH_SETTINGS_BATTERY_CHARGING" = "Charging";
+"WATCH_SETTINGS_BATTERY_NORMAL" = "Normal";
+"WATCH_SETTINGS_BATTERY_LOW" = "Low battery";
+"WATCH_SETTINGS_QR_SCANNED_SUCCESS" = "Watch QR code scanned and linked successfully.";
+
+/* Chat Actions & Sheets */
+"CHAT_ACTION_FORWARD" = "Forward";
+"CHAT_ACTION_SHARE" = "Share";
+"CHAT_ACTION_PIN" = "Pin message";
+"CHAT_ACTION_UNPIN" = "Unpin message";
+"CHAT_ACTION_MESSAGE_INFO" = "Message info";
+"CHAT_ACTION_VERIFY_SAFETY" = "Verify security code";
+"CHAT_PINNED_MESSAGE_TITLE" = "Pinned Message";
+"CHAT_MESSAGE_FORWARDED" = "Forwarded";
+
+/* Message Info Sheet */
+"CHAT_MESSAGE_INFO_TITLE" = "Message Info";
+"CHAT_MESSAGE_INFO_TIMELINE" = "Timeline";
+"CHAT_MESSAGE_INFO_READ" = "Read";
+"CHAT_MESSAGE_INFO_DELIVERED" = "Delivered";
+"CHAT_MESSAGE_INFO_SENT" = "Sent";
+"CHAT_MESSAGE_INFO_WAITING" = "Waiting to send...";
+"CHAT_MESSAGE_INFO_DELIVERY_DETAILS" = "Delivery Details";
+"CHAT_MESSAGE_INFO_TRANSPORT_CHANNEL" = "Transport Channel";
+"CHAT_MESSAGE_INFO_ROUTING_MODE" = "Routing Mode";
+"CHAT_INFO_TRANSPORT_BLUETOOTH" = "Bluetooth Low Energy (P2P Mesh)";
+"CHAT_INFO_TRANSPORT_INTERNET" = "Encrypted Internet / WebSocket";
+"CHAT_INFO_TRANSPORT_SATELLITE" = "Satellite Bridge";
+"CHAT_INFO_ROUTING_P2P_DIRECT" = "Direct P2P Link";
+"CHAT_INFO_ROUTING_QUEUED_STORE_FORWARD" = "Store & Forward Relay (Hop-by-Hop)";
+
+/* Safety Number Sheet */
+"SAFETY_NUMBER_TITLE_NAV" = "Verify Security Code";
+"SAFETY_NUMBER_VERIFIED_BADGE" = "Verified Secure";
+"SAFETY_NUMBER_MARK_VERIFIED" = "Mark as Verified";
+"SAFETY_NUMBER_COPY_SUCCESS" = "Safety number copied to clipboard";
+"SAFETY_NUMBER_SHARE" = "Share Code";
+
+/* Forward Sheet */
+"FORWARD_SHEET_TITLE" = "Forward to...";
+"FORWARD_SHEET_SEARCH_HINT" = "Search contacts";
+"FORWARD_SHEET_SELECT_CONTACTS" = "Select contacts to forward";
+"FORWARD_SHEET_SEND_SINGLE" = "Forward message";
+"FORWARD_SHEET_SEND_MULTIPLE" = "Forward to %d contacts";
+"FORWARD_SUCCESS" = "Message forwarded successfully";
+
+
+
+// SOS delivery readiness and incomplete offline coverage
+"SOS_BLUETOOTH_PREPARING" = "Preparing Bluetooth broadcast";
+"SOS_BLUETOOTH_OFF" = "Bluetooth is off";
+"SOS_BLUETOOTH_PERMISSION" = "Bluetooth permission needed";
+"SOS_BLUETOOTH_UNSUPPORTED" = "Bluetooth broadcast unavailable";
+"SOS_BLUETOOTH_UNAVAILABLE" = "Bluetooth is not broadcasting";
+"SOS_BLUETOOTH_PAUSED_BADGE" = "SOS ACTIVE · BLUETOOTH PENDING";
+"SOS_BLUETOOTH_OFF_HELP" = "Turn on Bluetooth in Settings to reach nearby rescuers. Internet alert status is shown separately below.";
+"SOS_BLUETOOTH_PERMISSION_HELP" = "Allow Bluetooth access in Settings to reach nearby rescuers. Internet alert status is shown separately below.";
+"SOS_BLUETOOTH_UNAVAILABLE_HELP" = "Your SOS is active, but the Bluetooth broadcast has not started. Internet alert status is shown separately below.";
+"OFFLINE_MAP_PARTIAL_COVERAGE" = "Partial coverage";
+"OFFLINE_MAP_MISSING_TILES" = "%d of %d map tiles are unavailable. This area has gaps offline.";
+"OFFLINE_MAP_PARTIAL_DOWNLOAD" = "Downloaded with gaps: %@";
+"OFFLINE_MAP_RETRY_MISSING" = "Retry missing tiles";
+
+// Two-step verification
+"PROFILE_MFA_METHOD_TITLE" = "Verification method";
+"PROFILE_MFA_SMS_SENT_MESSAGE" = "Enter the 6-digit code sent to your registered phone.";

@@ -448,6 +448,17 @@ fun ProfileScreen(
         )
     }
 
+    val secondFactorState by profileViewModel.secondFactorSignIn.state.collectAsStateWithLifecycle()
+    LaunchedEffect(secondFactorState != null) {
+        if (secondFactorState != null) {
+            emailLoginDialogOpen = false
+            passwordInput = ""
+        }
+    }
+    secondFactorState?.let {
+        ProfileSecondFactorDialog(it, profileViewModel.secondFactorSignIn, activity)
+    }
+
     if (emailLoginDialogOpen) {
         val focusManager = LocalFocusManager.current
         val normalizedEmail = emailInput.trim()

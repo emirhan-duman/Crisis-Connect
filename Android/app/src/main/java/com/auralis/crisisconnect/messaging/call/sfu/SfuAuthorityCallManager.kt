@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.messaging.call.sfu
 
+import com.auralis.crisisconnect.messaging.ResilientApplicationStore
 import android.content.Context
 import android.util.Log
 import com.auralis.crisisconnect.analytics.Analytics
@@ -109,7 +110,7 @@ object SfuAuthorityCallManager {
             runCatching {
                 val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
                 val uid = auth.currentUser?.uid ?: return@launch
-                val doc = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                val doc = com.auralis.crisisconnect.messaging.ResilientApplicationStore.profiles()
                     .collection("users").document(uid).get().await()
                 selfPhotoUrl = doc.getString("photoURL")?.trim()?.takeIf { it.isNotEmpty() }
                     ?: auth.currentUser?.photoUrl?.toString()

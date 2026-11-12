@@ -45,19 +45,54 @@ enum FirebasePhoneAuthFallback {
             return try await auth.signIn(with: credential)
         }
 
+        // Firebase Auth persists its current user in the Keychain, while deleting/reinstalling the
+        // app resets onboarding's UserDefaults. A returning user can therefore reach onboarding
+        // with a phone provider already attached. Calling link(with:) in that state fails locally
+        // with providerAlreadyLinked *before Firebase validates the freshly received SMS code*.
+        // Reauthenticate the same phone account instead; if the cached profile has not hydrated a
+        // phone number yet (or the user entered another number), normal phone sign-in lets Firebase
+        // resolve the credential to the account that owns it.
+        if hasPhoneProvider(currentUser) {
+            try? await currentUser.reload()
+            if samePhoneNumber(linkedPhoneNumber(currentUser), expectedPhoneNumber) {
+                return try await currentUser.reauthenticate(with: credential)
+            }
+            return try await auth.signIn(with: credential)
+        }
+
         do {
             return try await currentUser.link(with: credential)
         } catch {
-            let authCode = AuthErrorCode(rawValue: (error as NSError).code)
-            if authCode == .providerAlreadyLinked,
-               samePhoneNumber(currentUser.phoneNumber, expectedPhoneNumber) {
-                return nil
+            let nsError = error as NSError
+            let authCode = AuthErrorCode(rawValue: nsError.code)
+            if authCode == .providerAlreadyLinked {
+                // The provider can become linked between the preflight check and this callback.
+                // link(with:) has not consumed the phone credential in this client-side branch.
+                try? await currentUser.reload()
+                if samePhoneNumber(linkedPhoneNumber(currentUser), expectedPhoneNumber) {
+                    return try await currentUser.reauthenticate(with: credential)
+                }
+                return try await auth.signIn(with: credential)
             }
             if authCode == .credentialAlreadyInUse {
-                return try await auth.signIn(with: credential)
+                // Phone linking returns a temporary proof as an updated credential. Firebase's
+                // documented recovery path is to use that credential, not replay the original SMS
+                // credential after the link RPC has already consumed it.
+                let recoveryCredential = nsError.userInfo[AuthErrorUserInfoUpdatedCredentialKey]
+                    as? AuthCredential ?? credential
+                return try await auth.signIn(with: recoveryCredential)
             }
             throw error
         }
+    }
+
+    private static func hasPhoneProvider(_ user: User) -> Bool {
+        user.providerData.contains { $0.providerID == PhoneAuthProviderID }
+    }
+
+    private static func linkedPhoneNumber(_ user: User) -> String? {
+        user.phoneNumber
+            ?? user.providerData.first(where: { $0.providerID == PhoneAuthProviderID })?.phoneNumber
     }
 
     private static func samePhoneNumber(_ lhs: String?, _ rhs: String?) -> Bool {

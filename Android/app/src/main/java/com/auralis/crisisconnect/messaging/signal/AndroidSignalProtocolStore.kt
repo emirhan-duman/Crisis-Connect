@@ -30,11 +30,8 @@ import java.util.UUID
  *
  * libsignal calls these methods synchronously from whatever thread drives encrypt/decrypt (the FCM
  * receive path or the send path), so the DAO calls are synchronous too — never call this on the main
- * thread. Trust model is TOFU with non-blocking re-pin (Signal's default): [saveIdentity] records a
- * peer's key on first sight, and a CHANGED key (peer reinstalled/reset) is accepted and re-pinned
- * rather than refused — refusing would deadlock the pair forever, since neither side has a recovery
- * path once the old session is stale. The change is observable via [saveIdentity]'s
- * REPLACED_EXISTING return (and the safety number changing); users who care can re-verify.
+ * thread. First use must be authenticated by SignalSessionGate against the pinned P256
+ * identity. Changed identities require an explicit trusted re-pairing.
  */
 class AndroidSignalProtocolStore(
     private val dao: SignalStoreDao,
@@ -52,14 +49,9 @@ class AndroidSignalProtocolStore(
         identityKey: IdentityKey,
     ): IdentityKeyStore.IdentityChange {
         val existing = dao.getIdentity(address.toString())?.let { IdentityKey(it.identityKey) }
+        check(existing == null || existing == identityKey) { "Signal identity changed; explicit re-pairing required" }
         dao.putIdentity(SignalIdentityEntity(address.toString(), identityKey.serialize()))
-        return if (existing == null || existing == identityKey) {
-            IdentityKeyStore.IdentityChange.NEW_OR_UNCHANGED
-        } else {
-            // Content-free breadcrumb: the peer's safety number just changed (reinstall/reset).
-            Log.w(TAG, "identity re-pinned for $address (peer reinstalled or reset)")
-            IdentityKeyStore.IdentityChange.REPLACED_EXISTING
-        }
+        return IdentityKeyStore.IdentityChange.NEW_OR_UNCHANGED
     }
 
     override fun isTrustedIdentity(
@@ -69,10 +61,8 @@ class AndroidSignalProtocolStore(
     ): Boolean {
         val trusted = dao.getIdentity(address.toString())?.let { IdentityKey(it.identityKey) }
         if (trusted != null && trusted != identityKey) {
-            // Changed key = peer reinstalled/reset. Accept non-blockingly (Signal's default policy):
-            // libsignal follows up with saveIdentity, which re-pins and logs the change. Refusing
-            // here would drop the peer's re-handshake forever — an unrecoverable two-way deadlock.
-            Log.w(TAG, "identity CHANGED for $address (direction=$direction) — accepting for re-pin")
+            // Keep the authenticated pin until a trusted re-pairing clears it.
+            return false
         }
         return true
     }

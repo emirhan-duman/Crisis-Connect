@@ -4,6 +4,9 @@ import android.app.Application
 import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.DeviceError
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +40,11 @@ data class ScanStatusMessage(
 
 class QrScannerViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val coordinator = QrPairingCoordinator.get(application)
+    internal val connectionState = coordinator.state
+
+    internal fun consumeSuccess(id: String?) = coordinator.consumeSuccess(id)
+
     private val _hasCameraPermission = MutableStateFlow(false)
     val hasCameraPermission: StateFlow<Boolean> = _hasCameraPermission
 
@@ -56,13 +64,50 @@ class QrScannerViewModel(application: Application) : AndroidViewModel(applicatio
 
     private data class PendingQr(val raw: String, val data: QrData)
 
+    init {
+        viewModelScope.launch {
+            connectionState.collect { state ->
+                if (state.running) {
+                    _showNameDialog.value = false
+                    _statusMessage.value = when (state.stage) {
+                        QrConnectionStage.PAIRING -> ScanStatusMessage(getString(R.string.qr_scan_status_pairing), true, ScanStatusStage.PAIRING)
+                        QrConnectionStage.SAVING -> ScanStatusMessage(getString(R.string.qr_scan_status_saving), true, ScanStatusStage.SAVING)
+                        else -> ScanStatusMessage(getString(R.string.qr_scan_status_scanned_searching), true, ScanStatusStage.SEARCHING)
+                    }
+                }
+                when (val result = state.result) {
+                    is QrConnectResult.Saved -> {
+                        _pendingQr.value = null
+                        _manualName.value = ""
+                        _statusMessage.value = ScanStatusMessage(getString(R.string.qr_scan_status_saved), false, ScanStatusStage.SAVED)
+                    }
+                    is QrConnectResult.AlreadyRegistered -> {
+                        _pendingQr.value = null
+                        _manualName.value = ""
+                        setError(ScanError.ALREADY_REGISTERED)
+                    }
+                    is QrConnectResult.Failure -> setError(when (result.code) {
+                        DeviceError.MISSING_PERMISSIONS -> ScanError.MISSING_PERMISSIONS
+                        DeviceError.DEVICE_NOT_FOUND -> ScanError.DEVICE_NOT_FOUND
+                        DeviceError.HANDSHAKE_FAILED -> ScanError.HANDSHAKE_FAILED
+                        DeviceError.PAIRING_FAILED -> ScanError.PAIRING_FAILED
+                        DeviceError.BLUETOOTH_OFF -> ScanError.BLUETOOTH_OFF
+                    })
+                    null -> Unit
+                }
+            }
+        }
+    }
+
+
     private fun getString(resId: Int): String = getApplication<Application>().getString(resId)
 
     fun setPermission(granted: Boolean) {
         _hasCameraPermission.value = granted
     }
 
-    fun onQrResult(context: Context, raw: String, onSuccess: () -> Unit) {
+    fun onQrResult(context: Context, raw: String) {
+        if (connectionState.value.running || connectionState.value.result != null || _showNameDialog.value) return
         Log.d("QRScannerViewModel", "QR scanned, raw data length: ${raw.length}")
         val data = runCatching { parseQrPayload(raw) }.onFailure {
             Log.e("QRScannerViewModel", "Failed to parse QR data", it)
@@ -90,105 +135,27 @@ class QrScannerViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         Log.d("QRScannerViewModel", "Starting connection with name: $name")
-        startConnection(context, raw, name, onSuccess)
+        startConnection(context, raw, name)
     }
 
-    private fun startConnection(
-        context: Context,
-        raw: String,
-        overrideName: String?,
-        onSuccess: () -> Unit
-    ) {
-        Log.d("QRScannerViewModel", "Starting connection - override name: $overrideName")
+    private fun startConnection(context: Context, raw: String, overrideName: String?) {
         _showNameDialog.value = false
-        _statusMessage.value = ScanStatusMessage(
-            text = getString(R.string.qr_scan_status_scanned_searching),
-            isLoading = true,
-            stage = ScanStatusStage.SEARCHING
-        )
-
-        connectUsingQr(
-            context = context,
-            rawQrText = raw,
-            overrideName = overrideName,
-            onStatus = { stage ->
-                Log.d("QRScannerViewModel", "Connection status changed: $stage")
-                val message = when (stage) {
-                    QrConnectionStage.SEARCHING -> ScanStatusMessage(
-                        text = getString(R.string.qr_scan_status_scanned_searching),
-                        isLoading = true,
-                        stage = ScanStatusStage.SEARCHING
-                    )
-
-                    QrConnectionStage.PAIRING -> ScanStatusMessage(
-                        text = getString(R.string.qr_scan_status_pairing),
-                        isLoading = true,
-                        stage = ScanStatusStage.PAIRING
-                    )
-
-                    QrConnectionStage.SAVING -> ScanStatusMessage(
-                        text = getString(R.string.qr_scan_status_saving),
-                        isLoading = true,
-                        stage = ScanStatusStage.SAVING
-                    )
-                }
-                _statusMessage.value = message
-            }
-        ) { result ->
-            when (result) {
-                is QrConnectResult.Saved -> {
-                    Log.d("QRScannerViewModel", "Connection successful, contact saved")
-                    _statusMessage.value = ScanStatusMessage(
-                        text = getString(R.string.qr_scan_status_saved),
-                        isLoading = false,
-                        stage = ScanStatusStage.SAVED
-                    )
-                    _pendingQr.value = null
-                    _manualName.value = ""
-                    onSuccess()
-                }
-
-                is QrConnectResult.AlreadyRegistered -> {
-                    Log.d(
-                        "QRScannerViewModel",
-                        "Contact already registered for session: ${result.sessionCode}"
-                    )
-                    _pendingQr.value = null
-                    _manualName.value = ""
-                    setError(ScanError.ALREADY_REGISTERED)
-                }
-
-                is QrConnectResult.Failure -> {
-                    Log.e(
-                        "QRScannerViewModel",
-                        "Connection failed with error: ${result.code}",
-                        IllegalStateException("QR connection error")
-                    )
-                    val errorCode = when (result.code) {
-                        DeviceError.MISSING_PERMISSIONS -> ScanError.MISSING_PERMISSIONS
-                        DeviceError.DEVICE_NOT_FOUND -> ScanError.DEVICE_NOT_FOUND
-                        DeviceError.HANDSHAKE_FAILED -> ScanError.HANDSHAKE_FAILED
-                        DeviceError.PAIRING_FAILED -> ScanError.PAIRING_FAILED
-                        DeviceError.BLUETOOTH_OFF -> ScanError.BLUETOOTH_OFF
-                    }
-                    setError(errorCode)
-                }
-            }
-        }
+        coordinator.start(context, raw, overrideName)
     }
 
     fun updateManualName(value: String) {
         _manualName.value = value
     }
 
-    fun saveManualContact(context: Context, onSuccess: () -> Unit) {
+    fun saveManualContact(context: Context) {
         val pending = _pendingQr.value ?: return
         val finalName = _manualName.value.trim().ifEmpty { pending.data.sessionCode }
         _manualName.value = finalName
-        startConnection(context, pending.raw, finalName, onSuccess)
+        startConnection(context, pending.raw, finalName)
     }
 
     fun dismissError() {
+        coordinator.acknowledgeError()
         _error.value = null
     }
 

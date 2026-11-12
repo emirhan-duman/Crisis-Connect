@@ -77,17 +77,17 @@ internal fun prepareImageAttachmentForTransfer(
     profile: ImageTransferOptimizationProfile
 ): PreparedImageAttachment? {
     val normalizedMime = normalizeImageMimeType(mimeType)
-    val originalFile = imageMessageFile(context, ImageFileUtils.fileNameFor(uuid, normalizedMime))
+    // Stream the original into a transient working file so downsampling does not
+    // require holding a potentially very large original and its ciphertext in the heap.
+    val originalFile = File(context.cacheDir, "image-prep-${java.util.UUID.randomUUID()}.source")
     val compressedFile = imageMessageFile(context, ImageFileUtils.fileNameFor(uuid, IMAGE_MIME_JPEG))
     val thumbnailFile = imageThumbnailFile(context, ImageFileUtils.thumbnailNameFor(uuid, IMAGE_MIME_JPEG))
     val cleanupTargets = linkedSetOf(originalFile, compressedFile, thumbnailFile)
 
-    return runCatching {
+    return try { runCatching {
         originalFile.parentFile?.mkdirs()
         context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(originalFile, false).use { output ->
-                input.copyTo(output)
-            }
+            FileOutputStream(originalFile).use { output -> input.copyTo(output) }
         } ?: return null
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -137,10 +137,7 @@ internal fun prepareImageAttachmentForTransfer(
                 maxOutputBytes = profile.maxOutputBytes
             )
             compressedFile.parentFile?.mkdirs()
-            FileOutputStream(compressedFile, false).use { output ->
-                output.write(compressed.bytes)
-                output.flush()
-            }
+            LocalMedia.write(compressedFile, compressed.bytes)
             if (scaled !== rotated) {
                 scaled.recycle()
             }
@@ -159,23 +156,26 @@ internal fun prepareImageAttachmentForTransfer(
             finalMimeType = IMAGE_MIME_JPEG
         }
 
-        val bytes = finalFile.readBytes()
+        val bytes = LocalMedia.read(finalFile)
         val maxOutputBytes = profile.maxOutputBytes
         if (maxOutputBytes != null && bytes.size > maxOutputBytes) {
             cleanupTargets.forEach(::deleteIfExists)
             return null
         }
 
+        val persistedFile = imageMessageFile(context, ImageFileUtils.fileNameFor(uuid, finalMimeType))
+        if (finalFile == originalFile) LocalMedia.write(persistedFile, bytes)
+
         val thumbnailName = ImageFileUtils.thumbnailNameFor(uuid, finalMimeType)
         val thumbnailTarget = imageThumbnailFile(context, thumbnailName)
         val thumbnailCreated = generateImageThumbnail(
-            source = finalFile,
+            source = persistedFile,
             target = thumbnailTarget,
             mimeType = finalMimeType
         )
 
         PreparedImageAttachment(
-            fileName = finalFile.name,
+            fileName = persistedFile.name,
             thumbnailName = if (thumbnailCreated) thumbnailName else null,
             bytes = bytes,
             width = resolvedWidth,
@@ -185,6 +185,8 @@ internal fun prepareImageAttachmentForTransfer(
     }.getOrElse {
         cleanupTargets.forEach(::deleteIfExists)
         null
+    } } finally {
+        deleteIfExists(originalFile)
     }
 }
 
@@ -195,16 +197,16 @@ fun generateImageThumbnail(
 ): Boolean {
     return runCatching {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(source.absolutePath, bounds)
+        LocalMedia.read(source).let { BitmapFactory.decodeByteArray(it, 0, it.size, bounds) }
         val reqSize = 512
         val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, reqSize, reqSize)
         val options = BitmapFactory.Options().apply { inSampleSize = sampleSize.coerceAtLeast(1) }
-        val bitmap = BitmapFactory.decodeFile(source.absolutePath, options) ?: return@runCatching false
+        val bitmap = LocalMedia.read(source).let { BitmapFactory.decodeByteArray(it, 0, it.size, options) } ?: return@runCatching false
         val rotated = applyExifRotation(source, bitmap)
         target.parentFile?.mkdirs()
-        FileOutputStream(target, false).use { output ->
-            rotated.compress(compressFormatForMime(mimeType), 85, output)
-        }
+        val output = ByteArrayOutputStream()
+        check(rotated.compress(compressFormatForMime(mimeType), 85, output))
+        LocalMedia.write(target, output.toByteArray())
         if (rotated !== bitmap) {
             bitmap.recycle()
             rotated.recycle()
@@ -350,7 +352,7 @@ private fun resolveOrientedDimensions(file: File, rawWidth: Int, rawHeight: Int)
         return 0 to 0
     }
     val orientation = runCatching {
-        ExifInterface(file.absolutePath).getAttributeInt(
+        readImageExif(file).getAttributeInt(
             ExifInterface.TAG_ORIENTATION,
             ExifInterface.ORIENTATION_UNDEFINED
         )
@@ -384,9 +386,12 @@ private fun calculateInSampleSize(
     return inSampleSize.coerceAtLeast(1)
 }
 
+private fun readImageExif(file: File): ExifInterface =
+    if (LocalMedia.manages(file)) ExifInterface(LocalMedia.read(file).inputStream()) else ExifInterface(file.absolutePath)
+
 private fun applyExifRotation(source: File, bitmap: Bitmap): Bitmap {
     return try {
-        val exif = ExifInterface(source.absolutePath)
+        val exif = readImageExif(source)
         when (exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
             ExifInterface.ORIENTATION_ROTATE_90 -> rotateBitmap(bitmap, 90f)
             ExifInterface.ORIENTATION_ROTATE_180 -> rotateBitmap(bitmap, 180f)

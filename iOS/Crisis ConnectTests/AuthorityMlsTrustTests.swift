@@ -2,15 +2,15 @@ import XCTest
 @testable import Crisis_Connect
 
 final class AuthorityMlsTrustTests: XCTestCase {
-    func testApprovalNeverCarriesForwardToFirstOrChangedDeviceSet() {
-        XCTAssertFalse(AuthorityMlsTrust.approvalCarriesForward(
-            existingApproved: false, exactDeviceSetMatch: true
+    func testAutomaticTrustRequiresACompleteUniqueDeviceSet() {
+        XCTAssertTrue(AuthorityMlsTrust.automaticTrustEligible(
+            deviceCount: 2, commitments: ["device-a", "device-b"]
         ))
-        XCTAssertFalse(AuthorityMlsTrust.approvalCarriesForward(
-            existingApproved: true, exactDeviceSetMatch: false
+        XCTAssertFalse(AuthorityMlsTrust.automaticTrustEligible(
+            deviceCount: 0, commitments: []
         ))
-        XCTAssertTrue(AuthorityMlsTrust.approvalCarriesForward(
-            existingApproved: true, exactDeviceSetMatch: true
+        XCTAssertFalse(AuthorityMlsTrust.automaticTrustEligible(
+            deviceCount: 2, commitments: ["device-a", "device-a"]
         ))
     }
 

@@ -19,6 +19,7 @@ struct RescueClientView: View {
     @ObservedObject private var chatStore = SOSChatStore.shared
     @ObservedObject private var advancedSettings = AdvancedSettingsStore.shared
     @State private var authorityKeyReady = AuthorityMeshKeyStore.hasGroupKey()
+    @State private var authorityKeyError: String?
     @State private var showsRemoteSignals = false
 
     var body: some View {
@@ -50,6 +51,13 @@ struct RescueClientView: View {
 
                 RemoteSignalsEntryCard {
                     showsRemoteSignals = true
+                }
+
+                if let authorityKeyError {
+                    RescueErrorBanner(messageKey: authorityKeyError)
+                    Button(LocalizedStringKey("RESCUE_REFRESH")) {
+                        Task { await refreshAuthorityKey() }
+                    }
                 }
 
                 if let errorKey = manager.errorMessageKey {
@@ -176,11 +184,15 @@ struct RescueClientView: View {
         }
         .onAppear {
             manager.bootstrapRuntime()
-            Task {
-                let ready = await AuthorityMeshGroupKeyProvisioner.ensureGroupKey()
-                await MainActor.run { authorityKeyReady = ready }
-            }
+            Task { await refreshAuthorityKey() }
         }
+    }
+
+    @MainActor private func refreshAuthorityKey() async {
+        let access = await AuthorityMeshGroupKeyProvisioner.requestGroupKey()
+        guard !Task.isCancelled else { return }
+        authorityKeyReady = access == .available
+        authorityKeyError = access.errorMessageKey
     }
 
     private var activeBroadcasts: [RescueBroadcast] {

@@ -26,6 +26,8 @@ It combines Bluetooth-based communication, offline map support, role-aware rescu
 | `app` | Main Android application: Compose UI, local storage, messaging, calls, media transfer, maps, tools, settings, and shared chat flows |
 | `feature_rescue` | Android dynamic feature module for rescue coordination, rescue mesh, scanning, and Crisis Link sync |
 | `baselineprofile` | Baseline profile generator module for startup and scroll performance |
+| `wear` | Wear OS companion with connection status and SOS controls |
+| `watch-protocol` | Shared phone-to-watch protocol sources |
 | `functions` | Firebase Cloud Functions: role certificates, Play Integrity / App Attest verification, the encrypted messaging relay and prekey pool, VoIP push, SOS signal reporting, TURN credentials |
 | `dashboard` | Lightweight single-page summary surface for presenting the system at a high level |
 | `../.github/workflows` | Repository-level Android build and unit-test CI definitions |
@@ -67,7 +69,7 @@ Firebase is used for identity, authorization-adjacent metadata, rescue telemetry
 | --- | --- |
 | Android UI | Kotlin, Jetpack Compose, Material 3 |
 | Modules | `app` + `feature_rescue` dynamic feature |
-| Android SDK | `minSdk 24`, `compileSdk 36`, `targetSdk 36` |
+| Android SDK | `minSdk 24`, `compileSdk 37`, `targetSdk 37` |
 | Local storage | Room, SQLCipher, DataStore, encrypted preferences |
 | Connectivity | BLE, GATT, RFCOMM, foreground services |
 | Maps | MapLibre with offline region support |
@@ -79,7 +81,7 @@ Firebase is used for identity, authorization-adjacent metadata, rescue telemetry
 
 Before building locally, make sure the following are available:
 
-- Android Studio with Android SDK 36
+- Android Studio with Android SDK 37
 - JDK 21 for Gradle and LiteRT-LM bytecode compatibility
 - Node.js 22 if you will build or deploy Firebase Functions
 - A Firebase project if you want live authentication, Firestore, App Check, or certificate issuance

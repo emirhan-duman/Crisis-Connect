@@ -206,7 +206,7 @@
     <string name="advanced_settings_title">Pengaturan lanjutan</string>
     <string name="advanced_settings_screen_description">Sesuaikan perilaku aplikasi untuk diagnostik dan pengiriman pesan.</string>
     <string name="advanced_setting_public_mesh_title">Mode mesh publik</string>
-    <string name="advanced_setting_public_mesh_description">Jadikan node ini dapat ditemukan di lingkungan mesh terbuka untuk pengujian koordinasi yang lebih luas.</string>
+    <string name="advanced_setting_public_mesh_description">Obrolan publik: siapa pun di sekitar dapat membaca pesan dan bergabung. Jangan bagikan informasi sensitif.</string>
     <string name="advanced_setting_gatt_mesh_notifications_title">Notifikasi node mesh terbuka</string>
     <string name="advanced_setting_gatt_mesh_notifications_description">Hanya memberi notifikasi untuk pesan baru dari node obrolan umum mesh GATT publik.</string>
     <string name="advanced_setting_high_range_title">Mode jangkauan tinggi</string>
@@ -499,7 +499,6 @@
     <string name="gatt_mesh_action_message_info">Info pesan</string>
     <string name="gatt_mesh_message_info_sender">Pengirim</string>
     <string name="gatt_mesh_message_info_origin">Asal pesan</string>
-    <string name="gatt_mesh_message_info_direct_peer">Rekan langsung</string>
     <string name="gatt_mesh_message_info_time">Waktu</string>
     <string name="gatt_mesh_message_info_you">Anda</string>
     <string name="gatt_mesh_message_info_sent_to">Dikirim ke</string>
@@ -627,7 +626,7 @@
     <string name="add_from_contacts_empty">Belum ada orang di kontak Anda yang ada di Crisis Connect.</string>
     <string name="add_from_contacts_permission_needed">Izin kontak diperlukan untuk menemukan orang yang Anda kenal.</string>
     <string name="add_from_contacts_sign_in_required">Masuk untuk menemukan kontak di Crisis Connect.</string>
-    <string name="add_from_contacts_privacy_note">Nomor Anda dicocokkan dengan hash dan tidak pernah disimpan di server. Hanya orang yang memilih untuk dapat ditemukan yang muncul.</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect membaca nama dan nomor telepon kontak untuk menemukan pengguna aplikasi. Nomor dikirim untuk pencocokan ke server Crisis Connect yang dihosting Google Firebase di Amerika Serikat. Nama tetap di perangkat Anda. Nomor yang dicari diproses tanpa disimpan permanen; hasil pencocokan tetap di perangkat. Menyegarkan atau kembali ke layar ini saat masih terbuka dapat mengirim nomor lagi. Pilihan Anda diingat untuk akun ini di perangkat ini. Anda dapat menarik persetujuan di Pengaturan, pada Akses kontak.</string>
     <string name="add_from_contacts_found_count">%1$d di Crisis Connect</string>
     <string name="add_from_contacts_empty_hint">Mereka akan muncul di sini setelah memverifikasi nomor telepon mereka di aplikasi.</string>
     <string name="add_from_contacts_search_hint">Cari nama atau nomor</string>
@@ -656,7 +655,6 @@
     <string name="nearby_match_notification_text">Ketuk untuk terhubung melalui Bluetooth</string>
     <string name="nearby_pairing_channel_name">Permintaan pemasangan terdekat</string>
     <string name="nearby_pairing_request_title">%1$s ingin terhubung di dekat</string>
-    <string name="nearby_pairing_request_text">Terima untuk mengobrol melalui Bluetooth.</string>
     <string name="nearby_pairing_accept">Terima</string>
     <string name="nearby_pairing_decline">Tolak</string>
     <string name="manual_connect_button">Pasangkan dengan perangkat</string>
@@ -1219,6 +1217,7 @@
     <string name="chat_status_connected">Terhubung</string>
     <string name="chat_status_connected_bluetooth">Terhubung melalui Bluetooth</string>
     <string name="chat_status_connected_internet">Terhubung melalui internet</string>
+    <string name="chat_status_connected_satellite">Terhubung melalui satelit</string>
     <string name="internet_message_channel_name">Pesan internet</string>
     <string name="internet_message_notification_title">Pesan baru</string>
     <string name="channel_message_notification_body">Pesan baru</string>
@@ -1347,7 +1346,6 @@
     <string name="notification_photo_message_body">Pesan foto</string>
     <string name="chat_encryption_setup_title">Amankan obrolan ini</string>
     <string name="chat_encryption_setup_instruction">Pindai kode QR yang ditampilkan di layar Obrolan Baru perangkat lain untuk mengimpor kunci enkripsi bersama.</string>
-    <string name="chat_encryption_setup_session_mismatch">QR ini milik sesi obrolan yang berbeda.</string>
     <string name="chat_encryption_setup_invalid_qr">Format QR tidak didukung.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Memverifikasi kunci enkripsi…</string>
     <string name="chat_encryption_setup_handshake_failed">Tidak dapat memverifikasi kunci enkripsi. Coba lagi.</string>
@@ -1781,4 +1779,20 @@
     <string name="profile_delete_account_error_verification">Penghapusan tidak dapat diverifikasi di perangkat ini. Periksa koneksi Anda dan coba lagi.</string>
     <string name="profile_delete_account_error_signed_out">Anda harus masuk untuk menghapus akun.</string>
     <string name="profile_delete_account_reauth_needed">Demi keamanan Anda, kami perlu memastikan ini benar Anda sebelum menghapus. Keluar, masuk lagi, lalu coba kembali.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">Temukan kontak secara online</string>
+    <string name="contacts_disclosure_body">Crisis Connect membaca nama dan nomor telepon kontak untuk menemukan pengguna aplikasi. Nomor dikirim untuk pencocokan ke server Crisis Connect yang dihosting Google Firebase di Amerika Serikat. Nama tetap di perangkat Anda. Nomor yang dicari diproses tanpa disimpan permanen; hasil pencocokan tetap di perangkat. Menyegarkan atau kembali ke layar ini saat masih terbuka dapat mengirim nomor lagi. Pilihan Anda diingat untuk akun ini di perangkat ini. Anda dapat menarik persetujuan di Pengaturan, pada Akses kontak.</string>
+    <string name="contacts_local_disclosure_title">Temukan kontak di sekitar</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect hanya membaca nama dan nomor yang Anda bagikan melalui pemilih kontak sistem untuk menemukan seseorang di sekitar. Nomor yang dipilih digunakan untuk verifikasi identitas melalui Bluetooth. Fitur ini tidak mengirim kontak Anda ke server. Pilihan Anda diingat untuk akun ini di perangkat ini. Anda dapat menarik persetujuan di Pengaturan, pada Akses kontak.</string>
+    <string name="contacts_disclosure_accept">Saya setuju</string>
+    <string name="contacts_disclosure_decline">Tidak sekarang</string>
+    <string name="contacts_consent_settings_title">Akses kontak</string>
+    <string name="contacts_consent_settings_hint">Pilihan Anda diingat untuk akun ini di perangkat ini. Anda dapat menarik persetujuan di Pengaturan, pada Akses kontak.</string>
+    <string name="contacts_consent_revoke_online">Tarik persetujuan pencocokan online</string>
+    <string name="contacts_consent_revoke_nearby">Tarik persetujuan kontak sekitar</string>
+    <string name="nearby_choose_contact">Pilih kontak</string>
+    <string name="nearby_contact_selection_failed">Nomor yang dipilih tidak dapat dibaca. Pilih kontak lain.</string>
+    <string name="chat_status_internet_available">Internet tersedia</string>
+    <string name="chat_status_satellite_available">Koneksi satelit tersedia</string>
 </resources>

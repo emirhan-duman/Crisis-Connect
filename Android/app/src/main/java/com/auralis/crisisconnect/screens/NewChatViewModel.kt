@@ -88,8 +88,8 @@ class NewChatViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(exceptionHandler) {
             val code = generateSessionCode()
             _sessionCode.value = code
-            val key = LocalKeyStorage.getOrCreateAesKey(context)
-            _aesKey.value = key
+            val key = com.auralis.crisisconnect.data.database.KeyGeneratorUtil.generateAesKeyBase64()
+            if (_aesKey.value.isBlank()) _aesKey.value = key
             _userName.value = getSavedUserName(context).first()
             if (canModifyBluetoothAdapter()) {
                 if (originalName == null) {
@@ -124,16 +124,20 @@ class NewChatViewModel(application: Application) : AndroidViewModel(application)
 
     fun requestQrShare() {
         if (_qrShareId.value.isBlank()) {
+            _aesKey.value = com.auralis.crisisconnect.data.database.KeyGeneratorUtil.generateAesKeyBase64()
             _qrShareId.value = generateShareId()
         }
         _qrShareRequested.value = true
     }
 
-    fun cancelQrShareRequest() {
+    fun cancelQrShareRequest(finishInFlight: Boolean = false) {
+        val wasPublishing = qrBroadcastStarted || _qrShareRequested.value
         _qrShareRequested.value = false
         qrBroadcastStarted = false
         _qrShareId.value = ""
-        P2pGattServerService.stopPublishing(context)
+        if (wasPublishing) {
+            P2pGattServerService.stopPublishing(context, graceMillis = if (finishInFlight) 12_000L else 0L)
+        }
     }
 
     fun activateQrShareIfReady() {
@@ -169,7 +173,7 @@ class NewChatViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun restoreBluetoothSettings() {
-        cancelQrShareRequest()
+        cancelQrShareRequest(finishInFlight = true)
         if (canModifyBluetoothAdapter()) {
             setBluetoothNameSafely(originalName)
             if (_isDiscoverable.value) {
@@ -283,16 +287,18 @@ class NewChatViewModel(application: Application) : AndroidViewModel(application)
                 is DeviceResult.Success -> {
                     Log.d("NewChatViewModel", "Manual pairing successful")
                     val name = _manualRemoteName.value.trim().ifEmpty { sessionCode }
-                    saveContact(
-                        context,
-                        Contact(
-                            name = name,
-                            aesKey = "",
-                            sessionCode = sessionCode,
-                            address = mac
-                        ),
-                        analyticsSource = "manual_mac"
-                    )
+                    withContext(Dispatchers.IO) {
+                        saveContact(
+                            context,
+                            Contact(
+                                name = name,
+                                aesKey = "",
+                                sessionCode = sessionCode,
+                                address = mac
+                            ),
+                            analyticsSource = "manual_mac"
+                        )
+                    }
                     _manualMacAddress.value = ""
                     _manualRemoteName.value = ""
                     _manualSessionCode.value = ""

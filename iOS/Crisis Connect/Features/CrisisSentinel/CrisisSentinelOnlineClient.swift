@@ -117,6 +117,26 @@ final class CrisisSentinelOnlineClient {
         }
     }
 
+    /// Only an explicit server grant enables the cloud engine.
+    func checkCloudAccess() async throws -> Bool {
+        try await withIdToken { token in
+            var url = URLComponents(url: try self.endpoint("api/chat/providers"), resolvingAgainstBaseURL: false)
+            url?.queryItems = [URLQueryItem(name: "accessOnly", value: "1")]
+            guard let endpoint = url?.url else { return false }
+            var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await self.session.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 403 { return false }
+            guard status == 200 else { throw Self.mapStatus(status, detail: "Cloud access check failed") }
+            return (try? JSONDecoder().decode(CloudAccess.self, from: data))?.allowed == true
+        }
+    }
+
+    private struct CloudAccess: Decodable {
+        let allowed: Bool
+    }
+
     /// Providers/models the signed-in user's panel can use. Server omits unconfigured ones.
     func fetchProviders() async throws -> [CrisisSentinelOnlineProvider] {
         try await withIdToken { token in
@@ -143,7 +163,8 @@ final class CrisisSentinelOnlineClient {
 
     private func fetchIdToken(user: User, forceRefresh: Bool) async throws -> String {
         let token = try? await user.getIDTokenResult(forcingRefresh: forceRefresh).token
-        guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
+        guard Auth.auth().currentUser?.uid == user.uid,
+              let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
             throw CrisisSentinelOnlineError(kind: .unauthorized, message: "Could not obtain Firebase ID token")
         }
         return token

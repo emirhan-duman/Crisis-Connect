@@ -195,7 +195,7 @@ private struct ActiveDownloadCard: View {
                 Text(region.name)
                     .font(.headline)
                 Spacer()
-                Text(region.status.label)
+                Text(region.coverageStatusLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -372,9 +372,9 @@ private struct OfflineRegionRow: View {
 
             if region.status == .complete {
                 HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text(String(format: NSLocalizedString("OFFLINE_MAP_DOWNLOADED_TILES", comment: ""), region.tileCount))
+                    Image(systemName: region.hasIncompleteCoverage ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(region.hasIncompleteCoverage ? Color.appWarning : Color.green)
+                    Text(String(format: NSLocalizedString("OFFLINE_MAP_DOWNLOADED_TILES", comment: ""), region.downloadedTiles))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -390,6 +390,12 @@ private struct OfflineRegionRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            if region.hasIncompleteCoverage {
+                Text(String(format: NSLocalizedString("OFFLINE_MAP_MISSING_TILES", comment: ""), region.unavailableTileCount, region.tileCount))
+                    .font(.caption)
+                    .foregroundStyle(Color.appWarning)
             }
 
             if let error = region.lastError, region.status == .failed {
@@ -411,8 +417,8 @@ private struct OfflineRegionRow: View {
                     Button("COMMON_PAUSE") { onPause() }
                         .buttonStyle(.bordered)
                 }
-                if region.status == .paused || region.status == .failed || region.status == .idle {
-                    Button("COMMON_RESUME") { onResume() }
+                if region.status == .paused || region.status == .failed || region.status == .idle || region.hasIncompleteCoverage {
+                    Button(LocalizedStringKey(region.hasIncompleteCoverage ? "OFFLINE_MAP_RETRY_MISSING" : "COMMON_RESUME")) { onResume() }
                         .buttonStyle(.borderedProminent)
                 }
                 Button("OFFLINE_MAP_RENAME") { onRename() }

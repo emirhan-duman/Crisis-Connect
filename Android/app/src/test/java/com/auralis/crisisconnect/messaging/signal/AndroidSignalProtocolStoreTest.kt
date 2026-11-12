@@ -48,6 +48,7 @@ class AndroidSignalProtocolStoreTest {
 
         override fun putIdentity(entity: SignalIdentityEntity) { identities[entity.address] = entity }
         override fun getIdentity(address: String) = identities[address]
+        override fun deleteIdentity(address: String) { identities.remove(address) }
         override fun putSession(entity: SignalSessionEntity) { sessions[entity.address] = entity }
         override fun getSession(address: String) = sessions[address]
         override fun getSessionsForName(name: String) = sessions.values.filter { it.name == name }
@@ -143,31 +144,20 @@ class AndroidSignalProtocolStoreTest {
     }
 
     @Test
-    fun tofuIdentity_trustsFirstAndAcceptsChangedKeyForRepin() {
-        // The changed-key path logs via android.util.Log, which is unavailable on the JVM.
-        io.mockk.mockkStatic(android.util.Log::class)
-        io.mockk.every { android.util.Log.w(any<String>(), any<String>()) } returns 0
-        try {
-            val store = AndroidSignalProtocolStore(FakeDao(), fixedIdentity())
-            val addr = SignalProtocolAddress("peer-uid", 1)
-            val first = IdentityKeyPair.generate().publicKey
-            val second = IdentityKeyPair.generate().publicKey
-
-            // Unknown peer is trusted (TOFU), and recorded.
-            assertTrue(store.isTrustedIdentity(addr, first, org.signal.libsignal.protocol.state.IdentityKeyStore.Direction.SENDING))
-            store.saveIdentity(addr, first)
-            assertTrue(store.isTrustedIdentity(addr, first, org.signal.libsignal.protocol.state.IdentityKeyStore.Direction.SENDING))
-            assertArrayEquals(first.serialize(), store.getIdentity(addr)!!.serialize())
-
-            // A changed key (peer reinstalled/reset) is accepted non-blockingly — Signal's default
-            // policy. Rejecting here would deadlock the re-handshake forever; libsignal follows up
-            // with saveIdentity, which re-pins the new key.
-            assertTrue(store.isTrustedIdentity(addr, second, org.signal.libsignal.protocol.state.IdentityKeyStore.Direction.SENDING))
-            store.saveIdentity(addr, second)
-            assertArrayEquals(second.serialize(), store.getIdentity(addr)!!.serialize())
-        } finally {
-            io.mockk.unmockkStatic(android.util.Log::class)
-        }
+    fun identityTrustsFirstButRejectsReplacementWithoutMutatingPin() {
+        val store = AndroidSignalProtocolStore(FakeDao(), fixedIdentity())
+        val addr = SignalProtocolAddress("peer-uid", 1)
+        val first = IdentityKeyPair.generate().publicKey
+        val second = IdentityKeyPair.generate().publicKey
+        val direction = org.signal.libsignal.protocol.state.IdentityKeyStore.Direction.SENDING
+        assertTrue(store.isTrustedIdentity(addr, first, direction))
+        store.saveIdentity(addr, first)
+        assertTrue(store.isTrustedIdentity(addr, first, direction))
+        assertFalse(store.isTrustedIdentity(addr, second, direction))
+        var rejected = false
+        try { store.saveIdentity(addr, second) } catch (_: IllegalStateException) { rejected = true }
+        assertTrue(rejected)
+        assertArrayEquals(first.serialize(), store.getIdentity(addr)!!.serialize())
     }
 
     @Test

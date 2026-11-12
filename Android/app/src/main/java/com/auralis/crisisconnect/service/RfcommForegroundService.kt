@@ -63,6 +63,7 @@ import com.auralis.crisisconnect.data.saveLocalMessage
 import com.auralis.crisisconnect.data.saveContact
 import com.auralis.crisisconnect.getSavedUserName
 import com.auralis.crisisconnect.data.saveRemoteMessage
+import com.auralis.crisisconnect.data.updateContactPeerIdentity
 import com.auralis.crisisconnect.data.updateContactAddress
 import com.auralis.crisisconnect.messaging.MessagingIdentity
 import com.auralis.crisisconnect.nearby.NearbyContactAdvertiser
@@ -513,16 +514,17 @@ class RfcommForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        cleanupStaleIncomingTransferCaches()
-        RfcommTelecomCoordinator.initialize(applicationContext)
         ensureCallNotificationChannel()
         ensureCallEventNotificationChannel()
+        // Promote before cache cleanup and Telecom setup; both can touch disk or block on system
+        // services, leaving startForegroundService() past Android's promotion deadline on slow devices.
+        startForegroundRobust(buildNotification())
+        cleanupStaleIncomingTransferCaches()
+        RfcommTelecomCoordinator.initialize(applicationContext)
         registerReceiver(
             bluetoothStateReceiver,
             IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
         )
-        val initialNotification = buildNotification()
-        startForegroundRobust(initialNotification)
         observeBleFallbackIncomingMessages()
         if (foregroundStarted.get()) {
             ensureListening("service onCreate")
@@ -599,8 +601,25 @@ class RfcommForegroundService : Service() {
             }
         }
 
+        // Untyped fallback: satisfies system foreground deadline to avoid ForegroundServiceDidNotStartInTimeException
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            runCatching {
+                startForeground(NOTIFICATION_ID, notification, 0)
+                foregroundStarted.set(true)
+                foregroundHasPhoneCallType.set(false)
+                return
+            }
+        }
+        runCatching {
+            startForeground(NOTIFICATION_ID, notification)
+            foregroundStarted.set(true)
+            foregroundHasPhoneCallType.set(false)
+            return
+        }
+
         foregroundStarted.set(false)
         foregroundHasPhoneCallType.set(false)
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf()
     }
 
@@ -937,42 +956,23 @@ class RfcommForegroundService : Service() {
             return
         }
         serviceScope.launch {
-            val aesKeyBytes = decodeContactAesKey(getContact(applicationContext, sessionCode)?.aesKey)
+            var success = false
+            try {
+                val aesKeyBytes = decodeContactAesKey(getContact(applicationContext, sessionCode)?.aesKey)
 
-            val encryptedPacket = aesKeyBytes?.let { key ->
-                runCatching { AesCipherHelper.encrypt(key, normalized.toByteArray(Charsets.UTF_8)) }
-                    .getOrNull()
-            }
+                // Missing/invalid keys and encryption failures must never select a clear-text frame.
+                val payload = SecureRfcommText.seal(aesKeyBytes, uuid, normalized)
+                success = payload != null && thread.write(payload.toByteArray(Charsets.UTF_8))
 
-            val success = if (encryptedPacket != null && encryptedPacket.size > 12) {
-                val iv = encryptedPacket.copyOfRange(0, 12)
-                val cipherBytes = encryptedPacket.copyOfRange(12, encryptedPacket.size)
-                val payload = buildString {
-                    append("SEC_MSG|")
-                    append(uuid)
-                    append('|')
-                    append(Base64.encodeToString(iv, Base64.NO_WRAP))
-                    append('|')
-                    append(Base64.encodeToString(cipherBytes, Base64.NO_WRAP))
-                    append('\n')
+                if (success) {
+                    saveLocalMessage(applicationContext, sessionCode, uuid, normalized)
                 }
-                thread.write(payload.toByteArray(Charsets.UTF_8))
-            } else {
-                val encoded = normalized.replace("\n", "\\n")
-                val payload = buildString {
-                    append("MSG|")
-                    append(uuid)
-                    append('|')
-                    append(encoded)
-                    append('\n')
-                }
-                thread.write(payload.toByteArray(Charsets.UTF_8))
+            } catch (e: Exception) {
+                Log.e(TAG, "sendMessage failed for $sessionCode", e)
+                success = false
+            } finally {
+                handler.post { callback(success) }
             }
-
-            if (success) {
-                saveLocalMessage(applicationContext, sessionCode, uuid, normalized)
-            }
-            handler.post { callback(success) }
         }
     }
 
@@ -1075,25 +1075,28 @@ class RfcommForegroundService : Service() {
     ) {
         fun proceed() {
             serviceScope.launch {
-                val session = callSessions[sessionCode]
-                val thread = connectedThreads[sessionCode]
+                val session = callSessions.entries.firstOrNull {
+                    it.key.equals(sessionCode, ignoreCase = true) || it.value.callId == callId
+                }?.value ?: callSessions[sessionCode]
+                val currentCode = session?.sessionCode ?: sessionCode
+                val thread = connectedThreads[currentCode] ?: connectedThreads[sessionCode]
                 if (session == null || session.callId != callId || thread == null) {
                     handler.post { callback(false) }
                     return@launch
                 }
                 stopRingtone(session)
-                cancelCallNotification(sessionCode)
+                cancelCallNotification(currentCode)
                 val accepted = sendJsonLine(thread, buildAccept(callId))
                 if (!accepted) {
                     handler.post { callback(false) }
                     teardownCall(session, "error", notifyPeer = false)
-                    callSessions.remove(sessionCode)
+                    callSessions.remove(currentCode)
                     return@launch
                 }
                 val audioReady = prepareAudioPipelines(session, thread)
                 if (!audioReady) {
                     handler.post { callback(false) }
-                    endVoipCall(sessionCode, callId, reason = "error")
+                    endVoipCall(currentCode, callId, reason = "error")
                     return@launch
                 }
                 updateCallState(session, CallState.InCall)
@@ -1101,18 +1104,15 @@ class RfcommForegroundService : Service() {
             }
         }
 
-        if (acceptedByTelecom) {
-            proceed()
-            return
-        }
-
-        RfcommTelecomCoordinator.answerIncomingCall(sessionCode, callId) { success ->
-            if (!success) {
-                handler.post { callback(false) }
-                return@answerIncomingCall
+        if (!acceptedByTelecom) {
+            // Non-blocking Telecom sync: system Telecom issues must never block answering the call.
+            RfcommTelecomCoordinator.answerIncomingCall(sessionCode, callId) { success ->
+                if (!success) {
+                    Log.w(TAG, "Telecom answer sync failed for RFCOMM call $sessionCode/$callId")
+                }
             }
-            proceed()
         }
+        proceed()
     }
 
     fun rejectIncomingCall(sessionCode: String, callId: String, reason: String = "declined") {
@@ -1547,9 +1547,11 @@ class RfcommForegroundService : Service() {
         if (messageUuid.isBlank()) {
             return
         }
-        val thread = connectedThreads[sessionCode] ?: return
-        val payload = "ACK|$messageUuid\n"
-        thread.write(payload.toByteArray(Charsets.UTF_8))
+        serviceScope.launch {
+            val contact = getContact(applicationContext, sessionCode) ?: return@launch
+            val payload = SecureRfcommReceipt.seal(contact.aesKey, SecureRfcommReceipt.Kind.READ, messageUuid) ?: return@launch
+            connectedThreads[sessionCode]?.write(payload.toByteArray(Charsets.UTF_8))
+        }
     }
 
     private fun sendPeerName(sessionCode: String) {
@@ -1564,20 +1566,31 @@ class RfcommForegroundService : Service() {
     }
 
     /**
-     * Announces our internet identity (Firebase uid + long-term public key) over the Bluetooth link
-     * so the peer can stamp it onto their contact and reach us over the internet when Bluetooth
-     * drops — no QR re-scan needed. Sent on every connection, so it self-heals a uid that changed
-     * (e.g. after a data wipe). The key is base64 (no '|'/newline), so '|' is a safe delimiter.
+     * Internet identity enrichment requires the pair key and a challenge for this live socket.
+     * Older unsigned announcements cannot create or replace an identity pin.
      */
-    private fun sendPeerIdentity(sessionCode: String) {
+    private fun handleIdentityFrame(sessionCode: String, origin: ConnectedThread, payload: String) {
         serviceScope.launch {
-            val uid = FirebaseAuth.getInstance().currentUser?.uid?.trim()
-                ?.takeIf { it.isNotBlank() } ?: return@launch
+            if (connectedThreads[sessionCode] !== origin) return@launch
+            val contact = getContact(applicationContext, sessionCode) ?: return@launch
+            val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@launch
             val publicKey = runCatching { MessagingIdentity(applicationContext).publicKeyBase64() }
-                .getOrNull()?.trim()?.takeIf { it.isNotBlank() } ?: return@launch
-            val thread = connectedThreads[sessionCode] ?: return@launch
-            val payload = "PEER_IDENTITY|$uid|$publicKey\n"
-            thread.write(payload.toByteArray(Charsets.UTF_8))
+                .getOrNull() ?: return@launch
+            when (SecureRfcommIdentity.kind(payload)) {
+                SecureRfcommIdentity.Kind.CHALLENGE -> {
+                    val response = origin.identityProof.answer(contact.aesKey, payload, uid, publicKey)
+                        ?: return@launch
+                    if (connectedThreads[sessionCode] === origin) origin.write(response.toByteArray(Charsets.UTF_8))
+                }
+                SecureRfcommIdentity.Kind.PROOF -> {
+                    val identity = origin.identityProof.open(contact.aesKey, payload, SecureRfcommIdentity.Identity(uid, publicKey))
+                        ?: return@launch
+                    if (connectedThreads[sessionCode] === origin) {
+                        updateContactPeerIdentity(applicationContext, sessionCode, identity.uid, identity.publicKey)
+                    }
+                }
+                null -> Unit
+            }
         }
     }
 
@@ -1652,7 +1665,8 @@ class RfcommForegroundService : Service() {
                         createdAtMillis = incoming.createdAtMillis,
                         receivedAtMillis = incoming.timestampMs,
                         senderDisplayName = contact.name,
-                        senderAddress = normalizedAddress
+                        senderAddress = normalizedAddress,
+                        route = "ble_gatt_fallback"
                     )
                 }.getOrElse { throwable ->
                     Log.w(TAG, "[$normalizedAddress] Failed to persist BLE fallback message", throwable)
@@ -1844,7 +1858,7 @@ class RfcommForegroundService : Service() {
         updateActiveSessions(sessionCode, connected = true)
         connectedThread.start()
         sendPeerName(sessionCode)
-        sendPeerIdentity(sessionCode)
+        connectedThread.write(connectedThread.identityProof.challenge().toByteArray(Charsets.UTF_8))
     }
 
     private fun connectionFailed(sessionCode: String) {
@@ -1853,9 +1867,14 @@ class RfcommForegroundService : Service() {
         ensureListening("connectionFailed")
     }
 
+    @Synchronized
     private fun connectionLost(sessionCode: String, origin: ConnectedThread? = null) {
         Log.w(TAG, "RFCOMM connection lost for $sessionCode")
-        val existing = connectedThreads.remove(sessionCode)
+        val existing = if (origin == null) connectedThreads.remove(sessionCode) else {
+            // A replaced socket must not tear down the replacement or its transfers.
+            if (!connectedThreads.remove(sessionCode, origin)) return
+            origin
+        }
         if (existing != null && existing !== origin) {
             existing.cancel()
         }
@@ -4194,6 +4213,7 @@ class RfcommForegroundService : Service() {
         private val sessionCode: String,
         private val socket: BluetoothSocket
     ) : Thread("ConnectedThread-$sessionCode") {
+        internal val identityProof = SecureRfcommIdentity()
 
         private val inputStream: InputStream? = try {
             socket.inputStream
@@ -4265,7 +4285,12 @@ class RfcommForegroundService : Service() {
                         while (newline != -1) {
                             val message = builder.substring(0, newline).trim()
                             if (message.isNotEmpty()) {
-                                handleIncomingPayload(sessionCode, message)
+                                if (cancelled.get() || connectedThreads[sessionCode] !== this) return
+                                if (SecureRfcommIdentity.isEnvelope(message)) {
+                                    handleIdentityFrame(sessionCode, this, message)
+                                } else {
+                                    handleIncomingPayload(sessionCode, message)
+                                }
                             }
                             builder.delete(0, newline + 1)
                             newline = builder.indexOf("\n")

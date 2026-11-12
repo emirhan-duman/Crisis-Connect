@@ -23,6 +23,7 @@ class ImageTransferPreparationTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
+        LocalMedia.initialize(context) { javax.crypto.spec.SecretKeySpec(ByteArray(32) { 5 }, "AES") }
     }
 
     @Test

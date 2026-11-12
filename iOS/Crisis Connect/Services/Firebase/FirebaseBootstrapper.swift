@@ -38,7 +38,14 @@ final class FirebaseBootstrapper {
     }
 
     func syncAuthenticatedSession() async {
+        let signedInUid = auth.currentUser.flatMap { $0.isAnonymous ? nil : $0.uid }
         await bootstrapAuthenticatedSession()
+        // A token may have been registered to the anonymous startup account before login.
+        // Rebind after explicit sign-in (including MFA), without creating a new anonymous user
+        // if this account was cancelled, signed out, or replaced while profile sync was running.
+        if let signedInUid {
+            await MessagingRegistrar.ensureRegistered(forAuthenticatedUid: signedInUid)
+        }
     }
 
     private func bootstrap() async {
@@ -204,7 +211,7 @@ final class FirebaseBootstrapper {
 
     @discardableResult
     func refreshRescueAccess() async -> RescueAccessState {
-        let cachedCertificateRole = await securityRepository.getUsableStoredCertificateRole(allowExpired: true)
+        let cachedCertificateRole = await securityRepository.getUsableStoredCertificateRole(allowExpired: false)
         let cachedRescueRole = RescueRoleAccess.normalizedRole(cachedCertificateRole)
 
         guard let user = auth.currentUser, !user.isAnonymous else {
@@ -227,7 +234,7 @@ final class FirebaseBootstrapper {
         case .authorized(let role):
             secureStore.saveRole(role)
             let warmed = await warmUpCertificateWithBanner()
-            let hasStoredCertificate = await securityRepository.hasUsableStoredCertificate(allowExpired: true)
+            let hasStoredCertificate = await securityRepository.hasUsableStoredCertificate(allowExpired: false)
             let certificateReady = warmed || hasStoredCertificate
             CrashReporter.updateContext(role: role, certificateReady: certificateReady)
             return RescueAccessState(role: role, certificateReady: certificateReady)

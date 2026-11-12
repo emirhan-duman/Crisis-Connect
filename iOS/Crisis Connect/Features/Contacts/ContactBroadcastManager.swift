@@ -39,8 +39,8 @@ private struct P2pPendingHandshake {
 }
 
 private struct P2pPendingShareCompletion {
-    let session: P2pPublishedSession
-    let pending: P2pPendingHandshake
+    let contactId: UUID
+    let serverNonce: String
 }
 
 private struct P2pIncomingEnvelope {
@@ -169,11 +169,14 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
 
     private let queue = BlePeripheralHostCoordinator.shared.queue
     private let queueKey = DispatchSpecificKey<Void>()
+    private var shareStopWork: DispatchWorkItem?
+    private var didCheckShareRecovery = false
     private var shareSession: P2pPublishedSession?
     private var deviceResponses: [UUID: Data] = [:]
     private var pendingHandshakes: [UUID: P2pPendingHandshake] = [:]
     private var pendingShareCompletions: [UUID: P2pPendingShareCompletion] = [:]
     private var messageReceivers: [UUID: BleChunkReceiver] = [:]
+    private var controlReceivers: [UUID: P2pPrivacyWire.ControlReceiver] = [:]
     private var controlCharacteristic: CBMutableCharacteristic?
     private var messageOutCharacteristic: CBMutableCharacteristic?
     private var subscribedMessageOutCentrals: [UUID: CBCentral] = [:]
@@ -240,7 +243,8 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         shareId: String,
         sessionCode: String,
         displayName: String?,
-        aesKeyBase64: String
+        aesKeyBase64: String,
+        recoveryDeadline: Date? = nil
     ) {
         let normalizedShareId = P2pBleProtocol.normalizeShareId(shareId)
         let trimmedSessionCode = sessionCode.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -256,7 +260,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         let serverNonce = P2pBleProtocol.randomNonceBase64()
         let deviceId = localDeviceId()
         let avatarBase64 = localAvatarPayload()
-        let bootstrapPayload = Self.makeShareBootstrapPayload(
+        let plainBootstrap = Self.makeShareBootstrapPayload(
             shareId: normalizedShareId,
             sessionCode: trimmedSessionCode,
             displayName: displayName,
@@ -264,6 +268,8 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             deviceId: deviceId,
             avatarBase64: avatarBase64
         )
+        guard let key = P2pBleProtocol.decodeBase64(trimmedKey),
+              let bootstrapPayload = P2pPrivacyWire.seal(plainBootstrap, key: key, purpose: .bootstrap) else { return }
         let nextSession = P2pPublishedSession(
             shareId: normalizedShareId,
             sessionCode: trimmedSessionCode,
@@ -276,22 +282,101 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
 
         queue.async { [weak self] in
             guard let self else { return }
+            // A freshly created QR wins over an old restore queued during app startup.
+            if recoveryDeadline != nil, self.shareSession != nil { return }
+            self.didCheckShareRecovery = true
+            do {
+                try ContactShareRecovery.write(ContactShareCheckpoint(shareId: normalizedShareId,
+                    sessionCode: trimmedSessionCode, displayName: displayName, aesKeyBase64: trimmedKey,
+                    account: Auth.auth().currentUser?.uid ?? "", expiresAt: recoveryDeadline ?? Date().addingTimeInterval(300)))
+            } catch { return }
+            self.shareStopWork?.cancel()
+            self.shareStopWork = nil
             self.shareSession = nextSession
             self.refreshHostingIfNeeded()
+            if let deadline = recoveryDeadline {
+                let nonce = nextSession.serverNonce
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, self.shareSession?.serverNonce == nonce else { return }
+                    self.shareStopWork = nil
+                    try? ContactShareRecovery.clear()
+                    self.shareSession = nil
+                    self.refreshHostingIfNeeded()
+                }
+                self.shareStopWork = work
+                self.queue.asyncAfter(deadline: .now() + max(0, min(30, deadline.timeIntervalSinceNow)), execute: work)
+            }
         }
     }
 
-    func stopSharing() {
+    /// Reads the short-lived, account-bound QR capability on its owning serial queue.
+    func introductionKey(account: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                let saved = try? ContactShareRecovery.read()
+                let key = saved.flatMap { checkpoint in
+                    checkpoint.canResume(sessionCode: SecureLocalStore.shared.getOrCreateP2pSessionCode(),
+                        account: account, now: Date()) ? checkpoint.aesKeyBase64 : nil
+                }
+                continuation.resume(returning: key)
+            }
+        }
+    }
+
+    func resumePendingShare() {
+        queue.async { [weak self] in
+            guard let self, !self.didCheckShareRecovery, self.shareSession == nil else { return }
+            do {
+                guard let saved = try ContactShareRecovery.read() else { self.didCheckShareRecovery = true; return }
+                guard saved.canResume(sessionCode: SecureLocalStore.shared.getOrCreateP2pSessionCode(),
+                    account: Auth.auth().currentUser?.uid ?? "", now: Date()) else {
+                    try ContactShareRecovery.clear(); self.didCheckShareRecovery = true; return
+                }
+                self.didCheckShareRecovery = true
+                self.startSharing(shareId: saved.shareId, sessionCode: saved.sessionCode,
+                    displayName: saved.displayName, aesKeyBase64: saved.aesKeyBase64,
+                    recoveryDeadline: min(saved.expiresAt, Date().addingTimeInterval(30)))
+            } catch { /* Retry on the next foreground if protected storage is unavailable. */ }
+        }
+    }
+
+    func stopSharing(after delay: TimeInterval = 0) {
         queue.async { [weak self] in
             guard let self else { return }
-            self.shareSession = nil
-            self.refreshHostingIfNeeded()
+            self.shareStopWork?.cancel()
+            self.shareStopWork = nil
+            self.didCheckShareRecovery = true
+            guard delay > 0, let nonce = self.shareSession?.serverNonce else {
+                try? ContactShareRecovery.clear()
+                self.shareSession = nil
+                self.refreshHostingIfNeeded()
+                return
+            }
+            if var saved = try? ContactShareRecovery.read() {
+                saved.expiresAt = min(saved.expiresAt, Date().addingTimeInterval(min(delay, 12)))
+                try? ContactShareRecovery.write(saved)
+            }
+            // A navigation pop must not tear down the host halfway through the scanner's
+            // 12-second verification window. Explicit stop remains immediate.
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.shareSession?.serverNonce == nonce else { return }
+                self.shareStopWork = nil
+                try? ContactShareRecovery.clear()
+                self.shareSession = nil
+                self.refreshHostingIfNeeded()
+            }
+            self.shareStopWork = work
+            self.queue.asyncAfter(deadline: .now() + min(delay, 12), execute: work)
         }
     }
 
     func stop() {
         queue.async { [weak self] in
             guard let self else { return }
+            self.shareStopWork?.cancel()
+            self.shareStopWork = nil
+            self.didCheckShareRecovery = true
+            try? ContactShareRecovery.clear()
             self.shareSession = nil
             self.resetHostedTransportState()
             DispatchQueue.main.async {
@@ -732,13 +817,6 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
         guard characteristic.uuid == P2pBleProtocol.messageOutCharacteristicUUID else { return }
         subscribedMessageOutCentrals[central.identifier] = central
-        if let record = ContactStore.shared.contactForBleAddress(central.identifier.uuidString.uppercased()) {
-            bindCentral(central.identifier, to: record)
-        } else if let foregroundSessionId {
-            bindCentral(central.identifier, to: foregroundSessionId)
-        } else {
-            publishConnectedSessions()
-        }
         flushQueuedMessageOutValues(for: central.identifier, peripheral: peripheral)
     }
 
@@ -800,6 +878,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         pendingHandshakes.removeAll()
         pendingShareCompletions.removeAll()
         messageReceivers.removeAll()
+        controlReceivers.removeAll()
         controlCharacteristic = nil
         messageOutCharacteristic = nil
         subscribedMessageOutCentrals.removeAll()
@@ -822,6 +901,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         pendingHandshakes.removeAll()
         pendingShareCompletions.removeAll()
         messageReceivers.removeAll()
+        controlReceivers.removeAll()
         controlCharacteristic = nil
         messageOutCharacteristic = nil
         subscribedMessageOutCentrals.removeAll()
@@ -883,18 +963,14 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         if let shareSession {
             return P2pBleProtocol.buildIdentityValue(shareId: shareSession.shareId)
         }
-        return P2pBleProtocol.buildDeviceIdentityValue(deviceId: localDeviceId())
+        return P2pPrivacyWire.privateIdentity
     }
 
     private func currentBootstrapPayload() -> Data {
         if let shareSession {
             return shareSession.bootstrapPayload
         }
-        return Self.makeHostBootstrapPayload(
-            deviceId: localDeviceId(),
-            displayName: localDisplayName(),
-            avatarBase64: localAvatarPayload()
-        )
+        return Data(#"{"mode":"host","privacyVersion":2}"#.utf8)
     }
 
     private func handleControlWrite(_ value: Data, from central: CBCentral) -> CBATTError.Code {
@@ -902,7 +978,16 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             setErrorResponse(for: central.identifier, code: "share_inactive", message: "QR share session is not active")
             return .success
         }
-        guard let frame = try? JSONSerialization.jsonObject(with: value) as? [String: Any],
+        controlReceivers = controlReceivers.filter { !$0.value.isExpired }
+        if controlReceivers[central.identifier] == nil {
+            guard controlReceivers.count < 8 else { return .insufficientResources }
+            controlReceivers[central.identifier] = P2pPrivacyWire.ControlReceiver()
+        }
+        guard let wire = controlReceivers[central.identifier]?.receive(value) else { return .success }
+        controlReceivers.removeValue(forKey: central.identifier)
+        guard let key = P2pBleProtocol.decodeBase64(shareSession.aesKeyBase64),
+              let plaintext = P2pPrivacyWire.open(wire, key: key, purpose: .control) else { return .insufficientAuthentication }
+        guard let frame = try? JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
               let type = (frame["type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) else {
             setErrorResponse(for: central.identifier, code: "invalid_json", message: "Malformed control payload")
             return .success
@@ -1092,6 +1177,12 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             return
         }
 
+        // The scanner must not receive success until the reciprocal contact is durable. This
+        // closes the old 250ms window where a force-quit lost only the displaying side's record.
+        guard let record = persistAuthenticatedPeer(session: session, centralId: central.identifier, pending: pending) else {
+            setErrorResponse(for: central.identifier, code: "save_failed", message: "Could not save peer")
+            return
+        }
         pendingHandshakes.removeValue(forKey: central.identifier)
         setDeviceResponse(
             for: central.identifier,
@@ -1103,10 +1194,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
                 "serverDeviceId": session.deviceId
             ]
         )
-        pendingShareCompletions[central.identifier] = P2pPendingShareCompletion(
-            session: session,
-            pending: pending
-        )
+        pendingShareCompletions[central.identifier] = P2pPendingShareCompletion(contactId: record.id, serverNonce: session.serverNonce)
     }
 
     private func handleMessageChunk(_ value: Data, from central: CBCentral) -> CBATTError.Code {
@@ -1138,10 +1226,12 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
     }
 
     private func handleIncomingEnvelope(_ envelope: P2pIncomingEnvelope, from central: CBCentral) {
-        guard let record = ContactStore.shared.contactForRemoteDeviceId(envelope.fromDeviceId),
-              let key = ContactStore.shared.aesKey(for: record) else {
-            return
+        let matches = ContactStore.shared.pairedKeyCandidates().filter { record in
+            guard let key = ContactStore.shared.aesKey(for: record) else { return false }
+            return P2pPrivacyWire.matches(envelope.fromDeviceId, key: key, packet: envelope.encryptedPacket)
         }
+        guard matches.count == 1, let record = matches.first,
+              let key = ContactStore.shared.aesKey(for: record) else { return }
 
         guard let plaintext = decryptChatPayload(
             envelope.encryptedPacket,
@@ -1154,6 +1244,11 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         let address = central.identifier.uuidString.uppercased()
         ContactStore.shared.updateBleAddress(sessionId: record.id, address: address)
         bindCentral(central.identifier, to: record)
+
+        if payload.kind == "privacy_ping", let nonce = payload.messageId, UUID(uuidString: nonce) != nil {
+            sendChatEvent(kind: "privacy_pong", messageId: nonce, to: central, record: record)
+            return
+        }
 
         // Voice-call signaling from a central peer. Route it BEFORE the chat-kind switch —
         // these kinds used to fall into `default: break`, silently eating every incoming
@@ -1386,7 +1481,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
 
         let outerPayload: [String: Any] = [
             "type": P2pBleProtocol.typeChatEnvelope,
-            "fromDeviceId": localDeviceId(),
+            "fromDeviceId": P2pPrivacyWire.alias(key: key, packet: encryptedPacket),
             "payload": encryptedPacket.base64EncodedString()
         ]
         guard let outerData = try? JSONSerialization.data(withJSONObject: outerPayload, options: []),
@@ -1469,7 +1564,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         }
         let outerPayload: [String: Any] = [
             "type": P2pBleProtocol.typeChatEnvelope,
-            "fromDeviceId": localDeviceId(),
+            "fromDeviceId": P2pPrivacyWire.alias(key: key, packet: encryptedPacket),
             "payload": encryptedPacket.base64EncodedString()
         ]
         guard let outerData = try? JSONSerialization.data(withJSONObject: outerPayload, options: []),
@@ -1962,8 +2057,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         for record: ContactRecord,
         envelopeDeviceId: String? = nil
     ) -> String? {
-        envelopeDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            ?? record.verifiedIdentityKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        record.verifiedIdentityKey?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             ?? record.remoteDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
@@ -1971,7 +2065,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         session: P2pPublishedSession,
         centralId: UUID,
         pending: P2pPendingHandshake
-    ) {
+    ) -> ContactRecord? {
         let address = centralId.uuidString.uppercased()
 
         // Self-identity guard — the mirror of the Android host-side one. Two failures, two answers:
@@ -1994,7 +2088,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             || (!incomingSessionCode.isEmpty
                 && incomingSessionCode.caseInsensitiveCompare(localSessionCode) == .orderedSame) {
             MessagingDiagLog.log("pairing rejected: the peer identity is this device")
-            return
+            return nil
         }
         let localUid = (Auth.auth().currentUser?.uid ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2007,6 +2101,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             fallbackSessionCode: pending.clientSessionCode,
             fallbackAddress: address
         )
+        ContactStore.shared.prepareForHostPairing()
         let record = ContactStore.shared.upsertBleContact(
             name: pending.clientName ?? pending.clientSessionCode,
             sessionCode: peerSessionCode,
@@ -2027,6 +2122,8 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
             analyticsSource: "ble_gatt_peer",
             analyticsReceived: true
         )
+        do { try ContactStore.shared.flushPairingFromHost() }
+        catch { return nil }
         bindCentral(centralId, to: record)
         DispatchQueue.main.async {
             SOSChatStore.shared.ensureSession(
@@ -2042,18 +2139,15 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
                 isVerified: true,
                 avatarBase64: pending.clientAvatarBase64
             )
-            NotificationCenter.default.post(
-                name: .p2pShareDidAddContact,
-                object: nil,
-                userInfo: [
-                    "contactId": record.id
-                ]
-            )
         }
+        return record
     }
 
     private func finalizeShareCompletionIfNeeded(for centralId: UUID, deliveredPayload: Data) {
-        guard isServerFinishPayload(deliveredPayload),
+        guard let session = shareSession,
+              let key = P2pBleProtocol.decodeBase64(session.aesKeyBase64),
+              let plaintext = P2pPrivacyWire.open(deliveredPayload, key: key, purpose: .control),
+              isServerFinishPayload(plaintext),
               let completion = pendingShareCompletions.removeValue(forKey: centralId) else {
             return
         }
@@ -2061,11 +2155,12 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         // Keep the QR-share GATT service alive briefly after returning the final
         // ATT read response so the central can finish processing `server_finish`.
         queue.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
-            self?.persistAuthenticatedPeer(
-                session: completion.session,
-                centralId: centralId,
-                pending: completion.pending
-            )
+            guard self?.shareSession?.serverNonce == completion.serverNonce else { return }
+            try? ContactShareRecovery.clear()
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .p2pShareDidAddContact, object: nil,
+                    userInfo: ["contactId": completion.contactId])
+            }
         }
     }
 
@@ -2096,7 +2191,10 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
     private func setDeviceResponse(for identifier: UUID, payload: [String: Any?]) {
         let compact = payload.compactMapValues { $0 }
         guard let data = try? JSONSerialization.data(withJSONObject: compact, options: []) else { return }
-        deviceResponses[identifier] = data
+        guard let session = shareSession,
+              let key = P2pBleProtocol.decodeBase64(session.aesKeyBase64),
+              let wire = P2pPrivacyWire.seal(data, key: key, purpose: .control) else { return }
+        deviceResponses[identifier] = wire
     }
 
     private func setErrorResponse(for identifier: UUID, code: String, message: String) {
@@ -2199,22 +2297,7 @@ final class ContactBroadcastManager: NSObject, ObservableObject, CBPeripheralMan
         return (try? JSONSerialization.data(withJSONObject: compact, options: [])) ?? Data()
     }
 
-    private static func makeHostBootstrapPayload(
-        deviceId: String,
-        displayName: String,
-        avatarBase64: String?
-    ) -> Data {
-        let payload: [String: Any?] = [
-            "mode": "host",
-            "platform": "ios",
-            "protocolVersion": P2pBleProtocol.protocolVersion,
-            "serverDeviceId": deviceId,
-            "name": displayName.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
-            "avatarB64": avatarBase64?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        ]
-        let compact = payload.compactMapValues { $0 }
-        return (try? JSONSerialization.data(withJSONObject: compact, options: [])) ?? Data()
-    }
+
 }
 
 private extension Data {

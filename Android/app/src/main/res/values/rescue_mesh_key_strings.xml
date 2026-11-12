@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rescue_mesh_key_sign_in_required">Sign in again to obtain the mesh key.</string>
+    <string name="rescue_mesh_key_not_enabled">Secure mesh has not been enabled for this account yet. Contact an administrator.</string>
+    <string name="rescue_mesh_key_service_unavailable">The mesh key service is not available on the server. Contact an administrator.</string>
+    <string name="rescue_mesh_key_network_error">Could not reach the mesh key service. Check your internet connection and try again.</string>
+    <string name="rescue_mesh_key_fetch_failed">The mesh key could not be obtained. Please try again.</string>
+</resources>

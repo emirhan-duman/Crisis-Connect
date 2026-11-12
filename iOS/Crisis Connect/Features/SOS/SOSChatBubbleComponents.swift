@@ -91,12 +91,27 @@ struct SOSChatBubble: View, Equatable {
     }
 
     @ViewBuilder
+    private var forwardedHeader: some View {
+        if message.isForwarded || ForwardMetadata.isForwarded(message.text) {
+            HStack(spacing: 4) {
+                Image(systemName: "arrowshape.turn.up.right.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(NSLocalizedString("CHAT_MESSAGE_FORWARDED", comment: ""))
+                    .font(.caption2.italic())
+            }
+            .foregroundStyle(.secondary)
+            .padding(.bottom, 2)
+        }
+    }
+
+    @ViewBuilder
     private var bubbleBody: some View {
         switch message.kind {
         case .text:
             let visibleText = P2pSharedTransferSupport.stripReplyMetadata(message.text) ?? message.text
             if let payload = P2pSharedTransferSupport.parseFilePreviewMessage(visibleText) {
                 VStack(alignment: .leading, spacing: 8) {
+                    forwardedHeader
                     if let reply = message.inlineReplyMetadata {
                         ChatReplyQuotedPreview(
                             preview: reply.preview,
@@ -115,6 +130,7 @@ struct SOSChatBubble: View, Equatable {
                 }
             } else {
                 VStack(alignment: .leading, spacing: message.inlineReplyMetadata == nil ? 4 : 8) {
+                    forwardedHeader
                     if let reply = message.inlineReplyMetadata {
                         ChatReplyQuotedPreview(
                             preview: reply.preview,
@@ -124,7 +140,7 @@ struct SOSChatBubble: View, Equatable {
                         )
                     }
 
-                    let displayText = message.visibleTextPreview
+                    let displayText = ForwardMetadata.stripForward(message.visibleTextPreview)
                     if !displayText.isEmpty {
                         Text(displayText)
                             .font(.body)
@@ -140,6 +156,7 @@ struct SOSChatBubble: View, Equatable {
             }
         case .audio:
             VStack(alignment: .leading, spacing: 6) {
+                forwardedHeader
                 DeferredAudioMessageBubbleContent(
                     message: message,
                     tint: .whatsAppAccent,
@@ -149,6 +166,7 @@ struct SOSChatBubble: View, Equatable {
             }
         case .image:
             VStack(alignment: .leading, spacing: 8) {
+                forwardedHeader
                 ChatImageBubbleContent(
                     message: message,
                     maxWidth: maxBubbleWidth,
@@ -160,6 +178,7 @@ struct SOSChatBubble: View, Equatable {
             }
         case .location:
             VStack(alignment: .leading, spacing: 8) {
+                forwardedHeader
                 ChatLocationBubbleContent(
                     message: message,
                     maxWidth: maxBubbleWidth,
@@ -233,30 +252,52 @@ struct SOSChatBubble: View, Equatable {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         } else if message.isLocal {
-            if message.status == .read {
-                HStack(spacing: 4) {
-                    Text(timeLabel)
-                    Text("·")
-                    Text("SOS_CHAT_STATUS_READ")
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Color.whatsAppAccent)
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            if let result = message.watchReplyResult, ![.delivered, .read].contains(message.status) {
+                let tr = Locale.current.language.languageCode?.identifier == "tr"
+                Text(result == "accepted" ? (tr ? "Saat · Bağlantıya verildi; teslim doğrulanmadı" : "Watch · Handed to connection; delivery unconfirmed") : result == "noPeer" ? (tr ? "Saat · Gönderilemedi" : "Watch · Could not send") : (tr ? "Saat · Doğrulanmadı; otomatik tekrar gönderilmez" : "Watch · Not confirmed; no automatic resend"))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("watchReplyStatus_" + result)
             } else {
                 HStack(spacing: 4) {
-                    Image(systemName: statusSymbol(for: message.status))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(statusColor(for: message.status))
                     Text(timeLabel)
+                    if message.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                    switch message.status {
+                    case .read:
+                        DoubleCheckmarkIcon(color: Color.whatsAppAccent)
+                    case .delivered:
+                        DoubleCheckmarkIcon(color: .secondary)
+                    case .sent:
+                        Image(systemName: "checkmark")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    case .pending:
+                        Image(systemName: "clock")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    case .failed:
+                        Image(systemName: "exclamationmark.circle")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.red)
+                    }
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             }
         } else {
-            Text(timeLabel)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Text(timeLabel)
+                if message.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -1727,5 +1768,19 @@ struct ChatTypingBubble: View {
             }
             Spacer(minLength: 40)
         }
+    }
+}
+
+struct DoubleCheckmarkIcon: View {
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: -3.5) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .bold))
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .bold))
+        }
+        .foregroundStyle(color)
     }
 }

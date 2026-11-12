@@ -1,5 +1,7 @@
 package com.auralis.crisisconnect.service.voice
 
+import com.auralis.crisisconnect.core.media.LocalMedia
+
 import android.content.Context
 import android.util.Log
 import com.auralis.crisisconnect.core.crypto.AesGcm
@@ -268,10 +270,7 @@ class VoiceStreamReceiver(
         val targetDir = com.auralis.crisisconnect.data.voiceMessageDirectory(context)
         val targetFile = File(targetDir, voiceMessageFileName(metadata.uuid, metadata.mime))
         try {
-            FileOutputStream(targetFile).use { output ->
-                output.write(resolvedBytes)
-                output.flush()
-            }
+            LocalMedia.write(targetFile, resolvedBytes)
         } catch (ioException: IOException) {
             Log.e(TAG, "Failed to persist final audio", ioException)
             sendVerify(false)

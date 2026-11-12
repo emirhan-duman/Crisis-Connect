@@ -6,6 +6,71 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ContactTrustStateTest {
+    @Test fun bluetoothIdentityCannotReplaceEitherPinOrRestoreTrustAfterAConflict() {
+        val existing = Contact(name = "Family", aesKey = "paired", sessionCode = "family",
+            peerUid = "family-uid", peerPublicKey = "family-key", verified = true,
+            remoteDeviceId = "family-device", verifiedIdentityKey = "device:family-device", verifiedAt = 123)
+        for ((uid, key) in listOf("attacker" to "family-key", "family-uid" to "attacker-key", "attacker" to "attacker-key")) {
+            val changed = applyBluetoothPeerIdentity(existing, uid, key)
+            assertEquals("family-uid", changed.peerUid)
+            assertEquals("family-key", changed.peerPublicKey)
+            assertTrue(changed.peerKeyChanged)
+            val saved = mergeVerifiedTrust(changed, existing)
+            assertFalse(saved.verified)
+            assertEquals("", saved.verifiedIdentityKey)
+        }
+        assertEquals(existing, applyBluetoothPeerIdentity(existing, " family-uid ", " family-key "))
+        assertEquals(existing, applyBluetoothPeerIdentity(existing, "", "attacker-key"))
+        val empty = existing.copy(peerUid = "", peerPublicKey = "", verified = false)
+        val initial = applyBluetoothPeerIdentity(empty, "family-uid", "family-key")
+        assertEquals("family-uid", initial.peerUid)
+        assertFalse(initial.peerKeyChanged)
+    }
+
+    @Test fun relabelingRetiredKeyAsV2DoesNotReactivateIt() {
+        val old = ContactEntity(sessionCode = "legacy", name = "Family", aesKey = "old-secret", offlineKeyVersion = 1)
+        val relabeled = old.copy(offlineKeyVersion = 2, verified = true, verifiedIdentityKey = "device:claimed")
+        val saved = preserveLegacyOfflineStorage(relabeled, old)
+        assertEquals("old-secret", saved.aesKey)
+        assertTrue(saved.toContact().offlineRepairRequired)
+        assertEquals("", saved.toContact().aesKey)
+        assertFalse(saved.toContact().verified)
+    }
+
+    @Test fun retainedLegacyKeyNeverReachesTransportFacingContactOrTrust() {
+        val row = ContactEntity(sessionCode = "legacy", name = "Family", aesKey = "retained-secret", offlineKeyVersion = 1,
+            verified = true, verifiedIdentityKey = "device:legacy", verifiedAt = 123)
+        val contact = row.toContact()
+        assertEquals("", contact.aesKey)
+        assertTrue(contact.offlineRepairRequired)
+        assertFalse(contact.verified)
+        assertEquals("", contact.verifiedIdentityKey)
+        assertEquals("retained-secret", row.aesKey)
+    }
+
+    @Test fun metadataSavePreservesQuarantinedBytesButCannotReactivateThem() {
+        val row = ContactEntity(sessionCode = "legacy", name = "Family", aesKey = "retained-secret", offlineKeyVersion = 1)
+        val updated = row.toContact().copy(name = "Renamed")
+        val persisted = preserveLegacyOfflineStorage(updated.toEntity(), row)
+        assertEquals("retained-secret", persisted.aesKey)
+        assertEquals("Renamed", persisted.name)
+        assertEquals(1, persisted.offlineKeyVersion)
+        assertEquals("", persisted.toContact().aesKey)
+        assertTrue(persisted.toContact().offlineRepairRequired)
+    }
+
+    @Test fun freshPairingReplacesQuarantinedKeyAndMakesOnlyNewKeyEligible() {
+        val row = ContactEntity(sessionCode = "legacy", name = "Family", aesKey = "old-secret", offlineKeyVersion = 1)
+        val fresh = Contact(name = "Family", sessionCode = "legacy", aesKey = "new-pair-secret").toEntity()
+        val persisted = preserveLegacyOfflineStorage(fresh, row)
+        assertEquals(2, persisted.offlineKeyVersion)
+        assertEquals("new-pair-secret", persisted.toContact().aesKey)
+        assertFalse(persisted.toContact().offlineRepairRequired)
+    }
+
+
+
+
 
     @Test
     fun `mergeVerifiedTrust promotes verified contact when remote device id is present`() {

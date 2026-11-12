@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.auralis.crisisconnect.R
+import com.auralis.crisisconnect.screens.settings.BluetoothCapabilitiesCard
 import com.auralis.crisisconnect.ui.components.AppBottomBar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -287,6 +288,11 @@ fun AdvancedSettingsScreen(navController: NavController) {
                             onCheckedChange = viewModel::setExperimentalFeaturesEnabled
                         )
                     }
+                }
+
+                item(key = "bluetooth_capabilities") {
+                    SettingsSectionHeader(title = stringResource(R.string.bluetooth_capabilities_section))
+                    BluetoothCapabilitiesCard()
                 }
             }
         }

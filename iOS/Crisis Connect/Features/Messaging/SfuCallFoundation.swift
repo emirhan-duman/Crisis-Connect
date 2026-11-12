@@ -19,11 +19,10 @@
 import FirebaseAuth
 import Foundation
 
-/// Feature gate for the SFU authority-call path. MUST stay false until the native MLS core and
-/// the frame-crypto WebRTC build land — flipping it early would replace nothing on iOS (the
-/// managers aren't ported yet) but the flag mirrors Android's contract for when they are.
+/// Feature gate for the SFU authority-call path. The media path fails closed unless both the
+/// native MLS core and WebRTC frame-crypto hooks are available, matching Android's contract.
 enum SfuCallConfig {
-    static let enabled = false
+    static let enabled = true
 }
 
 /// One track I published to the SFU (mirrors the web/Android roster doc shape).

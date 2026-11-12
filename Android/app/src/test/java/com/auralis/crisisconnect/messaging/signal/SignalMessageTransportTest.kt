@@ -32,6 +32,7 @@ import org.signal.libsignal.protocol.util.KeyHelper
  * end to end through two independent stores, so the whole template/attachment layer rides the
  * forward-secret v3 transport unchanged. Robolectric so android.util.Base64 is real.
  */
+@org.robolectric.annotation.Config(sdk = [34], application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
 class SignalMessageTransportTest {
 
@@ -44,6 +45,7 @@ class SignalMessageTransportTest {
         val senderKeys = HashMap<String, SignalSenderKeyEntity>()
         override fun putIdentity(entity: SignalIdentityEntity) { identities[entity.address] = entity }
         override fun getIdentity(address: String) = identities[address]
+        override fun deleteIdentity(address: String) { identities.remove(address) }
         override fun putSession(entity: SignalSessionEntity) { sessions[entity.address] = entity }
         override fun getSession(address: String) = sessions[address]
         override fun getSessionsForName(name: String) = sessions.values.filter { it.name == name }

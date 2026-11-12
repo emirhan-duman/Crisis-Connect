@@ -503,7 +503,7 @@
 "ADVANCED_SETTINGS_DESCRIPTION" = "为诊断和消息传递微调应用行为。";
 "ADVANCED_SETTINGS_LINK_SUBTITLE" = "无线电行为、诊断和传递控制。";
 "ADVANCED_SETTING_PUBLIC_MESH_TITLE" = "公共聊天";
-"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "在附近的共享公共聊天中显示此手机。";
+"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "公开聊天：附近任何人都可以阅读消息并参与。请勿分享敏感信息。";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_TITLE" = "公共聊天通知";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_DESCRIPTION" = "仅提醒来自共享公共聊天的新消息。";
 "ADVANCED_SETTING_HIGH_RANGE_TITLE" = "高范围模式";
@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "开源——任何人都可以检查代码";
 "ONBOARDING_TRUST_NO_ADS" = "无广告——您的个人数据绝不出售";
 "ONBOARDING_TRUST_EMERGENCY" = "仅为紧急通信而构建";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "在您启用诊断之前，崩溃报告将保持关闭。";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "仅收集匿名崩溃报告以保持应用稳定。";
 "ONBOARDING_FINISH" = "启动 Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "云端";
@@ -1452,3 +1452,44 @@
 "guide_redesign_subtitle_now" = "选择当前情况，几秒内查看首个正确行动。";
 "guide_redesign_subtitle_prepare" = "完成计划和离线检查清单。";
 "guide_redesign_unknown_region" = "未知地区";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "在线查找联系人";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect 会读取通讯录中的姓名和电话号码，以查找使用此应用的人。电话号码会发送至由 Google Firebase 在美国托管的 Crisis Connect 服务器进行匹配。联系人姓名保留在设备上。查询的号码仅作处理，不会永久存储；匹配结果保留在设备上。此页面打开期间，刷新或返回页面可能会再次发送号码。你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "查找附近的联系人";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect 会读取设备上的联系人姓名和电话号码，让你选择要在附近查找的人。所选号码用于通过蓝牙验证身份。此功能不会将你的通讯录发送至服务器。你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。";
+"CONTACTS_DISCLOSURE_ACCEPT" = "我同意";
+"CONTACTS_DISCLOSURE_DECLINE" = "暂不";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "通讯录访问";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "你的选择将为此设备上的此账号保存。你可以在设置中的“通讯录访问”撤回同意。";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "撤回在线匹配同意";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "撤回附近联系人访问同意";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "互联网可用";
+
+// Two-step verification
+"PROFILE_MFA_TITLE" = "两步验证";
+"PROFILE_MFA_TOTP_MESSAGE" = "请输入身份验证器应用中的6位验证码。";
+"PROFILE_MFA_SMS_MESSAGE" = "向您已登记的手机发送验证码，然后输入短信中的验证码。";
+"PROFILE_MFA_UNSUPPORTED" = "不支持此验证方式。请使用其他已登记的方式，或取消并通过网页登录。";
+"PROFILE_MFA_AUTHENTICATOR" = "身份验证器";
+"PROFILE_MFA_SMS" = "短信";
+"PROFILE_MFA_CODE" = "验证码";
+"PROFILE_MFA_SEND" = "发送短信验证码";
+"PROFILE_MFA_RESEND" = "重新发送短信验证码";
+"PROFILE_MFA_VERIFY" = "验证";
+"PROFILE_MFA_METHOD_TITLE" = "验证方式";
+"PROFILE_MFA_SMS_SENT_MESSAGE" = "请输入发送至您已登记手机的6位验证码。";

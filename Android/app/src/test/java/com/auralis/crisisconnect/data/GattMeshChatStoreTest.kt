@@ -7,6 +7,21 @@ import org.junit.Before
 import org.junit.Test
 
 class GattMeshChatStoreTest {
+    @Test fun storedRouteDerivedBadgesCannotReturnAfterRestoreButLiveSignedMetadataStillWorks() {
+        for (session in listOf(GattMeshChatStore.SESSION_CODE, AuthorityMeshChatStore.sessionCode)) {
+            val restored = MessageEntity(sessionCode = session, messageUuid = "old", text = "Old order",
+                isLocal = false, isRead = false, timestampMillis = 100L,
+                originVerifiedRole = "fieldteam", originVerifiedAtMillis = 123L).toMessage()
+            assertNull(restored.originVerifiedRole)
+            assertNull(restored.originVerifiedAtMillis)
+        }
+        val store = MeshChatStoreCore("test")
+        store.appendRemoteMessage(id = "signed", text = "Signed order", senderLabel = "Officer", sourceAddress = "relay",
+            originVerifiedRole = "fieldteam", originVerifiedAtMillis = 123L)
+        assertEquals("fieldteam", store.currentMessages().single().originVerifiedRole)
+        store.replaceMessages(store.currentMessages())
+        assertNull(store.currentMessages().single().originVerifiedRole)
+    }
 
     @Before
     fun setUp() {

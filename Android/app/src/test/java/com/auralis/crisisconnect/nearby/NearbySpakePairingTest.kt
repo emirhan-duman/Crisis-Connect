@@ -11,6 +11,12 @@ import org.junit.Test
  */
 class NearbySpakePairingTest {
 
+    @Test fun numberPairingConversationIsLocalAndScopedToFreshKey() {
+        assertEquals("nYw3NKWbEM2aRElRI", NearbyPairingSupport.localSessionCode(ByteArray(32) { it.toByte() }))
+        org.junit.Assert.assertNotEquals(NearbyPairingSupport.localSessionCode(ByteArray(32)),
+            NearbyPairingSupport.localSessionCode(ByteArray(32) { it.toByte() }))
+    }
+
     private val alice = NearbySpakePairing.NearbyIdentity(
         uid = "uidAlice", publicKeyBase64 = "ALICEPUBKEYb64", displayName = "Alice"
     )

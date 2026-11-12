@@ -10,6 +10,8 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -132,8 +134,14 @@ private data class SosPalette(
 @Composable
 fun SOSScreen(navController: NavController) {
     val isRunning by GattSOSServerService.isDeclared.collectAsStateWithLifecycle()
+    val isAdvertising by GattSOSServerService.isAdvertising.collectAsStateWithLifecycle()
     val startTimestamp by GattSOSServerService.startTimestampMillis.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val saved by com.auralis.crisisconnect.watch.WatchRecoveryStore.get(context).state.collectAsStateWithLifecycle()
+    if (!isRunning && (saved.startedAt != null || saved.unavailable)) {
+        SavedSosScreen(navController, saved)
+        return
+    }
     val palette = rememberSosPalette()
     var hasSeenRunning by rememberSaveable { mutableStateOf(false) }
     val elapsedMillis by rememberElapsedMillis(startTimestamp = startTimestamp, isRunning = isRunning)
@@ -229,6 +237,7 @@ fun SOSScreen(navController: NavController) {
                     palette = palette,
                     elapsedMillis = elapsedMillis,
                     peerCount = peers.size,
+                    isAdvertising = isAdvertising,
                     cloudReportState = cloudReportState
                 )
 
@@ -291,6 +300,7 @@ private fun HeroCard(
     palette: SosPalette,
     elapsedMillis: Long,
     peerCount: Int,
+    isAdvertising: Boolean,
     cloudReportState: SosCloudReporter.State
 ) {
     val shape = RoundedCornerShape(24.dp)
@@ -312,7 +322,7 @@ private fun HeroCard(
                 SosBeacon(palette = palette)
                 Spacer(modifier = Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    LivePill(palette = palette)
+                    LivePill(palette = palette, isAdvertising = isAdvertising)
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = formatElapsed(elapsedMillis),
@@ -343,8 +353,8 @@ private fun HeroCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 StatusChip(
-                    icon = Icons.Default.CheckCircle,
-                    text = stringResource(R.string.sos_stage_broadcast_title),
+                    icon = if (isAdvertising) Icons.Default.CheckCircle else Icons.Default.Schedule,
+                    text = stringResource(if (isAdvertising) R.string.sos_stage_broadcast_title else R.string.sos_broadcast_pending),
                     tint = palette.statusPrimaryIconTint,
                     palette = palette,
                     modifier = Modifier.weight(1f)
@@ -357,8 +367,10 @@ private fun HeroCard(
                     },
                     text = if (peerCount > 0) {
                         stringResource(R.string.sos_chip_peers, peerCount)
-                    } else {
+                    } else if (isAdvertising) {
                         stringResource(R.string.sos_chip_searching)
+                    } else {
+                        stringResource(R.string.sos_broadcast_pending)
                     },
                     tint = palette.statusSecondaryIconTint,
                     palette = palette,
@@ -492,9 +504,9 @@ private fun SosBeacon(palette: SosPalette) {
 }
 
 @Composable
-private fun LivePill(palette: SosPalette) {
+private fun LivePill(palette: SosPalette, isAdvertising: Boolean) {
     val durationScale = rememberAnimatorDurationScale()
-    val transition = if (durationScale > 0f) rememberInfiniteTransition(label = "live-pulse") else null
+    val transition = if (isAdvertising && durationScale > 0f) rememberInfiniteTransition(label = "live-pulse") else null
     val dotScaleState = if (transition != null) {
         transition.animateFloat(
             initialValue = 0.88f,
@@ -534,7 +546,7 @@ private fun LivePill(palette: SosPalette) {
         }
         Spacer(modifier = Modifier.width(6.dp))
         Text(
-            text = stringResource(R.string.sos_screen_live_badge),
+            text = stringResource(if (isAdvertising) R.string.sos_screen_live_badge else R.string.sos_broadcast_pending),
             style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.15.sp),
             fontWeight = FontWeight.Bold,
             color = palette.liveText
@@ -915,4 +927,39 @@ private fun formatElapsed(elapsedMillis: Long): String {
     } else {
         String.format("%02d:%02d", minutes, seconds)
     }
+}
+
+/** Restoring history is intentionally passive; only this explicit gesture resumes transmission. */
+@Composable
+private fun SavedSosScreen(
+    navController: NavController,
+    saved: com.auralis.crisisconnect.watch.WatchRecoveryStore.Snapshot
+) {
+    val context = LocalContext.current
+    val failure by GattSOSServerService.startFailureMessage.collectAsStateWithLifecycle()
+    var actionError by remember { mutableStateOf(false) }
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)) {
+        Text(stringResource(R.string.sos_recovery_title), style = MaterialTheme.typography.headlineSmall)
+        Text(stringResource(if (saved.unavailable) R.string.sos_recovery_unavailable else R.string.sos_recovery_body))
+        saved.replies.filter { it.kind != "contact" }.takeLast(3).forEach { reply ->
+            Text(reply.text)
+            Text(stringResource(if (reply.result == "accepted") R.string.watch_reply_handed_off else R.string.watch_reply_uncertain), style = MaterialTheme.typography.bodySmall)
+        }
+        if (failure != null || actionError) Text(failure ?: stringResource(R.string.sos_recovery_failed))
+        Button(enabled = !saved.unavailable, onClick = {
+            actionError = runCatching {
+                androidx.core.content.ContextCompat.startForegroundService(context,
+                    Intent(context, GattSOSServerService::class.java)
+                        .putExtra(GattSOSServerService.EXTRA_USER_DECLARED, true)
+                        .putExtra(GattSOSServerService.EXTRA_RESUME_SESSION_ID, saved.startedAt.toString()))
+            }.isFailure
+        }) { Text(stringResource(R.string.sos_recovery_resume)) }
+        Button(enabled = !saved.unavailable, onClick = {
+            actionError = runCatching { GattSOSServerService.stopBroadcast(context) }.isFailure
+            if (!actionError) navController.popBackStack()
+        }) { Text(stringResource(R.string.sos_recovery_end)) }
+        Button(onClick = { navController.popBackStack() }) { Text(stringResource(R.string.sos_screen_back)) }
+    }
+}
 }

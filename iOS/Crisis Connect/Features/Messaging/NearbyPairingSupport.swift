@@ -54,21 +54,15 @@ enum NearbyPairingSupport {
 
     /// Persists a contact for a peer we just paired with over SPAKE2. Returns the session code.
     @discardableResult
-    static func savePairedContact(peer: NearbyIdentity, contactKey: Data, bluetoothAddress: String?) -> String {
-        // Deterministic pair id when both identities are known (matches Android + the internet
-        // 1:1 thread — pairing then upgrades the SAME contact, e.g. a hidden authority bridge,
-        // whose flags upsertBleContact preserves). Fallback: both sides hold the same contactKey,
-        // so the SHA256-derived code still aligns across the two devices.
-        let myUid = Auth.auth().currentUser?.uid.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    static func savePairedContact(peer: NearbyIdentity, contactKey: Data, bluetoothAddress: String?) throws -> String {
+        // A phone number is not an account credential. Keep this local, unverified pairing
+        // separate from every account conversation; a QR exchange binds the account identity.
         let peerUid = peer.uid.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sessionCode: String
-        if !myUid.isEmpty, !peerUid.isEmpty {
-            sessionCode = InternetConversation.pairId(myUid, peerUid)
-        } else {
-            let digest = Data(SHA256.hash(data: contactKey))
-            sessionCode = "n" + base64Url(digest).prefix(16)
+        let sessionCode = localSessionCode(contactKey: contactKey)
+        guard ContactStore.shared.contact(for: sessionCode) == nil,
+              peerUid.isEmpty || ContactStore.shared.contactForPeerUid(peerUid) == nil else {
+            throw NearbyPairingError.confirmationFailed
         }
-        let peerKey = peer.publicKeyBase64.trimmingCharacters(in: .whitespacesAndNewlines)
         _ = ContactStore.shared.upsertBleContact(
             name: peer.displayName.isEmpty ? (bluetoothAddress ?? "") : peer.displayName,
             sessionCode: sessionCode,
@@ -78,11 +72,15 @@ enum NearbyPairingSupport {
             bleShareId: nil,
             lastKnownBleAddress: bluetoothAddress,
             remoteDeviceId: nil,
-            peerUid: peerUid.isEmpty ? nil : peerUid,
-            peerPublicKey: peerKey.isEmpty ? nil : peerKey,
+            peerUid: nil,
+            peerPublicKey: nil,
             analyticsSource: "nearby"
         )
         return sessionCode
+    }
+
+    static func localSessionCode(contactKey: Data) -> String {
+        "n" + base64Url(Data(SHA256.hash(data: contactKey))).prefix(16)
     }
 
     private static func base64Url(_ d: Data) -> String {

@@ -88,6 +88,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.automirrored.filled.Forward
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
@@ -109,8 +110,11 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -157,6 +161,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
@@ -196,6 +201,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.getSavedUserName
+import com.auralis.crisisconnect.core.chat.ForwardMetadata
 import com.auralis.crisisconnect.core.chat.ActiveChatTracker
 import com.auralis.crisisconnect.core.chat.parseReplyMetadata
 import com.auralis.crisisconnect.core.chat.stripReplyMetadata
@@ -278,7 +284,12 @@ internal fun ChatBubble(
     remoteProfileBitmap: Bitmap?,
     currentOwnLocation: Location?,
     latestRemoteSharedLocation: SharedLocationPayload?,
-    highlight: Boolean
+    highlight: Boolean,
+    isPinned: Boolean = false,
+    onPinMessage: ((String) -> Unit)? = null,
+    onUnpinMessage: (() -> Unit)? = null,
+    onVerifySecurityCode: (() -> Unit)? = null,
+    onForwardMessage: ((ChatMessage) -> Unit)? = null
 ) {
     val (bubbleColor, contentColor) = when {
         // SOS alerts get the error container on BOTH sides — an emergency must never look like
@@ -299,7 +310,9 @@ internal fun ChatBubble(
     } else {
         Color.Transparent
     }
-    val parsedReply = remember(message.text) { parseReplyMetadata(message.text) }
+    val isForwarded = remember(message.text) { ForwardMetadata.isForwarded(message.text) }
+    val rawTextWithoutForward = remember(message.text) { ForwardMetadata.stripForward(message.text) }
+    val parsedReply = remember(rawTextWithoutForward) { parseReplyMetadata(rawTextWithoutForward) }
     val formattedTimestamp = remember(
         message.timestampMillis,
         message.originalTimestampMillis,
@@ -314,7 +327,7 @@ internal fun ChatBubble(
     }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
-    val displayText = parsedReply?.body ?: message.text
+    val displayText = parsedReply?.body ?: rawTextWithoutForward
     val sharedLocation = remember(displayText) { parseSharedLocationPayload(displayText) }
     val sharedFile = remember(displayText) { parseSharedFilePayload(displayText) }
     val shouldShowLiveLocation = message.isLocal &&
@@ -496,6 +509,25 @@ internal fun ChatBubble(
                             onLongClick = { showContextMenu = true }
                         )
                 ) {
+                    if (isForwarded) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Forward,
+                                contentDescription = stringResource(R.string.chat_message_forwarded),
+                                modifier = Modifier.size(13.dp),
+                                tint = contentColor.copy(alpha = 0.7f)
+                            )
+                            Text(
+                                text = stringResource(R.string.chat_message_forwarded),
+                                style = MaterialTheme.typography.labelSmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                                color = contentColor.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
                     when (message.messageType) {
                         MessageType.SOS_ALERT -> SosAlertMessageContent(
                             text = displayText,
@@ -566,6 +598,9 @@ internal fun ChatBubble(
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
+                    if (message.outboundRoute == com.auralis.crisisconnect.watch.WatchReplyChat.ROUTE && message.deliveryStatus?.name !in listOf("DELIVERED", "READ")) {
+                        Text(stringResource(if (message.deliveryStatus?.name == "SENT") R.string.watch_reply_chat_handoff else if (message.lastError == "watch_noPeer") R.string.watch_reply_chat_failed else R.string.watch_reply_chat_uncertain), style = MaterialTheme.typography.labelSmall, color = contentColor.copy(alpha = 0.8f))
+                    }
                     Row(
                         modifier = Modifier.align(
                             if (message.isLocal) Alignment.End else Alignment.Start
@@ -573,62 +608,80 @@ internal fun ChatBubble(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        if (isPinned) {
+                            Icon(
+                                imageVector = Icons.Filled.PushPin,
+                                contentDescription = stringResource(R.string.chat_pinned_message_title),
+                                modifier = Modifier
+                                    .size(13.dp)
+                                    .rotate(35f),
+                                tint = contentColor.copy(alpha = 0.75f)
+                            )
+                        }
                         Text(
                             text = formattedTimestamp,
                             style = MaterialTheme.typography.labelSmall,
                             color = contentColor.copy(alpha = 0.7f),
                             textAlign = TextAlign.Start
                         )
-                        if (message.isLocal) {
+                        if (message.isLocal && (message.outboundRoute != com.auralis.crisisconnect.watch.WatchReplyChat.ROUTE || message.deliveryStatus?.name in listOf("DELIVERED", "READ"))) {
                             val readIndicatorColor = Color(0xFF34B7F1)
                             val normalizedStatus = when {
                                 message.isRead -> MessageDeliveryStatus.READ
                                 message.deliveryStatus != null -> message.deliveryStatus
                                 else -> MessageDeliveryStatus.DELIVERED
                             }
-                            val (icon, statusLabel, tint) = when (normalizedStatus) {
-                                MessageDeliveryStatus.QUEUED -> Triple(
-                                    Icons.Outlined.Schedule,
-                                    R.string.chat_message_status_pending,
-                                    contentColor.copy(alpha = 0.6f)
+                            if (normalizedStatus == MessageDeliveryStatus.SENDING) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(13.dp),
+                                    strokeWidth = 1.6.dp,
+                                    color = contentColor.copy(alpha = 0.65f)
                                 )
+                            } else {
+                                val (icon, statusLabel, tint) = when (normalizedStatus) {
+                                    MessageDeliveryStatus.QUEUED -> Triple(
+                                        Icons.Outlined.Schedule,
+                                        R.string.chat_message_status_pending,
+                                        contentColor.copy(alpha = 0.6f)
+                                    )
 
-                                MessageDeliveryStatus.SENDING -> Triple(
-                                    Icons.Filled.MoreVert,
-                                    R.string.chat_message_status_sending,
-                                    contentColor.copy(alpha = 0.6f)
-                                )
+                                    MessageDeliveryStatus.SENDING -> Triple(
+                                        Icons.Filled.Done,
+                                        R.string.chat_message_status_sending,
+                                        contentColor.copy(alpha = 0.6f)
+                                    )
 
-                                MessageDeliveryStatus.SENT -> Triple(
-                                    Icons.Filled.Done,
-                                    R.string.chat_message_status_sent,
-                                    contentColor.copy(alpha = 0.6f)
-                                )
+                                    MessageDeliveryStatus.SENT -> Triple(
+                                        Icons.Filled.Done,
+                                        R.string.chat_message_status_sent,
+                                        contentColor.copy(alpha = 0.6f)
+                                    )
 
-                                MessageDeliveryStatus.DELIVERED -> Triple(
-                                    Icons.Filled.DoneAll,
-                                    R.string.chat_message_status_delivered,
-                                    contentColor.copy(alpha = 0.6f)
-                                )
+                                    MessageDeliveryStatus.DELIVERED -> Triple(
+                                        Icons.Filled.DoneAll,
+                                        R.string.chat_message_status_delivered,
+                                        contentColor.copy(alpha = 0.6f)
+                                    )
 
-                                MessageDeliveryStatus.READ -> Triple(
-                                    Icons.Filled.DoneAll,
-                                    R.string.chat_message_status_read,
-                                    readIndicatorColor
-                                )
+                                    MessageDeliveryStatus.READ -> Triple(
+                                        Icons.Filled.DoneAll,
+                                        R.string.chat_message_status_read,
+                                        readIndicatorColor
+                                    )
 
-                                MessageDeliveryStatus.FAILED -> Triple(
-                                    Icons.Filled.Close,
-                                    R.string.chat_message_status_failed,
-                                    MaterialTheme.colorScheme.error
+                                    MessageDeliveryStatus.FAILED -> Triple(
+                                        Icons.Filled.Close,
+                                        R.string.chat_message_status_failed,
+                                        MaterialTheme.colorScheme.error
+                                    )
+                                }
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = stringResource(statusLabel),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = tint
                                 )
                             }
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = stringResource(statusLabel),
-                                modifier = Modifier.size(16.dp),
-                                tint = tint
-                            )
                         }
                     }
                 }
@@ -672,10 +725,70 @@ internal fun ChatBubble(
                     }
                 )
                 DropdownMenuItem(
+                    text = { Text(stringResource(if (isPinned) R.string.chat_action_unpin else R.string.chat_action_pin)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.PushPin,
+                            contentDescription = null,
+                            tint = if (isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    onClick = {
+                        showContextMenu = false
+                        if (isPinned) {
+                            onUnpinMessage?.invoke()
+                        } else {
+                            onPinMessage?.invoke(message.messageUuid)
+                        }
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chat_action_forward)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Forward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    onClick = {
+                        showContextMenu = false
+                        onForwardMessage?.invoke(message)
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chat_action_share)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Share,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    onClick = {
+                        showContextMenu = false
+                        shareMessageExternally(context, message, displayText)
+                    }
+                )
+                DropdownMenuItem(
                     text = { Text(stringResource(R.string.gatt_mesh_action_message_info)) },
                     onClick = {
                         showContextMenu = false
                         onInfoRequested(message)
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chat_action_verify_security_code)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Shield,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    onClick = {
+                        showContextMenu = false
+                        onVerifySecurityCode?.invoke()
                     }
                 )
             }
@@ -973,5 +1086,54 @@ private fun SosAlertMessageContent(
                 }
             }
         }
+    }
+}
+
+private fun shareMessageExternally(context: Context, message: ChatMessage, displayText: String) {
+    runCatching {
+        val sendIntent = Intent(Intent.ACTION_SEND)
+        when (message.messageType) {
+            MessageType.TEXT, MessageType.SOS_ALERT -> {
+                sendIntent.type = "text/plain"
+                sendIntent.putExtra(Intent.EXTRA_TEXT, displayText)
+            }
+            MessageType.IMAGE -> {
+                val file = message.imageFilePath?.let { java.io.File(it) }
+                if (file != null && file.exists()) {
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        file
+                    )
+                    sendIntent.type = message.imageMimeType ?: "image/jpeg"
+                    sendIntent.putExtra(Intent.EXTRA_STREAM, uri)
+                    sendIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } else {
+                    sendIntent.type = "text/plain"
+                    sendIntent.putExtra(Intent.EXTRA_TEXT, displayText)
+                }
+            }
+            MessageType.AUDIO -> {
+                val file = message.audioFilePath?.let { java.io.File(it) }
+                if (file != null && file.exists()) {
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        file
+                    )
+                    sendIntent.type = "audio/*"
+                    sendIntent.putExtra(Intent.EXTRA_STREAM, uri)
+                    sendIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } else {
+                    sendIntent.type = "text/plain"
+                    sendIntent.putExtra(Intent.EXTRA_TEXT, displayText)
+                }
+            }
+        }
+        val chooser = Intent.createChooser(sendIntent, context.getString(R.string.chat_action_share))
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
+    }.onFailure {
+        Toast.makeText(context, context.getString(R.string.chat_file_open_failed), Toast.LENGTH_SHORT).show()
     }
 }

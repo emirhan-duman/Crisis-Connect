@@ -138,7 +138,7 @@
     <string name="advanced_settings_title">詳細設定</string>
     <string name="advanced_settings_screen_description">診断とメッセージ配信のためにアプリの動作を微調整します。</string>
     <string name="advanced_setting_public_mesh_title">パブリックメッシュモード</string>
-    <string name="advanced_setting_public_mesh_description">より広範な連携テストのため、このノードをオープンメッシュ環境で検出可能にします。</string>
+    <string name="advanced_setting_public_mesh_description">公開チャット：近くにいる誰でもメッセージを読んで参加できます。機密情報を共有しないでください。</string>
     <string name="advanced_setting_gatt_mesh_notifications_title">オープンメッシュノード通知</string>
     <string name="advanced_setting_gatt_mesh_notifications_description">公共GATTメッシュの一般チャットノードからの新しいメッセージのみ通知します。</string>
     <string name="advanced_setting_high_range_title">広範囲モード</string>
@@ -321,7 +321,6 @@
     <string name="gatt_mesh_action_message_info">メッセージ情報</string>
     <string name="gatt_mesh_message_info_sender">送信者</string>
     <string name="gatt_mesh_message_info_origin">メッセージの発信元</string>
-    <string name="gatt_mesh_message_info_direct_peer">直接のピア</string>
     <string name="gatt_mesh_message_info_time">時刻</string>
     <string name="gatt_mesh_message_info_you">あなた</string>
     <string name="gatt_mesh_message_info_sent_to">送信先</string>
@@ -840,7 +839,6 @@
     <string name="notification_photo_message_body">写真メッセージ</string>
     <string name="chat_encryption_setup_title">このチャットを保護</string>
     <string name="chat_encryption_setup_instruction">他のデバイスの新規チャット画面に表示されているQRコードをスキャンして、共有暗号化キーをインポートします。</string>
-    <string name="chat_encryption_setup_session_mismatch">このQRは別のチャットセッションに属しています。</string>
     <string name="chat_encryption_setup_invalid_qr">サポートされていないQR形式です。</string>
     <string name="chat_encryption_setup_handshake_in_progress">暗号化キーを検証中…</string>
     <string name="chat_encryption_setup_handshake_failed">暗号化キーを検証できませんでした。再試行してください。</string>
@@ -1615,7 +1613,7 @@
     <string name="add_from_contacts_empty">連絡先の中にはまだ Crisis Connect を使っている人はいません。</string>
     <string name="add_from_contacts_permission_needed">知っている人を見つけるには連絡先の権限が必要です。</string>
     <string name="add_from_contacts_sign_in_required">Crisis Connect で連絡先を見つけるにはサインインしてください。</string>
-    <string name="add_from_contacts_privacy_note">番号はハッシュで照合され、サーバーに保存されることはありません。表示可能を選んだ人だけが表示されます。</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect は連絡先の名前と電話番号を読み取り、アプリを使っている人を探します。照合のため、電話番号を米国の Google Firebase 上の Crisis Connect サーバーへ送信します。連絡先の名前は端末内に留まります。検索対象の番号は永続保存せずに処理し、照合結果は端末内に保持します。この画面を開いている間に更新したり画面に戻ったりすると、番号が再送信される場合があります。選択はこの端末のこのアカウント用に保存されます。設定の「連絡先へのアクセス」から同意を撤回できます。</string>
     <string name="add_from_contacts_found_count">Crisis Connect に %1$d 人</string>
     <string name="add_from_contacts_empty_hint">アプリで電話番号を確認すると、ここに表示されます。</string>
     <string name="add_from_contacts_search_hint">名前または番号を検索</string>
@@ -1644,7 +1642,6 @@
     <string name="nearby_match_notification_text">タップして Bluetooth で接続</string>
     <string name="nearby_pairing_channel_name">近くのペアリング要求</string>
     <string name="nearby_pairing_request_title">%1$s が近くで接続したがっています</string>
-    <string name="nearby_pairing_request_text">Bluetooth でチャットするには応答してください。</string>
     <string name="nearby_pairing_accept">応答</string>
     <string name="nearby_pairing_decline">拒否</string>
     <string name="safety_number_title">セキュリティ確認</string>
@@ -1656,6 +1653,7 @@
     <string name="chat_share_location">位置情報を共有</string>
     <string name="chat_status_connected_bluetooth">Bluetooth 経由で接続済み</string>
     <string name="chat_status_connected_internet">インターネット経由で接続済み</string>
+    <string name="chat_status_connected_satellite">衛星経由で接続済み</string>
     <string name="internet_message_channel_name">インターネットメッセージ</string>
     <string name="internet_message_notification_title">新しいメッセージ</string>
     <string name="channel_message_notification_body">新しいメッセージ</string>
@@ -1772,4 +1770,20 @@
     <string name="profile_delete_account_error_verification">この端末で削除を検証できませんでした。接続を確認してもう一度お試しください。</string>
     <string name="profile_delete_account_error_signed_out">アカウントを削除するにはログインが必要です。</string>
     <string name="profile_delete_account_reauth_needed">安全のため、削除の前にご本人であることを確認する必要があります。一度ログアウトして再度ログインし、もう一度お試しください。</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">連絡先をオンラインで検索</string>
+    <string name="contacts_disclosure_body">Crisis Connect は連絡先の名前と電話番号を読み取り、アプリを使っている人を探します。照合のため、電話番号を米国の Google Firebase 上の Crisis Connect サーバーへ送信します。連絡先の名前は端末内に留まります。検索対象の番号は永続保存せずに処理し、照合結果は端末内に保持します。この画面を開いている間に更新したり画面に戻ったりすると、番号が再送信される場合があります。選択はこの端末のこのアカウント用に保存されます。設定の「連絡先へのアクセス」から同意を撤回できます。</string>
+    <string name="contacts_local_disclosure_title">近くの連絡先を検索</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect は、近くの相手を探すために、システムの連絡先選択画面で共有した名前と電話番号だけを読み取ります。選択した番号は Bluetooth による本人確認に使います。この機能は連絡先をサーバーへ送信しません。選択はこの端末のこのアカウント用に保存されます。設定の「連絡先へのアクセス」から同意を撤回できます。</string>
+    <string name="contacts_disclosure_accept">同意する</string>
+    <string name="contacts_disclosure_decline">今はしない</string>
+    <string name="contacts_consent_settings_title">連絡先へのアクセス</string>
+    <string name="contacts_consent_settings_hint">選択はこの端末のこのアカウント用に保存されます。設定の「連絡先へのアクセス」から同意を撤回できます。</string>
+    <string name="contacts_consent_revoke_online">オンライン照合への同意を撤回</string>
+    <string name="contacts_consent_revoke_nearby">近くの連絡先への同意を撤回</string>
+    <string name="nearby_choose_contact">連絡先を選択</string>
+    <string name="nearby_contact_selection_failed">選択した電話番号を読み取れませんでした。別の連絡先を選択してください。</string>
+    <string name="chat_status_internet_available">インターネット利用可能</string>
+    <string name="chat_status_satellite_available">衛星回線利用可能</string>
 </resources>

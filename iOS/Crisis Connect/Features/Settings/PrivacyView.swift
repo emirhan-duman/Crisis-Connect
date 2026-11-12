@@ -9,9 +9,25 @@ import SwiftUI
 
 struct PrivacyView: View {
     @StateObject private var viewModel = PrivacySettingsViewModel()
+    @ObservedObject private var contactConsent = ContactAccessConsentStore.shared
 
     var body: some View {
         List {
+            Section(
+                header: Text("CONTACTS_CONSENT_SETTINGS_TITLE"),
+                footer: Text("CONTACTS_CONSENT_SETTINGS_HINT")
+            ) {
+                Button("CONTACTS_CONSENT_REVOKE_ONLINE", role: .destructive) {
+                    contactConsent.revoke(online: true)
+                }
+                .disabled(!contactConsent.isGranted(online: true))
+                .listRowBackground(Color.appRowBackground)
+                Button("CONTACTS_CONSENT_REVOKE_NEARBY", role: .destructive) {
+                    contactConsent.revoke(online: false)
+                }
+                .disabled(!contactConsent.isGranted(online: false))
+                .listRowBackground(Color.appRowBackground)
+            }
             Section(header: Text(LocalizedStringKey("PRIVACY_SHARING_SECTION")),
                     footer: Text(LocalizedStringKey("PRIVACY_SHARING_FOOTER"))) {
                 Toggle(isOn: $viewModel.shareLocationInSOS) {
@@ -44,7 +60,7 @@ struct PrivacyView: View {
                 Button {
                     viewModel.openSystemSettings()
                 } label: {
-                    Label(LocalizedStringKey("PRIVACY_OPEN_SETTINGS"), systemImage: "gearshape")
+                    Label(LocalizedStringKey(PlatformRuntime.isDesignedForIPadOnMac ? "Open Settings" : "PRIVACY_OPEN_SETTINGS"), systemImage: "gearshape")
                 }
                 .listRowBackground(Color.appRowBackground)
             }

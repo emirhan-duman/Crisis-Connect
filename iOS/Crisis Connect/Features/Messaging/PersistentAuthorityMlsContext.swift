@@ -67,6 +67,54 @@ actor PersistentAuthorityMlsContext {
         self.backend = backend
     }
 
+    /// Reads only the durable outbox ids for a retired generation; it never imports or mutates its ratchet.
+    static func pendingApplicationMessageIds(accountUid: String, channelId: String) throws -> Set<String> {
+        let uid = accountUid.trimmingCharacters(in: .whitespacesAndNewlines)
+        let channel = channelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !uid.isEmpty, !channel.isEmpty, channel.utf8.count <= 256 else {
+            throw AuthorityMlsError.invalidContext
+        }
+        let deviceId = SecureLocalStore.shared.getOrCreateRescueDeviceId()
+        let context = "authority-mls:v2:\(uid):\(deviceId):\(channel)"
+        guard context.utf8.count <= 512,
+              let encoded = try MlsStateVault.load(context: context) else { return [] }
+        return Set(try AuthorityMlsDurableStateCodec.decode(encoded)
+            .pendingApplicationMessages.map(\.messageId))
+    }
+
+    /// Clears a retired-generation outbox entry only after its plaintext has been durably staged
+    /// in the current generation (or that generation already published the same message id).
+    static func removePendingApplicationMessage(
+        accountUid: String,
+        channelId: String,
+        messageId: String
+    ) throws {
+        let uid = accountUid.trimmingCharacters(in: .whitespacesAndNewlines)
+        let channel = channelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !uid.isEmpty, !channel.isEmpty, channel.utf8.count <= 256,
+              messageId.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else {
+            throw AuthorityMlsError.invalidContext
+        }
+        let deviceId = SecureLocalStore.shared.getOrCreateRescueDeviceId()
+        let context = "authority-mls:v2:\(uid):\(deviceId):\(channel)"
+        guard context.utf8.count <= 512,
+              let encoded = try MlsStateVault.load(context: context) else { return }
+        let state = try AuthorityMlsDurableStateCodec.decode(encoded)
+        let pending = state.pendingApplicationMessages.filter { $0.messageId != messageId }
+        guard pending.count != state.pendingApplicationMessages.count else { return }
+        let migrated = AuthorityMlsDurableState(
+            snapshot: state.snapshot,
+            nextControlSequence: state.nextControlSequence,
+            nextApplicationSequence: state.nextApplicationSequence,
+            pendingControlEvents: state.pendingControlEvents,
+            pendingApplicationMessages: pending,
+            pendingReceivedApplications: state.pendingReceivedApplications,
+            offlineReceipts: state.offlineReceipts
+        )
+        let replacement = try AuthorityMlsDurableStateCodec.encode(migrated)
+        try MlsStateVault.saveMetadataOnly(replacement, context: context)
+    }
+
     func restoreOrInitialize(isCreator: Bool) throws -> AuthorityMlsStep {
         if initialized {
             return AuthorityMlsStep(

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Android सेटिंग्स में अधिसूचना ध्वनि, कंपन और लॉक-स्क्रीन दृश्यता चुनें। फ़ुल-स्क्रीन अलर्ट के लिए आपकी अनुमति की आवश्यकता होती है और यह परेशान न करें, बैटरी सेटिंग्स या बलपूर्वक रोके गए ऐप द्वारा सीमित हो सकता है।</string>
+    <string name="muster_alert_settings_title">ध्वनि, कंपन और लॉक स्क्रीन</string>
+    <string name="muster_alerts_blocked">Android सेटिंग्स में ऐप नोटिफिकेशन अक्षम हैं</string>
+    <string name="muster_alerts_quiet">यह अधिसूचना चैनल मौन या कम प्राथमिकता वाला है; Android सेटिंग्स में पॉप-अप अलर्ट सक्षम करें</string>
+    <string name="muster_locked_screen_note">जब आपका फ़ोन लॉक हो या उसकी स्क्रीन बंद हो तो फ़ुल-स्क्रीन अलर्ट दिखाई देते हैं, यदि Android उन्हें अनुमति देता है। जब आप फ़ोन का उपयोग कर रहे हों, तो Android इसके बजाय एक सचेत सूचना दिखा सकता है।</string>
+    <string name="muster_urgent_sound">साइलेंट मोड में ध्वनि</string>
+    <string name="muster_urgent_sound_help">केवल अत्यावश्यक आपदा सुरक्षा स्थिति जाँच के लिए। सुरक्षा स्थिति जाँच स्क्रीन दिखाई देने पर सीमित समय के लिए आपके मौजूदा अलार्म वॉल्यूम का उपयोग करता है। जब आप स्क्रीन को छूते हैं तो रुक जाता है।</string>
+    <string name="muster_urgent_ready">सिस्टम अनुमतियों के भीतर उपलब्ध है। डू नॉट डिस्टर्ब और अलार्म वॉल्यूम आपके नियंत्रण में रहता है।</string>
+    <string name="muster_urgent_not_ready">अलार्म वॉल्यूम, अधिसूचना अनुमतियां और परेशान न करें की जांच करें। सिस्टम प्रतिबंधों का सम्मान किया जाता है.</string>
+    <string name="muster_urgent_seconds">%1$d सेकंड</string>
+    <string name="muster_flash_settings">फ्लैश अलर्ट सेटिंग्स</string>
+    <string name="muster_flash_help">यदि आपका फ़ोन समर्थन करता है, तो Android की सुलभता सेटिंग में फ़्लैश सूचनाएँ चालू करें। ऐप बंद होने पर भी इन चेतावनियों को Android नियंत्रित करता है।</string>
+</resources>

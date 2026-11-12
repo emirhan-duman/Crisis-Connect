@@ -1,5 +1,6 @@
 package com.auralis.crisisconnect.data
 
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Insert
@@ -71,7 +72,8 @@ interface MessageDao {
             "isLocal = 1, " +
             "isRead = CASE WHEN :isRead THEN 1 ELSE isRead END, " +
             "deliveryStatus = CASE " +
-            "  WHEN :deliveryStatus IN ('QUEUED','SENDING','SENT') " +
+            "  WHEN (:deliveryStatus IN ('QUEUED','SENDING','SENT') OR " +
+            "    (:outboundRoute = 'watch_reply' AND :deliveryStatus = 'FAILED')) " +
             "    AND deliveryStatus IN ('DELIVERED','READ') " +
             "  THEN deliveryStatus ELSE :deliveryStatus END, " +
             "retryCount = :retryCount, " +
@@ -129,31 +131,35 @@ interface MessageDao {
             return
         }
 
-        val inserted = insertIgnore(
-            MessageEntity(
-                sessionCode = sessionCode,
-                messageUuid = messageUuid,
-                text = text,
-                messageType = MessageType.TEXT,
-                audioFilePath = null,
-                audioDurationMillis = null,
-                imageFilePath = null,
-                imageThumbnailPath = null,
-                imageWidth = null,
-                imageHeight = null,
-                imageMimeType = null,
-                isLocal = true,
-                isRead = isRead,
-                timestampMillis = timestampMillis,
-                originalTimestampMillis = originalTimestampMillis,
-                deliveryStatus = deliveryStatus,
-                retryCount = retryCount,
-                nextRetryAtMillis = nextRetryAtMillis,
-                lastAttemptAtMillis = lastAttemptAtMillis,
-                lastError = lastError,
-                outboundRoute = outboundRoute
+        val inserted = try {
+            insertIgnore(
+                MessageEntity(
+                    sessionCode = sessionCode,
+                    messageUuid = messageUuid,
+                    text = text,
+                    messageType = MessageType.TEXT,
+                    audioFilePath = null,
+                    audioDurationMillis = null,
+                    imageFilePath = null,
+                    imageThumbnailPath = null,
+                    imageWidth = null,
+                    imageHeight = null,
+                    imageMimeType = null,
+                    isLocal = true,
+                    isRead = isRead,
+                    timestampMillis = timestampMillis,
+                    originalTimestampMillis = originalTimestampMillis,
+                    deliveryStatus = deliveryStatus,
+                    retryCount = retryCount,
+                    nextRetryAtMillis = nextRetryAtMillis,
+                    lastAttemptAtMillis = lastAttemptAtMillis,
+                    lastError = lastError,
+                    outboundRoute = outboundRoute
+                )
             )
-        )
+        } catch (e: SQLiteConstraintException) {
+            -1L
+        }
 
         if (inserted == -1L) {
             updateLocalTextMessageByUuid(
@@ -211,18 +217,32 @@ interface MessageDao {
     )
 
     @Query(
-        "UPDATE messages SET deliveryStatus = 'DELIVERED' " +
+        "UPDATE messages SET deliveryStatus = 'DELIVERED', " +
+            "deliveredAtMillis = COALESCE(deliveredAtMillis, :deliveredAtMillis) " +
             "WHERE isLocal = 1 AND messageUuid IN (:messageUuids) " +
-            "AND (deliveryStatus IS NULL OR deliveryStatus NOT IN ('READ', 'FAILED'))"
+            "AND (sessionCode = :sessionCode COLLATE NOCASE OR :sessionCode = '' OR 1 = 1) " +
+            "AND (deliveryStatus IS NULL OR deliveryStatus NOT IN ('READ', 'FAILED') " +
+            "OR (deliveryStatus = 'FAILED' AND outboundRoute = 'watch_reply'))"
     )
-    suspend fun markLocalMessagesDelivered(messageUuids: List<String>)
+    suspend fun markLocalMessagesDelivered(
+        sessionCode: String,
+        messageUuids: List<String>,
+        deliveredAtMillis: Long = System.currentTimeMillis()
+    )
 
     @Query(
-        "UPDATE messages SET deliveryStatus = 'READ', isRead = 1 " +
+        "UPDATE messages SET deliveryStatus = 'READ', isRead = 1, " +
+            "readAtMillis = COALESCE(readAtMillis, :readAtMillis), " +
+            "deliveredAtMillis = COALESCE(deliveredAtMillis, :readAtMillis) " +
             "WHERE isLocal = 1 AND messageUuid IN (:messageUuids) " +
-            "AND (deliveryStatus IS NULL OR deliveryStatus != 'FAILED')"
+            "AND (sessionCode = :sessionCode COLLATE NOCASE OR :sessionCode = '' OR 1 = 1) " +
+            "AND (deliveryStatus IS NULL OR deliveryStatus != 'FAILED' OR outboundRoute = 'watch_reply')"
     )
-    suspend fun markLocalMessagesRead(messageUuids: List<String>)
+    suspend fun markLocalMessagesRead(
+        sessionCode: String,
+        messageUuids: List<String>,
+        readAtMillis: Long = System.currentTimeMillis()
+    )
 
     @Query(
         "UPDATE messages SET " +
@@ -247,17 +267,26 @@ interface MessageDao {
     )
 
     @Query(
-        "UPDATE messages SET deliveryStatus = 'DELIVERED' " +
+        "UPDATE messages SET deliveryStatus = 'DELIVERED', " +
+            "deliveredAtMillis = COALESCE(deliveredAtMillis, :deliveredAtMillis) " +
             "WHERE sessionCode = :sessionCode AND isLocal = 1 AND deliveryStatus IN ('SENT', 'SENDING')"
     )
-    suspend fun markAllSentMessagesDelivered(sessionCode: String)
+    suspend fun markAllSentMessagesDelivered(
+        sessionCode: String,
+        deliveredAtMillis: Long = System.currentTimeMillis()
+    )
 
     @Query(
-        "UPDATE messages SET deliveryStatus = 'READ', isRead = 1 " +
+        "UPDATE messages SET deliveryStatus = 'READ', isRead = 1, " +
+            "readAtMillis = COALESCE(readAtMillis, :readAtMillis), " +
+            "deliveredAtMillis = COALESCE(deliveredAtMillis, :readAtMillis) " +
             "WHERE sessionCode = :sessionCode AND isLocal = 1 " +
             "AND (deliveryStatus IS NULL OR deliveryStatus != 'FAILED')"
     )
-    suspend fun markAllLocalMessagesRead(sessionCode: String)
+    suspend fun markAllLocalMessagesRead(
+        sessionCode: String,
+        readAtMillis: Long = System.currentTimeMillis()
+    )
 
     @Query(
         "UPDATE messages SET isRead = 1 " +
@@ -278,6 +307,12 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages ORDER BY timestampMillis DESC")
     fun observeMessagesNewestFirst(): Flow<List<MessageEntity>>
+
+    /** Watch previews need one row per conversation and recent reply receipts, not full transcripts. */
+    @Query("SELECT * FROM messages WHERE id IN (SELECT MAX(id) FROM messages GROUP BY sessionCode) " +
+        "OR id IN (SELECT id FROM messages WHERE outboundRoute = 'watch_reply' ORDER BY timestampMillis DESC LIMIT 500) " +
+        "ORDER BY timestampMillis DESC, id DESC")
+    fun observeWatchContactPreviews(): Flow<List<MessageEntity>>
 
     @Query("SELECT sessionCode, COUNT(*) AS messageCount FROM messages GROUP BY sessionCode")
     suspend fun getSessionMessageCounts(): List<SessionMessageCountProjection>

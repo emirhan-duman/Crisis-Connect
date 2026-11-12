@@ -87,6 +87,7 @@ struct ContactRecord: Identifiable, Codable, Equatable {
     var verifiedAt: Date?
     var remoteSessionCode: String?
     var aesKeyBase64: String
+    var offlineKeyVersion: Int
     var preferredTransport: ContactTransport
     var remotePlatform: ContactRemotePlatform
     var bleShareId: String?
@@ -126,6 +127,7 @@ struct ContactRecord: Identifiable, Codable, Equatable {
         verifiedAt: Date? = nil,
         remoteSessionCode: String? = nil,
         aesKeyBase64: String,
+        offlineKeyVersion: Int = 2,
         preferredTransport: ContactTransport,
         remotePlatform: ContactRemotePlatform = .unknown,
         bleShareId: String? = nil,
@@ -155,6 +157,7 @@ struct ContactRecord: Identifiable, Codable, Equatable {
         self.verifiedAt = trustState.verifiedAt
         self.remoteSessionCode = remoteSessionCode?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.aesKeyBase64 = aesKeyBase64
+        self.offlineKeyVersion = offlineKeyVersion
         self.preferredTransport = preferredTransport
         self.remotePlatform = remotePlatform
         self.bleShareId = bleShareId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
@@ -171,6 +174,8 @@ struct ContactRecord: Identifiable, Codable, Equatable {
         self.lastUpdated = lastUpdated
     }
 
+    var offlineRepairRequired: Bool { offlineKeyVersion < 2 }
+
     private enum CodingKeys: String, CodingKey {
         case id
         case name
@@ -181,6 +186,7 @@ struct ContactRecord: Identifiable, Codable, Equatable {
         case verifiedAt
         case remoteSessionCode
         case aesKeyBase64
+        case offlineKeyVersion
         case preferredTransport
         case remotePlatform
         case bleShareId
@@ -217,16 +223,21 @@ struct ContactRecord: Identifiable, Codable, Equatable {
             bleShareId: bleShareId
         )
 
+        let storedAesKey = try container.decodeIfPresent(String.self, forKey: .aesKeyBase64) ?? ""
+        let storedKeyVersion = try container.decodeIfPresent(Int.self, forKey: .offlineKeyVersion) ?? 0
+        let retiresLegacyKey = storedKeyVersion < 2 && !storedAesKey.isEmpty
+        let storedVerified = try container.decodeIfPresent(Bool.self, forKey: .isVerified) ?? false
         self.init(
             id: try container.decodeIfPresent(UUID.self, forKey: .id) ?? BroadcastSessionId.fromRawIdentifier(stableIdentifier),
             name: try container.decodeIfPresent(String.self, forKey: .name) ?? "Contact",
             broadcastId: broadcastId,
             sessionCode: sessionCode,
-            isVerified: try container.decodeIfPresent(Bool.self, forKey: .isVerified) ?? false,
+            isVerified: storedKeyVersion >= 2 && storedVerified,
             verifiedIdentityKey: try container.decodeIfPresent(String.self, forKey: .verifiedIdentityKey),
             verifiedAt: try container.decodeIfPresent(Date.self, forKey: .verifiedAt),
             remoteSessionCode: try container.decodeIfPresent(String.self, forKey: .remoteSessionCode),
-            aesKeyBase64: try container.decodeIfPresent(String.self, forKey: .aesKeyBase64) ?? "",
+            aesKeyBase64: storedAesKey,
+            offlineKeyVersion: retiresLegacyKey || storedKeyVersion == 1 ? 1 : max(2, storedKeyVersion),
             preferredTransport: transport,
             remotePlatform: try container.decodeIfPresent(ContactRemotePlatform.self, forKey: .remotePlatform) ?? .unknown,
             bleShareId: bleShareId,
@@ -340,6 +351,49 @@ final class ContactStore: ObservableObject {
         loadPersisted()
     }
 
+    /// Allows an isolated store for persistence/recovery contract tests.
+    init(persistenceURL: URL) {
+        self.persistenceURL = persistenceURL
+        loadPersisted()
+    }
+
+    /// Wait for both disk restore and its published roster before answering a cold-start request.
+    func waitUntilLoaded() async {
+        await withCheckedContinuation { continuation in
+            persistenceQueue.async {
+                // loadPersisted enqueues the roster publication on this same serial main queue.
+                DispatchQueue.main.async { continuation.resume() }
+            }
+        }
+    }
+
+    /// Pairing's completion receipt must never get ahead of the contacts file on disk.
+    func flushDurably() async throws {
+        let snapshot = stateQueue.sync { storedContacts }
+        let url = persistenceURL
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            persistenceQueue.async {
+                do {
+                    try LocalEncryptedFileStore.write(JSONEncoder().encode(snapshot), to: url)
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    /// The peripheral must commit the authenticated peer before acknowledging server_finish.
+    /// Called on the Bluetooth host queue, never on the main/UI thread.
+    func prepareForHostPairing() {
+        persistenceQueue.sync {} // Initial disk restore must precede the identity upsert.
+    }
+
+    func flushPairingFromHost() throws {
+        try persistenceQueue.sync {
+            let snapshot = stateQueue.sync { storedContacts }
+            try LocalEncryptedFileStore.write(JSONEncoder().encode(snapshot), to: persistenceURL)
+        }
+    }
+
     func contact(for broadcastId: String) -> ContactRecord? {
         let normalized = broadcastId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return stateQueue.sync {
@@ -371,6 +425,46 @@ final class ContactStore: ObservableObject {
                     || $0.sessionCode.caseInsensitiveCompare(normalized) == .orderedSame
             }
         }
+    }
+
+    /// Resolve and commit an authenticated QR introduction atomically, without name-based matching.
+    @discardableResult
+    func acceptQrIntroduction(sender: String, owner: String, publicKey: String, payload: [String: Any]?,
+                              activeQrKeyBase64: String?, fallbackName: String,
+                              knownPeerIsChild: Bool = false, knownPeerPhotoURL: String? = nil) -> ContactRecord? {
+        var result: ContactRecord?
+        var snapshot: [ContactRecord] = []
+        var migrations: [(UUID, UUID)] = []
+        var isNew = false
+        stateQueue.sync {
+            let code = (payload?["rsc"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let existing = storedContacts.first {
+                !code.isEmpty && ($0.remoteSessionCode?.caseInsensitiveCompare(code) == .orderedSame ||
+                    $0.sessionCode.caseInsensitiveCompare(code) == .orderedSame)
+            } ?? storedContacts.first { $0.peerUid == sender }
+            guard var introduced = QrContactIntroduction.resolve(sender: sender, owner: owner, publicKey: publicKey,
+                payload: payload, existing: existing, activeQrKeyBase64: activeQrKeyBase64, fallbackName: fallbackName,
+                knownPeerIsChild: knownPeerIsChild, knownPeerPhotoURL: knownPeerPhotoURL) else { return }
+            let duplicates = storedContacts.filter { $0.id != introduced.id && $0.peerUid == sender }
+            for duplicate in duplicates {
+                introduced = mergeDuplicateRecord(primary: introduced, secondary: duplicate)
+                migrations.append((duplicate.id, introduced.id))
+            }
+            isNew = existing == nil && duplicates.isEmpty
+            storedContacts.removeAll { $0.id == introduced.id }
+            // Remove only this introduction's duplicate IDs, never unrelated contacts.
+            let duplicateIDs = Set(duplicates.map(\.id))
+            snapshot = storedContacts.filter { !duplicateIDs.contains($0.id) }
+            snapshot.append(introduced)
+            storedContacts = snapshot
+            result = introduced
+        }
+        if result != nil {
+            migrateSessionsIfNeeded(migrations)
+            publish(snapshot)
+            if isNew { AppAnalytics.contactReceived(via: "qr_reciprocal", transport: "internet") }
+        }
+        return result
     }
 
     /// Stamps a peer's internet identity onto the paired BLE contact [id], AND absorbs any separate
@@ -533,8 +627,17 @@ final class ContactStore: ObservableObject {
         return aesKey(for: record)
     }
 
+    func pairedKeyCandidates() -> [ContactRecord] {
+        stateQueue.sync { storedContacts.filter { $0.offlineKeyVersion >= 2 && !$0.aesKeyBase64.isEmpty } }
+    }
+
+    func offlineKeyCandidates() -> [ContactRecord] {
+        stateQueue.sync { storedContacts.filter { $0.offlineKeyVersion >= 2 && !$0.aesKeyBase64.isEmpty && !$0.broadcastId.isEmpty } }
+    }
+
     func aesKey(for record: ContactRecord) -> SymmetricKey? {
-        guard let data = Data(base64Encoded: record.aesKeyBase64, options: [.ignoreUnknownCharacters]),
+        guard record.offlineKeyVersion >= 2,
+              let data = Data(base64Encoded: record.aesKeyBase64, options: [.ignoreUnknownCharacters]),
               data.count == 32 else {
             return nil
         }
@@ -620,6 +723,7 @@ final class ContactStore: ObservableObject {
                 }
                 if !canonicalKey.isEmpty {
                     mergedRecord.aesKeyBase64 = canonicalKey
+                    mergedRecord.offlineKeyVersion = 2
                 }
                 if mergedRecord.preferredTransport != .bleGatt {
                     mergedRecord.preferredTransport = .legacyBroadcast
@@ -672,6 +776,7 @@ final class ContactStore: ObservableObject {
         name: String,
         sessionCode: String,
         aesKeyBase64: String,
+        offlineKeyVersion: Int = 2,
         isVerified: Bool = false,
         verifiedIdentityKey: String? = nil,
         verifiedAt: Date? = nil,
@@ -698,7 +803,7 @@ final class ContactStore: ObservableObject {
             verifiedIdentityKey: verifiedIdentityKey,
             remoteDeviceId: normalizedDeviceId
         )
-        let incomingTrusted = isVerified && normalizedVerifiedIdentityKey != nil
+        let incomingTrusted = offlineKeyVersion >= 2 && isVerified && normalizedVerifiedIdentityKey != nil
         let canonicalKey = canonicalAESKey(aesKeyBase64)
         let now = Date()
         let stableKey = normalizedVerifiedIdentityKey
@@ -745,18 +850,22 @@ final class ContactStore: ObservableObject {
                     verifiedAt: mergedRecord.verifiedAt
                 )
 
+                let reusesRetiredKey = mergedRecord.offlineRepairRequired && !canonicalKey.isEmpty && mergedRecord.aesKeyBase64 == canonicalKey
+                let acceptsIncomingTrust = incomingTrusted && !reusesRetiredKey
                 mergedRecord.name = name
                 mergedRecord.sessionCode = normalizedSession
-                mergedRecord.isVerified = incomingTrusted || preservedTrust.isVerified
-                mergedRecord.verifiedIdentityKey = incomingTrusted
+                mergedRecord.isVerified = acceptsIncomingTrust || preservedTrust.isVerified
+                mergedRecord.verifiedIdentityKey = acceptsIncomingTrust
                     ? normalizedVerifiedIdentityKey
                     : preservedTrust.verifiedIdentityKey
-                mergedRecord.verifiedAt = incomingTrusted
+                mergedRecord.verifiedAt = acceptsIncomingTrust
                     ? (verifiedAt ?? preservedTrust.verifiedAt ?? now)
                     : preservedTrust.verifiedAt
                 mergedRecord.remoteSessionCode = normalizedRemoteSession ?? mergedRecord.remoteSessionCode
-                if !canonicalKey.isEmpty {
+                // Internet-only QR imports cannot reactivate a legacy key or replace a fresh pairing.
+                if !canonicalKey.isEmpty, !reusesRetiredKey, offlineKeyVersion >= 2 || mergedRecord.aesKeyBase64.isEmpty {
                     mergedRecord.aesKeyBase64 = canonicalKey
+                    mergedRecord.offlineKeyVersion = offlineKeyVersion
                 }
                 mergedRecord.preferredTransport = .bleGatt
                 mergedRecord.remotePlatform = remotePlatform == .unknown ? mergedRecord.remotePlatform : remotePlatform
@@ -792,6 +901,7 @@ final class ContactStore: ObservableObject {
                     verifiedAt: incomingTrusted ? (verifiedAt ?? now) : nil,
                     remoteSessionCode: normalizedRemoteSession,
                     aesKeyBase64: canonicalKey,
+                    offlineKeyVersion: offlineKeyVersion,
                     preferredTransport: .bleGatt,
                     remotePlatform: remotePlatform,
                     bleShareId: normalizedShareId,
@@ -824,6 +934,13 @@ final class ContactStore: ObservableObject {
 
         migrateSessionsIfNeeded(migratedSessionPairs)
         publish(snapshot)
+        if analyticsSource == "qr", let peer = normalizedPeerUid, let p256 = normalizedPeerPublicKey,
+           SignalSessionGate.shared.identityChangePending(peer) {
+            do {
+                try SignalSessionGate.shared.forgetPeer(peer, p256: p256)
+                acknowledgePeerKeyChange(contactId: updatedRecord.id)
+            } catch { NSLog("Signal recovery requires a successful trusted re-pair") }
+        }
         return updatedRecord
     }
 
@@ -941,6 +1058,7 @@ final class ContactStore: ObservableObject {
 
     /// The user compared the safety number and confirmed the new key — clear the warning.
     func acknowledgePeerKeyChange(contactId: UUID) {
+        if let peer = contact(for: contactId)?.peerUid, SignalSessionGate.shared.identityChangePending(peer) { return }
         var snapshot: [ContactRecord] = []
         stateQueue.sync {
             var next = storedContacts
@@ -952,6 +1070,15 @@ final class ContactStore: ObservableObject {
         }
         guard !snapshot.isEmpty else { return }
         publish(snapshot)
+    }
+
+    func markSignalIdentityChanged(peerUid: String) {
+        let snapshot: [ContactRecord] = stateQueue.sync {
+            guard let index = storedContacts.firstIndex(where: { $0.peerUid == peerUid }) else { return [] }
+            storedContacts[index].peerKeyChanged = true
+            return storedContacts
+        }
+        if !snapshot.isEmpty { publish(snapshot) }
     }
 
     @discardableResult
@@ -1087,7 +1214,7 @@ final class ContactStore: ObservableObject {
         return score
     }
 
-    private func mergeDuplicateRecord(primary: ContactRecord, secondary: ContactRecord) -> ContactRecord {
+    func mergeDuplicateRecord(primary: ContactRecord, secondary: ContactRecord) -> ContactRecord {
         var merged = primary
 
         if shouldAdoptContactName(current: merged.name, incoming: secondary.name) {
@@ -1102,8 +1229,10 @@ final class ContactStore: ObservableObject {
         if merged.remoteSessionCode?.nilIfEmpty == nil {
             merged.remoteSessionCode = secondary.remoteSessionCode?.nilIfEmpty
         }
-        if merged.aesKeyBase64.isEmpty, !secondary.aesKeyBase64.isEmpty {
+        if !secondary.aesKeyBase64.isEmpty,
+           merged.aesKeyBase64.isEmpty || (merged.offlineKeyVersion < 2 && secondary.offlineKeyVersion >= 2) {
             merged.aesKeyBase64 = secondary.aesKeyBase64
+            merged.offlineKeyVersion = secondary.offlineKeyVersion
         }
         if merged.preferredTransport != .bleGatt, secondary.preferredTransport == .bleGatt {
             merged.preferredTransport = .bleGatt

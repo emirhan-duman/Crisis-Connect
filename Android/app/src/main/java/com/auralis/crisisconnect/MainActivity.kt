@@ -142,12 +142,26 @@ import java.security.SecureRandom
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import com.auralis.crisisconnect.feature.rescueAuthChanges
+import com.auralis.crisisconnect.security.FirebaseRoleHelper
+import com.auralis.crisisconnect.security.securityDataStore
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import com.auralis.crisisconnect.ui.share.ExternalShareTargetSheet
+import com.auralis.crisisconnect.ui.share.IncomingSharePayload
+import com.auralis.crisisconnect.ui.share.SharedIncomingItem
+import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -156,6 +170,7 @@ private val ONBOARDING_TERMS_ACCEPTED_KEY = booleanPreferencesKey("terms_v2_acce
 
 class MainActivity : ComponentActivity() {
     private val navigationEvents = MutableSharedFlow<Intent>(extraBufferCapacity = 1)
+    private val pendingSharePayload = MutableStateFlow<IncomingSharePayload?>(null)
     private var rfcommServiceStarted = false
     private var isAppReady = false
     private var incomingCallWakeWindowApplied = false
@@ -168,6 +183,13 @@ class MainActivity : ComponentActivity() {
             onRescueFeatureInstalled()
         }
     }
+
+    private var automaticRescueAttemptUid: String? = null
+
+    private val rescuePreparationConfirmationLauncher =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
+            // Play reports the result through the install session listener.
+        }
 
     private val criticalPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -223,8 +245,12 @@ class MainActivity : ComponentActivity() {
         applyIncomingCallWakeWindowPolicy(intent)
         answerInternetCallIfRequested(intent)
         handleSsoDeepLink(intent)
+        if (savedInstanceState == null) {
+            handleIncomingShareIntent(intent)
+        }
         rescueFeatureManager.registerListener(rescueFeatureInstallListener)
         FirebaseApp.initializeApp(this)
+        observeRescueFeaturePreparation()
         lifecycleScope.launch {
             settingsDataStore.data.map { prefs ->
                 prefs[booleanPreferencesKey("rescue_show_in_navbar")] ?: false
@@ -234,7 +260,7 @@ class MainActivity : ComponentActivity() {
         }
         lifecycleScope.launch(Dispatchers.IO) {
             val role = SecurityRepository(applicationContext)
-                .getUsableStoredCertificateRole(allowExpired = true)
+                .getUsableStoredCertificateRole(allowExpired = false)
                 ?.trim()
                 ?.lowercase(Locale.US)
             NavbarSettingsCache.hasRescueAccess = role == "admin" || role == "fieldteam"
@@ -610,6 +636,12 @@ class MainActivity : ComponentActivity() {
                                 composable("qr_scan") { QrScannerScreen(navController) }
                                 composable("settings") { SettingsScreen(navController) }
                                 composable("advanced_settings") { AdvancedSettingsScreen(navController) }
+                                composable("watch_settings") {
+                                    com.auralis.crisisconnect.screens.settings.WatchSettingsScreen(
+                                        onNavigateBack = { navController.popBackStack() },
+                                        onNavigateToQrScan = { navController.navigate("qr_scan") }
+                                    )
+                                }
                                 composable("child_profile_settings") { ChildProfileScreen(navController) }
                                 composable("profile") { ProfileScreen(navController) }
                                 composable(
@@ -736,6 +768,13 @@ class MainActivity : ComponentActivity() {
                                     GuideMainScreen(navController = navController)
                                 }
                                 composable("tools_main") { ToolsMainScreen(navController) }
+                                composable("personnel_muster?panel={panel}&session={session}", arguments = listOf(
+                                    androidx.navigation.navArgument("panel") { type = androidx.navigation.NavType.StringType; nullable = true; defaultValue = null },
+                                    androidx.navigation.navArgument("session") { type = androidx.navigation.NavType.StringType; nullable = true; defaultValue = null }
+                                )) { entry -> com.auralis.crisisconnect.muster.MusterScreen(
+                                    entry.arguments?.getString("panel")?.takeIf { it.isNotBlank() },
+                                    entry.arguments?.getString("session")?.takeIf { it.isNotBlank() }
+                                ) { navController.popBackStack() } }
                                 composable("secure_dossiers") { TrustDossierScreen(navController) }
                                 composable("crisis_sentinel") { CrisisSentinelScreen(navController) }
                                 composable(
@@ -829,6 +868,30 @@ class MainActivity : ComponentActivity() {
                         CertificateProvisioningBanner(
                             modifier = Modifier.align(Alignment.TopCenter)
                         )
+                        val incomingShare by pendingSharePayload.collectAsStateWithLifecycle()
+                        incomingShare?.let { payload ->
+                            ExternalShareTargetSheet(
+                                payload = payload,
+                                onDismiss = {
+                                    pendingSharePayload.value = null
+                                },
+                                onShareSent = { targetCodes ->
+                                    pendingSharePayload.value = null
+                                    if (targetCodes.size == 1) {
+                                        val targetCode = targetCodes.first()
+                                        lifecycleScope.launch {
+                                            val destination = resolveConversationRoute(
+                                                context = this@MainActivity.applicationContext,
+                                                sessionCode = targetCode
+                                            )
+                                            navController.navigate(destination) {
+                                                launchSingleTop = true
+                                            }
+                                        }
+                                    }
+                                }
+                            )
+                        }
                     }
                     }
                 }
@@ -1094,11 +1157,59 @@ class MainActivity : ComponentActivity() {
         if (rfcommServiceStarted) {
             return
         }
-        ContextCompat.startForegroundService(
-            this,
-            Intent(this, com.auralis.crisisconnect.service.RfcommForegroundService::class.java)
-        )
-        rfcommServiceStarted = true
+        runCatching {
+            ContextCompat.startForegroundService(
+                this,
+                Intent(this, com.auralis.crisisconnect.service.RfcommForegroundService::class.java)
+            )
+        }.onSuccess {
+            rfcommServiceStarted = true
+        }.onFailure { throwable ->
+            // Android 12+ can reject an FGS start if the activity loses foreground eligibility
+            // between the permission flow and this call. Keep the UI alive and allow a later retry.
+            android.util.Log.w(TAG, "Unable to start RFCOMM foreground service", throwable)
+        }
+    }
+
+    /** Covers every sign-in method, including signing in without returning to the home screen. */
+    private fun observeRescueFeaturePreparation() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                launch {
+                    combine(rescueAuthChanges(), applicationContext.securityDataStore.data) { uid, _ -> uid }
+                        .collectLatest { userId ->
+                            val auth = FirebaseAuth.getInstance()
+                            if (userId == null || auth.currentUser?.isAnonymous == true) {
+                                automaticRescueAttemptUid = null
+                                return@collectLatest
+                            }
+                            val cachedAccess = hasStoredRescueFeatureAccess()
+                            val hasAccess = cachedAccess || FirebaseRoleHelper.fetchRescueRole() is
+                                FirebaseRoleHelper.RescueRoleResult.Authorized
+                            if (!hasAccess || auth.currentUser?.uid != userId) return@collectLatest
+                            val shouldRequest = automaticRescueAttemptUid != userId
+                            val detach = rescueFeatureManager.installIfNeeded(
+                                confirmationLauncher = rescuePreparationConfirmationLauncher,
+                                requestIfMissing = shouldRequest,
+                                onRequestStarted = { automaticRescueAttemptUid = userId },
+                                onInstalled = { onRescueFeatureInstalled() },
+                                onError = { Log.w(TAG, "Automatic rescue preparation failed; manual retry remains available") }
+                            )
+                            try {
+                                awaitCancellation()
+                            } finally {
+                                detach()
+                            }
+                        }
+                }
+                launch {
+                    // Certificate provisioning may finish AFTER the module download on first login.
+                    applicationContext.securityDataStore.data.collect {
+                        if (rescueFeatureManager.isInstalled()) onRescueFeatureInstalled()
+                    }
+                }
+            }
+        }
     }
 
     private fun bootstrapCrisisLinkServiceIfEnabled() {
@@ -1163,7 +1274,7 @@ class MainActivity : ComponentActivity() {
     private suspend fun hasStoredRescueFeatureAccess(): Boolean {
         return withContext(Dispatchers.IO) {
             SecurityRepository(applicationContext)
-                .getUsableStoredCertificateRole(allowExpired = true)
+                .getUsableStoredCertificateRole(allowExpired = false)
                 ?.trim()
                 ?.lowercase(Locale.US) in RESCUE_FEATURE_ROLES
         }
@@ -1213,25 +1324,126 @@ class MainActivity : ComponentActivity() {
         applyIncomingCallWakeWindowPolicy(intent)
         answerInternetCallIfRequested(intent)
         handleSsoDeepLink(intent)
+        handleIncomingShareIntent(intent)
         navigationEvents.tryEmit(intent)
+    }
+
+    /** Handles content shared into CrisisConnect from external apps (WhatsApp, Gallery, Browser, etc.). */
+    private fun handleIncomingShareIntent(intent: Intent?) {
+        if (intent == null) return
+        val action = intent.action
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val payload = extractSharePayload(applicationContext, intent)
+            if (payload != null && (payload.initialText.isNotBlank() || payload.items.isNotEmpty())) {
+                withContext(Dispatchers.Main) {
+                    pendingSharePayload.value = payload
+                }
+            }
+        }
+    }
+
+    private fun extractSharePayload(context: Context, intent: Intent): IncomingSharePayload? {
+        val action = intent.action ?: return null
+        val type = intent.type ?: "*/*"
+        val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+            ?: intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+            ?: intent.getStringExtra(Intent.EXTRA_SUBJECT)
+            ?: ""
+
+        val items = mutableListOf<SharedIncomingItem>()
+
+        if (action == Intent.ACTION_SEND) {
+            val streamUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(Intent.EXTRA_STREAM)
+            }
+            if (streamUri != null) {
+                copyUriToIncomingCache(context, streamUri, type)?.let { items.add(it) }
+            }
+        } else if (action == Intent.ACTION_SEND_MULTIPLE) {
+            val streamUris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+            }
+            streamUris?.filterNotNull()?.forEach { uri ->
+                copyUriToIncomingCache(context, uri, type)?.let { items.add(it) }
+            }
+        }
+
+        if (sharedText.isBlank() && items.isEmpty()) return null
+
+        return IncomingSharePayload(
+            initialText = sharedText,
+            items = items
+        )
+    }
+
+    private fun copyUriToIncomingCache(context: Context, uri: Uri, fallbackMimeType: String): SharedIncomingItem? {
+        return runCatching {
+            val resolver = context.contentResolver
+            val mimeType = resolver.getType(uri)?.takeIf { it.isNotBlank() } ?: fallbackMimeType
+            var displayName = ""
+            runCatching {
+                resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (idx != -1) {
+                            displayName = cursor.getString(idx) ?: ""
+                        }
+                    }
+                }
+            }
+            val cacheDir = File(context.cacheDir, "shared_incoming").apply { mkdirs() }
+            val ext = displayName.substringAfterLast('.', "").ifBlank {
+                when {
+                    mimeType.startsWith("image/jpeg") || mimeType.startsWith("image/jpg") -> "jpg"
+                    mimeType.startsWith("image/png") -> "png"
+                    mimeType.startsWith("image/webp") -> "webp"
+                    mimeType.startsWith("audio/ogg") -> "ogg"
+                    mimeType.startsWith("audio/mp4") || mimeType.startsWith("audio/m4a") -> "m4a"
+                    mimeType.startsWith("audio/mpeg") -> "mp3"
+                    else -> "bin"
+                }
+            }
+            val safeFileName = "${UUID.randomUUID()}.$ext"
+            val targetFile = File(cacheDir, safeFileName)
+            resolver.openInputStream(uri)?.use { input ->
+                targetFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (targetFile.exists() && targetFile.length() > 0) {
+                SharedIncomingItem(
+                    file = targetFile,
+                    originalName = displayName.ifBlank { safeFileName },
+                    mimeType = mimeType,
+                    sizeBytes = targetFile.length()
+                )
+            } else null
+        }.getOrNull()
     }
 
     /** Catches the `crisisconnect://sso/callback` deep link returned by the web enterprise-SSO flow. */
     private fun handleSsoDeepLink(intent: Intent?) {
         val data = intent?.data ?: return
-        if (data.scheme != "crisisconnect" || data.host != "sso") {
+        if (data.scheme != "https" || data.host != "crisisconnect.network" ||
+            data.path != "/api/auth/sso/v2/app-callback" || data.port !in listOf(-1, 443) || data.userInfo != null) {
             return
         }
         val code = data.getQueryParameter("code")
-        val error = data.getQueryParameter("error")
-        when {
-            !code.isNullOrBlank() -> EnterpriseSsoBridge.emit(EnterpriseSsoBridge.Result.Code(code))
-            else -> EnterpriseSsoBridge.emit(EnterpriseSsoBridge.Result.Error(error))
-        }
+        if (data.getQueryParameters("state").size != 1 || data.getQueryParameters("code").size > 1) return
+        EnterpriseSsoBridge.handleCallback(applicationContext, code, data.getQueryParameter("state"))
     }
 
     override fun onResume() {
         super.onResume()
+        com.auralis.crisisconnect.screens.QR.QrPairingCoordinator.get(this).resumePending(this)
         // Re-apply on warm start so the status/navigation bar icons stay in sync
         // with the active theme even if the system reset them while we were
         // backgrounded (e.g. another app changed the bar appearance).
@@ -1251,6 +1463,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun onRescueFeatureInstalled() {
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        bootstrapAuthorityMeshServiceIfEnabled()
         bootstrapCrisisLinkServiceIfEnabled()
         bootstrapMeshServiceIfAlwaysOn()
     }
@@ -1363,15 +1577,13 @@ class MainActivity : ComponentActivity() {
             context: Context,
             configure: Intent.() -> Unit = {}
         ): Intent {
-            return Intent()
-                .setComponent(ComponentName(context, MainActivity::class.java))
-                .apply {
-                    putExtra(
-                        EXTRA_TRUSTED_LAUNCH_TOKEN,
-                        getOrCreateTrustedLaunchToken(context.applicationContext)
-                    )
-                    configure()
-                }
+            return Intent(context, MainActivity::class.java).apply {
+                putExtra(
+                    EXTRA_TRUSTED_LAUNCH_TOKEN,
+                    getOrCreateTrustedLaunchToken(context.applicationContext)
+                )
+                configure()
+            }
         }
 
         private fun getOrCreateTrustedLaunchToken(context: Context): String {

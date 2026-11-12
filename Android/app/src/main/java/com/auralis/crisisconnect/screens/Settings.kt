@@ -56,6 +56,7 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Sos
 import androidx.compose.material.icons.outlined.StarRate
 import androidx.compose.material.icons.outlined.SupportAgent
+import androidx.compose.material.icons.outlined.Watch
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.IconButton
@@ -654,6 +655,11 @@ fun SettingsScreen(navController: NavController) {
                     }
                 }
 
+                Column {
+                    SettingsSectionHeader(title = stringResource(R.string.contacts_consent_settings_title))
+                    GroupedSettingsCard { ContactConsentSettings() }
+                }
+
                 // Section: General
                 Column {
                     SettingsSectionHeader(title = stringResource(R.string.settings_section_general))
@@ -664,6 +670,16 @@ fun SettingsScreen(navController: NavController) {
                             title = stringResource(R.string.settings_sos_contacts_title),
                             description = stringResource(R.string.settings_sos_contacts_subtitle),
                             onClick = { navController.navigate("sos_emergency_contacts") }
+                        )
+
+                        SettingsRowDivider()
+
+                        SettingsNavRow(
+                            icon = Icons.Outlined.Watch,
+                            iconTint = MaterialTheme.colorScheme.primary,
+                            title = stringResource(R.string.settings_watch_title),
+                            description = stringResource(R.string.settings_watch_description),
+                            onClick = { navController.navigate("watch_settings") }
                         )
 
                         SettingsRowDivider()
@@ -1105,7 +1121,7 @@ private fun settingsPermissionRequirements(): List<SettingsPermissionRequirement
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         requirements += SettingsPermissionRequirement(
             labelRes = R.string.permission_group_nearby_wifi,
-            permissions = listOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+            permissions = com.auralis.crisisconnect.util.LocalNetworkPermissions.wifiPermissions()
         )
         requirements += SettingsPermissionRequirement(
             labelRes = R.string.permission_group_notifications,

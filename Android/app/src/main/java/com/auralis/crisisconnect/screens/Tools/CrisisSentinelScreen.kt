@@ -141,6 +141,7 @@ import androidx.navigation.NavController
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.ai.CrisisSentinelChatMessage
 import com.auralis.crisisconnect.ai.CrisisSentinelChatRole
+import com.auralis.crisisconnect.ai.CrisisSentinelConversationIds
 import com.auralis.crisisconnect.ai.CrisisSentinelConversationSummary
 import com.auralis.crisisconnect.ai.CrisisSentinelMapPoint
 import com.auralis.crisisconnect.ai.CrisisSentinelModelAvailability
@@ -641,8 +642,17 @@ fun CrisisSentinelChatScreen(
         }
     }
 
-    LaunchedEffect(conversationId) {
-        viewModel.openConversation(conversationId)
+    val chatLifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(chatLifecycle, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshRoleAccess()
+        }
+        chatLifecycle.addObserver(observer)
+        onDispose { chatLifecycle.removeObserver(observer) }
+    }
+    val canOpenConversation = !CrisisSentinelConversationIds.isCloud(conversationId) || uiState.isOnlineEngineAllowed
+    LaunchedEffect(conversationId, canOpenConversation) {
+        if (canOpenConversation) viewModel.openConversation(conversationId)
     }
 
     LaunchedEffect(initialPrompt) {
@@ -686,7 +696,11 @@ fun CrisisSentinelChatScreen(
         }
     }
 
-    if (showEnginePicker) {
+    LaunchedEffect(uiState.isOnlineEngineAllowed) {
+        if (!uiState.isOnlineEngineAllowed) showEnginePicker = false
+    }
+
+    if (showEnginePicker && uiState.isOnlineEngineAllowed) {
         LaunchedEffect(Unit) {
             viewModel.refreshOnlineProviders()
         }
@@ -1312,18 +1326,10 @@ private fun CrisisSentinelHomeHero(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Top) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_tool_crisis_sentinel_shine),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
+                CrisisSentinelOrb(
+                    size = 48.dp,
+                    variant = if (isModelReady) CrisisSentinelOrbVariant.Edge else CrisisSentinelOrbVariant.Sentinel
+                )
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
                     Text(
                         text = stringResource(R.string.tool_crisis_sentinel_title),
@@ -1541,6 +1547,11 @@ private fun ChatEmptyStateCard(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        CrisisSentinelOrb(
+            size = 64.dp,
+            variant = if (mode == CrisisSentinelUserMode.Public) CrisisSentinelOrbVariant.Sentinel else CrisisSentinelOrbVariant.Edge
+        )
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = stringResource(R.string.crisis_sentinel_chat_empty_title),
             style = MaterialTheme.typography.headlineSmall,
@@ -1841,7 +1852,10 @@ private fun AssistantThinkingBubble() {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        TypingDots()
+        CrisisSentinelOrb(
+            size = 22.dp,
+            isGenerating = true
+        )
         Text(
             text = stringResource(R.string.crisis_sentinel_generating),
             style = MaterialTheme.typography.bodyMedium,
@@ -2187,10 +2201,9 @@ private fun IntroCard() {
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.Top
         ) {
-            Icon(
-                painter = painterResource(id = R.drawable.ic_tool_crisis_sentinel_shine),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer
+            CrisisSentinelOrb(
+                size = 32.dp,
+                variant = CrisisSentinelOrbVariant.Edge
             )
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
@@ -2433,7 +2446,6 @@ private fun responseSourceLabel(source: CrisisSentinelResponseSource): Int {
     return when (source) {
         CrisisSentinelResponseSource.LocalModel -> R.string.crisis_sentinel_source_local_model
         CrisisSentinelResponseSource.OfflineRules -> R.string.crisis_sentinel_source_offline_rules
-        CrisisSentinelResponseSource.OnlineModel -> R.string.crisis_sentinel_source_online_model
         CrisisSentinelResponseSource.OnlineModel -> R.string.crisis_sentinel_source_online_model
     }
 }

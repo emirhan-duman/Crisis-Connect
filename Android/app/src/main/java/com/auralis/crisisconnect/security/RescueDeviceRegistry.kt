@@ -15,10 +15,13 @@ object RescueDeviceRegistry {
     private const val COLLECTION = "rescueDevices"
 
     suspend fun registerLocalDevice(
-        firestore: FirebaseFirestore,
         context: Context,
         uid: String
     ): String {
+        // Certificate callables read rescueDevices from the default database.
+        // Profile data can live in the regional application database; its client
+        // must never be used for this ownership registry.
+        val firestore = FirebaseFirestore.getInstance()
         val appContext = context.applicationContext
         val normalizedUid = uid.trim()
         require(normalizedUid.isNotEmpty()) { "uid is required" }

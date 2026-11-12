@@ -26,7 +26,8 @@ final class VoipPushRegistrar: NSObject, PKPushRegistryDelegate, @unchecked Send
 
     private let registry = PKPushRegistry(queue: .main)
     private let client = InternetMessagingClient()
-    private var lastRegisteredToken: String?
+    private let registrationLock = NSLock()
+    private var lastRegistration: (uid: String, token: String)?
 
     private override init() {
         super.init()
@@ -53,12 +54,20 @@ final class VoipPushRegistrar: NSObject, PKPushRegistryDelegate, @unchecked Send
     }
 
     private func registerToken(_ tokenData: Data) async {
-        guard Auth.auth().currentUser != nil else { return }
+        guard let uid = Auth.auth().currentUser?.uid else {
+            registrationLock.withLock { lastRegistration = nil }
+            return
+        }
         let token = tokenData.map { String(format: "%02x", $0) }.joined()
-        guard token != lastRegisteredToken else { return }
+        let alreadyRegistered = registrationLock.withLock {
+            if lastRegistration?.uid != uid { lastRegistration = nil }
+            return lastRegistration?.token == token
+        }
+        guard !alreadyRegistered else { return }
         do {
             try await client.registerPushToken(token, platform: "ios-voip")
-            lastRegisteredToken = token
+            guard Auth.auth().currentUser?.uid == uid else { return }
+            registrationLock.withLock { lastRegistration = (uid, token) }
         } catch {
             NSLog("VoipPushRegistrar: failed to register VoIP token: %@", String(describing: error))
         }
@@ -76,9 +85,17 @@ final class VoipPushRegistrar: NSObject, PKPushRegistryDelegate, @unchecked Send
     }
 
     func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
-        guard type == .voIP, let token = lastRegisteredToken else { return }
-        lastRegisteredToken = nil
-        Task { try? await client.unregisterPushToken(token) }
+        guard type == .voIP else { return }
+        let previous = registrationLock.withLock {
+            let value = lastRegistration
+            lastRegistration = nil
+            return value
+        }
+        guard let previous else { return }
+        Task {
+            guard Auth.auth().currentUser?.uid == previous.uid else { return }
+            try? await client.unregisterPushToken(previous.token)
+        }
     }
 
     func pushRegistry(

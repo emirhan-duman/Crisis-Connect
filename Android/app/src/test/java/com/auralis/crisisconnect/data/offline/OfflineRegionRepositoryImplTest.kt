@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import io.mockk.Runs
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
@@ -12,6 +13,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.flow.flowOf
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -99,6 +102,42 @@ class OfflineRegionRepositoryImplTest {
         if (stored.bytesDownloaded == 10_000L) {
             assertEquals(20_000L, stored.bytesRequired)
         }
+    }
+
+    @Test
+    fun estimatedResourceCountDoesNotMarkRegionReadyBeforeMapLibreCompletes() = runTest(dispatcher) {
+        val dao = mockk<OfflineRegionDao>()
+        val mockDatabase = mockk<OfflineDatabase>()
+        every { mockDatabase.offlineRegionDao() } returns dao
+        every { dao.observeRegions() } returns flowOf(emptyList())
+        coEvery { dao.upsert(any()) } returns 1L
+        coEvery { dao.getByRegionId(any()) } returns null
+        val updates = mutableListOf<OfflineRegionEntity>()
+        coEvery { dao.update(capture(updates)) } just Runs
+        val manager = mockk<OfflineManager>()
+        val region = mockk<OfflineRegion>(relaxed = true)
+        val observer = slot<OfflineRegion.OfflineRegionObserver>()
+        every { region.id } returns 42L
+        every { region.setObserver(capture(observer)) } just Runs
+        every { manager.createOfflineRegion(any(), any(), any()) } answers {
+            arg<OfflineManager.CreateOfflineRegionCallback>(2).onCreate(region)
+        }
+        val repository = OfflineRegionRepositoryImpl(mockDatabase, manager, backgroundScope, dispatcher)
+        repository.startDownload(OfflineDownloadRequest("test", LatLngBounds.from(10.0, 10.0, 9.0, 9.0), 8.0, 10.0, "style", 2f))
+
+        val estimated = createStatus(OfflineRegion.STATE_ACTIVE, 2, 10_000, 2, 5_000, 2, false)
+        // SDK isComplete alone accepts the estimate; our repository must wait for precision.
+        assertEquals(true, estimated.isComplete)
+        assertEquals(false, estimated.isRequiredResourceCountPrecise)
+        observer.captured.onStatusChanged(estimated)
+        runCurrent()
+        assertEquals(com.auralis.crisisconnect.data.offline.OfflineRegionStatus.Downloading, updates.last().status)
+
+        val complete = createStatus(OfflineRegion.STATE_ACTIVE, 2, 10_000, 2, 5_000, 2, true)
+        assertEquals(true, complete.isComplete)
+        observer.captured.onStatusChanged(complete)
+        runCurrent()
+        assertEquals(com.auralis.crisisconnect.data.offline.OfflineRegionStatus.Complete, updates.last().status)
     }
 
     private fun createStatus(

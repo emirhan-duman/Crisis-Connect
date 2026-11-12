@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Pumili ng notification sound, vibration at lock-screen visibility sa mga setting ng Android. Ang mga full-screen na alerto ay nangangailangan ng iyong pahintulot at maaaring limitahan ng Huwag Istorbohin, mga setting ng baterya, o isang app na pinigilan ng puwersa.</string>
+    <string name="muster_alert_settings_title">Tunog, vibration at lock screen</string>
+    <string name="muster_alerts_blocked">Ang mga notification ng app ay hindi pinagana sa mga setting ng Android</string>
+    <string name="muster_alerts_quiet">Ang channel ng notification na ito ay tahimik o mababa ang priyoridad; paganahin ang mga pop-up na alerto sa mga setting ng Android</string>
+    <string name="muster_locked_screen_note">Lumilitaw ang mga full-screen na alerto kapag naka-lock ang iyong telepono o naka-off ang screen nito, kung pinapayagan sila ng Android. Habang ginagamit mo ang telepono, ang Android ay maaaring magpakita na lang ng paunang abiso.</string>
+    <string name="muster_urgent_sound">Tunog sa silent mode</string>
+    <string name="muster_urgent_sound_help">Para sa agarang pagsuri sa kaligtasan sa sakuna lamang. Ginagamit ang iyong kasalukuyang volume ng alarm para sa isang limitadong oras habang nakikita ang pagsuri sa kaligtasan screen. Hihinto kapag hinawakan mo ang screen.</string>
+    <string name="muster_urgent_ready">Available sa loob ng mga pahintulot ng system. Huwag Istorbohin at ang volume ng alarma ay mananatiling nasa ilalim ng iyong kontrol.</string>
+    <string name="muster_urgent_not_ready">Suriin ang volume ng alarma, mga pahintulot sa notification at Huwag Istorbohin. Ang mga paghihigpit sa system ay iginagalang.</string>
+    <string name="muster_urgent_seconds">%1$d segundo</string>
+    <string name="muster_flash_settings">Mga setting ng alerto sa flash</string>
+    <string name="muster_flash_help">Kung sinusuportahan ng telepono mo, i-on ang mga flash notification sa mga setting ng accessibility ng Android. Android ang kumokontrol sa mga ito, kahit nakasara ang app.</string>
+</resources>
