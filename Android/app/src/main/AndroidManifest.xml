@@ -80,6 +80,12 @@
         android:required="false"
         tools:replace="android:required" />
 
+    <queries>
+        <intent>
+            <action android:name="android.settings.BLUETOOTH_SETTINGS" />
+        </intent>
+    </queries>
+
     <application
         android:name=".CrisisConnectApp"
         android:allowBackup="false"

@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothAdapter
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -144,16 +145,18 @@ class RfcommAutostartReceiver : BroadcastReceiver() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun bluetoothSettingsIntent(context: Context): PendingIntent {
-        val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        } else {
-            PendingIntent.FLAG_UPDATE_CURRENT
-        }
-        return PendingIntent.getActivity(context, 0, intent, flags)
+    private fun bluetoothSettingsIntent(context: Context): PendingIntent? {
+        val settings = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+        val activity = context.packageManager.queryIntentActivities(
+            settings,
+            PackageManager.MATCH_DEFAULT_ONLY or PackageManager.MATCH_SYSTEM_ONLY
+        ).firstOrNull { it.activityInfo?.exported == true }?.activityInfo
+            ?: return null
+        settings.setComponent(ComponentName(activity.packageName, activity.name))
+        settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return PendingIntent.getActivity(
+            context, 0, settings, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 
     companion object {
