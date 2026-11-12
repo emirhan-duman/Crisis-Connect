@@ -124,7 +124,7 @@ struct RecentDisastersView: View {
                 filtersRow
 
                 if viewModel.isStale {
-                    OfflineBanner()
+                    OfflineBanner(deferred:viewModel.error == .deferred)
                 }
 
                 content
@@ -628,15 +628,16 @@ private struct NearbyDisasterCard: View {
 // ─── Banners / states ────────────────────────────────────────────────────────
 
 private struct OfflineBanner: View {
+    var deferred = false
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.white)
             VStack(alignment: .leading, spacing: 2) {
-                Text("RECENT_DISASTERS_OFFLINE_MODE")
+                Text(LocalizedStringKey(deferred ? "CHAT_AUTOMATIC_DISASTER_MODE" : "RECENT_DISASTERS_OFFLINE_MODE"))
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.white)
-                Text("RECENT_DISASTERS_OFFLINE_MESSAGE")
+                Text(LocalizedStringKey(deferred ? "TRAFFIC_FEED_DEFERRED" : "RECENT_DISASTERS_OFFLINE_MESSAGE"))
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.9))
             }
@@ -658,7 +659,7 @@ private struct DisasterErrorState: View {
             Image(systemName: "icloud.slash")
                 .font(.system(size: 56))
                 .foregroundStyle(Color.appTextSecondary.opacity(0.6))
-            Text(LocalizedStringKey(error == .timeout ? "RECENT_DISASTERS_ERROR_TIMEOUT" : "RECENT_DISASTERS_ERROR_OFFLINE"))
+            Text(LocalizedStringKey(error == .deferred ? "TRAFFIC_FEED_DEFERRED" : (error == .timeout ? "RECENT_DISASTERS_ERROR_TIMEOUT" : "RECENT_DISASTERS_ERROR_OFFLINE")))
                 .font(.body)
                 .foregroundStyle(Color.appTextSecondary)
                 .multilineTextAlignment(.center)

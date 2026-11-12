@@ -28,6 +28,12 @@
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
+      <TestPlans>
+         <TestPlanReference
+            default = "YES"
+            reference = "container:Crisis Connect.xctestplan">
+         </TestPlanReference>
+      </TestPlans>
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
@@ -37,16 +43,11 @@
             ReferencedContainer = "container:Crisis Connect.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
-      <TestPlans>
-         <TestPlanReference
-            reference = "container:Crisis Connect.xctestplan"
-            default = "YES">
-         </TestPlanReference>
-      </TestPlans>
       <Testables>
          <TestableReference
             skipped = "NO"
-            parallelizable = "NO">
+            parallelizable = "NO"
+            useTestSelectionWhitelist = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "1E7EE2362EAD5A1700C66134"
@@ -56,7 +57,8 @@
             </BuildableReference>
          </TestableReference>
          <TestableReference
-            skipped = "NO">
+            skipped = "NO"
+            useTestSelectionWhitelist = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "1E7EE2402EAD5A1700C66134"

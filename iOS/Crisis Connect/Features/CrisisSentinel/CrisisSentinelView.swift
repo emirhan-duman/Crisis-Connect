@@ -91,6 +91,7 @@ struct CrisisSentinelView: View {
 }
 
 struct CrisisSentinelHomeView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = CrisisSentinelViewModel()
     @State private var pendingConversationRoute: CrisisSentinelConversationRoute?
     @State private var pendingDeletion: CrisisSentinelConversationSummary?
@@ -127,10 +128,8 @@ struct CrisisSentinelHomeView: View {
         .background(AppScreenBackground())
         .navigationTitle("CRISIS_SENTINEL_TITLE")
         .navigationBarTitleDisplayMode(.inline)
-        // Android re-checks the role on every screen open — a certificate issued after this view
-        // model was created (fresh sign-in, auto-provisioning) must unlock the cloud engine here.
-        .task {
-            await viewModel.refreshRoleAccess()
+        .task(id: scenePhase) {
+            if scenePhase == .active { await viewModel.refreshRoleAccess() }
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -384,6 +383,7 @@ private struct CrisisSentinelInfoView: View {
 }
 
 struct CrisisSentinelChatView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = CrisisSentinelViewModel()
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isFileImporterPresented = false
@@ -481,7 +481,9 @@ struct CrisisSentinelChatView: View {
                 isProcessingInput: viewModel.isProcessingInput,
                 isDictating: viewModel.isDictating,
                 onSubmit: {
-                    currentConversationID = viewModel.submitChatMessage(conversationID: currentConversationID)
+                    let isCloud = currentConversationID.map(CrisisSentinelConversationIds.isCloud) == true
+                    let id = isCloud && !viewModel.isOnlineEngineAllowed ? nil : currentConversationID
+                    currentConversationID = viewModel.submitChatMessage(conversationID: id)
                 },
                 onCancel: { viewModel.cancelGeneration() },
                 onFile: { isFileImporterPresented = true },
@@ -498,6 +500,20 @@ struct CrisisSentinelChatView: View {
         .onAppear {
             currentConversationID = currentConversationID ?? conversationID
             viewModel.openConversation(id: currentConversationID)
+        }
+        .task(id: scenePhase) {
+            if scenePhase == .active { await viewModel.refreshRoleAccess() }
+        }
+        .onChange(of: viewModel.isOnlineEngineAllowed) { _, allowed in
+            if allowed, let conversationID, CrisisSentinelConversationIds.isCloud(conversationID),
+               currentConversationID == conversationID, viewModel.activeConversation == nil {
+                viewModel.openConversation(id: conversationID)
+            } else if !allowed {
+                isModelPickerPresented = false
+                if let id = currentConversationID, CrisisSentinelConversationIds.isCloud(id) {
+                    currentConversationID = nil
+                }
+            }
         }
         .onChange(of: viewModel.activeConversation?.id) { _, newId in
             // A brand-new cloud chat gets its id after createChat lands — sync the composer's id.
@@ -577,9 +593,11 @@ struct CrisisSentinelChatView: View {
             : ["CRISIS_SENTINEL_SUGGEST_FIELD_1", "CRISIS_SENTINEL_SUGGEST_FIELD_2",
                "CRISIS_SENTINEL_SUGGEST_FIELD_3", "CRISIS_SENTINEL_SUGGEST_FIELD_4"]
         return VStack(spacing: 12) {
-            AppCustomIconBadge(tint: .appPrimary, size: 58) {
-                CrisisSentinelSparklesIcon()
-            }
+            CrisisSentinelOrbView(
+                variant: viewModel.mode == .publicUser ? .sentinel : .edge,
+                size: 64
+            )
+            .padding(.bottom, 2)
             Text("CRISIS_SENTINEL_CHAT_EMPTY_TITLE")
                 .font(.title2.weight(.bold))
                 .multilineTextAlignment(.center)
@@ -643,7 +661,7 @@ struct CrisisSentinelChatView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 10) {
-                TypingDotsView()
+                CrisisSentinelOrbView(variant: .sentinel, size: 22, isGenerating: true)
                 Text("CRISIS_SENTINEL_GENERATING")
                     .font(.subheadline)
                     .foregroundStyle(Color.appTextSecondary)
@@ -762,9 +780,7 @@ struct CrisisSentinelChatView: View {
 private struct CrisisSentinelIntroCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            AppCustomIconBadge(tint: .appPrimary) {
-                CrisisSentinelSparklesIcon()
-            }
+            CrisisSentinelOrbView(variant: .edge, size: 44)
             VStack(alignment: .leading, spacing: 6) {
                 Text("CRISIS_SENTINEL_TITLE")
                     .font(.title3.weight(.bold))

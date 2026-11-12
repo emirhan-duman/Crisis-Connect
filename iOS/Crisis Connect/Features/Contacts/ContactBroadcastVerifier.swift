@@ -9,8 +9,9 @@ import Foundation
 import CoreBluetooth
 import Combine
 import FirebaseAuth
+import UIKit
 
-struct ContactVerificationResult {
+struct ContactVerificationResult: Codable {
     let shareId: String
     let sessionCode: String
     let displayName: String?
@@ -60,6 +61,8 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
     @Published private(set) var progress: ContactVerificationProgress = .idle
 
     private let queue = DispatchQueue(label: "contact.p2p.scan")
+    private var backgrounded = false
+    private var lifecycleObservers: [NSObjectProtocol] = []
     private var central: CBCentralManager?
     private var timeoutWork: DispatchWorkItem?
     private var shouldStartWhenReady = false
@@ -74,6 +77,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
     // retried, or they starve the real QR host out of the 12s verification window.
     private var rejectedFallbackPeripheralIds: Set<UUID> = []
     private var activeCandidateIsFallback = false
+    private var controlWriteChunks: [Data] = []
     private var controlCharacteristic: CBCharacteristic?
     private var bootstrapPayload: P2pBootstrapPayload?
     private var controlStage: P2pControlStage?
@@ -83,6 +87,33 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
 
     override init() {
         super.init()
+        lifecycleObservers = [
+            NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.setBackgrounded(true)
+            },
+            NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.setBackgrounded(false)
+            }
+        ]
+    }
+
+    deinit {
+        lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
+        timeoutWork?.cancel()
+    }
+
+    private func setBackgrounded(_ value: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.backgrounded = value
+            // Background Core Bluetooth discovery requires an explicit service filter.
+            // Never restart or disconnect an already established handshake.
+            if self.central?.isScanning == true, self.targetPayload != nil {
+                self.central?.stopScan()
+                self.shouldStartWhenReady = true
+                self.startScanIfPossible()
+            }
+        }
     }
 
     func verify(
@@ -91,6 +122,10 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         timeout: TimeInterval = 12,
         completion: @escaping (ContactVerificationOutcome) -> Void
     ) {
+        guard payload.supportsSecureOfflinePairing else {
+            completion(.failed(.notFound))
+            return
+        }
         queue.async { [weak self] in
             guard let self else { return }
             self.stopScanning(disconnect: true)
@@ -102,6 +137,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             self.completion = completion
             self.shouldStartWhenReady = true
             self.controlCharacteristic = nil
+            self.controlWriteChunks.removeAll()
             self.bootstrapPayload = nil
             self.controlStage = nil
             self.clientNonce = nil
@@ -128,6 +164,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             self.keyData = nil
             self.localDisplayName = ""
             self.controlCharacteristic = nil
+            self.controlWriteChunks.removeAll()
             self.bootstrapPayload = nil
             self.controlStage = nil
             self.clientNonce = nil
@@ -288,7 +325,9 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
 
         case P2pBleProtocol.controlCharacteristicUUID:
             guard
-                let object = try? JSONSerialization.jsonObject(with: value) as? [String: Any],
+                let keyData,
+                let plaintext = P2pPrivacyWire.open(value, key: keyData, purpose: .control),
+                let object = try? JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
                 let type = (object["type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             else {
                 disconnectAndResumeScan()
@@ -321,6 +360,10 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         }
         guard let controlCharacteristic else {
             disconnectAndResumeScan()
+            return
+        }
+        if !controlWriteChunks.isEmpty {
+            peripheral.writeValue(controlWriteChunks.removeFirst(), for: controlCharacteristic, type: .withResponse)
             return
         }
         peripheral.readValue(for: controlCharacteristic)
@@ -407,7 +450,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             disconnectAndResumeScan()
             return
         }
-        peripheral.writeValue(data, for: controlCharacteristic, type: .withResponse)
+        writePrivateControl(data, peripheral: peripheral, characteristic: controlCharacteristic)
     }
 
     private func handleServerHello(_ object: [String: Any]) {
@@ -525,12 +568,25 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             disconnectAndResumeScan()
             return
         }
-        peripheral.writeValue(data, for: controlCharacteristic, type: .withResponse)
+        writePrivateControl(data, peripheral: peripheral, characteristic: controlCharacteristic)
+    }
+
+    private func writePrivateControl(_ data: Data, peripheral: CBPeripheral, characteristic: CBCharacteristic) {
+        guard let keyData,
+              let sealed = P2pPrivacyWire.seal(data, key: keyData, purpose: .control),
+              let framed = P2pPrivacyWire.frameControl(sealed) else { disconnectAndResumeScan(); return }
+        let size = max(1, peripheral.maximumWriteValueLength(for: .withResponse))
+        controlWriteChunks = stride(from: 0, to: framed.count, by: size).map {
+            framed.subdata(in: $0..<min($0 + size, framed.count))
+        }
+        peripheral.writeValue(controlWriteChunks.removeFirst(), for: characteristic, type: .withResponse)
     }
 
     private func parseBootstrapPayload(from data: Data) -> P2pBootstrapPayload? {
         guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let keyData,
+            let plaintext = P2pPrivacyWire.open(data, key: keyData, purpose: .bootstrap),
+            let json = try? JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
             let shareId = (json["shareId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
             let sessionCode = (json["sessionCode"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
             let platform = (json["platform"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -580,6 +636,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
             return
         }
         controlCharacteristic = nil
+        controlWriteChunks.removeAll()
         bootstrapPayload = nil
         controlStage = nil
         clientNonce = nil
@@ -593,6 +650,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         activePeripheral = nil
         activeCandidateIsFallback = false
         controlCharacteristic = nil
+        controlWriteChunks.removeAll()
         bootstrapPayload = nil
         controlStage = nil
         clientNonce = nil
@@ -613,8 +671,8 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         shouldStartWhenReady = false
         setProgress(.searching)
         central.scanForPeripherals(
-            withServices: nil,
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+            withServices: backgrounded ? [P2pBleProtocol.serviceUUID] : nil,
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: !backgrounded]
         )
         DispatchQueue.main.async { [weak self] in
             self?.isScanning = true
@@ -651,6 +709,7 @@ final class ContactBroadcastVerifier: NSObject, ObservableObject, CBCentralManag
         keyData = nil
         localDisplayName = ""
         controlCharacteristic = nil
+        controlWriteChunks.removeAll()
         bootstrapPayload = nil
         controlStage = nil
         clientNonce = nil

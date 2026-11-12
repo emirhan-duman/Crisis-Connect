@@ -599,6 +599,16 @@ final class GattMeshChatStore: ObservableObject {
         return rawValue
     }
 
+    static func retireLegacyOriginVerification(_ messages: [GattMeshChatMessage], version: Int?) -> [GattMeshChatMessage] {
+        guard version != 2 else { return messages }
+        return messages.map { message in
+            var copy = message
+            copy.originVerifiedRole = nil
+            copy.originVerifiedAtMillis = nil
+            return copy
+        }
+    }
+
     private func loadPersistedState() {
         guard let payload = try? LocalEncryptedFileStore.read(from: persistenceURL) else {
             return
@@ -606,14 +616,15 @@ final class GattMeshChatStore: ObservableObject {
         guard let snapshot = try? JSONDecoder().decode(Snapshot.self, from: payload.data) else {
             return
         }
-        messages = normalizeMessages(snapshot.messages)
+        messages = normalizeMessages(Self.retireLegacyOriginVerification(snapshot.messages, version: snapshot.originVerificationVersion))
         unreadCount = max(0, snapshot.unreadCount)
     }
 
     private func persistState() {
         let snapshot = Snapshot(
             messages: messages,
-            unreadCount: isChatOpen ? 0 : unreadCount
+            unreadCount: isChatOpen ? 0 : unreadCount,
+            originVerificationVersion: 2
         )
         pendingPersistWorkItem?.cancel()
         let workItem = DispatchWorkItem {
@@ -627,6 +638,7 @@ final class GattMeshChatStore: ObservableObject {
     private struct Snapshot: Codable {
         let messages: [GattMeshChatMessage]
         let unreadCount: Int
+        let originVerificationVersion: Int?
     }
 }
 

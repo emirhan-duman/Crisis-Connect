@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Android 設定で、通知音、振動、ロック画面の表示/非表示を選択します。全画面アラートにはユーザーの許可が必要であり、おやすみモード、バッテリー設定、アプリの強制停止によって制限される場合があります。</string>
+    <string name="muster_alert_settings_title">音、振動、ロック画面</string>
+    <string name="muster_alerts_blocked">Android 設定でアプリの通知が無効になっています</string>
+    <string name="muster_alerts_quiet">この通知チャネルはサイレントか優先度が低いです。 Android設定でポップアップアラートを有効にする</string>
+    <string name="muster_locked_screen_note">Android で許可されている場合、携帯電話がロックされている場合、または画面がオフの場合、全画面アラートが表示されます。電話機の使用中、Android は代わりにヘッドアップ通知を表示する場合があります。</string>
+    <string name="muster_urgent_sound">マナーモード時のサウンド</string>
+    <string name="muster_urgent_sound_help">緊急災害時の安否確認のみ。安否確認画面が表示されている間、限られた時間だけ既存のアラーム音量を使用します。画面に触れると止まります。</string>
+    <string name="muster_urgent_ready">システム権限内で利用可能です。おやすみモードとアラームの音量はお客様が制御できます。</string>
+    <string name="muster_urgent_not_ready">アラームの音量、通知の許可、おやすみモードを確認してください。システム制限は尊重されます。</string>
+    <string name="muster_urgent_seconds">%1$d 秒</string>
+    <string name="muster_flash_settings">フラッシュアラート設定</string>
+    <string name="muster_flash_help">対応する端末では、Androidのユーザー補助設定でフラッシュ通知を有効にできます。アプリを閉じている間も、フラッシュ通知はAndroidが管理します。</string>
+</resources>

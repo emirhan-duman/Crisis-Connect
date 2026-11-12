@@ -328,7 +328,7 @@ enum SOSNotificationCenter {
             intentIdentifiers: [],
             options: []
         )
-        return [callCategory]
+        return [callCategory, MusterNotificationCenter.category, MusterNotificationCenter.configuredCategory]
     }
 
     private static func incomingCallNotificationIdentifier(for normalizedSessionId: String) -> String {
@@ -616,6 +616,12 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        if notification.request.content.userInfo["type"] as? String == "personnel_muster" {
+            guard MusterNotificationCenter.payload(notification.request.content.userInfo) != nil else { completionHandler([]); return }
+            Task { _ = await MusterClient.shared.receivePush(notification.request.content.userInfo) }
+            completionHandler([.banner, .sound, .list])
+            return
+        }
         // The backend's iOS chat push is an ALERT push (so a force-quit app still shows a banner),
         // but its userInfo carries the same E2E data payload the silent push did. In the
         // foreground the app decrypts and posts its OWN localized notification, so never present
@@ -650,6 +656,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        if MusterNotificationCenter.handle(response, completion: completionHandler) { return }
         SOSNotificationCenter.handleNotificationResponse(response)
         completionHandler()
     }

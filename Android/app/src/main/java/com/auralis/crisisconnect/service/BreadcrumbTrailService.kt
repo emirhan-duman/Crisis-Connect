@@ -5,7 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -18,6 +17,8 @@ import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import android.content.pm.ServiceInfo
+import android.util.Log
 import com.auralis.crisisconnect.MainActivity
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.screens.Tools.BreadcrumbTrailMode
@@ -44,7 +45,33 @@ class BreadcrumbTrailService : Service(), LocationListener {
             stopTracking()
             return START_NOT_STICKY
         }
-        startForeground(NOTIFICATION_ID, buildNotification())
+        if (!hasRequiredPermissions(this)) {
+            Log.w(TAG, "Stopping BreadcrumbTrailService: missing location permissions")
+            BreadcrumbTrailRepository.pause()
+            stopTracking()
+            return START_NOT_STICKY
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "SecurityException starting location foreground service", e)
+            BreadcrumbTrailRepository.pause()
+            stopTracking()
+            return START_NOT_STICKY
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed starting location foreground service", e)
+            BreadcrumbTrailRepository.pause()
+            stopTracking()
+            return START_NOT_STICKY
+        }
         requestUpdates()
         return START_STICKY
     }
@@ -110,7 +137,7 @@ class BreadcrumbTrailService : Service(), LocationListener {
 
     private fun stopTracking() {
         runCatching { locationManager.removeUpdates(this) }
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf()
     }
 
@@ -120,17 +147,13 @@ class BreadcrumbTrailService : Service(), LocationListener {
         val stopIntent = PendingIntent.getService(
             this,
             9122,
-            Intent(this, BreadcrumbTrailService::class.java)
-                .setComponent(ComponentName(this, BreadcrumbTrailService::class.java))
-                .setAction(ACTION_STOP),
+            Intent(this, BreadcrumbTrailService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val contentIntent = PendingIntent.getActivity(
             this,
             9123,
-            Intent(this, MainActivity::class.java)
-                .setComponent(ComponentName(this, MainActivity::class.java))
-                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -170,16 +193,42 @@ class BreadcrumbTrailService : Service(), LocationListener {
     }
 
     companion object {
+        private const val TAG = "BreadcrumbTrailService"
         private const val CHANNEL_ID = "breadcrumb_trail_tracking"
         private const val NOTIFICATION_ID = 9121
         private const val ACTION_START = "com.auralis.crisisconnect.breadcrumb.START"
         private const val ACTION_STOP = "com.auralis.crisisconnect.breadcrumb.STOP"
 
+        fun hasRequiredPermissions(context: Context): Boolean {
+            val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
+            val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
+            val hasLocation = fine || coarse
+            val hasFgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ContextCompat.checkSelfPermission(context, Manifest.permission.FOREGROUND_SERVICE_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED
+            } else {
+                true
+            }
+            return hasLocation && hasFgs
+        }
+
         fun start(context: Context) {
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, BreadcrumbTrailService::class.java).setAction(ACTION_START),
-            )
+            if (!hasRequiredPermissions(context)) {
+                Log.w(TAG, "Cannot start BreadcrumbTrailService: missing location permissions")
+                BreadcrumbTrailRepository.pause()
+                return
+            }
+            try {
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, BreadcrumbTrailService::class.java).setAction(ACTION_START),
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to startForegroundService for BreadcrumbTrailService", e)
+                BreadcrumbTrailRepository.pause()
+            }
         }
 
         fun stop(context: Context) {

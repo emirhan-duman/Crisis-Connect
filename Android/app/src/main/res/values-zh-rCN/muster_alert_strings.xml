@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">在 Android 设置中选择通知声音、振动和锁屏显示方式。全屏提醒需要你的授权，可能受勿扰模式、电池设置或应用被强行停止的影响。</string>
+    <string name="muster_alert_settings_title">声音、振动与锁屏</string>
+    <string name="muster_alerts_blocked">Android 设置中已关闭此应用的通知</string>
+    <string name="muster_alerts_quiet">此通知渠道处于静音状态或优先级较低；请在 Android 设置中启用弹出通知</string>
+    <string name="muster_locked_screen_note">Android 允许时，手机锁定或熄屏后可显示全屏提醒。使用手机时，Android 可能改为显示横幅通知。</string>
+    <string name="muster_urgent_sound">静音模式下播放声音</string>
+    <string name="muster_urgent_sound_help">仅用于紧急灾害安全确认。在安全确认屏幕显示期间，以现有的闹钟音量播放限定时长的声音。触摸屏幕即停止。</string>
+    <string name="muster_urgent_ready">可在系统权限允许的范围内使用。勿扰模式和闹钟音量仍由你控制。</string>
+    <string name="muster_urgent_not_ready">请检查闹钟音量、通知权限和勿扰模式。应用会遵守系统限制。</string>
+    <string name="muster_urgent_seconds">%1$d 秒</string>
+    <string name="muster_flash_settings">闪光提醒设置</string>
+    <string name="muster_flash_help">如果手机支持，请在 Android 无障碍设置中启用闪光通知。闪光提醒由 Android 管理，应用关闭时也一样。</string>
+</resources>

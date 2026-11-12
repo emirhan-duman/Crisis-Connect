@@ -14,16 +14,22 @@ class ChatEncryptionSetupScreenTest {
         return method.invoke(null, raw) as Pair<String, String>?
     }
 
+    @Test fun legacyQrCannotBypassVersionChecksInEncryptionSetup() {
+        assertNull(invokeParseHandshake("""{"code":"SESSION","key":"RETIRED","platform":"android"}"""))
+        assertNull(invokeParseHandshake("""{"code":"SESSION","key":"RETIRED","platform":"android","offlineProtocolVersion":"2"}"""))
+        assertNull(invokeParseHandshake("""{"code":"SESSION","key":"RETIRED","platform":"android","offlineProtocolVersion":2.5}"""))
+    }
+
     @Test
     fun parseJsonFormat() {
-        val raw = """dcs://{"v":1,"code":"SESSION","key":"KEY123","name":"Test"}"""
+        val raw = """dcs://{"v":1,"code":"SESSION","key":"KEY123","platform":"android","offlineProtocolVersion":2,"name":"Test"}"""
         val result = invokeParseHandshake(raw)
         assertEquals("SESSION" to "KEY123", result)
     }
 
     @Test
     fun parseEncodedJsonFormat() {
-        val raw = "dcs://%7B%22v%22%3A1%2C%22code%22%3A%22ABC%22%2C%22key%22%3A%22XYZ%22%7D"
+        val raw = "dcs://" + java.net.URLEncoder.encode("""{"v":1,"code":"ABC","key":"XYZ","platform":"ios","offlineProtocolVersion":2}""", "UTF-8")
         val result = invokeParseHandshake(raw)
         assertEquals("ABC" to "XYZ", result)
     }
@@ -31,10 +37,10 @@ class ChatEncryptionSetupScreenTest {
     @Test
     fun parsePipeFormats() {
         val prefixed = invokeParseHandshake("dcs|REMOTE|KEYVALUE")
-        assertEquals("REMOTE" to "KEYVALUE", prefixed)
+        assertNull(prefixed)
 
         val simple = invokeParseHandshake("REMOTE|KEYVALUE")
-        assertEquals("REMOTE" to "KEYVALUE", simple)
+        assertNull(simple)
 
         val invalid = invokeParseHandshake("onlyonepart")
         assertNull(invalid)

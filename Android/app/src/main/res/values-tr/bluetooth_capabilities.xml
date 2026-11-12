@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bluetooth_capabilities_section">Cihaz yetenekleri</string>
+    <string name="bluetooth_capabilities_title">Bluetooth yetenekleri</string>
+    <string name="bluetooth_capabilities_device">%1$s · Android %2$s</string>
+    <string name="bluetooth_capabilities_refresh">Bluetooth yeteneklerini yenile</string>
+    <string name="bluetooth_capabilities_supported">Destekleniyor</string>
+    <string name="bluetooth_capabilities_unsupported">Desteklenmiyor</string>
+    <string name="bluetooth_capabilities_unknown">Kontrol edilemiyor</string>
+    <string name="bluetooth_capabilities_loading">Cihaz yetenekleri kontrol ediliyor…</string>
+    <string name="bluetooth_capabilities_off">Cihazın yeteneklerini kontrol etmek için Bluetooth’u açın.</string>
+    <string name="bluetooth_capabilities_permission">Bluetooth yeteneklerini kontrol etmek için yakındaki cihazlar izni gerekiyor.</string>
+    <string name="bluetooth_capabilities_no_adapter">Bu cihazda kullanılabilir bir Bluetooth adaptörü yok.</string>
+    <string name="bluetooth_capabilities_unavailable">Bluetooth yetenekleri okunamadı. Yenilemeyi deneyin.</string>
+    <string name="bluetooth_capabilities_grant">İzin ver</string>
+    <string name="bluetooth_capabilities_settings">Bluetooth ayarları</string>
+    <string name="bluetooth_capabilities_app_settings">Uygulama izinleri</string>
+    <string name="bluetooth_capabilities_long_range">UZUN MENZİL</string>
+    <string name="bluetooth_capabilities_coded">LE Coded PHY</string>
+    <string name="bluetooth_capabilities_coded_description">Daha uzun menzilli Bluetooth LE iletişimi için hata düzeltme.</string>
+    <string name="bluetooth_capabilities_s8">S=8 · 125 kbit/sn</string>
+    <string name="bluetooth_capabilities_s2">S=2 · 500 kbit/sn</string>
+    <string name="bluetooth_capabilities_s8_description">Daha güçlü hata düzeltme</string>
+    <string name="bluetooth_capabilities_s2_description">Daha yüksek veri hızı</string>
+    <string name="bluetooth_capabilities_coding_note">S=8 ve S=2, LE Coded PHY desteği kapsamında gösterilir. Android bu kodlama türleri için ayrı destek bilgisi sunmaz.</string>
+    <string name="bluetooth_capabilities_le">Bluetooth Low Energy</string>
+    <string name="bluetooth_capabilities_le_description">Düşük güç tüketimiyle cihaz keşfi ve iletişim.</string>
+    <string name="bluetooth_capabilities_2m">LE 2M PHY</string>
+    <string name="bluetooth_capabilities_2m_description">Daha hızlı BLE aktarımı için 2 Mbit/sn fiziksel katman.</string>
+    <string name="bluetooth_capabilities_extended">Extended advertising</string>
+    <string name="bluetooth_capabilities_extended_description">Daha fazla veri taşıyan Bluetooth LE duyuruları.</string>
+    <string name="bluetooth_capabilities_max_bytes">En fazla %1$d bayt duyuru verisi</string>
+    <string name="bluetooth_capabilities_periodic">Periyodik duyurular</string>
+    <string name="bluetooth_capabilities_periodic_description">Eşzamanlı aralıklarla gönderilen duyurular.</string>
+    <string name="bluetooth_capabilities_multiple">Çoklu duyuru</string>
+    <string name="bluetooth_capabilities_multiple_description">Aynı anda birden fazla duyuru yayını desteği.</string>
+    <string name="bluetooth_capabilities_filtering">Donanımsal tarama filtresi</string>
+    <string name="bluetooth_capabilities_filtering_description">Bluetooth denetleyicisi tarama sonuçlarını filtreler.</string>
+    <string name="bluetooth_capabilities_batching">Donanımsal tarama gruplama</string>
+    <string name="bluetooth_capabilities_batching_description">Denetleyici sonuçları gruplayarak işlemcinin uyanma sıklığını azaltır.</string>
+    <string name="bluetooth_capabilities_api_note">Coded PHY, 2M PHY, extended ve periyodik duyuru kontrolleri Android 8 veya üzerini gerektirir.</string>
+    <string name="bluetooth_capabilities_disclaimer">Cihazın Android üzerinden bildirdiği destektir. Etkin bağlantı modunu veya ölçülmüş menzili göstermez.</string>
+</resources>

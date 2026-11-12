@@ -21,9 +21,9 @@
        below. Always include a backup pin and an `expiration` attribute
        no more than ~6 months past the leaf certificate's actual expiry.
 
-    4. Debug-overrides allows user-installed CAs only in debug builds so
-       engineers can use mitmproxy / Charles to inspect requests. Release
-       builds do NOT trust user CAs.
+    4. Debug and internal variants select build-specific configurations with
+       debug-overrides for user-installed CAs. This production configuration
+       trusts only system CAs.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
@@ -52,10 +52,5 @@
     </domain-config>
     -->
 
-    <debug-overrides>
-        <trust-anchors>
-            <certificates src="system" />
-            <certificates src="user" />
-        </trust-anchors>
-    </debug-overrides>
+
 </network-security-config>

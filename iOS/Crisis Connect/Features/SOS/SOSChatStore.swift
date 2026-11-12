@@ -69,6 +69,14 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
     let timestamp: Date
     var status: SOSChatMessageStatus
     let transportMessageId: String?
+    var watchReplyResult: String? = nil
+    var isPinned: Bool = false
+    var sentAt: Date? = nil
+    var deliveredAt: Date? = nil
+    var readAt: Date? = nil
+    var transportUsed: String? = nil
+    var isForwarded: Bool = false
+    var storeAndForwardStatus: String? = nil
 
     init(
         id: UUID,
@@ -91,7 +99,14 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
         isLocal: Bool,
         timestamp: Date,
         status: SOSChatMessageStatus,
-        transportMessageId: String?
+        transportMessageId: String?,
+        isPinned: Bool = false,
+        sentAt: Date? = nil,
+        deliveredAt: Date? = nil,
+        readAt: Date? = nil,
+        transportUsed: String? = nil,
+        isForwarded: Bool = false,
+        storeAndForwardStatus: String? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -119,6 +134,13 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
         self.status = status
         let normalizedTransportMessageId = transportMessageId?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.transportMessageId = (normalizedTransportMessageId?.isEmpty == false) ? normalizedTransportMessageId : nil
+        self.isPinned = isPinned
+        self.sentAt = sentAt
+        self.deliveredAt = deliveredAt
+        self.readAt = readAt
+        self.transportUsed = transportUsed
+        self.isForwarded = isForwarded
+        self.storeAndForwardStatus = storeAndForwardStatus
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -143,6 +165,14 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
         case timestamp
         case status
         case transportMessageId
+        case watchReplyResult
+        case isPinned
+        case sentAt
+        case deliveredAt
+        case readAt
+        case transportUsed
+        case isForwarded
+        case storeAndForwardStatus
     }
 
     init(from decoder: Decoder) throws {
@@ -175,9 +205,17 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
         isLocal = try container.decode(Bool.self, forKey: .isLocal)
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         status = try container.decode(SOSChatMessageStatus.self, forKey: .status)
+        watchReplyResult = try container.decodeIfPresent(String.self, forKey: .watchReplyResult)
         let decodedTransportMessageId = (try container.decodeIfPresent(String.self, forKey: .transportMessageId))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         transportMessageId = (decodedTransportMessageId?.isEmpty == false) ? decodedTransportMessageId : nil
+        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        sentAt = try container.decodeIfPresent(Date.self, forKey: .sentAt)
+        deliveredAt = try container.decodeIfPresent(Date.self, forKey: .deliveredAt)
+        readAt = try container.decodeIfPresent(Date.self, forKey: .readAt)
+        transportUsed = try container.decodeIfPresent(String.self, forKey: .transportUsed)
+        isForwarded = try container.decodeIfPresent(Bool.self, forKey: .isForwarded) ?? false
+        storeAndForwardStatus = try container.decodeIfPresent(String.self, forKey: .storeAndForwardStatus)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -203,6 +241,14 @@ struct SOSChatMessage: Identifiable, Equatable, Codable, Sendable {
         try container.encode(timestamp, forKey: .timestamp)
         try container.encode(status, forKey: .status)
         try container.encodeIfPresent(transportMessageId, forKey: .transportMessageId)
+        try container.encodeIfPresent(watchReplyResult, forKey: .watchReplyResult)
+        try container.encode(isPinned, forKey: .isPinned)
+        try container.encodeIfPresent(sentAt, forKey: .sentAt)
+        try container.encodeIfPresent(deliveredAt, forKey: .deliveredAt)
+        try container.encodeIfPresent(readAt, forKey: .readAt)
+        try container.encodeIfPresent(transportUsed, forKey: .transportUsed)
+        try container.encode(isForwarded, forKey: .isForwarded)
+        try container.encodeIfPresent(storeAndForwardStatus, forKey: .storeAndForwardStatus)
     }
 }
 
@@ -224,6 +270,10 @@ extension SOSChatMessage {
     var visibleTextPreview: String {
         guard kind == .text else { return text }
         return P2pSharedTransferSupport.previewText(for: text)
+    }
+
+    var displayText: String {
+        ForwardMetadata.stripForward(visibleTextPreview)
     }
 
     var replyPreviewText: String {
@@ -335,10 +385,15 @@ final class SOSChatStore: ObservableObject {
     @Published private(set) var sessions: [SOSChatSession] = []
     @Published private(set) var messagesBySession: [UUID: [SOSChatMessage]] = [:]
 
+    @Published private(set) var watchProjectionReady = false
     private let persistenceQueue = DispatchQueue(label: "sos.chat.persistence")
     private let persistenceURL: URL
     private let sessionUpdateSubject = PassthroughSubject<UUID, Never>()
     private var pendingSave: DispatchWorkItem?
+    private let persistenceRevisionLock = NSLock()
+    private var persistenceRevision: UInt64 = 0
+    private var lastWrittenRevision: UInt64 = 0 // Access only on persistenceQueue.
+    @MainActor private var initialLoadWaiters: [CheckedContinuation<Void, Never>] = []
 
     nonisolated static func voicePreviewText() -> String {
         NSLocalizedString("Voice message", comment: "")
@@ -382,6 +437,10 @@ final class SOSChatStore: ObservableObject {
         voiceMessageDirectoryURL().appendingPathComponent(fileName, isDirectory: false)
     }
 
+    nonisolated static func resolveSessionAudioURL(fileName: String) -> URL? {
+        voiceMessageFileURL(fileName: fileName)
+    }
+
     nonisolated static func imageMessageDirectoryURL() -> URL {
         cachedImageMessagesDirectoryURL
     }
@@ -392,6 +451,10 @@ final class SOSChatStore: ObservableObject {
 
     nonisolated static func imageMessageFileURL(fileName: String) -> URL {
         imageMessageDirectoryURL().appendingPathComponent(fileName, isDirectory: false)
+    }
+
+    nonisolated static func resolveSessionImageURL(fileName: String) -> URL? {
+        imageMessageFileURL(fileName: fileName)
     }
 
     nonisolated static func imageThumbnailFileURL(fileName: String) -> URL {
@@ -575,7 +638,22 @@ final class SOSChatStore: ObservableObject {
         loadPersisted()
     }
 
+    /// A cold-start receive must not be acknowledged before the disk snapshot is installed.
+    @MainActor func waitUntilLoaded() async {
+        guard !watchProjectionReady else { return }
+        await withCheckedContinuation { initialLoadWaiters.append($0) }
+    }
+
+    @MainActor private func finishInitialLoad() {
+        watchProjectionReady = true
+        reconcileWatchReplies()
+        let waiters = initialLoadWaiters
+        initialLoadWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
     func clear() {
+        try? SOSRecoveryStore.shared.clearReplies()
         sessions = []
         messagesBySession = [:]
         schedulePersist()
@@ -748,9 +826,12 @@ final class SOSChatStore: ObservableObject {
         text: String,
         status: SOSChatMessageStatus,
         transportMessageId: String? = nil,
-        kind: SOSChatMessageKind = .text
+        kind: SOSChatMessageKind = .text,
+        isForwarded: Bool = false,
+        transportUsed: String? = nil
     ) -> SOSChatMessage {
         ensureSession(id: sessionId, role: .unknown)
+        let now = Date()
         let message = SOSChatMessage(
             id: UUID(),
             sessionId: sessionId,
@@ -759,9 +840,12 @@ final class SOSChatStore: ObservableObject {
             audioRelativePath: nil,
             audioDurationMillis: nil,
             isLocal: true,
-            timestamp: Date(),
+            timestamp: now,
             status: status,
-            transportMessageId: normalizedTransportMessageId(transportMessageId)
+            transportMessageId: normalizedTransportMessageId(transportMessageId),
+            sentAt: (status == .sent || status == .delivered || status == .read) ? now : nil,
+            transportUsed: transportUsed,
+            isForwarded: isForwarded
         )
         var messages = messagesBySession[sessionId, default: []]
         messages.append(message)
@@ -780,9 +864,12 @@ final class SOSChatStore: ObservableObject {
         audioRelativePath: String,
         durationMillis: Int?,
         status: SOSChatMessageStatus,
-        transportMessageId: String? = nil
+        transportMessageId: String? = nil,
+        isForwarded: Bool = false,
+        transportUsed: String? = nil
     ) -> SOSChatMessage {
         ensureSession(id: sessionId, role: .unknown)
+        let now = Date()
         let message = SOSChatMessage(
             id: UUID(),
             sessionId: sessionId,
@@ -791,9 +878,12 @@ final class SOSChatStore: ObservableObject {
             audioRelativePath: audioRelativePath,
             audioDurationMillis: durationMillis,
             isLocal: true,
-            timestamp: Date(),
+            timestamp: now,
             status: status,
-            transportMessageId: normalizedTransportMessageId(transportMessageId)
+            transportMessageId: normalizedTransportMessageId(transportMessageId),
+            sentAt: (status == .sent || status == .delivered || status == .read) ? now : nil,
+            transportUsed: transportUsed,
+            isForwarded: isForwarded
         )
         var messages = messagesBySession[sessionId, default: []]
         messages.append(message)
@@ -815,9 +905,12 @@ final class SOSChatStore: ObservableObject {
         imageHeight: Int?,
         imageMimeType: String?,
         status: SOSChatMessageStatus,
-        transportMessageId: String? = nil
+        transportMessageId: String? = nil,
+        isForwarded: Bool = false,
+        transportUsed: String? = nil
     ) -> SOSChatMessage {
         ensureSession(id: sessionId, role: .unknown)
+        let now = Date()
         let message = SOSChatMessage(
             id: UUID(),
             sessionId: sessionId,
@@ -831,9 +924,12 @@ final class SOSChatStore: ObservableObject {
             imageHeight: imageHeight,
             imageMimeType: imageMimeType,
             isLocal: true,
-            timestamp: Date(),
+            timestamp: now,
             status: status,
-            transportMessageId: normalizedTransportMessageId(transportMessageId)
+            transportMessageId: normalizedTransportMessageId(transportMessageId),
+            sentAt: (status == .sent || status == .delivered || status == .read) ? now : nil,
+            transportUsed: transportUsed,
+            isForwarded: isForwarded
         )
         var messages = messagesBySession[sessionId, default: []]
         messages.append(message)
@@ -1157,7 +1253,7 @@ final class SOSChatStore: ObservableObject {
         var result: [(UUID, String, String)] = []
         for (sessionId, messages) in messagesBySession {
             for message in messages
-            where message.isLocal && message.status == .pending && message.kind == .text {
+            where message.isLocal && message.status == .pending && message.kind == .text && message.watchReplyResult == nil {
                 guard let tid = normalizedTransportMessageId(message.transportMessageId) else { continue }
                 result.append((sessionId, tid, message.text))
             }
@@ -1183,6 +1279,57 @@ final class SOSChatStore: ObservableObject {
             session.unreadCount = 0
         }
         schedulePersist()
+    }
+
+    func pinMessage(id: UUID, sessionId: UUID) {
+        guard var messages = messagesBySession[sessionId] else { return }
+        var changed = false
+        for index in messages.indices {
+            let shouldPin = (messages[index].id == id)
+            if messages[index].isPinned != shouldPin {
+                messages[index].isPinned = shouldPin
+                changed = true
+            }
+        }
+        if changed {
+            setMessages(messages, for: sessionId)
+            schedulePersist()
+        }
+    }
+
+    func unpinMessage(sessionId: UUID) {
+        guard var messages = messagesBySession[sessionId] else { return }
+        var changed = false
+        for index in messages.indices {
+            if messages[index].isPinned {
+                messages[index].isPinned = false
+                changed = true
+            }
+        }
+        if changed {
+            setMessages(messages, for: sessionId)
+            schedulePersist()
+        }
+    }
+
+    func pinnedMessage(for sessionId: UUID) -> SOSChatMessage? {
+        messagesBySession[sessionId]?.first(where: { $0.isPinned })
+    }
+
+    func updateMessageTransport(sessionId: UUID, transportMessageId: String, transport: String) {
+        guard let normalized = normalizedTransportMessageId(transportMessageId) else { return }
+        guard var messages = messagesBySession[sessionId] else { return }
+        var changed = false
+        for index in messages.indices {
+            if normalizedTransportMessageId(messages[index].transportMessageId) == normalized {
+                messages[index].transportUsed = transport
+                changed = true
+            }
+        }
+        if changed {
+            setMessages(messages, for: sessionId)
+            schedulePersist()
+        }
     }
 
     func messages(for sessionId: UUID) -> [SOSChatMessage] {
@@ -1348,6 +1495,14 @@ final class SOSChatStore: ObservableObject {
             let updated = transform(messages[index].status)
             if updated != messages[index].status {
                 messages[index].status = updated
+                let now = Date()
+                if updated == .sent && messages[index].sentAt == nil {
+                    messages[index].sentAt = now
+                } else if updated == .delivered && messages[index].deliveredAt == nil {
+                    messages[index].deliveredAt = now
+                } else if updated == .read && messages[index].readAt == nil {
+                    messages[index].readAt = now
+                }
                 changed = true
             }
         }
@@ -1547,15 +1702,88 @@ final class SOSChatStore: ObservableObject {
         return oldName == placeholder
     }
 
+    /// Merge the durable watch journal after disk loading; never enqueue or send these messages.
+    func reconcileWatchReplies(_ source: [SOSRecoveryStore.Reply]? = nil) {
+        guard watchProjectionReady else { return }
+        var changed = false
+        for reply in source ?? SOSRecoveryStore.shared.snapshot.replies {
+            guard let sessionId = UUID(uuidString: reply.peer) else { continue }
+            if session(for: sessionId) == nil { ensureSession(id: sessionId, role: .unknown) }
+            var messages = messagesBySession[sessionId, default: []]
+            let existing = messages.firstIndex { $0.isLocal && $0.transportMessageId == reply.id }
+            if let existing, [.delivered, .read].contains(messages[existing].status) { continue }
+            let status: SOSChatMessageStatus = reply.result == "accepted" ? .sent : .failed
+            if let existing {
+                guard messages[existing].status != status || messages[existing].watchReplyResult != reply.result else { continue }
+                messages[existing].status = status
+                messages[existing].watchReplyResult = reply.result
+            } else {
+                var message = SOSChatMessage(id: UUID(), sessionId: sessionId, text: reply.text,
+                    isLocal: true, timestamp: reply.createdAt ?? .now, status: status, transportMessageId: reply.id)
+                message.watchReplyResult = reply.result
+                messages.append(message)
+            }
+            setMessages(messages, for: sessionId)
+            if let last = messages.last {
+                updateSession(sessionId: sessionId) { session in session.lastUpdated = last.timestamp; session.lastMessage = last.text }
+            }
+            changed = true
+        }
+        if changed { schedulePersist() }
+    }
+
+    /// A watch already owns the send. This projection can never enter the phone retry queue.
+    func reconcileIndependentWatchSent(contact: ContactRecord, id: String, text: String, outcome: String) throws {
+        for (sessionId, messages) in messagesBySession {
+            if let old = messages.first(where: { $0.transportMessageId == id }),
+               sessionId != contact.id || !old.isLocal || old.text != text { throw IndependentWatchError.invalid }
+        }
+        ensureSession(id: contact.id, displayName: contact.name, role: .unknown, isVerified: contact.isVerified)
+        var messages = messagesBySession[contact.id, default: []]
+        let status: SOSChatMessageStatus = outcome == "read" ? .read : outcome == "delivered" ? .delivered : outcome == "accepted" ? .sent : .failed
+        if let index = messages.firstIndex(where: { $0.transportMessageId == id }) {
+            let ranks: [SOSChatMessageStatus] = [.pending, .failed, .sent, .delivered, .read]
+            if ranks.firstIndex(of: status)! > ranks.firstIndex(of: messages[index].status)! { messages[index].status = status }
+            messages[index].watchReplyResult = messages[index].status == .failed ? "uncertain" : "accepted"
+        } else {
+            var message = SOSChatMessage(id: UUID(), sessionId: contact.id, text: text, isLocal: true,
+                timestamp: .now, status: status, transportMessageId: id)
+            message.watchReplyResult = outcome == "uncertain" ? "uncertain" : "accepted"
+            messages.append(message)
+        }
+        setMessages(messages, for: contact.id)
+        if let last = messages.last { updateSession(sessionId: contact.id) { $0.lastUpdated = last.timestamp; $0.lastMessage = last.text } }
+        schedulePersist()
+    }
+
+    private func nextPersistenceRevision() -> UInt64 {
+        persistenceRevisionLock.lock(); defer { persistenceRevisionLock.unlock() }
+        persistenceRevision += 1
+        return persistenceRevision
+    }
+
+    /// Network ACKs may delete the only server copy. Commit the encrypted snapshot first.
+    @MainActor func flushToDisk() async throws {
+        await waitUntilLoaded()
+        pendingSave?.cancel()
+        let snapshot = SOSChatSnapshot(sessions: sessions, messagesBySession: messagesBySession)
+        let revision = nextPersistenceRevision()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            persistenceQueue.async {
+                do { try self.saveSnapshot(snapshot, to: self.persistenceURL, revision: revision); continuation.resume() }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
     private func schedulePersist() {
         pendingSave?.cancel()
-        let snapshot = SOSChatSnapshot(
-            sessions: sessions,
-            messagesBySession: messagesBySession
-        )
+        let snapshot = SOSChatSnapshot(sessions: sessions, messagesBySession: messagesBySession)
+        let revision = nextPersistenceRevision()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.saveSnapshot(snapshot, to: self.persistenceURL)
+            do { try self.saveSnapshot(snapshot, to: self.persistenceURL, revision: revision) }
+            catch { MessagingDiagLog.log("chat snapshot persistence deferred") }
         }
         pendingSave = workItem
         persistenceQueue.asyncAfter(deadline: .now() + 0.4, execute: workItem)
@@ -1567,6 +1795,7 @@ final class SOSChatStore: ObservableObject {
             let url = self.persistenceURL
             guard let payload = try? LocalEncryptedFileStore.read(from: url),
                   let snapshot = try? JSONDecoder().decode(SOSChatSnapshot.self, from: payload.data) else {
+                DispatchQueue.main.async { self.finishInitialLoad() }
                 return
             }
             var updatedSessions = snapshot.sessions
@@ -1605,6 +1834,7 @@ final class SOSChatStore: ObservableObject {
             DispatchQueue.main.async {
                 self.sessions = updatedSessions
                 self.messagesBySession = snapshot.messagesBySession
+                self.finishInitialLoad()
                 if needsPersist {
                     self.schedulePersist()
                 }
@@ -1612,15 +1842,17 @@ final class SOSChatStore: ObservableObject {
         }
     }
 
-    private func saveSnapshot(_ snapshot: SOSChatSnapshot, to url: URL) {
+    private func saveSnapshot(_ snapshot: SOSChatSnapshot, to url: URL, revision: UInt64) throws {
+        guard revision >= lastWrittenRevision else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(snapshot) else { return }
+        let data = try encoder.encode(snapshot)
         let directory = url.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: directory.path) {
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
         }
-        try? LocalEncryptedFileStore.write(data, to: url)
+        try LocalEncryptedFileStore.write(data, to: url)
+        lastWrittenRevision = revision
     }
 }
 

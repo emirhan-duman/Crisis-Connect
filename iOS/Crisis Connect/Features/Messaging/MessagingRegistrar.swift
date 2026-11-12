@@ -41,6 +41,7 @@ enum MessagingRegistrar {
     // sign-ins never race — the exact failure that mints duplicate accounts.
     private static let gate = AsyncGate()
     private static let connectivityRetry = ConnectivityRetry()
+    private static let preKeyMaintenance = DeferredPreKeyMaintenance()
 
     /// Idempotent; safe to call on every launch. Never throws — messaging registration is
     /// best-effort and must not block or crash app start.
@@ -50,17 +51,39 @@ enum MessagingRegistrar {
         }
     }
 
-    private static func ensureRegisteredLocked() async {
+    /// Explicit account changes never use the startup path's anonymous sign-in fallback.
+    /// Check inside the gate too: a sign-out may happen while another registration is running.
+    static func ensureRegistered(
+        forAuthenticatedUid uid: String,
+        currentAccount: @Sendable () -> (uid: String, isAnonymous: Bool)? = {
+            Auth.auth().currentUser.map { ($0.uid, $0.isAnonymous) }
+        },
+        register: @Sendable (String) async -> Void = { await ensureRegisteredLocked(authenticatedUid: $0) }
+    ) async {
+        await gate.run {
+            guard let account = currentAccount(), account.uid == uid, !account.isAnonymous else { return }
+            await register(uid)
+        }
+    }
+
+    private static func ensureRegisteredLocked(authenticatedUid: String? = nil) async {
         let client = InternetMessagingClient()
 
         // Resolve a STABLE uid: prefer a restored session (waiting briefly for the keychain restore),
         // otherwise a fresh anonymous sign-in — bounded and retried. nil only when we genuinely
         // couldn't reach Firebase (offline / wedged); arm a connectivity retry and bail for now.
-        guard let uid = await resolveUid(client: client) else {
-            NSLog("MessagingRegistrar: no uid yet — deferring internet bring-up until connectivity returns")
-            MessagingDiagLog.log("registrar: NO uid — internet deferred until connectivity")
-            connectivityRetry.arm { await ensureRegistered() }
-            return
+        let uid: String
+        if let authenticatedUid {
+            guard let user = Auth.auth().currentUser, !user.isAnonymous, user.uid == authenticatedUid else { return }
+            uid = authenticatedUid
+        } else {
+            guard let restoredUid = await resolveUid(client: client) else {
+                NSLog("MessagingRegistrar: no uid yet — deferring internet bring-up until connectivity returns")
+                MessagingDiagLog.log("registrar: NO uid — internet deferred until connectivity")
+                connectivityRetry.arm { await ensureRegistered() }
+                return
+            }
+            uid = restoredUid
         }
         MessagingDiagLog.log("registrar: uid=\(uid.prefix(8)) resolved")
         connectivityRetry.disarm()
@@ -85,6 +108,9 @@ enum MessagingRegistrar {
         }
 
         // Register the push token now that a uid exists (also re-registered on FCM refresh).
+        if let authenticatedUid {
+            guard let user = Auth.auth().currentUser, !user.isAnonymous, user.uid == authenticatedUid else { return }
+        }
         await InternetPushRegistrar.shared.registerTokenWithBackend()
         // And the PushKit VoIP token, so a force-quit device can be woken to ring an internet call.
         VoipPushRegistrar.shared.registerCurrentTokenWithBackend()
@@ -92,12 +118,7 @@ enum MessagingRegistrar {
         // Signal-protocol (v3) prekeys: publish/rotate + top up one-time pools so peers can start
         // a forward-secret session with us. Best-effort — messaging falls back to the v2 envelope
         // for peers without a session if this fails.
-        do {
-            let store = try SignalProtocolFileStore()
-            try await SignalPreKeyManager(store: store).ensurePublished()
-        } catch {
-            NSLog("MessagingRegistrar: failed to publish Signal prekeys: %@", String(describing: error))
-        }
+        await preKeyMaintenance.schedule(uid: uid)
 
         // Start the realtime downlink so incoming internet messages land in the chat, and the
         // store-and-forward queue that redelivers any message stuck pending (offline compose,
@@ -159,6 +180,31 @@ enum MessagingRegistrar {
             let first = await group.next() ?? nil
             group.cancelAll()
             return first
+        }
+    }
+}
+
+/// Bulk key maintenance waits locally for recovery; inbox startup never waits on key uploads.
+private actor DeferredPreKeyMaintenance {
+    private var job: Task<Void, Never>?
+    private var uid: String?
+    private var generation = UUID()
+    func schedule(uid: String) {
+        if self.uid == uid, job != nil { return }
+        job?.cancel()
+        self.uid = uid
+        let token = UUID()
+        generation = token
+        job = Task {
+            defer { if generation == token { job = nil } }
+            while DisasterTrafficController.shared.isSaving {
+                do { try await Task.sleep(nanoseconds: 15_000_000_000) } catch { return }
+            }
+            guard !Task.isCancelled, Auth.auth().currentUser?.uid == uid else { return }
+            do {
+                let store = try SignalProtocolFileStore()
+                try await SignalPreKeyManager(store: store).ensurePublished()
+            } catch { NSLog("MessagingRegistrar: failed to publish Signal prekeys: %@", String(describing: error)) }
         }
     }
 }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">اختر صوت الإشعارات والاهتزاز ورؤية شاشة القفل في إعدادات Android. تتطلب التنبيهات بملء الشاشة إذنًا منك وقد تكون مقيدة بميزة عدم الإزعاج أو إعدادات البطارية أو تطبيق تم إيقافه بالقوة.</string>
+    <string name="muster_alert_settings_title">الصوت والاهتزاز وشاشة القفل</string>
+    <string name="muster_alerts_blocked">تم تعطيل إشعارات التطبيق في إعدادات Android</string>
+    <string name="muster_alerts_quiet">قناة الإشعارات هذه صامتة أو ذات أولوية منخفضة؛ تمكين التنبيهات المنبثقة في إعدادات Android</string>
+    <string name="muster_locked_screen_note">تظهر تنبيهات ملء الشاشة عندما يكون هاتفك مقفلاً أو عندما تكون شاشته متوقفة عن التشغيل، إذا كان Android يسمح بذلك. أثناء استخدامك للهاتف، قد يعرض Android إشعارًا تنبيهيًا بدلاً من ذلك.</string>
+    <string name="muster_urgent_sound">الصوت في الوضع الصامت</string>
+    <string name="muster_urgent_sound_help">لعمليات التحقق من السلامة العاجلة في حالات الكوارث فقط. يستخدم مستوى صوت المنبه الموجود لديك لفترة محدودة بينما تكون شاشة التحقق من السلامة مرئية. يتوقف عند لمس الشاشة.</string>
+    <string name="muster_urgent_ready">متاح ضمن أذونات النظام. لا تزعج ويظل مستوى صوت التنبيه تحت سيطرتك.</string>
+    <string name="muster_urgent_not_ready">تحقق من مستوى صوت المنبه وأذونات الإشعارات وعدم الإزعاج. يتم احترام قيود النظام.</string>
+    <string name="muster_urgent_seconds">%1$d ثانية</string>
+    <string name="muster_flash_settings">إعدادات تنبيه الفلاش</string>
+    <string name="muster_flash_help">إذا كان هاتفك يدعم ذلك، فعّل إشعارات الفلاش من إعدادات تسهيل الاستخدام في Android. يدير Android هذه التنبيهات حتى عندما يكون التطبيق مغلقًا.</string>
+</resources>

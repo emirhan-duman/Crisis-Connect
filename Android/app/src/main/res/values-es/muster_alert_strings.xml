@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Elija un sonido de notificación, vibración y visibilidad de la pantalla de bloqueo en la configuración Android. Las alertas de pantalla completa requieren su permiso y pueden estar limitadas por No molestar, la configuración de la batería o una aplicación detenida por la fuerza.</string>
+    <string name="muster_alert_settings_title">Sonido, vibración y pantalla de bloqueo</string>
+    <string name="muster_alerts_blocked">Las notificaciones de aplicaciones están deshabilitadas en la configuración de Android</string>
+    <string name="muster_alerts_quiet">Este canal de notificación es silencioso o de baja prioridad; habilitar alertas emergentes en la configuración de Android</string>
+    <string name="muster_locked_screen_note">Las alertas de pantalla completa aparecen cuando su teléfono está bloqueado o su pantalla está apagada, si Android las permite. Mientras usa el teléfono, Android puede mostrar una notificación de aviso.</string>
+    <string name="muster_urgent_sound">Sonido en modo silencioso</string>
+    <string name="muster_urgent_sound_help">Solo para registros urgentes por desastre. Utiliza el volumen de alarma existente por un tiempo limitado mientras la pantalla de registro está visible. Se detiene cuando tocas la pantalla.</string>
+    <string name="muster_urgent_ready">Disponible dentro de los permisos del sistema. No molestar y el volumen de la alarma permanecen bajo su control.</string>
+    <string name="muster_urgent_not_ready">Verifique el volumen de la alarma, los permisos de notificación y No molestar. Se respetan las restricciones del sistema.</string>
+    <string name="muster_urgent_seconds">%1$d segundos</string>
+    <string name="muster_flash_settings">Configuración de alerta de flash</string>
+    <string name="muster_flash_help">Si tu teléfono lo permite, activa las notificaciones con flash en los ajustes de accesibilidad de Android. Android controla estos avisos también con la aplicación cerrada.</string>
+</resources>

@@ -1,5 +1,7 @@
 package com.auralis.crisisconnect.service.p2p
 
+import com.auralis.crisisconnect.core.media.LocalMedia
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
@@ -41,6 +43,7 @@ import com.auralis.crisisconnect.data.PREFERRED_TRANSPORT_RFCOMM
 import com.auralis.crisisconnect.data.REMOTE_PLATFORM_IOS
 import com.auralis.crisisconnect.data.REMOTE_PLATFORM_UNKNOWN
 import com.auralis.crisisconnect.data.getContact
+import com.auralis.crisisconnect.data.getContacts
 import com.auralis.crisisconnect.data.getContactByAddress
 import com.auralis.crisisconnect.data.getContactByRemoteDeviceId
 import com.auralis.crisisconnect.data.hasAnyBleGattContacts
@@ -58,7 +61,6 @@ import com.auralis.crisisconnect.data.saveRemoteAudioMessage
 import com.auralis.crisisconnect.data.saveRemoteImageMessage
 import com.auralis.crisisconnect.data.saveRemoteMessage
 import com.auralis.crisisconnect.data.MessageDeliveryStatus
-import com.auralis.crisisconnect.data.updateContactAesKey
 import com.auralis.crisisconnect.data.updateContactBleRuntimeMetadata
 import com.auralis.crisisconnect.data.updateLocalMessageDeliveryState
 import com.auralis.crisisconnect.data.voiceMessageFile
@@ -72,6 +74,7 @@ import com.auralis.crisisconnect.security.AesCipherHelper
 import com.auralis.crisisconnect.security.BleChunkReceiver
 import com.auralis.crisisconnect.service.p2p.call.P2pCallController
 import com.auralis.crisisconnect.service.p2p.call.P2pCallProtocol
+import com.auralis.crisisconnect.service.RadioPrivacyIdentity
 import com.auralis.crisisconnect.service.BleFilePayload
 import com.auralis.crisisconnect.service.BleImagePayload
 import com.auralis.crisisconnect.service.BleMessageNotifier
@@ -174,10 +177,11 @@ class P2pGattServerService : Service() {
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var advertiser: BluetoothLeAdvertiser? = null
     private var gattServer: BluetoothGattServer? = null
-    private var shareSession: PublishedSession? = null
+    @Volatile private var shareSession: PublishedSession? = null
     private var hasBleContacts = false
     private var messageOutCharacteristic: BluetoothGattCharacteristic? = null
     private var startCommandJob: Job? = null
+    private var shareStopJob: Job? = null
     private var hostedShareSession: PublishedSession? = null
     private var isGattHostingActive = false
     private var sharedHostEnabled = false
@@ -453,11 +457,21 @@ class P2pGattServerService : Service() {
             startForegroundWithTypes(callActive = false)
         } catch (startException: Exception) {
             // Foreground promotion is rejected when started from the background on Android 12+
-            // (ForegroundServiceStartNotAllowedException). Stop instead of crashing.
+            // (ForegroundServiceStartNotAllowedException). Stop safely without crashing the system watchdog.
             Log.w(TAG, "P2P startForeground failed; stopping service", startException)
+            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
             stopSelf()
         }
         P2pCallController.shared(applicationContext).registerServerLink(callLink)
+        serviceScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(15_000L)
+                if (gattServer != null && !awaitingPrimaryServiceRegistration && advertisedPrivacyEpoch != RadioPrivacyIdentity.current.epoch) {
+                    stopAdvertising()
+                    startAdvertisingForCurrentProfiles()
+                }
+            }
+        }
     }
 
     /**
@@ -476,10 +490,19 @@ class P2pGattServerService : Service() {
                     types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 }
             }
-            startForeground(NOTIFICATION_ID, notification, types)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+            try {
+                startForeground(NOTIFICATION_ID, notification, types)
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed startForeground with types=$types, attempting fallback", e)
+                try {
+                    startForeground(NOTIFICATION_ID, notification, 0)
+                    return
+                } catch (_: Exception) {
+                }
+            }
         }
+        startForeground(NOTIFICATION_ID, notification)
     }
 
     private fun refreshForegroundTypeForCall(callActive: Boolean) {
@@ -495,9 +518,55 @@ class P2pGattServerService : Service() {
         val action = intent?.action
         when (action) {
             ACTION_START_SHARE -> {
+                shareStopJob?.cancel()
+                shareStopJob = null
                 shareSession = intent.toPublishedSession()
+                val recoveryDeadline = intent.getLongExtra(EXTRA_RECOVERY_DEADLINE, 0L)
+                if (recoveryDeadline > 0L) {
+                    val restored = shareSession
+                    shareStopJob = serviceScope.launch {
+                        kotlinx.coroutines.delay((recoveryDeadline - System.currentTimeMillis()).coerceIn(0L, 30_000L))
+                        publicationMutex.withLock {
+                            if (shareSession !== restored) return@withLock
+                            runCatching { com.auralis.crisisconnect.screens.QR.QrShareRecovery.stop(applicationContext) }
+                            shareSession = null
+                            hasBleContacts = hasAnyBleGattContacts(applicationContext)
+                            if (shareSession != null) return@withLock
+                            if (!sharedHostEnabled && !hasBleContacts) {
+                                stopForeground(STOP_FOREGROUND_REMOVE)
+                                stopSelf()
+                                publishRunningState(running = false, session = null)
+                            } else if (!restartGattPublication()) { stopSelf() }
+                        }
+                    }
+                }
             }
             ACTION_STOP_SHARE -> {
+                shareStopJob?.cancel()
+                shareStopJob = null
+                val graceMillis = intent?.getLongExtra(EXTRA_STOP_GRACE_MILLIS, 0L)?.coerceIn(0L, 12_000L) ?: 0L
+                val finishingSession = shareSession
+                if (graceMillis > 0L && finishingSession != null) {
+                    shareStopJob = serviceScope.launch {
+                        kotlinx.coroutines.delay(graceMillis)
+                        publicationMutex.withLock {
+                            // A new QR publication owns a new session; old cleanup cannot stop it.
+                            if (shareSession !== finishingSession) return@withLock
+                            shareSession = null
+                            hasBleContacts = hasAnyBleGattContacts(applicationContext)
+                            // A new publication can arrive while the contact query is running.
+                            if (shareSession != null) return@withLock
+                            if (!sharedHostEnabled && !hasBleContacts) {
+                                stopForeground(STOP_FOREGROUND_REMOVE)
+                                stopSelf()
+                                publishRunningState(running = false, session = null)
+                            } else if (!restartGattPublication()) {
+                                stopSelf()
+                            }
+                        }
+                    }
+                    return START_STICKY
+                }
                 shareSession = null
             }
             ACTION_ENSURE_HOST, null -> {
@@ -707,6 +776,7 @@ class P2pGattServerService : Service() {
             )
         }
         return runCatching {
+            advertisedPrivacyEpoch = RadioPrivacyIdentity.current.epoch
             localAdvertiser.startAdvertising(
                 settings,
                 advertiseDataBuilder.build(),
@@ -732,28 +802,24 @@ class P2pGattServerService : Service() {
         }
     }
 
+    private var advertisedPrivacyEpoch: Long = -1
+    private val privacyControlReceivers = ConcurrentHashMap<String, P2pPrivacyWire.ControlReceiver>()
+
     private fun currentIdentityValue(): ByteArray {
         val activeShare = shareSession
         return if (activeShare != null) {
             P2pBleProtocol.buildIdentityValue(activeShare.shareId)
         } else {
-            P2pBleProtocol.buildDeviceIdentityValue(LocalKeyStorage.getOrCreateP2pDeviceId(this))
+            P2pPrivacyWire.privateIdentity
         }
     }
 
     private fun currentBootstrapPayload(): ByteArray {
         val activeShare = shareSession
         return if (activeShare != null) {
-            activeShare.bootstrapPayload.toByteArray(Charsets.UTF_8)
+            activeShare.bootstrapPayload
         } else {
-            JSONObject().apply {
-                put("mode", "host")
-                put("platform", "android")
-                put("protocolVersion", P2pBleProtocol.PROTOCOL_VERSION)
-                put("serverDeviceId", LocalKeyStorage.getOrCreateP2pDeviceId(this@P2pGattServerService))
-                localDisplayName()?.let { put("name", it) }
-                localAvatarPayload()?.let { put("avatarB64", it) }
-            }.toString().toByteArray(Charsets.UTF_8)
+            "{\"mode\":\"host\",\"privacyVersion\":2}".toByteArray(Charsets.UTF_8)
         }
     }
 
@@ -766,8 +832,14 @@ class P2pGattServerService : Service() {
             return BluetoothGatt.GATT_SUCCESS
         }
         val key = deviceKey(device) ?: return BluetoothGatt.GATT_FAILURE
-        val payload = value.toString(Charsets.UTF_8).trim()
-        val frame = runCatching { JSONObject(payload) }.getOrNull() ?: run {
+        privacyControlReceivers.entries.removeIf { it.value.isExpired }
+        if (!privacyControlReceivers.containsKey(key) && privacyControlReceivers.size >= 8) return BluetoothGatt.GATT_FAILURE
+        val receiver = privacyControlReceivers.getOrPut(key) { P2pPrivacyWire.ControlReceiver() }
+        val wire = receiver.receive(value) ?: return BluetoothGatt.GATT_SUCCESS
+        privacyControlReceivers.remove(key, receiver)
+        val secret = P2pBleProtocol.decodeBase64(activeShare.aesKeyBase64) ?: return BluetoothGatt.GATT_FAILURE
+        val plaintext = P2pPrivacyWire.open(wire, secret, P2pPrivacyWire.Purpose.CONTROL) ?: return BluetoothGatt.GATT_INSUFFICIENT_AUTHENTICATION
+        val frame = runCatching { JSONObject(plaintext.toString(Charsets.UTF_8)) }.getOrNull() ?: run {
             setErrorResponse(key, "invalid_json", "Malformed control payload")
             return BluetoothGatt.GATT_SUCCESS
         }
@@ -985,6 +1057,17 @@ class P2pGattServerService : Service() {
             setErrorResponse(deviceKey, "auth_failed", "Client finish proof mismatch")
             return
         }
+        // Commit the reciprocal contact before returning server_finish. A kill after the ATT
+        // response must not leave the scanner saved while the displaying side has no record.
+        val saved = device != null && runCatching {
+            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                kotlinx.coroutines.withTimeout(2_500L) { persistAuthenticatedPeer(session, device, pending) }
+            }
+        }.getOrDefault(false)
+        if (!saved) {
+            setErrorResponse(deviceKey, "save_failed", "Could not save peer")
+            return
+        }
         pendingHandshakes.remove(deviceKey)
         setDeviceResponse(
             deviceKey,
@@ -996,11 +1079,8 @@ class P2pGattServerService : Service() {
                 put("serverDeviceId", session.deviceId)
             }.toString()
         )
-        if (device != null) {
-            serviceScope.launch {
-                persistAuthenticatedPeer(session, device, pending)
-            }
-        }
+        // Keep the share recovery intent until the user stops/leaves the QR. A process kill
+        // before the central reads server_finish must still allow a fresh handshake on reopen.
     }
 
     private fun handleDescriptorWrite(device: BluetoothDevice?, value: ByteArray): Int {
@@ -1032,10 +1112,12 @@ class P2pGattServerService : Service() {
                 is BleChunkReceiver.ChunkResult.Rejected -> {
                     Log.w(TAG, "Rejecting inbound P2P chat chunk reason=${chunkResult.reason}")
                     messageReceivers.remove(key)
+        privacyControlReceivers.remove(key)
                     return BluetoothGatt.GATT_FAILURE
                 }
             }
             messageReceivers.remove(key)
+        privacyControlReceivers.remove(key)
             val envelopeBytes = P2pBleProtocol.unwrapTransportPacket(packet, MAX_TRANSPORT_PACKET_BYTES)
             if (P2pCallProtocol.isCallAudioFrame(envelopeBytes)) {
                 // Binary voice-call audio fast path; must never reach the chat envelope parser.
@@ -1050,6 +1132,7 @@ class P2pGattServerService : Service() {
         }.getOrElse { throwable ->
             Log.w(TAG, "Failed to handle inbound P2P chat chunk", throwable)
             messageReceivers.remove(key)
+        privacyControlReceivers.remove(key)
             BluetoothGatt.GATT_FAILURE
         }
     }
@@ -1080,6 +1163,12 @@ class P2pGattServerService : Service() {
                 lastKnownBleAddress = address,
                 name = displayName
             )
+        }
+        if (payload.kind == "privacy_ping") {
+            val nonce = payload.messageId?.takeIf { runCatching { UUID.fromString(it) }.isSuccess } ?: return
+            rememberCallRoute(contact.sessionCode, device)
+            sendChatEvent("privacy_pong", nonce, device, contact)
+            return
         }
         if (P2pCallProtocol.isCallSignalKind(payload.kind)) {
             val rawPayload = runCatching {
@@ -1141,22 +1230,10 @@ class P2pGattServerService : Service() {
                 )
             }
             P2pBleProtocol.CHAT_KIND_DECRYPT_FAIL -> {
-                val messageId = payload.messageId?.trim().takeIf { !it.isNullOrBlank() }
-                Log.w(TAG, "Remote peer failed to decrypt message ${messageId ?: "(unknown)"} — clearing AES key for plaintext fallback")
-                updateContactAesKey(applicationContext, contact.sessionCode, "")
-                if (messageId != null) {
-                    updateLocalMessageDeliveryState(
-                        context = applicationContext,
-                        uuid = messageId,
-                        deliveryStatus = MessageDeliveryStatus.QUEUED,
-                        retryCount = 0,
-                        nextRetryAtMillis = null,
-                        lastAttemptAtMillis = null,
-                        lastError = null,
-                        outboundRoute = null
-                    )
-                }
+                // Remote diagnostics cannot erase keys or authorize plaintext retransmission.
+                Log.w(TAG, "Peer reported a decryption failure; retaining the paired key")
             }
+
             P2pBleProtocol.CHAT_KIND_VOICE_INIT,
             P2pBleProtocol.CHAT_KIND_VOICE_CHUNK,
             P2pBleProtocol.CHAT_KIND_VOICE_DONE,
@@ -1237,7 +1314,7 @@ class P2pGattServerService : Service() {
         val fileName = voiceMessageFileName(transfer.messageId, transfer.mimeType)
         withContext(Dispatchers.IO) {
             val destination = voiceMessageFile(applicationContext, fileName)
-            destination.writeBytes(fileBytes)
+            LocalMedia.write(destination, fileBytes)
             saveRemoteAudioMessage(
                 context = applicationContext,
                 sessionCode = contact.sessionCode,
@@ -1331,7 +1408,7 @@ class P2pGattServerService : Service() {
             val destination = imageMessageFile(applicationContext, fileName)
             val thumbnail = imageThumbnailFile(applicationContext, thumbnailName)
             destination.parentFile?.mkdirs()
-            destination.writeBytes(imageBytes)
+            LocalMedia.write(destination, imageBytes)
             val thumbnailCreated = generateImageThumbnail(
                 source = destination,
                 target = thumbnail,
@@ -1457,15 +1534,11 @@ class P2pGattServerService : Service() {
     }
 
     private fun resolveContactForEnvelope(device: BluetoothDevice?, envelope: ParsedEnvelope): Contact? {
-        val byDeviceId = getContactByRemoteDeviceId(applicationContext, envelope.fromDeviceId)
-        if (byDeviceId != null) {
-            return byDeviceId
+        val candidates = getContacts(applicationContext).filter { contact ->
+            val key = P2pBleProtocol.decodeBase64(contact.aesKey) ?: return@filter false
+            P2pPrivacyWire.matches(envelope.fromDeviceId, key, envelope.encryptedPacket)
         }
-        val byAddress = device?.address?.let { getContactByAddress(applicationContext, it) }
-        if (byAddress != null && byAddress.remoteDeviceId.isBlank()) {
-            return byAddress
-        }
-        return null
+        return candidates.singleOrNull()
     }
 
     private fun parseEnvelope(value: ByteArray): ParsedEnvelope? {
@@ -1531,10 +1604,10 @@ class P2pGattServerService : Service() {
         session: PublishedSession,
         device: BluetoothDevice,
         pending: PendingHandshake
-    ) {
+    ): Boolean {
         val address = device.address?.trim().orEmpty()
         if (address.isBlank()) {
-            return
+            return false
         }
         val remotePlatform = normalizeRemotePlatform(pending.clientPlatform)
         val classicSessionCode = pending.clientSessionCode.trim()
@@ -1555,7 +1628,7 @@ class P2pGattServerService : Service() {
                 classicSessionCode.equals(session.sessionCode.trim(), ignoreCase = true))
         ) {
             Log.w(TAG, "Rejecting pairing: the peer identity is this device")
-            return
+            return false
         }
         val localUid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }
             .getOrNull()?.trim().orEmpty()
@@ -1571,7 +1644,7 @@ class P2pGattServerService : Service() {
             fallbackSessionCode = pending.clientSessionCode,
             fallbackAddress = address
         )
-        runCatching {
+        return runCatching {
             val savedContact = saveBleContactAndMigrateLegacySession(
                 context = applicationContext,
                 contact = Contact(
@@ -1618,9 +1691,10 @@ class P2pGattServerService : Service() {
                     payloadBase64 = avatarPayload
                 )
             }
+            true
         }.onFailure { throwable ->
             Log.e(TAG, "Failed to persist authenticated P2P peer", throwable)
-        }
+        }.getOrDefault(false)
     }
 
     @SuppressLint("MissingPermission")
@@ -1650,7 +1724,7 @@ class P2pGattServerService : Service() {
         val encrypted = runCatching { AesCipherHelper.encrypt(key, innerBytes) }.getOrNull() ?: return
         val outerBytes = JSONObject().apply {
             put("type", P2pBleProtocol.TYPE_CHAT_ENVELOPE)
-            put("fromDeviceId", LocalKeyStorage.getOrCreateP2pDeviceId(this@P2pGattServerService))
+            put("fromDeviceId", P2pPrivacyWire.alias(key, encrypted))
             put("payload", Base64.encodeToString(encrypted, Base64.NO_WRAP))
         }.toString().toByteArray(StandardCharsets.UTF_8)
         val packet = runCatching {
@@ -1794,7 +1868,7 @@ class P2pGattServerService : Service() {
             ?: return false
         val outerBytes = JSONObject().apply {
             put("type", P2pBleProtocol.TYPE_CHAT_ENVELOPE)
-            put("fromDeviceId", LocalKeyStorage.getOrCreateP2pDeviceId(this@P2pGattServerService))
+            put("fromDeviceId", P2pPrivacyWire.alias(key, encrypted))
             put("payload", Base64.encodeToString(encrypted, Base64.NO_WRAP))
         }.toString().toByteArray(StandardCharsets.UTF_8)
         val packet = runCatching { P2pBleProtocol.wrapTransportPacket(outerBytes) }.getOrNull()
@@ -2241,12 +2315,13 @@ class P2pGattServerService : Service() {
             if (!avatarBase64.isNullOrBlank()) {
                 put("avatarB64", avatarBase64)
             }
-        }.toString()
+        }.toString().toByteArray(Charsets.UTF_8)
+        val sealedBootstrap = P2pPrivacyWire.seal(bootstrapPayload, decodedKey, P2pPrivacyWire.Purpose.BOOTSTRAP) ?: return null
         return PublishedSession(
             shareId = shareId,
             sessionCode = sessionCode,
             displayName = displayName,
-            bootstrapPayload = bootstrapPayload,
+            bootstrapPayload = sealedBootstrap,
             aesKeyBase64 = aesKeyBase64,
             serverNonce = serverNonce,
             deviceId = deviceId
@@ -2276,6 +2351,7 @@ class P2pGattServerService : Service() {
         deviceResponses.clear()
         pendingHandshakes.clear()
         messageReceivers.clear()
+        privacyControlReceivers.clear()
         subscribedCentrals.clear()
         centralMtuByAddress.clear()
     }
@@ -2285,12 +2361,16 @@ class P2pGattServerService : Service() {
         deviceResponses.remove(key)
         pendingHandshakes.remove(key)
         messageReceivers.remove(key)
+        privacyControlReceivers.remove(key)
         subscribedCentrals.remove(key)
         centralMtuByAddress.remove(key)
     }
 
     private fun setDeviceResponse(deviceKey: String, payload: String) {
-        deviceResponses[deviceKey] = payload.toByteArray(Charsets.UTF_8)
+        val session = shareSession ?: return
+        val key = P2pBleProtocol.decodeBase64(session.aesKeyBase64) ?: return
+        val wire = P2pPrivacyWire.seal(payload.toByteArray(Charsets.UTF_8), key, P2pPrivacyWire.Purpose.CONTROL) ?: return
+        deviceResponses[deviceKey] = wire
     }
 
     private fun setErrorResponse(deviceKey: String, code: String, message: String) {
@@ -2385,6 +2465,8 @@ class P2pGattServerService : Service() {
         private const val EXTRA_AES_KEY_BASE64 = "extra_aes_key_base64"
         private const val ACTION_START_SHARE = "com.auralis.crisisconnect.action.P2P_START_SHARE"
         private const val ACTION_STOP_SHARE = "com.auralis.crisisconnect.action.P2P_STOP_SHARE"
+        private const val EXTRA_STOP_GRACE_MILLIS = "stop_grace_millis"
+        private const val EXTRA_RECOVERY_DEADLINE = "recovery_deadline"
         private const val ACTION_ENSURE_HOST = "com.auralis.crisisconnect.action.P2P_ENSURE_HOST"
         private const val ACTION_ACQUIRE_SHARED_HOST =
             "com.auralis.crisisconnect.action.P2P_ACQUIRE_SHARED_HOST"
@@ -2459,23 +2541,31 @@ class P2pGattServerService : Service() {
             shareId: String,
             sessionCode: String,
             displayName: String?,
-            aesKeyBase64: String
+            aesKeyBase64: String,
+            recoveryDeadline: Long = 0L
         ) {
             val appContext = context.applicationContext
+            runCatching { com.auralis.crisisconnect.screens.QR.QrShareRecovery.save(appContext, shareId, sessionCode,
+                displayName, aesKeyBase64, recoveryDeadline) }
+                .onFailure { Log.w(TAG, "Unable to checkpoint QR share") }
             val intent = Intent(appContext, P2pGattServerService::class.java).apply {
                 action = ACTION_START_SHARE
                 putExtra(EXTRA_SHARE_ID, shareId)
                 putExtra(EXTRA_SESSION_CODE, sessionCode)
                 putExtra(EXTRA_DISPLAY_NAME, displayName)
                 putExtra(EXTRA_AES_KEY_BASE64, aesKeyBase64)
+                putExtra(EXTRA_RECOVERY_DEADLINE, recoveryDeadline)
             }
             ContextCompat.startForegroundService(appContext, intent)
         }
 
-        fun stopPublishing(context: Context) {
+        fun stopPublishing(context: Context, graceMillis: Long = 0L) {
             val appContext = context.applicationContext
+            runCatching { com.auralis.crisisconnect.screens.QR.QrShareRecovery.stop(appContext, graceMillis.coerceIn(0L, 12_000L)) }
+                .onFailure { Log.w(TAG, "Unable to checkpoint QR share stop") }
             val intent = Intent(appContext, P2pGattServerService::class.java).apply {
                 action = ACTION_STOP_SHARE
+                putExtra(EXTRA_STOP_GRACE_MILLIS, graceMillis.coerceIn(0L, 12_000L))
             }
             ContextCompat.startForegroundService(appContext, intent)
         }
@@ -2499,7 +2589,7 @@ data class PublishedSession(
     val shareId: String,
     val sessionCode: String,
     val displayName: String?,
-    val bootstrapPayload: String,
+    val bootstrapPayload: ByteArray,
     val aesKeyBase64: String,
     val serverNonce: String,
     val deviceId: String

@@ -4,6 +4,13 @@ All notable changes to Crisis Connect are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.0]
+
+Public mobile source for Android phone build 81, Wear OS build 82 and iOS build 44. See the [1.2.0 release notes](docs/releases/1.2.0.md).
+
+- Added organization check-ins with configurable answers, optional text and voice, and durable offline replies.
+- Improved mobile check-in alerts, QR contact pairing, and watch reconnection controls.
+
 ## [1.1.9] - 2026-08-13
 
 Android `versionCode` 64, iOS `MARKETING_VERSION` 1.1.9 (`CURRENT_PROJECT_VERSION` 36).

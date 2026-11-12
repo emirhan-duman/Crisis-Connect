@@ -400,8 +400,6 @@ private struct ScreenLightActiveView: View {
     let brightness: Double
     let onStop: () -> Void
 
-    @State private var previousBrightness: CGFloat = UIScreen.main.brightness
-
     private var backgroundColor: Color {
         switch screenColor {
         case .white: return .white
@@ -434,17 +432,62 @@ private struct ScreenLightActiveView: View {
             }
             .foregroundStyle(foregroundColor)
         }
-        .onAppear {
-            previousBrightness = UIScreen.main.brightness
-            UIScreen.main.brightness = CGFloat(brightness)
-        }
-        .onChange(of: brightness) { _, newValue in
-            UIScreen.main.brightness = CGFloat(newValue)
-        }
-        .onDisappear {
-            UIScreen.main.brightness = previousBrightness
-        }
+        .background(ScreenBrightnessControl(brightness: CGFloat(brightness)))
         .accessibilityIdentifier("flashlight-screen-light-active")
+    }
+}
+
+/// Owns the brightness override only on the display currently hosting the screen light.
+private struct ScreenBrightnessControl: UIViewRepresentable {
+    let brightness: CGFloat
+
+    func makeUIView(context: Context) -> BrightnessView {
+        let view = BrightnessView()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: BrightnessView, context: Context) {
+        view.requestedBrightness = brightness
+        view.updateScreen()
+    }
+
+    static func dismantleUIView(_ view: BrightnessView, coordinator: ()) {
+        view.restoreBrightness()
+    }
+
+    final class BrightnessView: UIView {
+        var requestedBrightness: CGFloat = 1
+        private var overriddenScreen: UIScreen?
+        private var previousBrightness: CGFloat?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            updateScreen()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            updateScreen()
+        }
+
+        func updateScreen() {
+            let screen = window?.windowScene?.screen
+            if overriddenScreen !== screen {
+                restoreBrightness()
+                overriddenScreen = screen
+                previousBrightness = screen?.brightness
+            }
+            screen?.brightness = min(max(requestedBrightness, 0), 1)
+        }
+
+        func restoreBrightness() {
+            if let overriddenScreen, let previousBrightness {
+                overriddenScreen.brightness = previousBrightness
+            }
+            overriddenScreen = nil
+            previousBrightness = nil
+        }
     }
 }
 

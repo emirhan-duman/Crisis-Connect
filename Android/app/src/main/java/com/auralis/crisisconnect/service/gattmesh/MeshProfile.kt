@@ -43,7 +43,7 @@ class MeshProfile(
     val serviceUuid: UUID,
     val messageInUuid: UUID,
     val messageOutUuid: UUID,
-    val payloadKeyId: String,
+    payloadKeyId: String,
     /**
      * Returns the AES-GCM payload key for this network, or null when the key is unavailable
      * (e.g. an authority device that has not been provisioned yet). When null, the mesh must not
@@ -70,7 +70,11 @@ class MeshProfile(
      * chat screen title. Authority uses its own label so it never shows up as the public "Genel" chat.
      */
     val chatTitleRes: Int,
-)
+) {
+    private val configuredPayloadKeyId = payloadKeyId
+    val payloadKeyId: String
+        get() = if (id == "authority") "authority-v2-${System.currentTimeMillis() / com.auralis.crisisconnect.security.AuthorityMeshKeyLease.PERIOD_MS}" else configuredPayloadKeyId
+}
 
 object MeshProfiles {
 
@@ -107,7 +111,7 @@ object MeshProfiles {
         serviceUuid = UUIDGenerator.fromAssignedNumber(0xCCA1),
         messageInUuid = UUIDGenerator.fromAssignedNumber(0xCCA2),
         messageOutUuid = UUIDGenerator.fromAssignedNumber(0xCCA3),
-        payloadKeyId = "authority-v1",
+        payloadKeyId = "authority-v2",
         derivePayloadKey = { context -> AuthorityMeshKeyStore.loadGroupKey(context) },
         admission = AdmissionPolicy.RequireVerifiedRole(
             allowedRoles = setOf("admin", "fieldteam"),

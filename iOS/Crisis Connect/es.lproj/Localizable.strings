@@ -503,7 +503,7 @@
 "ADVANCED_SETTINGS_DESCRIPTION" = "Ajusta con precisión el comportamiento de la app para diagnósticos y entrega de mensajes.";
 "ADVANCED_SETTINGS_LINK_SUBTITLE" = "Comportamiento de radio, diagnósticos y controles de entrega.";
 "ADVANCED_SETTING_PUBLIC_MESH_TITLE" = "Chat general";
-"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Muestra este teléfono en el chat general compartido cercano.";
+"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Chat público: cualquier persona cercana puede leer los mensajes y participar. No compartas información sensible.";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_TITLE" = "Notificaciones del chat general";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_DESCRIPTION" = "Solo alertas de nuevos mensajes del chat general compartido.";
 "ADVANCED_SETTING_HIGH_RANGE_TITLE" = "Modo de largo alcance";
@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Código abierto: cualquiera puede inspeccionar el código";
 "ONBOARDING_TRUST_NO_ADS" = "Sin anuncios: tus datos personales nunca se venden";
 "ONBOARDING_TRUST_EMERGENCY" = "Creado solo para la comunicación de emergencia";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Los informes de fallos permanecen desactivados hasta que habilites los diagnósticos.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Solo se recopilan informes de fallos anónimos para mantener la app estable.";
 "ONBOARDING_FINISH" = "Iniciar Crisis Connect";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Nube";
@@ -1452,3 +1452,44 @@
 "guide_redesign_subtitle_now" = "Elige la situación y consulta la primera acción correcta en segundos.";
 "guide_redesign_subtitle_prepare" = "Completa tus planes y listas de verificación sin conexión.";
 "guide_redesign_unknown_region" = "Región desconocida";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Buscar contactos en línea";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect lee los nombres y números de teléfono de tus contactos para encontrar personas que usan la aplicación. Envía los números a los servidores de Crisis Connect alojados por Google Firebase en Estados Unidos para buscar coincidencias. Los nombres permanecen en tu dispositivo. Los números consultados se procesan sin guardarse permanentemente; las coincidencias quedan en tu dispositivo. Actualizar esta pantalla o volver a ella mientras está abierta puede enviar los números de nuevo. Tu elección se recuerda para esta cuenta en este dispositivo. Puedes retirar tu consentimiento en Ajustes, en Acceso a contactos.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Buscar contactos cercanos";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect lee los nombres y números de teléfono en tu dispositivo para que elijas a quién buscar cerca. El número elegido se usa para verificar la identidad mediante Bluetooth. Esta función no envía tus contactos a un servidor. Tu elección se recuerda para esta cuenta en este dispositivo. Puedes retirar tu consentimiento en Ajustes, en Acceso a contactos.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "Acepto";
+"CONTACTS_DISCLOSURE_DECLINE" = "Ahora no";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Acceso a contactos";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Tu elección se recuerda para esta cuenta en este dispositivo. Puedes retirar tu consentimiento en Ajustes, en Acceso a contactos.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "Retirar consentimiento de búsqueda en línea";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Retirar consentimiento de contactos cercanos";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "Internet disponible";
+
+// Two-step verification
+"PROFILE_MFA_TITLE" = "Verificación en dos pasos";
+"PROFILE_MFA_TOTP_MESSAGE" = "Introduce el código de 6 dígitos de tu aplicación de autenticación.";
+"PROFILE_MFA_SMS_MESSAGE" = "Envía un código de verificación a tu teléfono registrado y luego introduce el código del SMS.";
+"PROFILE_MFA_UNSUPPORTED" = "Este método de verificación no es compatible. Usa otro método registrado o cancela e inicia sesión en la web.";
+"PROFILE_MFA_AUTHENTICATOR" = "Aplicación de autenticación";
+"PROFILE_MFA_SMS" = "SMS";
+"PROFILE_MFA_CODE" = "Código de verificación";
+"PROFILE_MFA_SEND" = "Enviar código por SMS";
+"PROFILE_MFA_RESEND" = "Reenviar código por SMS";
+"PROFILE_MFA_VERIFY" = "Verificar";
+"PROFILE_MFA_METHOD_TITLE" = "Método de verificación";
+"PROFILE_MFA_SMS_SENT_MESSAGE" = "Introduce el código de 6 dígitos enviado a tu teléfono registrado.";

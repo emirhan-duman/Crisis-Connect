@@ -13,6 +13,7 @@ import UIKit
 struct SOSBroadcastView: View {
     var onCancel: () -> Void
     @ObservedObject private var manager = SOSBroadcastManager.shared
+    @ObservedObject private var recovery = SOSRecoveryStore.shared
     @State private var activeChatSessionId: UUID?
     // Apple-style arming phase (Android parity): a 5-second haptic countdown the user can abort
     // with a deliberate slide before the emergency broadcast actually starts. Skipped when SOS is
@@ -35,10 +36,12 @@ struct SOSBroadcastView: View {
         // report plus contact alerts with NO abort window. `isEmergencyDeclared` is set only by
         // declareEmergency() (:650) and cleared only by stop() (:670) — it is the real "an SOS is
         // live" flag.
-        if isArming && !manager.isEmergencyDeclared {
+        if !manager.isEmergencyDeclared && (recovery.snapshot.session != nil || recovery.unavailable) {
+            SavedSOSRecoveryView(onClose: onCancel)
+        } else if isArming && !manager.isEmergencyDeclared {
             SOSCountdownView(
                 onCancelled: onCancel,
-                onFired: { isArming = false }
+                onFired: { manager.start(declaringEmergency: true); isArming = false }
             )
         } else {
             broadcastScreen
@@ -57,51 +60,55 @@ struct SOSBroadcastView: View {
             )
             .ignoresSafeArea()
 
-            VStack(spacing: 18) {
-                Spacer(minLength: 8)
+            ScrollView {
+                VStack(spacing: 18) {
 
-                SOSBroadcastHero()
+                    SOSBroadcastHero(status: manager.broadcastStatus)
 
-                HStack(spacing: 12) {
-                    SOSMetricCard(
-                        title: "SOS_BROADCAST_DURATION",
-                        icon: "timer",
-                        value: Text(manager.elapsedText)
-                            .font(.title3.weight(.semibold))
-                            .monospacedDigit(),
-                        valueColor: .primary
-                    )
-                    // A live count beats a static "ACTIVE": once a rescuer completes the
-                    // authenticated handshake the victim SEES that someone found them.
-                    SOSMetricCard(
-                        title: "SOS_BROADCAST_STATUS_TITLE",
-                        icon: "dot.radiowaves.left.and.right",
-                        value: manager.connectedRescuerCount > 0
-                            ? Text("\(manager.connectedRescuerCount) ").font(.title3.weight(.semibold))
-                                + Text(LocalizedStringKey("SOS_BROADCAST_RESCUERS_NEARBY"))
-                                    .font(.title3.weight(.semibold))
-                            : Text(LocalizedStringKey("SOS_BROADCAST_STATUS_ACTIVE"))
-                                .font(.title3.weight(.semibold)),
-                        valueColor: manager.connectedRescuerCount > 0 ? .green : .appSOS
-                    )
+                    HStack(spacing: 12) {
+                        SOSMetricCard(
+                            title: "SOS_BROADCAST_DURATION",
+                            icon: "timer",
+                            value: Text(manager.elapsedText)
+                                .font(.title3.weight(.semibold))
+                                .monospacedDigit(),
+                            valueColor: .primary
+                        )
+                        // A live count beats a static "ACTIVE": once a rescuer completes the
+                        // authenticated handshake the victim SEES that someone found them.
+                        SOSMetricCard(
+                            title: "SOS_BROADCAST_STATUS_TITLE",
+                            icon: "dot.radiowaves.left.and.right",
+                            value: manager.connectedRescuerCount > 0
+                                ? Text("\(manager.connectedRescuerCount) ").font(.title3.weight(.semibold))
+                                    + Text(LocalizedStringKey("SOS_BROADCAST_RESCUERS_NEARBY"))
+                                        .font(.title3.weight(.semibold))
+                                : Text(LocalizedStringKey(manager.broadcastStatus.titleKey))
+                                    .font(.title3.weight(.semibold)),
+                            valueColor: manager.connectedRescuerCount > 0 ? .green
+                                : (manager.broadcastStatus.isBroadcasting ? .appSOS : .appWarning)
+                        )
+                    }
+
+                    SOSCloudUplinkChip()
+
+                    Text(LocalizedStringKey("SOS_BROADCAST_HELP"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+
+                    SOSEmergencyCallCard()
+
+                    SOSNotifiedContactsCard()
+
                 }
-
-                SOSCloudUplinkChip()
-
-                Text(LocalizedStringKey("SOS_BROADCAST_HELP"))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-
-                SOSEmergencyCallCard()
-
-                SOSNotifiedContactsCard()
-
-                Spacer()
+                .frame(maxWidth: 640)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
+            .scrollBounceBehavior(.basedOnSize)
         }
         .navigationDestination(
             isPresented: Binding(
@@ -130,7 +137,7 @@ struct SOSBroadcastView: View {
         .onAppear {
             // The one place a real emergency is declared: this screen is only reached by the user
             // triggering SOS. Everything else brings the session up with declaringEmergency: false.
-            manager.start(declaringEmergency: true)
+            // Opening/restoring this screen does not declare a new emergency.
         }
         .onReceive(manager.$lastAuthenticatedFieldTeamSessionId.receive(on: RunLoop.main)) { sessionId in
             guard let sessionId else { return }
@@ -169,38 +176,40 @@ private struct SOSCountdownView: View {
             )
             .ignoresSafeArea()
 
-            VStack {
-                VStack(spacing: 10) {
-                    Text(LocalizedStringKey("SOS_COUNTDOWN_TITLE"))
-                        .font(.title.weight(.bold))
-                        .multilineTextAlignment(.center)
-                    Text(LocalizedStringKey("SOS_COUNTDOWN_BODY"))
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(.top, 40)
-
-                Spacer()
-
-                countdownDial
-
-                Spacer()
-
-                VStack(spacing: 12) {
-                    SlideToCancelView(title: LocalizedStringKey("SOS_COUNTDOWN_SLIDE_LABEL"), tint: .appSOS) {
-                        guard !fired else { return }
-                        fired = true
-                        onCancelled()
+            ScrollView {
+                VStack(spacing: 24) {
+                    VStack(spacing: 10) {
+                        Text(LocalizedStringKey("SOS_COUNTDOWN_TITLE"))
+                            .font(.title.weight(.bold))
+                            .multilineTextAlignment(.center)
+                        Text(LocalizedStringKey("SOS_COUNTDOWN_BODY"))
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
-                    Text(LocalizedStringKey("SOS_COUNTDOWN_SLIDE_HINT"))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                    countdownDial
                 }
-                .padding(.bottom, 24)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 24)
+                .frame(maxWidth: 560)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 12) {
+                SlideToCancelView(title: LocalizedStringKey("SOS_COUNTDOWN_SLIDE_LABEL"), tint: .appSOS) {
+                    guard !fired else { return }
+                    fired = true
+                    onCancelled()
+                }
+                Text(LocalizedStringKey("SOS_COUNTDOWN_SLIDE_HINT"))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
             .padding(.horizontal, 28)
+            .padding(.vertical, 16)
             .frame(maxWidth: 560)
         }
         .onAppear {
@@ -218,7 +227,7 @@ private struct SOSCountdownView: View {
             while secondsLeft > 0 {
                 haptic.impactOccurred()
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                guard !fired else { return }
+                guard !fired, !Task.isCancelled else { return }
                 secondsLeft -= 1
             }
             guard !fired else { return }
@@ -260,21 +269,23 @@ private struct SOSCountdownView: View {
 }
 
 private struct SOSBroadcastHero: View {
+    let status: SOSBluetoothBroadcastStatus
+
     var body: some View {
         VStack(spacing: 14) {
             HStack {
-                Text(LocalizedStringKey("SOS_BROADCAST_LIVE_BADGE"))
+                Text(LocalizedStringKey(status.isBroadcasting ? "SOS_BROADCAST_LIVE_BADGE" : "SOS_BLUETOOTH_PAUSED_BADGE"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.appSOS))
+                    .background(Capsule().fill(status.isBroadcasting ? Color.appSOS : Color.appWarning))
 
                 Spacer()
             }
 
             ZStack {
-                SOSPulseRings()
+                if status.isBroadcasting { SOSPulseRings() }
 
                 Circle()
                     .fill(Color.appSOS.opacity(0.2))
@@ -289,11 +300,11 @@ private struct SOSBroadcastHero: View {
                     .foregroundStyle(Color.appSOS)
             }
 
-            Text(LocalizedStringKey("SOS_BROADCAST_ACTIVE"))
+            Text(LocalizedStringKey(status.titleKey))
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(.primary)
 
-            Text(LocalizedStringKey("SOS_BROADCAST_HINT"))
+            Text(LocalizedStringKey(status.detailKey))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -641,12 +652,16 @@ private struct SlideToCancelView: View {
     @State private var isCompleted: Bool = false
     @State private var isArmed: Bool = false
     @State private var hasTriggeredHaptic: Bool = false
+    @GestureState private var isDragging = false
+    @State private var dragRegion: CGRect?
+    @State private var dragWasResized = false
 
     var body: some View {
         GeometryReader { proxy in
-            let height = proxy.size.height
+            let region = AdaptivePresentationRegion.frame(in: proxy)
+            let height = region.height
             let knobSize = max(0, height - 10)
-            let maxOffset = max(0, proxy.size.width - knobSize - 10)
+            let maxOffset = max(0, region.width - knobSize - 10)
             let progress = maxOffset == 0 ? 0 : dragOffset / maxOffset
             let isNearEnd = progress > 0.78
             let fillWidth = max(0, knobSize + dragOffset + 10)
@@ -717,11 +732,19 @@ private struct SlideToCancelView: View {
                     .offset(x: dragOffset)
             }
             .padding(5)
+            .frame(width: region.width, height: height)
+            .offset(x: region.minX, y: region.minY)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture()
+                    .updating($isDragging) { _, dragging, _ in dragging = true }
                     .onChanged { value in
                         guard !isCompleted else { return }
+                        if dragRegion == nil {
+                            dragRegion = region
+                            dragWasResized = false
+                        }
+                        guard !dragWasResized, dragRegion == region else { return }
                         let clamped = min(max(0, value.translation.width), maxOffset)
                         dragOffset = clamped
                         let progress = maxOffset == 0 ? 0 : clamped / maxOffset
@@ -738,8 +761,13 @@ private struct SlideToCancelView: View {
                         }
                     }
                     .onEnded { _ in
+                        defer { dragRegion = nil }
                         guard !isCompleted else { return }
-                        if dragOffset > maxOffset * 0.78 {
+                        if SOSSlideCancellationPolicy.canComplete(
+                            offset: dragOffset, travel: maxOffset,
+                            startingRegion: dragRegion, currentRegion: region,
+                            wasResized: dragWasResized
+                        ) {
                             isCompleted = true
                             isArmed = false
                             withAnimation(.easeOut(duration: 0.2)) {
@@ -756,10 +784,27 @@ private struct SlideToCancelView: View {
                         }
                     }
             )
+            .onChange(of: region) { _, _ in
+                // Resizing must not turn an incomplete drag into a completed cancellation.
+                guard !isCompleted else { return }
+                if isDragging { dragWasResized = true }
+                dragOffset = 0
+                isArmed = false
+                hasTriggeredHaptic = false
+            }
+            .onChange(of: isDragging) { _, dragging in
+                if !dragging { dragRegion = nil }
+            }
         }
         .frame(height: 62)
         .accessibilityLabel(Text(title))
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { onComplete() }
+    }
+}
+
+enum SOSSlideCancellationPolicy {
+    static func canComplete(offset: CGFloat, travel: CGFloat, startingRegion: CGRect?, currentRegion: CGRect, wasResized: Bool = false) -> Bool {
+        !wasResized && startingRegion == currentRegion && travel > 0 && offset > travel * 0.78
     }
 }

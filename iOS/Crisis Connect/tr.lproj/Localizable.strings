@@ -105,16 +105,16 @@
 "CONTACT_BLUETOOTH_DISABLED_MESSAGE" = "Yakındaki QR kişilerini doğrulamak için Bluetooth'u açın.";
 "CONTACT_BLUETOOTH_UNAUTHORIZED_MESSAGE" = "Yakındaki QR kişilerini doğrulamak için Bluetooth erişimine izin verin.";
 "CONTACT_BLUETOOTH_UNSUPPORTED_MESSAGE" = "Bu cihaz yakındaki QR kişilerini Bluetooth üzerinden doğrulayamıyor.";
-"CONTACT_ONBOARDING_SEARCHING_TITLE" = "Yakında aranıyor";
-"CONTACT_ONBOARDING_SEARCHING_MESSAGE" = "Diğer cihazın kişi yayını aranıyor.";
+"CONTACT_ONBOARDING_SEARCHING_TITLE" = "Cihaz aranıyor";
+"CONTACT_ONBOARDING_SEARCHING_MESSAGE" = "Diğer cihazı yakında tutun ve QR ekranını açık bırakın.";
 "CONTACT_ONBOARDING_PAIRING_TITLE" = "Güvenli eşleşme";
-"CONTACT_ONBOARDING_PAIRING_MESSAGE" = "QR payload, canlı Bluetooth el sıkışmasıyla doğrulanıyor.";
+"CONTACT_ONBOARDING_PAIRING_MESSAGE" = "Güvenli bağlantı kurmak için diğer cihaz doğrulanıyor.";
 "CONTACT_ONBOARDING_SAVING_TITLE" = "Kişi kaydediliyor";
-"CONTACT_ONBOARDING_SAVING_MESSAGE" = "Güvenli kişi kaydı ve sohbet oturumu tamamlanıyor.";
+"CONTACT_ONBOARDING_SAVING_MESSAGE" = "Sohbetiniz hazırlanıyor…";
 "CONTACT_ONBOARDING_ALREADY_REGISTERED_TITLE" = "Zaten kayıtlı";
-"CONTACT_ONBOARDING_ALREADY_REGISTERED_MESSAGE" = "Mevcut güvenli kişi güncellendi, önceki sohbet geçmişi korundu.";
-"CONTACT_ONBOARDING_COMPLETED_TITLE" = "Kişi hazır";
-"CONTACT_ONBOARDING_COMPLETED_MESSAGE" = "Güvenli eşleşme tamamlandı. Bu kişiyle çevrimdışı mesajlaşabilirsiniz.";
+"CONTACT_ONBOARDING_ALREADY_REGISTERED_MESSAGE" = "Mevcut kişi güncellendi. Sohbet geçmişiniz korundu.";
+"CONTACT_ONBOARDING_COMPLETED_TITLE" = "Kişi eklendi";
+"CONTACT_ONBOARDING_COMPLETED_MESSAGE" = "Sohbetiniz açılıyor…";
 "CONTACT_CAMERA_TITLE" = "Kamera erişimi";
 "CONTACT_CAMERA_MESSAGE" = "QR kod taramak için kamera izni verin.";
 "Close" = "Kapat";
@@ -503,7 +503,7 @@
 "ADVANCED_SETTINGS_DESCRIPTION" = "Tanılama ve mesaj iletim davranışını ayrıntılı olarak ayarlayın.";
 "ADVANCED_SETTINGS_LINK_SUBTITLE" = "Radyo davranışı, tanılama ve teslim kontrolleri.";
 "ADVANCED_SETTING_PUBLIC_MESH_TITLE" = "Genel sohbet";
-"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Bu telefonu yakındaki ortak sohbette görünür yapar.";
+"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Herkese açık sohbet: yakındaki herkes mesajları okuyabilir ve katılabilir. Hassas bilgi paylaşmayın.";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_TITLE" = "Genel sohbet bildirimleri";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_DESCRIPTION" = "Yalnızca ortak genel sohbetteki yeni mesajlar için bildirim gösterir.";
 "ADVANCED_SETTING_HIGH_RANGE_TITLE" = "Yüksek menzil modu";
@@ -1230,7 +1230,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "Açık kaynak — kodu herkes inceleyebilir";
 "ONBOARDING_TRUST_NO_ADS" = "Reklam yok — kişisel verilerin asla satılmaz";
 "ONBOARDING_TRUST_EMERGENCY" = "Yalnızca acil durum iletişimi için üretildi";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "Tanılamayı etkinleştirene kadar çökme raporları kapalı kalır.";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "Uygulamayı stabil tutmak için yalnızca anonim çökme raporları toplanır.";
 "ONBOARDING_FINISH" = "Crisis Connect'i Başlat";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "Bulut";
@@ -1538,3 +1538,234 @@
 "Attach annotation" = "Açıklamayı ekle";
 "Handwritten annotation canvas" = "El yazısı açıklama alanı";
 "Secure dossier" = "Güvenli dosya";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "Rehberindeki kişileri internette bul";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect, uygulamayı kullanan kişileri bulmak için rehberindeki adları ve telefon numaralarını okur. Telefon numaralarını eşleştirme amacıyla Google Firebase tarafından ABD’de barındırılan Crisis Connect sunucularına gönderir. Rehberdeki adlar cihazında kalır. Sorgulanan numaralar kalıcı olarak saklanmadan işlenir; eşleşmeler cihazında tutulur. Bu ekran açıkken yenileme veya ekrana geri dönme numaraların tekrar gönderilmesine yol açabilir. Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "Yakındaki rehber kişilerini bul";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect, yakınında arayacağın kişiyi seçebilmen için cihazındaki rehber adlarını ve telefon numaralarını okur. Seçilen numara Bluetooth üzerinden kimlik doğrulamada kullanılır. Bu özellik rehberini sunucuya göndermez. Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.";
+"CONTACTS_DISCLOSURE_ACCEPT" = "Kabul ediyorum";
+"CONTACTS_DISCLOSURE_DECLINE" = "Şimdi değil";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "Rehber erişimi";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "İnternet eşleştirme onayını kaldır";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "Yakındaki kişiler onayını kaldır";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Otomatik veri tasarrufu";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS veya kısıtlı bağlantı: kısa metinler aralıklı gönderilir; uzun metinler bağlantının düzelmesini bekler. İnternetten medya, arama ve çevrimiçi durum duraklatılır. Bluetooth kullanılabilir.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Senin durumun: SOS aktif";
+"TRAFFIC_LOCAL_OFFLINE" = "Bağlantın: çevrimdışı · mesajlar kuyrukta";
+"TRAFFIC_LOCAL_LIMITED" = "Bağlantın: kısıtlı · veri tasarrufu";
+"TRAFFIC_FEED_DEFERRED" = "Veri tasarrufu için otomatik yenileme duraklatıldı. Elle yenileyebilirsin.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Gönderildi, mesajın taşıma kanalına kabul edildiğini gösterir. Teslim edildi, alıcının onayını; okundu ise okuma işaretini gösterir.";
+
+/* Contact QR scanner */
+"QR_SCANNER_HEADING" = "Kişinin QR kodunu tara";
+"QR_SCANNER_AUTO_HINT" = "QR kodunu çerçevenin içinde tut. Kod otomatik olarak taranır.";
+"QR_SCANNER_READY" = "Kamera hazır";
+"QR_SCANNER_STARTING" = "Kamera açılıyor…";
+"QR_SCANNER_HELP" = "Tarama yardımı";
+"QR_SCANNER_LIGHT_ON" = "Işığı aç";
+"QR_SCANNER_LIGHT_OFF" = "Işığı kapat";
+"QR_SCANNER_LIGHT_ERROR" = "Fener değiştirilemedi. Tekrar dene.";
+"QR_SCANNER_PERMISSION_TITLE" = "Taramak için kameraya izin ver";
+"QR_SCANNER_PERMISSION_DETAIL" = "Crisis Connect QR kodunu tarayıp kişi eklemek için Ayarlar’dan kamera erişimini aç.";
+"QR_SCANNER_OPEN_SETTINGS" = "Ayarları aç";
+"QR_SCANNER_UNAVAILABLE_TITLE" = "Kamera kullanılamıyor";
+"QR_SCANNER_UNAVAILABLE_DETAIL" = "Bu cihazda kullanılabilir kamera yok. Tarayıcıyı kapatıp devam etmek için Manuel Bağlan seçeneğini kullan.";
+"QR_SCANNER_PAUSED_TITLE" = "Kamera duraklatıldı";
+"QR_SCANNER_PAUSED_DETAIL" = "Kamera geçici olarak kullanımda veya kullanılamıyor. Kamera hazır olduğunda tarama devam eder.";
+"QR_SCANNER_TIP_ALIGN" = "QR kodunun tamamını çerçevenin içinde tut.";
+"QR_SCANNER_TIP_STILL" = "Telefonunu kısa bir süre sabit tut. Tarama otomatik olarak başlar.";
+"QR_SCANNER_TIP_LIGHT" = "Tarama başarısız olursa daha aydınlık bir yere geç. Kullanılabiliyorsa feneri aç.";
+
+"CONTACT_ONBOARDING_STEP_SEARCH" = "Ara";
+
+"CONTACT_ONBOARDING_STEP_PAIR" = "Eşleştir";
+
+"CONTACT_ONBOARDING_STEP_SAVE" = "Kaydet";
+
+"CONTACT_ONBOARDING_STEP_DONE" = "Tamamlandı";
+
+"CONTACT_ONBOARDING_STEP_ACTIVE" = "Devam ediyor";
+
+"CONTACT_ONBOARDING_STEP_WAITING" = "Bekliyor";
+
+// Independent resilient and legacy sessions
+"AUTHORITY_SESSION" = "Sohbet";
+"AUTHORITY_RESILIENT_SESSION" = "Dayanıklı";
+"AUTHORITY_COMPATIBILITY_SESSION" = "Eski sürüm uyumu";
+"AUTHORITY_RESILIENT_NOTICE" = "Güncel uygulamalar için ayrı sohbet. Mesajlar yalnız bu oturuma katılan doğrulanmış cihazlara ulaşır; eski uygulamalar uyum sohbetini kullanır.";
+"AUTHORITY_COMPATIBILITY_NOTICE" = "Eski uygulamalarla ayrı sohbet. İlk bölgenin bağlantısı gerekir; dayanıklı oturumun mesajları buraya aktarılmaz.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "İnternet kullanılabilir";
+
+"SAFETY_NUMBER_REPAIR_REQUIRED" = "Bu kişinin güvenli kimliği değişti. Mesaj gönderimi durduruldu. Kimliği doğrulayıp yeniden eşleştirmek için birlikte yeni bir QR kod tarayın.";
+
+"NEARBY_PAIRING_IDENTITY_WARNING" = "Bu kişi telefon numaranı biliyor. Adı ve kimliği doğrulanmadı. Yalnızca yerel bir bağlantı kurulur; hesap kimliği veya kayıtlı bir kişiyle yeniden eşleşmek için yeni bir QR kod kullan.";
+
+"OFFLINE_PAIRING_UPGRADE_REQUIRED" = "Bluetooth eşleştirmesi güvenlik için güncellendi. Karşı tarafın uygulamayı güncelleyip yeni QR kod oluşturmasını iste ve yeniden tara. Sohbet geçmişin korunur.";
+
+"PEER_SECURITY_UPGRADE_REQUIRED" = "Bu görüşmeyi güvenle doğrulamak için iki uygulamayı da güncelleyin. Mesajlar kuyrukta korunur; daha zayıf şifrelemeye geçilmez.";
+
+// Second-factor sign-in
+"PROFILE_MFA_TITLE" = "İki adımlı doğrulama";
+"PROFILE_MFA_TOTP_MESSAGE" = "Kimlik doğrulayıcı uygulamanızdaki 6 haneli kodu girin.";
+"PROFILE_MFA_SMS_MESSAGE" = "Kayıtlı telefonunuza doğrulama kodu gönderin, ardından SMS kodunu girin.";
+"PROFILE_MFA_UNSUPPORTED" = "Bu doğrulama yöntemi desteklenmiyor. Başka bir kayıtlı yöntem seçin veya iptal edip web üzerinden giriş yapın.";
+"PROFILE_MFA_AUTHENTICATOR" = "Kimlik doğrulayıcı";
+"PROFILE_MFA_SMS" = "SMS";
+"PROFILE_MFA_CODE" = "Doğrulama kodu";
+"PROFILE_MFA_SEND" = "SMS kodu gönder";
+"PROFILE_MFA_RESEND" = "SMS kodunu tekrar gönder";
+"PROFILE_MFA_VERIFY" = "Doğrula";
+
+// Authority mesh key delivery
+"RESCUE_MESH_KEY_SIGN_IN_REQUIRED" = "Mesh anahtarını almak için hesabınıza tekrar giriş yapın.";
+"RESCUE_MESH_KEY_CERTIFICATE_REQUIRED" = "Geçerli bir mesh sertifikası bulunamadı. İnternet bağlantısı varken bu cihazı doğrulayın.";
+"RESCUE_MESH_KEY_UNAUTHORIZED" = "Bu cihazın mesh kullanma yetkisi yok.";
+"RESCUE_MESH_KEY_NOT_ENABLED" = "Güvenli mesh henüz bu hesap için etkinleştirilmemiş. Yöneticinizle iletişime geçin.";
+"RESCUE_MESH_KEY_SERVICE_UNAVAILABLE" = "Mesh anahtar servisi sunucuda kullanılamıyor. Yöneticinizle iletişime geçin.";
+"RESCUE_MESH_KEY_NETWORK_ERROR" = "Mesh anahtar servisine ulaşılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin.";
+"RESCUE_MESH_KEY_FETCH_FAILED" = "Mesh anahtarı alınamadı. Lütfen tekrar deneyin.";
+
+// Watch Settings & Standalone Messaging
+"WATCH_SETTINGS_TITLE" = "Saat Mesajları";
+"WATCH_SETTINGS_SUBTITLE" = "Bağlı saat yetkilendirmesi, mesaj senkronizasyonu ve cihaz onayları";
+"WATCH_SETTINGS_NOTICE" = "Saatten gelen şifreli mesajlar normal sohbetlerinde görünür. Gönderen cihazı ve kişiyi burada onayla.";
+"WATCH_SETTINGS_SIGN_IN_REQUIRED" = "Devam etmek için hesabına giriş yap.";
+"WATCH_SETTINGS_STATUS_RECEIVER" = "Telefon Alıcısı";
+"WATCH_SETTINGS_STATUS_WATCH" = "Bağlı Saat";
+"WATCH_SETTINGS_ACTIVE" = "Aktif";
+"WATCH_SETTINGS_INACTIVE" = "Pasif";
+"WATCH_SETTINGS_PAIRED" = "Eşleşti";
+"WATCH_SETTINGS_NOT_PAIRED" = "Eşleşmedi";
+"WATCH_SETTINGS_SECTION_STATUS" = "Durum ve Kontroller";
+"WATCH_SETTINGS_SECTION_ACTIONS" = "İşlemler";
+"WATCH_SETTINGS_SECTION_CONTACTS" = "Kayıtlı Kişiler";
+"WATCH_SETTINGS_ENABLE_PHONE" = "Bu telefonda mesaj almayı aç";
+"WATCH_SETTINGS_ENABLE_PHONE_SUBTITLE" = "Bu telefonun bağımsız saat mesajlarını almasını sağlar";
+"WATCH_SETTINGS_PAIR_WATCH" = "Bağlı saatimi bu hesapla yetkilendir";
+"WATCH_SETTINGS_PAIR_WATCH_SUBTITLE" = "Apple Watch saatini bu hesapla eşleştirir";
+"WATCH_SETTINGS_REFRESH" = "Mesajları kontrol et ve eşitle";
+"WATCH_SETTINGS_REFRESH_SUBTITLE" = "Bekleyen mesajları ve teslim durumlarını günceller";
+"WATCH_SETTINGS_DISABLE_PHONE" = "Bu telefonun yetkisini kaldır";
+"WATCH_SETTINGS_DISABLE_PHONE_SUBTITLE" = "Alıcı yetkisi kaldırılır; sohbet geçmişi korunur";
+"WATCH_SETTINGS_CONTACTS_FOOTER" = "Kayıtlı saat ve telefon cihazlarını görüntüleyip yönetmek için bir kişi seçin.";
+"WATCH_SETTINGS_NO_CONTACTS" = "Saat mesajlaşması için uygun kayıtlı kişi bulunamadı.";
+"WATCH_SETTINGS_NO_DEVICES" = "Bu kişi henüz bağımsız mesajlaşmayı açmamış.";
+"WATCH_SETTINGS_PHONE_NOT_ENABLED" = "Önce bu telefonda mesaj almayı aç.";
+"WATCH_SETTINGS_DEVICE_PHONE" = "Telefon";
+"WATCH_SETTINGS_DEVICE_WATCH" = "Saat";
+"WATCH_SETTINGS_DEVICE_PENDING" = "İncelemek için dokunun";
+"WATCH_SETTINGS_APPROVE_TITLE" = "Cihazı Onayla";
+"WATCH_SETTINGS_APPROVE_MSG" = "Bu cihazdan mesaj almaya izin verilsin mi? Karşı tarafta da onay gereklidir.\n\nCihaz doğrulama kodu:\n%@";
+"WATCH_SETTINGS_BTN_APPROVE" = "Onayla";
+"WATCH_SETTINGS_BTN_REVOKE" = "Yetkiyi Kaldır";
+"WATCH_SETTINGS_BTN_CANCEL" = "İptal";
+"WATCH_SETTINGS_READY_NOTICE" = "Telefon alıcısı hazır. Kişinin cihazını seçip onayla.";
+"WATCH_SETTINGS_PAIRED_NOTICE" = "Saat yetkilendirildi. Kişi cihazlarını onaylayabilirsin.";
+"WATCH_SETTINGS_REFRESHED_NOTICE" = "Kayıtlı mesajlar ve teslim durumları güncellendi.";
+"WATCH_SETTINGS_REVOKED_NOTICE" = "Alıcı yetkisi kaldırıldı; sohbet geçmişi korundu.";
+"WATCH_SETTINGS_CONTACT_REVOKED_NOTICE" = "Cihazın kişi onayı kaldırıldı.";
+"WATCH_SETTINGS_CONTACT_APPROVED_NOTICE" = "Cihaz onaylandı.";
+"WATCH_SETTINGS_UNPAIR_WATCH" = "Saatin eşleşmesini kaldır";
+"WATCH_SETTINGS_UNPAIR_WATCH_SUBTITLE" = "Saati bu hesaptan ayırır; telefon alıcısı aktif kalır";
+"WATCH_SETTINGS_UNPAIR_CONFIRM_TITLE" = "Saatin eşleşmesi kaldırılsın mı?";
+"WATCH_SETTINGS_UNPAIR_CONFIRM_MSG" = "Bu saat artık hesabınız adına mesaj göndermek için yetkilendirilmeyecektir.";
+"WATCH_SETTINGS_UNPAIRED_NOTICE" = "Saat eşleşmesi başarıyla kaldırıldı.";
+"WATCH_SETTINGS_LAST_SYNC" = "Son eşitleme: %@";
+"WATCH_SETTINGS_NEVER_SYNCED" = "Henüz eşitlenmedi";
+"WATCH_SETTINGS_HW_TITLE" = "Apple Watch Bağlantısı";
+"WATCH_SETTINGS_HW_CONNECTED" = "Bağlı";
+"WATCH_SETTINGS_HW_DISCONNECTED" = "Bağlı Değil";
+"WATCH_SETTINGS_COMPANION_TITLE" = "Saat SOS ve Hızlı Yanıtlar";
+"WATCH_SETTINGS_COMPANION_DESC" = "Acil durumlarda saatiniz iptal için 5 saniye geri sayar, BLE acil durum yayını yapar ve kurtarma ekiplerine hazır şifreli yanıtlar göndermenizi sağlar.";
+"WATCH_SETTINGS_QUICK_REPLIES_TITLE" = "Hazır hızlı yanıtlar";
+"WATCH_SETTINGS_QUICK_REPLIES_DESC" = "“İyiyim”, “Yaralıyım”, “Yardım lazım”";
+"WATCH_SETTINGS_DEVICE_ALREADY_APPROVED" = "Onaylı Cihaz";
+"WATCH_SETTINGS_DEVICE_ALREADY_APPROVED_MSG" = "Bu cihaz hesabınızla mesajlaşmak üzere zaten onaylanmıştır.\n\nDoğrulama Kodu:\n%@\n\nYetkisini kaldırmak istiyor musunuz?";
+"WATCH_SETTINGS_QUICK_REPLIES_MANAGE" = "Özelleştirilebilir Hızlı Yanıtlar";
+"WATCH_SETTINGS_QUICK_REPLIES_MANAGE_DESC" = "Acil durumda veya sohbette saatinizde görünecek hazır şablonları yönetin.";
+"WATCH_SETTINGS_QUICK_REPLY_ADD" = "Hızlı yanıt ekle";
+"WATCH_SETTINGS_QUICK_REPLY_ADD_PLACEHOLDER" = "örn. Toplanma noktasındayım";
+"WATCH_SETTINGS_QUICK_REPLY_RESET" = "Varsayılanlara sıfırla";
+"WATCH_SETTINGS_QUICK_REPLY_DEFAULT_TAG" = "Varsayılan";
+"WATCH_SETTINGS_QUICK_REPLY_CUSTOM_TAG" = "Özel";
+"WATCH_SETTINGS_QUICK_REPLY_LIMIT_NOTICE" = "Hızlı yanıt 50 karakteri geçemez.";
+"WATCH_SETTINGS_SCAN_QR_TITLE" = "Saati QR Kod ile Eşleştir";
+"WATCH_SETTINGS_SCAN_QR_DESC" = "Saatin ekranındaki tek seferlik eşleşme QR kodunu kamerayla tarayın";
+"WATCH_SETTINGS_BATTERY_TITLE" = "Saat Pili";
+"WATCH_SETTINGS_BATTERY_LEVEL" = "%%%d · %@";
+"WATCH_SETTINGS_BATTERY_UNKNOWN" = "Eşitleme bekleniyor";
+"WATCH_SETTINGS_BATTERY_CHARGING" = "Şarj oluyor";
+"WATCH_SETTINGS_BATTERY_NORMAL" = "Normal";
+"WATCH_SETTINGS_BATTERY_LOW" = "Düşük pil";
+"WATCH_SETTINGS_QR_SCANNED_SUCCESS" = "Saat QR kodu başarıyla tarandı ve eşleştirildi.";
+
+/* Chat Actions & Sheets */
+"CHAT_ACTION_FORWARD" = "İlet";
+"CHAT_ACTION_SHARE" = "Paylaş";
+"CHAT_ACTION_PIN" = "Mesajı Sabitle";
+"CHAT_ACTION_UNPIN" = "Sabitlemeyi Kaldır";
+"CHAT_ACTION_MESSAGE_INFO" = "Mesaj Bilgisi";
+"CHAT_ACTION_VERIFY_SAFETY" = "Güvenlik Kodunu Doğrula";
+"CHAT_PINNED_MESSAGE_TITLE" = "Sabitlenen Mesaj";
+"CHAT_MESSAGE_FORWARDED" = "İletildi";
+
+/* Message Info Sheet */
+"CHAT_MESSAGE_INFO_TITLE" = "Mesaj Bilgisi";
+"CHAT_MESSAGE_INFO_TIMELINE" = "Zaman Çizelgesi";
+"CHAT_MESSAGE_INFO_READ" = "Görüldü";
+"CHAT_MESSAGE_INFO_DELIVERED" = "İletildi";
+"CHAT_MESSAGE_INFO_SENT" = "Gönderildi";
+"CHAT_MESSAGE_INFO_WAITING" = "Gönderilmek için bekleniyor...";
+"CHAT_MESSAGE_INFO_DELIVERY_DETAILS" = "İletim Detayları";
+"CHAT_MESSAGE_INFO_TRANSPORT_CHANNEL" = "İletim Kanalı";
+"CHAT_MESSAGE_INFO_ROUTING_MODE" = "Yönlendirme Modu";
+"CHAT_INFO_TRANSPORT_BLUETOOTH" = "Bluetooth Low Energy (P2P Mesh)";
+"CHAT_INFO_TRANSPORT_INTERNET" = "Şifreli İnternet / WebSocket";
+"CHAT_INFO_TRANSPORT_SATELLITE" = "Uydu Köprüsü (Satellite)";
+"CHAT_INFO_ROUTING_P2P_DIRECT" = "Doğrudan P2P Bağlantısı";
+"CHAT_INFO_ROUTING_QUEUED_STORE_FORWARD" = "Store & Forward Rölesi (Sekmeli)";
+
+/* Safety Number Sheet */
+"SAFETY_NUMBER_TITLE_NAV" = "Güvenlik Kodunu Doğrula";
+"SAFETY_NUMBER_VERIFIED_BADGE" = "Doğrulandı";
+"SAFETY_NUMBER_MARK_VERIFIED" = "Doğrulandı Olarak İşaretle";
+"SAFETY_NUMBER_COPY_SUCCESS" = "Güvenlik kodu panoya kopyalandı";
+"SAFETY_NUMBER_SHARE" = "Kodu Paylaş";
+
+/* Forward Sheet */
+"FORWARD_SHEET_TITLE" = "İlet...";
+"FORWARD_SHEET_SEARCH_HINT" = "Kişi ara";
+"FORWARD_SHEET_SELECT_CONTACTS" = "İletilecek kişileri seçin";
+"FORWARD_SHEET_SEND_SINGLE" = "Mesajı ilet";
+"FORWARD_SHEET_SEND_MULTIPLE" = "%d kişiye ilet";
+"FORWARD_SUCCESS" = "Mesaj başarıyla iletildi";
+
+
+
+// SOS delivery readiness and incomplete offline coverage
+"SOS_BLUETOOTH_PREPARING" = "Bluetooth yayını hazırlanıyor";
+"SOS_BLUETOOTH_OFF" = "Bluetooth kapalı";
+"SOS_BLUETOOTH_PERMISSION" = "Bluetooth izni gerekli";
+"SOS_BLUETOOTH_UNSUPPORTED" = "Bluetooth yayını kullanılamıyor";
+"SOS_BLUETOOTH_UNAVAILABLE" = "Bluetooth yayını yapılmıyor";
+"SOS_BLUETOOTH_PAUSED_BADGE" = "SOS ETKİN · BLUETOOTH BEKLENİYOR";
+"SOS_BLUETOOTH_OFF_HELP" = "Yakındaki kurtarma ekiplerine ulaşmak için Ayarlar’dan Bluetooth’u aç. İnternet üzerinden uyarıların durumu aşağıda ayrıca gösterilir.";
+"SOS_BLUETOOTH_PERMISSION_HELP" = "Yakındaki kurtarma ekiplerine ulaşmak için Ayarlar’dan Bluetooth erişimine izin ver. İnternet üzerinden uyarıların durumu aşağıda ayrıca gösterilir.";
+"SOS_BLUETOOTH_UNAVAILABLE_HELP" = "SOS etkin, ancak Bluetooth yayını başlamadı. İnternet üzerinden uyarıların durumu aşağıda ayrıca gösterilir.";
+"OFFLINE_MAP_PARTIAL_COVERAGE" = "Eksik kapsam";
+"OFFLINE_MAP_MISSING_TILES" = "%d / %d harita karosu kullanılamıyor. Bu bölgenin çevrimdışı haritasında boşluklar var.";
+"OFFLINE_MAP_PARTIAL_DOWNLOAD" = "Eksik kapsamla indirildi: %@";
+"OFFLINE_MAP_RETRY_MISSING" = "Eksik karoları tekrar dene";
+
+// Two-step verification
+"PROFILE_MFA_METHOD_TITLE" = "Doğrulama yöntemi";
+"PROFILE_MFA_SMS_SENT_MESSAGE" = "Kayıtlı telefonunuza gönderilen 6 haneli kodu girin.";

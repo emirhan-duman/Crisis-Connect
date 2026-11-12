@@ -88,15 +88,9 @@ internal class RfcommHandshakeDelegate(
         serviceScope.launch {
             val contact = getContact(appContext, sessionCode)
             val storedKeyBase64 = contact?.aesKey?.takeIf { it.isNotBlank() }
-            val localDeviceKeyBase64 = runCatching {
-                LocalKeyStorage.getOrCreateAesKey(appContext)
-            }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
             val candidateKeys = mutableListOf<String>()
             if (!storedKeyBase64.isNullOrBlank()) {
                 candidateKeys.add(storedKeyBase64)
-            }
-            if (!localDeviceKeyBase64.isNullOrBlank() && localDeviceKeyBase64 != storedKeyBase64) {
-                candidateKeys.add(localDeviceKeyBase64)
             }
             if (candidateKeys.isEmpty()) {
                 Log.w(TAG, "Ignoring handshake request for $sessionCode: no candidate AES key available")
@@ -114,7 +108,7 @@ internal class RfcommHandshakeDelegate(
                 val decrypted = decryptAesGcm(decoded, ivBase64, cipherBase64)
                     ?.toString(Charsets.UTF_8)
                     ?: continue
-                if (decrypted == "CHALLENGE:$challenge") {
+                if (decrypted == "CHALLENGE_V2:$challenge") {
                     selectedKeyBytes = decoded
                     selectedKeyBase64 = candidate
                     break
@@ -130,7 +124,7 @@ internal class RfcommHandshakeDelegate(
 
             val responsePayload = encryptAesGcm(
                 selectedKeyBytes,
-                "RESPONSE:$challenge".toByteArray(Charsets.UTF_8)
+                "RESPONSE_V2:$challenge".toByteArray(Charsets.UTF_8)
             ) ?: return@launch
             val (responseIv, responseCipher) = responsePayload
             writeToSession(
@@ -167,7 +161,7 @@ internal class RfcommHandshakeDelegate(
 
         val decrypted = decryptAesGcm(pending.aesKey, ivBase64, cipherBase64)
             ?.toString(Charsets.UTF_8)
-        val success = decrypted == "RESPONSE:$challenge"
+        val success = decrypted == "RESPONSE_V2:$challenge"
         handler.post { pending.callback(success) }
         onSessionActive(sessionCode)
         if (success) {
@@ -272,7 +266,7 @@ internal class RfcommHandshakeDelegate(
         callback: (Boolean) -> Unit
     ) {
         val challenge = UUID.randomUUID().toString()
-        val payloadBytes = "CHALLENGE:$challenge".toByteArray(Charsets.UTF_8)
+        val payloadBytes = "CHALLENGE_V2:$challenge".toByteArray(Charsets.UTF_8)
         val encryptionResult = encryptAesGcm(keyBytes, payloadBytes)
         if (encryptionResult == null) {
             handler.post { callback(false) }

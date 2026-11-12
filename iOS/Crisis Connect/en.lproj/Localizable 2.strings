@@ -388,7 +388,7 @@
 "ADVANCED_SETTINGS_DESCRIPTION" = "Fine-tune app behavior for diagnostics and message delivery.";
 "ADVANCED_SETTINGS_LINK_SUBTITLE" = "Radio behavior, diagnostics, and delivery controls.";
 "ADVANCED_SETTING_PUBLIC_MESH_TITLE" = "Public mesh mode";
-"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Make this node discoverable in open mesh environments for broader coordination tests.";
+"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Public chat: anyone nearby can read messages and participate. Do not share sensitive information.";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_TITLE" = "Open mesh node notifications";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_DESCRIPTION" = "Only notifies for new messages from the public GATT mesh general chat node.";
 "ADVANCED_SETTING_HIGH_RANGE_TITLE" = "High range mode";

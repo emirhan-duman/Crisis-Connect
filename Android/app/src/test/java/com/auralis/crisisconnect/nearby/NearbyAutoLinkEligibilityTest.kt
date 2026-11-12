@@ -7,8 +7,7 @@ import org.junit.Test
 
 /**
  * Gate that decides whether a chat-open should try to auto-bootstrap an offline Bluetooth link.
- * These pin the exact conditions so the feature only fires for a fresh internet-added contact and
- * never re-fires once a Bluetooth key/address is in place.
+ * Existing internet identities must use QR to establish their offline key.
  */
 class NearbyAutoLinkEligibilityTest {
 
@@ -29,8 +28,8 @@ class NearbyAutoLinkEligibilityTest {
     )
 
     @Test
-    fun `eligible for a fresh internet contact with a stored number`() {
-        assertTrue(NearbyAutoLink.isEligible(internetContact()))
+    fun `a stored phone number cannot authorize an existing identity upgrade`() {
+        assertFalse(NearbyAutoLink.isEligible(internetContact()))
     }
 
     @Test

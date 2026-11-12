@@ -2,7 +2,6 @@ package com.auralis.crisisconnect.service.sos
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.location.Location
 import android.util.Log
 import com.auralis.crisisconnect.R
 import com.auralis.crisisconnect.data.Contact
@@ -13,6 +12,7 @@ import com.auralis.crisisconnect.data.getSessionMessageCounts
 import com.auralis.crisisconnect.data.saveLocalMessage
 import com.auralis.crisisconnect.data.saveLocalSosMessage
 import com.auralis.crisisconnect.data.updateSosAlertText
+import com.auralis.crisisconnect.connectivity.SatelliteNetworkStatus
 import com.auralis.crisisconnect.messaging.InternetChatTransport
 import com.auralis.crisisconnect.security.ChildProfileManager
 import com.auralis.crisisconnect.service.BlePeerIdentityUtils
@@ -24,6 +24,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -67,14 +69,18 @@ object SosContactNotifier {
     private const val TAG = "SosContactNotifier"
     private const val MAX_RECIPIENTS = SosEmergencyContactsStore.MAX_CONTACTS
     private const val PREFS_NAME = "sos_contact_notifier"
+    private const val KEY_ACTIVE_ALERTS = "active_alerts_v1"
+    private const val KEY_PENDING_ALERT_IDS = "pending_alert_ids_v1"
     private const val KEY_PENDING_ALL_CLEAR_SESSIONS = "pending_all_clear_sessions"
 
     private const val INITIAL_LOCATION_WAIT_MS = 12_000L
     private const val LOOP_TICK_MS = 15_000L
+    private const val SATELLITE_LOOP_TICK_MS = 60_000L
     private const val INITIAL_RETRY_INTERVAL_MS = 30_000L
+    private const val SATELLITE_INITIAL_RETRY_INTERVAL_MS = 120_000L
     private const val LOCATION_REFRESH_INTERVAL_MS = 60_000L
+    private const val SATELLITE_LOCATION_REFRESH_INTERVAL_MS = 600_000L
     private const val LIVE_UPDATE_MIN_INTERVAL_MS = 60_000L
-    private const val LIVE_UPDATE_MIN_MOVE_METERS = 25f
 
     private val notifierScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
@@ -92,21 +98,44 @@ object SosContactNotifier {
 
     fun onSosStarted(
         context: Context,
-        locationProvider: suspend () -> BlePeerIdentityUtils.PeerLocationSnapshot?
+        locationProvider: suspend () -> BlePeerIdentityUtils.PeerLocationSnapshot?,
+        resuming: Boolean = false
     ) {
         val appContext = context.applicationContext
+        com.auralis.crisisconnect.connectivity.DisasterTrafficController.setEmergency(true)
         job?.cancel()
         alerted = linkedMapOf()
         _recipients.value = emptyList()
         _selectionReady.value = false
         // A fresh SOS supersedes any all-clear still waiting from the previous session.
-        prefs(appContext).edit().remove(KEY_PENDING_ALL_CLEAR_SESSIONS).apply()
+        if (!resuming) prefs(appContext).edit().remove(KEY_PENDING_ALL_CLEAR_SESSIONS).remove(KEY_ACTIVE_ALERTS).remove(KEY_PENDING_ALERT_IDS).commit()
         job = notifierScope.launch {
-            val targets = runCatching { selectRecipients(appContext) }
+            val selected = runCatching { selectRecipients(appContext) }
+                .onFailure { Log.w(TAG, "Failed to select SOS recipients", it) }
+                .getOrDefault(emptyList())
+            currentCoroutineContext().ensureActive()
+            val delivery = SosContactDeliveryState(
+                resuming = resuming,
+                selectedIds = selected.map { it.sessionCode },
+                messageIds = readAlertIds(appContext, KEY_PENDING_ALERT_IDS),
+                sentMessageIds = readAlertIds(appContext, KEY_ACTIVE_ALERTS)
+            )
+            // Persist all recipients before GPS/network waits, even if no send was attempted.
+            prefs(appContext).edit()
+                .putString(KEY_PENDING_ALERT_IDS, JSONObject(delivery.messageIds).toString()).commit()
+            val targets = runCatching {
+                delivery.messageIds.keys.mapNotNull { session ->
+                    getContact(appContext, session)?.takeIf { it.supportsInternet }?.also { contact ->
+                        delivery.sentMessageIds[session]?.let { messageId ->
+                            alerted[session] = AlertedRecipient(contact, messageId)
+                        }
+                    }
+                }
+            }
                 .onFailure { Log.w(TAG, "Failed to select SOS recipients", it) }
                 .getOrDefault(emptyList())
             _recipients.value = targets.map {
-                Recipient(it.sessionCode, it.name, RecipientStatus.Waiting)
+                Recipient(it.sessionCode, it.name, if (delivery.isPending(it.sessionCode)) RecipientStatus.Waiting else RecipientStatus.Sent)
             }
             _selectionReady.value = true
             if (targets.isEmpty()) {
@@ -115,38 +144,45 @@ object SosContactNotifier {
             }
 
             val transport = InternetChatTransport(appContext)
-            val pending = targets.associateBy { it.sessionCode }.toMutableMap()
+            val pending = targets.filter { delivery.isPending(it.sessionCode) }.associateBy { it.sessionCode }.toMutableMap()
 
             // A fix makes the first alert far more useful; wait briefly, then run with what we have.
             var lastFix = withTimeoutOrNull(INITIAL_LOCATION_WAIT_MS) {
                 runCatching { locationProvider() }.getOrNull()
             }
             var lastFixFetchedAt = System.currentTimeMillis()
-            var lastSentFix: BlePeerIdentityUtils.PeerLocationSnapshot? = null
             var lastInitialAttemptAt = 0L
             var lastLiveUpdateAt = 0L
 
             while (isActive && GattSOSServerService.isDeclared.value) {
                 val now = System.currentTimeMillis()
+                val satellite = SatelliteNetworkStatus.isConstrained(appContext) ||
+                    com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value
+                val loopTick = if (satellite) SATELLITE_LOOP_TICK_MS else LOOP_TICK_MS
+                val retryInterval = if (satellite) SATELLITE_INITIAL_RETRY_INTERVAL_MS
+                    else INITIAL_RETRY_INTERVAL_MS
+                val locationRefreshInterval = if (satellite) SATELLITE_LOCATION_REFRESH_INTERVAL_MS
+                    else LOCATION_REFRESH_INTERVAL_MS
 
                 // Refresh the fix on its own cadence so the GPS isn't hammered every tick.
-                if (now - lastFixFetchedAt >= LOCATION_REFRESH_INTERVAL_MS) {
+                if (now - lastFixFetchedAt >= locationRefreshInterval) {
                     runCatching { locationProvider() }.getOrNull()?.let { lastFix = it }
                     lastFixFetchedAt = now
                 }
 
-                if (!transport.isAvailable()) {
-                    delay(LOOP_TICK_MS)
+                if (!transport.isAvailable(allowSatellite = true)) {
+                    delay(loopTick)
                     continue
                 }
 
                 // Initial alerts — rebuilt each attempt so a late send still ships a fresh fix.
-                if (pending.isNotEmpty() && now - lastInitialAttemptAt >= INITIAL_RETRY_INTERVAL_MS) {
+                if (pending.isNotEmpty() && now - lastInitialAttemptAt >= retryInterval) {
                     lastInitialAttemptAt = now
                     val text = buildSosMessage(appContext, lastFix)
                     for (contact in pending.values.toList()) {
+                        currentCoroutineContext().ensureActive()
                         updateStatus(contact.sessionCode, RecipientStatus.Sending)
-                        val messageId = UUID.randomUUID().toString()
+                        val messageId = delivery.messageIds[contact.sessionCode] ?: continue
                         val sent = runCatching {
                             transport.sendText(
                                 messageId = messageId,
@@ -157,7 +193,10 @@ object SosContactNotifier {
                                 templateCode = InternetChatTransport.SOS_ALERT_TEMPLATE
                             )
                         }.getOrDefault(false)
+                        currentCoroutineContext().ensureActive()
                         if (sent) {
+                            delivery.markAlertSent(contact.sessionCode, lastFix?.coordinates())
+                            prefs(appContext).edit().putString(KEY_ACTIVE_ALERTS, JSONObject(delivery.sentMessageIds).toString()).commit()
                             runCatching {
                                 saveLocalSosMessage(appContext, contact.sessionCode, messageId, text)
                             }.onFailure {
@@ -165,7 +204,6 @@ object SosContactNotifier {
                             }
                             pending.remove(contact.sessionCode)
                             alerted[contact.sessionCode] = AlertedRecipient(contact, messageId)
-                            lastSentFix = lastFix
                             updateStatus(contact.sessionCode, RecipientStatus.Sent)
                         } else {
                             updateStatus(contact.sessionCode, RecipientStatus.Failed)
@@ -176,15 +214,17 @@ object SosContactNotifier {
                 // Live location updates — rewrite the delivered bubbles when the victim has moved.
                 val fix = lastFix
                 if (
+                    !SatelliteNetworkStatus.isConstrained(appContext) &&
                     alerted.isNotEmpty() &&
                     fix != null &&
-                    now - lastLiveUpdateAt >= LIVE_UPDATE_MIN_INTERVAL_MS &&
-                    hasMovedEnough(lastSentFix, fix)
+                    now - lastLiveUpdateAt >= (if (satellite) 600_000L else LIVE_UPDATE_MIN_INTERVAL_MS)
                 ) {
                     lastLiveUpdateAt = now
                     val newText = buildSosMessage(appContext, fix)
-                    var anySent = false
+                    val coordinates = fix.coordinates()
                     alerted.values.forEach { recipient ->
+                        currentCoroutineContext().ensureActive()
+                        if (!delivery.needsLocationUpdate(recipient.contact.sessionCode, coordinates)) return@forEach
                         val payload = JSONObject()
                             .put("ref", recipient.alertMessageId)
                             .put("text", newText)
@@ -199,19 +239,17 @@ object SosContactNotifier {
                                 templateCode = InternetChatTransport.SOS_LOCATION_UPDATE_TEMPLATE
                             )
                         }.getOrDefault(false)
+                        currentCoroutineContext().ensureActive()
                         if (sent) {
-                            anySent = true
+                            delivery.markLocationSent(recipient.contact.sessionCode, coordinates)
                             runCatching {
                                 updateSosAlertText(appContext, recipient.alertMessageId, newText)
                             }
                         }
                     }
-                    if (anySent) {
-                        lastSentFix = fix
-                    }
                 }
 
-                delay(LOOP_TICK_MS)
+                delay(loopTick)
             }
         }
     }
@@ -221,23 +259,29 @@ object SosContactNotifier {
      * alert. Undeliverable all-clears (offline stop, transient failure) are persisted and retried
      * by [SosReportWorker] once a network appears — nobody should keep worrying after a false alarm.
      */
+    fun pause() { job?.cancel(); job = null }
+
     fun onSosStopped(context: Context) {
+        com.auralis.crisisconnect.connectivity.DisasterTrafficController.setEmergency(false)
         val appContext = context.applicationContext
         job?.cancel()
         job = null
-        val toNotify = alerted.values.map { it.contact }
+        val stored = runCatching { JSONObject(prefs(appContext).getString(KEY_ACTIVE_ALERTS, "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val toNotify = (stored.keys().asSequence().toSet() + alerted.keys)
         alerted = linkedMapOf()
         _recipients.value = emptyList()
         _selectionReady.value = false
+        prefs(appContext).edit().remove(KEY_PENDING_ALERT_IDS).commit()
         if (toNotify.isEmpty()) {
             return
         }
         prefs(appContext).edit()
             .putStringSet(
                 KEY_PENDING_ALL_CLEAR_SESSIONS,
-                toNotify.map { it.sessionCode }.toSet()
+                toNotify
             )
-            .apply()
+            .remove(KEY_ACTIVE_ALERTS)
+            .commit()
         notifierScope.launch {
             if (!deliverPendingAllClear(appContext)) {
                 SosReportWorker.enqueue(appContext)
@@ -264,7 +308,7 @@ object SosContactNotifier {
             return true
         }
         val transport = InternetChatTransport(appContext)
-        if (!transport.isAvailable()) {
+        if (!transport.isAvailable(allowSatellite = true)) {
             return false
         }
         val text = appContext.getString(R.string.sos_contact_message_ended)
@@ -372,24 +416,13 @@ object SosContactNotifier {
         }
     }
 
-    private fun hasMovedEnough(
-        from: BlePeerIdentityUtils.PeerLocationSnapshot?,
-        to: BlePeerIdentityUtils.PeerLocationSnapshot
-    ): Boolean {
-        // The very first update after an alert that shipped WITHOUT a fix should always go out.
-        if (from == null) return true
-        val results = FloatArray(1)
-        return runCatching {
-            Location.distanceBetween(
-                from.latitude,
-                from.longitude,
-                to.latitude,
-                to.longitude,
-                results
-            )
-            results[0] >= LIVE_UPDATE_MIN_MOVE_METERS
-        }.getOrDefault(false)
-    }
+    private fun BlePeerIdentityUtils.PeerLocationSnapshot.coordinates() =
+        SosContactDeliveryState.Coordinates(latitude, longitude)
+
+    private fun readAlertIds(context: Context, key: String): Map<String, String> = runCatching {
+        val stored = JSONObject(prefs(context).getString(key, "{}") ?: "{}")
+        stored.keys().asSequence().associateWith { stored.getString(it) }
+    }.getOrDefault(emptyMap())
 
     private fun updateStatus(sessionCode: String, status: RecipientStatus) {
         _recipients.value = _recipients.value.map {

@@ -12,10 +12,7 @@ import kotlinx.coroutines.flow.map
  * Opt-in switch for nearby contact discovery. Off by default — advertising your (rotating,
  * truncated) phone token so nearby contacts can find you only happens when the user turns it on.
  *
- * Exception: once the user has added their phone number (e.g. in the welcome flow) we flip it on
- * as a sensible default via [enableByDefaultIfUnset], because discovery only works for people who
- * already have your number. A deliberate choice via the toggle ([setEnabled]) always wins and is
- * never overridden by that default.
+ * Only an explicit toggle opts in. A stored phone number is not consent to advertise presence.
  */
 object NearbyDiscoveryPreferences {
     private val ENABLED_KEY = booleanPreferencesKey("nearby_discovery_enabled")
@@ -24,7 +21,7 @@ object NearbyDiscoveryPreferences {
     private val USER_SET_KEY = booleanPreferencesKey("nearby_discovery_user_set")
 
     fun isEnabled(context: Context): Flow<Boolean> =
-        context.settingsDataStore.data.map { it[ENABLED_KEY] ?: false }
+        context.settingsDataStore.data.map { it[USER_SET_KEY] == true && it[ENABLED_KEY] == true }
 
     suspend fun isEnabledNow(context: Context): Boolean = isEnabled(context).first()
 
@@ -40,16 +37,5 @@ object NearbyDiscoveryPreferences {
      * made an explicit choice (or it's already on). Returns true only if it actually flipped it on,
      * so the caller can bring the service up.
      */
-    suspend fun enableByDefaultIfUnset(context: Context): Boolean {
-        var flippedOn = false
-        context.settingsDataStore.edit { prefs ->
-            val userSet = prefs[USER_SET_KEY] ?: false
-            val current = prefs[ENABLED_KEY] ?: false
-            if (!userSet && !current) {
-                prefs[ENABLED_KEY] = true
-                flippedOn = true
-            }
-        }
-        return flippedOn
-    }
+    suspend fun enableByDefaultIfUnset(context: Context): Boolean = false
 }

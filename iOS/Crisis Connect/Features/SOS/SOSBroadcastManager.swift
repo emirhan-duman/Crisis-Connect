@@ -473,9 +473,15 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     /// broadcast, and being advertised where rescuers can see it — hangs off THIS, never off
     /// `isSessionActive`. Conflating the two is what made merely opening a chat transmit a real SOS.
     @Published private(set) var isEmergencyDeclared: Bool = false
+    @Published private(set) var emergencySessionID: String?
     @Published private(set) var bluetoothState: CBManagerState = .unknown
+    var broadcastStatus: SOSBluetoothBroadcastStatus {
+        SOSBluetoothBroadcastStatus(isBroadcasting: isBroadcasting, bluetoothState: bluetoothState)
+    }
     @Published private(set) var lastAuthenticatedFieldTeamSessionId: UUID?
 
+    @Published private(set) var recoveryError: String?
+    var recoveryRequired: Bool { !isEmergencyDeclared && SOSRecoveryStore.shared.snapshot.session != nil }
     private var startDate: Date?
     private var timer: Timer?
 
@@ -508,6 +514,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     }
     private var authSessionNonces: [UUID: String] = [:]
     private var pskCentrals: Set<UUID> = []
+    private var pskContactBroadcastIds: [UUID: String] = [:]
     private var secureInReceivers: [UUID: SOSChunkReceiver] = [:]
     private var secureChatReceivers: [UUID: SOSChunkReceiver] = [:]
     private var verifiedCentrals: Set<UUID> = []
@@ -553,7 +560,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
 
     var hostProfileIdentifier: String { "sos" }
     var hostPrimaryServiceUUID: CBUUID { serviceUUID }
-    var isPeripheralHostActive: Bool { isSessionActive && PlatformRuntime.supportsBlePeripheralHosting }
+    var isPeripheralHostActive: Bool { isSessionActive && PlatformRuntime.supportsBlePeripheralHosting && !WatchE2ETestMode.enabled }
     var hostedAdvertisementDescriptor: BleHostedAdvertisementDescriptor? {
         // Hosting is advertised only when an emergency was declared. CoreBluetooth cannot put service
         // DATA in an advertisement — the trick Android uses to mark intent — so on iOS intent is
@@ -573,7 +580,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     }
 
     private var idValue: Data {
-        Data(broadcastId.utf8)
+        Data(RadioPrivacyIdentity.current.broadcastId.utf8)
     }
 
     private struct PendingNotificationKey: Hashable {
@@ -616,7 +623,8 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     /// the agency dashboard and auto-messaged the user's contacts with no user action at all. The
     /// emergency block below is unchanged and un-gated internally: a suppressed real SOS is far worse
     /// than an accidental one, so nothing here is made conditional except who may reach it.
-    func start(declaringEmergency: Bool) {
+    func start(declaringEmergency: Bool, resumingID: String? = nil) {
+        if declaringEmergency && !isEmergencyDeclared, !declareEmergency(resumingID: resumingID) { return }
         guard timer == nil else {
             // A chat already had the session up and the user has now pressed SOS: escalate in place
             // rather than returning, or the real emergency would be silently swallowed.
@@ -630,13 +638,13 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         if declaringEmergency {
             declareEmergency()
         }
-        startDate = Date()
+        startDate = SOSRecoveryStore.shared.snapshot.session?.startedAt ?? Date()
         updateElapsed()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.updateElapsed()
         }
         timer?.tolerance = 0.2
-        guard PlatformRuntime.supportsBlePeripheralHosting else {
+        guard PlatformRuntime.supportsBlePeripheralHosting, !WatchE2ETestMode.enabled else {
             bluetoothState = .unsupported
             isBroadcasting = false
             return
@@ -645,29 +653,53 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     }
 
     /// Idempotent: the SOS button can be pressed while a chat session is already hosting.
-    private func declareEmergency() {
-        guard !isEmergencyDeclared else { return }
+    @discardableResult
+    private func declareEmergency(resumingID: String? = nil) -> Bool {
+        guard !isEmergencyDeclared else { return true }
+        let saved: SOSRecoveryStore.Session
+        do { saved = try SOSRecoveryStore.shared.begin(resuming: resumingID); recoveryError = nil }
+        catch { recoveryError = "Kayıtlı SOS devam edemedi. Oturum korundu."; return false }
+        emergencySessionID = saved.id
+        startDate = saved.startedAt
         isEmergencyDeclared = true
-        AppAnalytics.sosActivated()
+        #if DEBUG && targetEnvironment(simulator)
+        if WatchE2ETestMode.enabled { return true }
+        #endif
+        if resumingID == nil { AppAnalytics.sosActivated() }
         // Lock-screen + Dynamic Island live status (best-effort, never blocks the broadcast).
-        SosLiveActivityController.sosDeclared(startedAt: Date())
+        SosLiveActivityController.sosDeclared(startedAt: saved.startedAt)
         Task { @MainActor in
             self.signalLocationCoordinator.beginBroadcasting()
         }
         // Internet uplinks (best-effort; never block the BLE broadcast): the agency dashboard
         // report and the automatic emergency-contact alerts.
-        SosCloudReporter.shared.onSosStarted()
-        SosContactNotifier.shared.onSosStarted()
+        SosCloudReporter.shared.onSosStarted(resuming: resumingID != nil)
+        SosContactNotifier.shared.onSosStarted(resuming: resumingID != nil)
         // The session was advertised as chat-only until now; re-announce it so rescuers can see it.
         BlePeripheralHostCoordinator.shared.setNeedsRefresh()
+        return true
     }
 
     func stop() {
+        do { try SOSRecoveryStore.shared.finish(); recoveryError = nil }
+        catch { recoveryError = "SOS kaydı kapatılamadı. Tekrar dene."; return }
+        #if DEBUG && targetEnvironment(simulator)
+        if WatchE2ETestMode.enabled {
+            isSessionActive = false
+            isEmergencyDeclared = false
+            emergencySessionID = nil
+            timer?.invalidate(); timer = nil; startDate = nil; elapsedSeconds = 0
+            lastAuthenticatedFieldTeamSessionId = nil
+            isBroadcasting = false
+            return
+        }
+        #endif
         isSessionActive = false
         if isEmergencyDeclared {
             SosLiveActivityController.sosEnded()
         }
         isEmergencyDeclared = false
+        emergencySessionID = nil
         Task { @MainActor in
             self.signalLocationCoordinator.endBroadcasting()
         }
@@ -690,6 +722,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     }
 
     func peripheralHostWillReset() {
+        DispatchQueue.main.async { [weak self] in self?.isBroadcasting = false }
         resetHostedTransportState()
     }
 
@@ -796,6 +829,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         publishRescuerCount()
         authSessionNonces.removeAll()
         pskCentrals.removeAll()
+        pskContactBroadcastIds.removeAll()
         secureInReceivers.removeAll()
         secureChatReceivers.removeAll()
         verifiedCentrals.removeAll()
@@ -945,9 +979,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         let centralId = central.identifier
         resetCentralState(for: centralId)
         if value == pskChallengeValue {
-            guard let key = localPskKey() else { return .unlikelyError }
-            sessionKeys[centralId] = key
-            publishRescuerCount()
+            // Select the exact stored contact key only after decrypting and binding its hello.
             authSessionNonces.removeValue(forKey: centralId)
             pskCentrals.insert(centralId)
             authResponseValues[centralId] = pskResponseValue
@@ -994,18 +1026,35 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     ) -> CBATTError.Code {
         guard let value, !value.isEmpty else { return .invalidAttributeValueLength }
         let centralId = central.identifier
-        guard let sessionKey = sessionKeys[centralId] else { return .insufficientAuthentication }
+        guard pskCentrals.contains(centralId) || sessionKeys[centralId] != nil else { return .insufficientAuthentication }
         let receiver = secureInReceivers[centralId] ?? SOSChunkReceiver(maxPacketSize: maxRoleProofPacketBytes)
         secureInReceivers[centralId] = receiver
 
         do {
             guard let packet = try receiver.onChunk(value) else { return .success }
+            if pskCentrals.contains(centralId), sessionKeys[centralId] == nil {
+                for contact in ContactStore.shared.offlineKeyCandidates() {
+                    guard let candidate = ContactStore.shared.aesKey(for: contact),
+                          let plaintext = try? AesGcmHelper.decryptPacket(key: candidate, transportPacket: packet,
+                              maxPacketSize: maxRoleProofPacketBytes),
+                          let hello = ContactHandshakePayload.decode(from: plaintext),
+                          hello.broadcastId.caseInsensitiveCompare(contact.broadcastId) == .orderedSame else { continue }
+                    sessionKeys[centralId] = candidate
+                    pskContactBroadcastIds[centralId] = contact.broadcastId
+                    break
+                }
+            }
+            guard let sessionKey = sessionKeys[centralId] else { return .insufficientAuthentication }
             if let handshake = try? AesGcmHelper.decryptPacket(
                 key: sessionKey,
                 transportPacket: packet,
                 maxPacketSize: maxRoleProofPacketBytes
             ),
             let payload = ContactHandshakePayload.decode(from: handshake) {
+                // An anonymous ECDH session must present a role proof, not a contact hello.
+                guard pskCentrals.contains(centralId),
+                      let boundId = pskContactBroadcastIds[centralId],
+                      boundId.caseInsensitiveCompare(payload.broadcastId) == .orderedSame else { return .insufficientAuthentication }
                 receiver.reset()
                 verifiedCentrals.insert(centralId)
                 let sessionId = BroadcastSessionId.fromBroadcastId(payload.broadcastId)
@@ -1169,9 +1218,12 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     private func handleSecureAck(_ value: Data?, central: CBCentral) -> CBATTError.Code {
         guard let value, !value.isEmpty else { return .invalidAttributeValueLength }
         let centralId = central.identifier
+        guard verifiedCentrals.contains(centralId), let key = sessionKeys[centralId],
+              let authenticated = SecureBleReceipt.open(key: key, wire: value),
+              let ack = BleChatEnvelope.decodeAck(authenticated) else { return .insufficientAuthentication }
         let sessionId = resolveSessionId(for: centralId)
         DispatchQueue.main.async {
-            if let ack = BleChatEnvelope.decodeAck(value) {
+            do {
                 switch ack.type {
                 case .delivered:
                     SOSChatStore.shared.markDelivered(
@@ -1186,10 +1238,6 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
                 case .decryptFail:
                     break
                 }
-            } else if value == self.messageAckValue {
-                SOSChatStore.shared.markDelivered(sessionId: sessionId)
-            } else if value == self.readAckValue {
-                SOSChatStore.shared.markRead(sessionId: sessionId)
             }
         }
         return .success
@@ -1248,6 +1296,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         sessionKeys.removeValue(forKey: centralId)
         authSessionNonces.removeValue(forKey: centralId)
         pskCentrals.remove(centralId)
+        pskContactBroadcastIds.removeValue(forKey: centralId)
         verifiedCentrals.remove(centralId)
         secureInReceivers[centralId]?.reset()
         secureInReceivers.removeValue(forKey: centralId)
@@ -1325,13 +1374,6 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
         combined.append(serverPublicKey)
         let digest = Data(SHA256.hash(data: combined))
         return digest.base64EncodedString()
-    }
-
-    private func localPskKey() -> SymmetricKey? {
-        let base64 = SecureLocalStore.shared.getOrCreateAesKeyBase64()
-        guard let data = Data(base64Encoded: base64, options: [.ignoreUnknownCharacters]),
-              data.count == 32 else { return nil }
-        return SymmetricKey(data: data)
     }
 
     func sendChatMessage(to sessionId: UUID, text: String, transportMessageId: String) -> Bool {
@@ -1641,6 +1683,7 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
     ) -> String {
         var payload: [String: Any] = [
             "kind": "peer_info",
+            "broadcastId": broadcastId,
             "name": name,
             "role": role
         ]
@@ -2223,6 +2266,11 @@ final class SOSBroadcastManager: NSObject, ObservableObject, CBPeripheralManager
 
     private func setAck(_ payload: Data, for central: CBCentral, peripheral: CBPeripheralManager) {
         let centralId = central.identifier
+        var payload = payload
+        if BleChatEnvelope.decodeAck(payload) != nil {
+            guard let key = sessionKeys[centralId], let encrypted = SecureBleReceipt.seal(key: key, payload: payload) else { return }
+            payload = encrypted
+        }
         secureAckValues[centralId] = payload
         guard let secureAckCharacteristic else { return }
         if subscribedAckCentrals[centralId] != nil {

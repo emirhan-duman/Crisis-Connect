@@ -1,0 +1,10 @@
+<resources>
+    <string name="sos_recovery_title">Kayıtlı SOS</string>
+    <string name="sos_recovery_body">Önceki SOS ve cevapların korundu. Yayın duraklatıldı. Hâlâ yardıma ihtiyacın varsa devam et. Aynı oturum sürdürülür; kişilere ilk SOS uyarısı tekrar gönderilmez.</string>
+    <string name="sos_recovery_resume">Kayıtlı SOS’a devam et</string>
+    <string name="sos_recovery_end">Kayıtlı SOS’u bitir</string>
+    <string name="sos_recovery_failed">SOS devam edemedi. Bluetooth ve izinleri kontrol et. Kayıtlı oturumun korundu.</string>
+    <string name="watch_reply_handed_off">Bağlantıya verildi; teslim edildiği doğrulanmadı.</string>
+    <string name="watch_reply_uncertain">Teslim edildiği doğrulanmadı. Bu cevap otomatik tekrar gönderilmeyecek.</string>
+    <string name="sos_recovery_unavailable">Kayıtlı SOS bilgisi okunamadı. SOS yeniden başlatılmadı. Uygulamayı yeniden açıp tekrar dene.</string>
+</resources>

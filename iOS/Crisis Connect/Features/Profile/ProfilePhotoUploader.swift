@@ -48,6 +48,7 @@ enum ProfilePhotoUploader {
                 return
             }
         }
+        guard DisasterTrafficController.shared.permits(.avatar) else { return }
         guard UserDefaults.standard.bool(forKey: pendingKey) else { return }
         guard let user = Auth.auth().currentUser, !user.isAnonymous else { return }
         let generation = UserDefaults.standard.string(forKey: pendingGenerationKey) ?? UUID().uuidString
@@ -61,12 +62,17 @@ enum ProfilePhotoUploader {
             let metadata = StorageMetadata()
             metadata.contentType = "image/jpeg"
             metadata.cacheControl = "public, max-age=300"
-            _ = try await reference.putDataAsync(data, metadata: metadata)
-            let url = try await reference.downloadURL()
+            let url: URL
+            if ResilientApplicationStore.enabled {
+                url = try await ResilientMediaClient.uploadAvatar(data, generation: generation)
+            } else {
+                _ = try await reference.putDataAsync(data, metadata: metadata)
+                url = try await reference.downloadURL()
+            }
             // A delete or a newer selection may have happened while Storage was uploading. Only the
             // generation that is still pending may publish its URL to Firestore.
             guard UserDefaults.standard.string(forKey: pendingGenerationKey) == generation else { return }
-            try await Firestore.firestore().collection("users").document(user.uid).setData([
+            try await ResilientApplicationStore.profiles().collection("users").document(user.uid).setData([
                 "photoURL": url.absoluteString,
                 "photoUpdatedAt": FieldValue.serverTimestamp(),
                 "photoDeletedAt": FieldValue.delete()
@@ -90,7 +96,9 @@ enum ProfilePhotoUploader {
 
     private static func publishDeletionTombstone(user explicitUser: User? = nil) async throws {
         guard let user = explicitUser ?? Auth.auth().currentUser, !user.isAnonymous else { return }
-        try await Firestore.firestore().collection("users").document(user.uid).setData([
+        let previous = try? await ResilientApplicationStore.profiles().collection("users").document(user.uid).getDocument()
+        let oldURL = previous?.get("photoURL") as? String
+        try await ResilientApplicationStore.profiles().collection("users").document(user.uid).setData([
             "photoURL": "",
             "photoUpdatedAt": FieldValue.serverTimestamp(),
             "photoDeletedAt": FieldValue.serverTimestamp()
@@ -98,6 +106,9 @@ enum ProfilePhotoUploader {
         UserDefaults.standard.removeObject(forKey: deletionPendingKey)
 
         do {
+            if ResilientApplicationStore.enabled, let oldURL, let path = ResilientMediaClient.avatarPath(oldURL) {
+                try await ResilientMediaClient.delete(path: path)
+            }
             try await Storage.storage().reference(withPath: "users/\(user.uid)/avatar.jpg").delete()
         } catch {
             // The Firestore tombstone is already authoritative. A missing object or a transient

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="qr_scanner_heading">Kişinin QR kodunu tara</string>
+    <string name="qr_scanner_auto_hint">QR kodunu çerçevenin içinde tut. Tarama otomatik başlar.</string>
+    <string name="qr_scanner_camera_ready">Kamera hazır</string>
+    <string name="qr_scanner_camera_starting">Kamera açılıyor…</string>
+    <string name="qr_scanner_help_action">Tarama yardımı</string>
+    <string name="qr_scanner_torch_on">Işığı aç</string>
+    <string name="qr_scanner_torch_off">Işığı kapat</string>
+    <string name="qr_scanner_torch_error">Fener değiştirilemedi. Tekrar dene.</string>
+    <string name="qr_scanner_permission_title">Tarama için kamerayı aç</string>
+    <string name="qr_scanner_permission_detail">Bir Crisis Connect QR kodunu tarayıp kişi eklemek için kameranı kullan.</string>
+</resources>

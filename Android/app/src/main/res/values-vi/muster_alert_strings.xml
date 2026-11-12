@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Chọn âm thanh thông báo, độ rung và hiển thị màn hình khóa trong cài đặt Android. Cảnh báo toàn màn hình cần có sự cho phép của bạn và có thể bị giới hạn bởi chế độ Không làm phiền, cài đặt pin hoặc ứng dụng bị buộc dừng.</string>
+    <string name="muster_alert_settings_title">Âm thanh, độ rung và màn hình khóa</string>
+    <string name="muster_alerts_blocked">Thông báo ứng dụng bị tắt trong cài đặt Android</string>
+    <string name="muster_alerts_quiet">Kênh thông báo này ở chế độ im lặng hoặc có mức độ ưu tiên thấp; bật cảnh báo bật lên trong cài đặt Android</string>
+    <string name="muster_locked_screen_note">Cảnh báo toàn màn hình xuất hiện khi điện thoại của bạn bị khóa hoặc màn hình tắt, nếu Android cho phép chúng. Thay vào đó, khi bạn đang sử dụng điện thoại, Android có thể hiển thị thông báo cảnh báo.</string>
+    <string name="muster_urgent_sound">Âm thanh ở chế độ im lặng</string>
+    <string name="muster_urgent_sound_help">Chỉ dành cho những trường hợp đăng ký khẩn cấp vì thảm họa. Sử dụng âm lượng báo thức hiện có của bạn trong một thời gian giới hạn khi màn hình đăng ký hiển thị. Dừng khi bạn chạm vào màn hình.</string>
+    <string name="muster_urgent_ready">Có sẵn trong phạm vi quyền của hệ thống. Không làm phiền và âm lượng báo thức vẫn nằm trong tầm kiểm soát của bạn.</string>
+    <string name="muster_urgent_not_ready">Kiểm tra âm lượng báo thức, quyền thông báo và Không làm phiền. Các hạn chế của hệ thống được tôn trọng.</string>
+    <string name="muster_urgent_seconds">%1$d giây</string>
+    <string name="muster_flash_settings">Cài đặt cảnh báo flash</string>
+    <string name="muster_flash_help">Nếu điện thoại hỗ trợ, hãy bật thông báo bằng đèn flash trong phần cài đặt trợ năng của Android. Android quản lý các cảnh báo này ngay cả khi ứng dụng đã đóng.</string>
+</resources>

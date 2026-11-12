@@ -25,14 +25,12 @@ enum NearbyPairingGatt {
 // MARK: - Discovery opt-in (mirror of Android's NearbyDiscoveryPreferences)
 
 /// Opt-in switch for nearby discoverability. Off by default — hosting the "open to add" beacon only
-/// happens when the user turns it on. Exception, same as Android: once the user has a verified phone
-/// number we flip it on as a sensible default, because SPAKE2 pairing only works for people who
-/// already have your number anyway. A deliberate toggle choice always wins over that default.
+/// happens when the user explicitly turns it on. Adding a phone number never opts in.
 enum NearbyDiscoveryPreferences {
     private static let enabledKey = "nearby.discovery.enabled"
     private static let userSetKey = "nearby.discovery.userSet"
 
-    static var isEnabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+    static var isEnabled: Bool { UserDefaults.standard.bool(forKey: userSetKey) && UserDefaults.standard.bool(forKey: enabledKey) }
 
     static func setEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: enabledKey)
@@ -40,13 +38,9 @@ enum NearbyDiscoveryPreferences {
         BlePeripheralHostCoordinator.shared.setNeedsRefresh()
     }
 
-    /// Default-on once a phone number exists — never overriding an explicit choice.
+    /// Compatibility hook for callers; discoverability still requires explicit consent.
     static func enableByDefaultIfUnset() {
-        guard !UserDefaults.standard.bool(forKey: userSetKey),
-              !UserDefaults.standard.bool(forKey: enabledKey),
-              NearbyPairingSupport.ownPhoneE164() != nil else { return }
-        UserDefaults.standard.set(true, forKey: enabledKey)
-        BlePeripheralHostCoordinator.shared.setNeedsRefresh()
+        // A phone number is not consent to advertise presence. Only setEnabled opts in.
     }
 }
 
@@ -65,6 +59,7 @@ final class NearbyPairingPeripheral: NSObject, ObservableObject, BlePeripheralHo
     private final class Session {
         let responder: NearbySpakePairing.Responder
         var peer: NearbyIdentity?
+        let createdAt = ProcessInfo.processInfo.systemUptime
         init(_ responder: NearbySpakePairing.Responder) { self.responder = responder }
     }
 
@@ -77,6 +72,7 @@ final class NearbyPairingPeripheral: NSObject, ObservableObject, BlePeripheralHo
     static let shared = NearbyPairingPeripheral()
 
     private var sessions: [UUID: Session] = [:]     // central id -> handshake state
+    private var admission = NearbyPairingAdmission()
     private var responses: [UUID: Data] = [:]       // central id -> current READ payload
     private let queue = DispatchQueue(label: "nearby.pairing.peripheral")
 
@@ -160,6 +156,10 @@ final class NearbyPairingPeripheral: NSObject, ObservableObject, BlePeripheralHo
     }
 
     private func handleWrite(centralId: UUID, value: Data) {
+        let now = ProcessInfo.processInfo.systemUptime
+        sessions = sessions.filter { now >= $0.value.createdAt && now - $0.value.createdAt < 60 }
+        responses = responses.filter { sessions[$0.key] != nil }
+        guard isPeripheralHostActive, value.count <= 8192 else { return }
         if let existing = sessions[centralId] {
             // Second write = SPAKE2 message 3.
             guard existing.peer == nil else { return }
@@ -176,6 +176,9 @@ final class NearbyPairingPeripheral: NSObject, ObservableObject, BlePeripheralHo
             }
             return
         }
+        // Check admission before parsing or expensive curve operations. Rotating IDs cannot
+        // evade the global bound; incomplete/approval sessions are bounded and expire.
+        guard sessions.count < 8, admission.admit(centralId, now: now) else { return }
         // First write = SPAKE2 message 1.
         guard let ownPhone = NearbyPairingSupport.ownPhoneE164() else {
             responses[centralId] = NearbySpakePairing.rejectMessage()
@@ -196,10 +199,15 @@ final class NearbyPairingPeripheral: NSObject, ObservableObject, BlePeripheralHo
     /// User approved: reveal our identity, save the contact.
     func accept(_ id: UUID) {
         queue.async {
-            guard let session = self.sessions[id], let peer = session.peer else { return }
-            self.responses[id] = (try? session.responder.responseMessage(status: NearbySpakePairing.statusOk))
-            if let key = try? session.responder.contactKey() {
-                NearbyPairingSupport.savePairedContact(peer: peer, contactKey: key, bluetoothAddress: id.uuidString)
+            guard let session = self.sessions[id], let peer = session.peer,
+                  ProcessInfo.processInfo.systemUptime - session.createdAt < 60,
+                  self.isPeripheralHostActive else { return }
+            do {
+                let key = try session.responder.contactKey()
+                try NearbyPairingSupport.savePairedContact(peer: peer, contactKey: key, bluetoothAddress: id.uuidString)
+                self.responses[id] = try session.responder.responseMessage(status: NearbySpakePairing.statusOk)
+            } catch {
+                self.responses[id] = NearbySpakePairing.rejectMessage()
             }
             DispatchQueue.main.async { if self.pendingApproval?.id == id { self.pendingApproval = nil } }
         }
@@ -324,9 +332,9 @@ final class NearbyPairingCentral: NSObject, CBCentralManagerDelegate, CBPeripher
                 guard let peer = try? initiator.onMessage4(value), let key = try? initiator.contactKey() else {
                     finish(.failed); return
                 }
-                let sessionCode = NearbyPairingSupport.savePairedContact(
+                guard let sessionCode = try? NearbyPairingSupport.savePairedContact(
                     peer: peer, contactKey: key, bluetoothAddress: peripheral.identifier.uuidString
-                )
+                ) else { finish(.failed); return }
                 finish(.paired(sessionCode: sessionCode, displayName: peer.displayName))
             default:
                 finish(.notMatched) // REJECT

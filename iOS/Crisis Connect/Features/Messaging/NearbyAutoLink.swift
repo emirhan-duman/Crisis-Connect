@@ -30,11 +30,9 @@ final class NearbyAutoLink: NSObject, CBCentralManagerDelegate {
     /// handshake open longer while they tap Accept (NearbyPairingCentral's own timeout).
     private static let discoverWindow: TimeInterval = 8
 
-    /// True when [contact] is an internet contact that could still gain an automatic BT link.
+    /// Existing identities require trusted QR re-pairing; knowing a number is insufficient.
     static func isEligible(_ contact: ContactRecord?) -> Bool {
-        guard let contact else { return false }
-        let phone = contact.peerPhone?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return contact.supportsInternet && !phone.isEmpty && contact.aesKeyBase64.isEmpty
+        false
     }
 
     /// Fire-and-forget: scans briefly for pairing beacons (0xCCA6) and runs the number-keyed
@@ -131,7 +129,7 @@ final class NearbyAutoLink: NSObject, CBCentralManagerDelegate {
         let stored = ContactStore.shared.contacts.first {
             $0.sessionCode.caseInsensitiveCompare(session) == .orderedSame
         }
-        guard let stored, !stored.aesKeyBase64.isEmpty else { return false }
+        guard let stored, ContactStore.shared.aesKey(for: stored) != nil else { return false }
         let storedUid = stored.peerUid?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let storedKey = stored.peerPublicKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return storedUid == expectedUid && storedKey == expectedKey

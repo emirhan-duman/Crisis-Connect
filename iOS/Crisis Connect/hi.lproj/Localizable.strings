@@ -503,7 +503,7 @@
 "ADVANCED_SETTINGS_DESCRIPTION" = "डायग्नोस्टिक्स और संदेश डिलीवरी के लिए ऐप के व्यवहार को ठीक करें।";
 "ADVANCED_SETTINGS_LINK_SUBTITLE" = "रेडियो व्यवहार, डायग्नोस्टिक्स और डिलीवरी नियंत्रण।";
 "ADVANCED_SETTING_PUBLIC_MESH_TITLE" = "सामान्य चैट";
-"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "इस फ़ोन को आस-पास की साझा सामान्य चैट में दिखाएँ।";
+"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "सार्वजनिक चैट: आस-पास का कोई भी व्यक्ति संदेश पढ़ सकता है और शामिल हो सकता है। संवेदनशील जानकारी साझा न करें।";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_TITLE" = "सामान्य चैट सूचनाएँ";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_DESCRIPTION" = "केवल साझा सामान्य चैट के नए संदेशों के लिए अलर्ट।";
 "ADVANCED_SETTING_HIGH_RANGE_TITLE" = "उच्च रेंज मोड";
@@ -1218,7 +1218,7 @@
 "ONBOARDING_TRUST_OPEN_SOURCE" = "ओपन सोर्स — कोई भी कोड की जाँच कर सकता है";
 "ONBOARDING_TRUST_NO_ADS" = "कोई विज्ञापन नहीं — आपका व्यक्तिगत डेटा कभी नहीं बेचा जाता";
 "ONBOARDING_TRUST_EMERGENCY" = "केवल आपातकालीन संचार के लिए बनाया गया";
-"ONBOARDING_TRUST_DIAGNOSTICS" = "जब तक आप डायग्नोस्टिक्स सक्षम नहीं करते, क्रैश रिपोर्टें बंद रहती हैं।";
+"ONBOARDING_TRUST_DIAGNOSTICS" = "ऐप को स्थिर रखने के लिए केवल अनाम क्रैश रिपोर्ट एकत्र की जाती हैं।";
 "ONBOARDING_FINISH" = "Crisis Connect शुरू करें";
 
 "CRISIS_SENTINEL_ENGINE_ONLINE" = "क्लाउड";
@@ -1452,3 +1452,44 @@
 "guide_redesign_subtitle_now" = "स्थिति चुनें और कुछ सेकंड में पहला सही कदम देखें।";
 "guide_redesign_subtitle_prepare" = "अपनी योजनाएँ और ऑफ़लाइन चेकलिस्ट पूरी करें।";
 "guide_redesign_unknown_region" = "अज्ञात क्षेत्र";
+
+/* Contact access: explicit consent before OS permission and directory lookup. */
+"CONTACTS_DISCLOSURE_TITLE" = "संपर्कों को ऑनलाइन खोजें";
+"CONTACTS_DISCLOSURE_BODY" = "Crisis Connect ऐप का उपयोग करने वाले लोगों को खोजने के लिए आपके संपर्कों के नाम और फ़ोन नंबर पढ़ता है। मिलान के लिए फ़ोन नंबर अमेरिका में Google Firebase द्वारा होस्ट किए गए Crisis Connect सर्वर पर भेजे जाते हैं। नाम आपके डिवाइस पर रहते हैं। खोजे गए नंबर स्थायी रूप से सहेजे बिना संसाधित होते हैं; मिलान आपके डिवाइस पर रहते हैं। यह स्क्रीन खुली होने पर रीफ़्रेश करने या वापस आने से नंबर फिर भेजे जा सकते हैं। आपकी पसंद इस डिवाइस पर इस खाते के लिए याद रखी जाती है। आप सेटिंग में संपर्कों तक पहुँच के तहत सहमति वापस ले सकते हैं।";
+"CONTACTS_LOCAL_DISCLOSURE_TITLE" = "आस-पास के संपर्क खोजें";
+"CONTACTS_LOCAL_DISCLOSURE_BODY" = "Crisis Connect आपके डिवाइस पर संपर्कों के नाम और फ़ोन नंबर पढ़ता है ताकि आप आस-पास खोजने के लिए किसी व्यक्ति को चुन सकें। चुना गया नंबर Bluetooth से पहचान सत्यापन के लिए इस्तेमाल होता है। यह सुविधा आपके संपर्क सर्वर पर नहीं भेजती। आपकी पसंद इस डिवाइस पर इस खाते के लिए याद रखी जाती है। आप सेटिंग में संपर्कों तक पहुँच के तहत सहमति वापस ले सकते हैं।";
+"CONTACTS_DISCLOSURE_ACCEPT" = "मैं सहमत हूँ";
+"CONTACTS_DISCLOSURE_DECLINE" = "अभी नहीं";
+
+"CONTACTS_CONSENT_SETTINGS_TITLE" = "संपर्कों तक पहुँच";
+
+"CONTACTS_CONSENT_SETTINGS_HINT" = "आपकी पसंद इस डिवाइस पर इस खाते के लिए याद रखी जाती है। आप सेटिंग में संपर्कों तक पहुँच के तहत सहमति वापस ले सकते हैं।";
+
+"CONTACTS_CONSENT_REVOKE_ONLINE" = "ऑनलाइन मिलान की सहमति वापस लें";
+
+"CONTACTS_CONSENT_REVOKE_NEARBY" = "आस-पास के संपर्कों की सहमति वापस लें";
+
+"CHAT_AUTOMATIC_DISASTER_MODE" = "Automatic data saving";
+"CHAT_DISASTER_MODE_DETAIL" = "SOS or a limited connection: short texts are paced; longer texts wait for recovery. Internet media, calls and presence are paused. Bluetooth remains available.";
+
+// Automatic limited-network connection status (local observation).
+"TRAFFIC_LOCAL_SOS" = "Your status: SOS active";
+"TRAFFIC_LOCAL_OFFLINE" = "Your connection: offline · messages queued";
+"TRAFFIC_LOCAL_LIMITED" = "Your connection: limited · saving data";
+"TRAFFIC_FEED_DEFERRED" = "Automatic refresh paused to save data. You can refresh manually.";
+"TRAFFIC_DELIVERY_EXPLANATION" = "Sent means the transport accepted the message. Delivered means the recipient acknowledged it; Read means it was marked as read.";
+"CHAT_STATUS_INTERNET_AVAILABLE" = "इंटरनेट उपलब्ध है";
+
+// Two-step verification
+"PROFILE_MFA_TITLE" = "दो चरणों में पुष्टि";
+"PROFILE_MFA_TOTP_MESSAGE" = "अपने ऑथेंटिकेटर ऐप का 6 अंकों वाला कोड डालें।";
+"PROFILE_MFA_SMS_MESSAGE" = "अपने रजिस्टर्ड फ़ोन पर पुष्टि करने का कोड भेजें, फिर SMS में मिला कोड डालें।";
+"PROFILE_MFA_UNSUPPORTED" = "पुष्टि करने का यह तरीका समर्थित नहीं है। रजिस्टर किया गया कोई दूसरा तरीका इस्तेमाल करें या रद्द करके वेब पर साइन इन करें।";
+"PROFILE_MFA_AUTHENTICATOR" = "ऑथेंटिकेटर";
+"PROFILE_MFA_SMS" = "SMS";
+"PROFILE_MFA_CODE" = "पुष्टि करने का कोड";
+"PROFILE_MFA_SEND" = "SMS कोड भेजें";
+"PROFILE_MFA_RESEND" = "SMS कोड फिर से भेजें";
+"PROFILE_MFA_VERIFY" = "पुष्टि करें";
+"PROFILE_MFA_METHOD_TITLE" = "पुष्टि करने का तरीका";
+"PROFILE_MFA_SMS_SENT_MESSAGE" = "अपने रजिस्टर्ड फ़ोन पर भेजा गया 6 अंकों वाला कोड डालें।";

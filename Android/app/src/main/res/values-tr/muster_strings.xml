@@ -1,0 +1,77 @@
+<resources>
+    <string name="muster_full_screen">Yoklama uyarılarını tam ekran göster</string>
+    <string name="muster_full_screen_description">Açıkken yoklama uyarısı ekranı uyandırıp kilit ekranının üzerinde açılabilir. Telefonu kullanırken Android üst bildirim gösterebilir. Kapatsan da normal bildirimler açık kalır.</string>
+    <string name="muster_full_screen_permission">Android’in tam ekran bildirim izni de gerekli.</string>
+    <string name="muster_full_screen_settings">Tam ekran iznini aç</string>
+    <string name="muster_unlock">Yanıtlamak için kilidi aç</string>
+    <string name="muster_later">Daha sonra</string>
+    <string name="muster_outbox">Bekleyen ve iletilemeyen yanıtlar</string>
+    <string name="muster_title">Personel yoklaması</string><string name="muster_description">Kurumundan gelen güvenlik yoklamaları</string>
+    <string name="muster_notification">Kurumun güvenlik durumunu bildirmeni istiyor.</string>
+    <string name="muster_connect_instructions">Yoklama isteği geldi. Talimatın tamamı için bağlan; yanıtını çevrimdışı kaydedebilirsin.</string>
+    <string name="muster_safe">Güvendeyim</string><string name="muster_help">Yardıma ihtiyacım var</string><string name="muster_at_point">Toplanma noktasındayım</string>
+    <string name="muster_queued">Telefona kaydedildi · gönderim bekliyor</string><string name="muster_sent">Kurumuna iletildi</string><string name="muster_failed">Yanıt iletilemedi. Uygulamayı aç ve kurumuna ulaşmak için başka bir kullanılabilir kanal dene.</string>
+    <string name="muster_back">Geri</string><string name="muster_sign_in">Yoklamalarını görmek için kurum hesabınla giriş yap.</string>
+    <string name="muster_delivery_explanation">Yanıtlar gönderilmeden önce güvenle kaydedilir. Telefona kaydedildi mesajı kurumunun yanıtı aldığı anlamına gelmez.</string>
+    <string name="muster_refresh">Yenile ve gönderimi dene</string><string name="muster_error">İşlem tamamlanamadı. Önbellekteki isteklerin ve kayıtlı yanıtların telefonda duruyor.</string>
+    <string name="muster_empty">Yoklama görevi bulunamadı.</string><string name="muster_drill">TATBİKAT</string><string name="muster_note">İsteğe bağlı not</string><string name="muster_closed">Bu yoklama kapalı.</string>
+    <string name="muster_ui_institutional">KURUM YOKLAMASI</string>
+    <string name="muster_ui_home_waiting">Kurumun yanıtını bekliyor</string>
+    <string name="muster_ui_home_failed">Yanıtın iletilemedi</string>
+    <string name="muster_ui_home_pending">Yanıtın gönderim bekliyor</string>
+    <string name="muster_ui_home_update">Yoklama durumun</string>
+    <string name="muster_ui_respond">Durumumu bildir</string>
+    <string name="muster_ui_view">Durumu gör</string>
+    <string name="muster_ui_offline_short">Çevrimdışı yanıtlanabilir</string>
+    <string name="muster_ui_history_settings">Geçmiş ve ayarlar</string>
+    <string name="muster_ui_your_status">Durumun</string>
+    <string name="muster_ui_settings">Yoklama ayarları</string>
+    <string name="muster_ui_sign_in_title">Kurum hesabı gerekli</string>
+    <string name="muster_ui_checkins">Yoklamalar</string>
+    <string name="muster_ui_outbox_count">Giden kutusu (%1$d)</string>
+    <string name="muster_ui_refresh_error">Güncellenemedi. Kayıtlı yoklamaları yanıtlamaya devam edebilirsin.</string>
+    <string name="muster_ui_delivery_explanation">Kurum alındığını doğrulayana kadar yanıtların bu telefonda saklanır. Bekleyen yanıtlar bağlantı olduğunda yeniden gönderilir.</string>
+    <string name="muster_ui_outbox_empty">Bekleyen yanıt yok</string>
+    <string name="muster_ui_outbox_empty_detail">Gönderilmeyi bekleyen veya ilgilenmen gereken yanıtlar burada görünür.</string>
+    <string name="muster_ui_inbox_title">Durumunu kurumunla paylaş</string>
+    <string name="muster_ui_inbox_detail">Yoklamalarını gör, yanıtının iletimini takip et.</string>
+    <string name="muster_ui_empty_detail">Kurumundan gelen yoklamalar ana ekranında görünür.</string>
+    <string name="muster_ui_less">Daha az göster</string>
+    <string name="muster_ui_instructions">Talimatın tamamı</string>
+    <string name="muster_ui_deadline">İstenen yanıt zamanı: %1$s</string>
+    <string name="muster_ui_save_error">Yanıtın kaydedilemedi. Tekrar dene veya kurumuna başka bir kullanılabilir kanaldan ulaş.</string>
+    <string name="muster_ui_help_open">Yardım talebin hâlâ açık. Durumunu değiştirmen talebi kapatmaz.</string>
+    <string name="muster_ui_received_detail">Kurumun bu yanıtı aldığını doğruladı.</string>
+    <string name="muster_ui_change_answer">Yanıtımı güncelle</string>
+    <string name="muster_ui_question">Durumun nasıl?</string>
+    <string name="muster_ui_add_note">Not ekle</string>
+    <string name="muster_ui_safe_detail">Şu an güvendeyim</string>
+    <string name="muster_ui_help_detail">Desteğe ihtiyacım var</string>
+    <string name="muster_ui_point_detail">Belirlenen noktaya ulaştım</string>
+    <string name="muster_ui_offline_detail">Yanıtın gönderilmeden önce güvenle kaydedilir. Bağlantı yoksa telefonda bekler ve otomatik yeniden denenir. Acil yardım için ulaşabildiğin acil yardım kanallarını kullan.</string>
+    <string name="muster_ui_refreshing">Yoklama güncelleniyor…</string>
+    <string name="muster_ui_not_delivered">İletilemedi</string>
+    <string name="muster_ui_awaiting">Yanıtın bekleniyor</string>
+    <string name="muster_ui_your_answer">Yanıtın</string>
+    <string name="muster_ui_enabled">Açık</string>
+    <string name="muster_ui_disabled">Kapalı</string>
+    <string name="muster_ui_permission_required">Android izni gerekli</string>
+    <string name="muster_ui_notification_settings">Bildirim ayarları</string>
+    <string name="muster_ui_locked_detail">Yoklamayı görmek ve durumunu güvenle bildirmek için telefonunun kilidini aç.</string>
+    <string name="muster_drill_title">Personel tatbikatı</string>
+    <string name="muster_drill_notification">Kurumun tatbikat için güvenlik durumunu bildirmeni istiyor.</string>
+    <string name="muster_ui_drill_awaiting">Tatbikat · yanıtın bekleniyor</string>
+    <string name="muster_ui_help_status">Yardım talebin açık</string>
+
+    <string name="muster_response_message">Yalnızca mesaj</string>
+    <string name="muster_response_send_message">Yalnızca mesaj gönder</string>
+    <string name="muster_response_message_hint">Yalnızca mesaj göndermek güvende olduğunu doğrulamaz.</string>
+    <string name="muster_voice_record">Sesli mesaj kaydet</string>
+    <string name="muster_voice_stop">Durdur</string>
+    <string name="muster_voice_play">Sesli mesajı dinle</string>
+    <string name="muster_voice_discard">Kaydı sil</string>
+    <string name="muster_voice_limit">En fazla 30 saniye. Bağlantı olduğunda ses gönderilir.</string>
+    <string name="muster_voice_error">Sesli mesaj kullanılamıyor. Yeniden dene.</string>
+    <string name="muster_voice_permission">Sesli mesaj kaydetmek için Android ayarlarından mikrofon erişimine izin ver.</string>
+    <string name="muster_voice_duration">%1$d sn</string>
+</resources>

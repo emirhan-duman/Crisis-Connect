@@ -66,7 +66,7 @@ struct NotificationsView: View {
                 Button {
                     viewModel.openSystemSettings()
                 } label: {
-                    Label(LocalizedStringKey("NOTIFICATIONS_OPEN_SETTINGS"), systemImage: "gearshape")
+                    Label(LocalizedStringKey(PlatformRuntime.isDesignedForIPadOnMac ? "Open Settings" : "NOTIFICATIONS_OPEN_SETTINGS"), systemImage: "gearshape")
                 }
                 .listRowBackground(Color.appRowBackground)
             }

@@ -1,7 +1,6 @@
 package com.auralis.crisisconnect.messaging.call
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.ActivityOptions
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,7 +8,6 @@ import android.app.NotificationManager
 import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -72,6 +70,14 @@ class InternetCallForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // Satisfy the foreground-service promotion deadline before starting collectors or resolving
+        // call state. The initial placeholder is replaced with the call-specific notification in
+        // onStartCommand once the manager state is available.
+        ensureChannels()
+        foregroundActive = promoteToForeground(
+            servicePlaceholderNotification(),
+            includeMicrophone = false
+        )
         // Live notification: re-render whenever the call changes (state, mute, video, peer), and keep
         // the ringtone in lockstep with the INCOMING state.
         scope.launch {
@@ -112,12 +118,7 @@ class InternetCallForegroundService : Service() {
             call.state != InternetCallManager.State.ENDED &&
             call.state != InternetCallManager.State.IDLE
         if (!p2pLive && sfuUiCall() == null) {
-            runCatching {
-                ServiceCompat.startForeground(
-                    this, FOREGROUND_ID, servicePlaceholderNotification(),
-                    foregroundServiceType(includeMicrophone = false)
-                )
-            }
+            promoteToForeground(servicePlaceholderNotification(), includeMicrophone = false)
             stopRingtone()
             foregroundActive = false
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -129,18 +130,11 @@ class InternetCallForegroundService : Service() {
         // added when the service restarts on accept. If even that fails, retry without the mic type.
         val ringingOnly = call?.state == InternetCallManager.State.INCOMING ||
             (call == null && sfuUiCall()?.state == SfuCallState.INCOMING)
-        val started = runCatching {
-            ServiceCompat.startForeground(
-                this, FOREGROUND_ID, buildNotification(call),
-                foregroundServiceType(includeMicrophone = !ringingOnly)
-            )
-        }.recoverCatching {
-            ServiceCompat.startForeground(
-                this, FOREGROUND_ID, buildNotification(call),
-                foregroundServiceType(includeMicrophone = false)
-            )
-        }.isSuccess
+        val started = promoteToForeground(buildNotification(call), includeMicrophone = !ringingOnly)
         if (!started) {
+            android.util.Log.w(TAG, "Failed all attempts to startForeground for InternetCallForegroundService; stopping safely")
+            runCatching { startForeground(FOREGROUND_ID, servicePlaceholderNotification()) }
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -200,7 +194,6 @@ class InternetCallForegroundService : Service() {
         return START_NOT_STICKY
     }
 
-    @SuppressLint("MissingPermission") // Every notify call is guarded by canPostNotifications().
     private fun onCallChanged(call: InternetCallManager.CallInfo?) {
         if (call == null ||
             call.state == InternetCallManager.State.ENDED ||
@@ -216,9 +209,9 @@ class InternetCallForegroundService : Service() {
                 } else {
                     stopRingtone()
                 }
-                if (foregroundActive && canPostNotifications()) {
+                if (foregroundActive) {
                     runCatching {
-                        NotificationManagerCompat.from(this).notify(FOREGROUND_ID, buildNotification(null))
+                        postCallNotification(FOREGROUND_ID, buildNotification(null))
                     }
                 }
                 return
@@ -240,9 +233,9 @@ class InternetCallForegroundService : Service() {
         } else {
             stopRingtone()
         }
-        if (foregroundActive && canPostNotifications()) {
+        if (foregroundActive) {
             runCatching {
-                NotificationManagerCompat.from(this).notify(FOREGROUND_ID, buildNotification(call))
+                postCallNotification(FOREGROUND_ID, buildNotification(call))
             }
         }
     }
@@ -289,6 +282,36 @@ class InternetCallForegroundService : Service() {
         return type
     }
 
+    private fun promoteToForeground(notification: Notification, includeMicrophone: Boolean): Boolean {
+        val preferredType = foregroundServiceType(includeMicrophone = includeMicrophone)
+        val attempt1 = runCatching {
+            ServiceCompat.startForeground(this, FOREGROUND_ID, notification, preferredType)
+        }
+        if (attempt1.isSuccess) return true
+
+        if (includeMicrophone) {
+            val noMicType = foregroundServiceType(includeMicrophone = false)
+            val attempt2 = runCatching {
+                ServiceCompat.startForeground(this, FOREGROUND_ID, notification, noMicType)
+            }
+            if (attempt2.isSuccess) return true
+        }
+
+        val attempt3 = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(FOREGROUND_ID, notification, 0)
+            } else {
+                startForeground(FOREGROUND_ID, notification)
+            }
+        }
+        if (attempt3.isSuccess) return true
+
+        val attempt4 = runCatching {
+            startForeground(FOREGROUND_ID, notification)
+        }
+        return attempt4.isSuccess
+    }
+
     /** Mirrors RfcommForegroundService: on a locked device the ring's full-screen intent owns the UI,
      *  so a plain activity launch would be swallowed and must be skipped. */
     private fun isDeviceLockedForIncomingUi(): Boolean {
@@ -297,15 +320,12 @@ class InternetCallForegroundService : Service() {
     }
 
     private fun openAppIntent(): PendingIntent {
-        val launch = Intent()
-            .setComponent(ComponentName(this, MainActivity::class.java))
-            .setAction(Intent.ACTION_MAIN)
-            .addCategory(Intent.CATEGORY_LAUNCHER)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val launch = packageManager.getLaunchIntentForPackage(packageName)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return PendingIntent.getActivity(
             this,
             0,
-            launch,
+            launch ?: Intent(),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
     }
@@ -357,7 +377,12 @@ class InternetCallForegroundService : Service() {
         }
         return ActivityOptions.makeBasic()
             .setPendingIntentCreatorBackgroundActivityStartMode(
-                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                if (Build.VERSION.SDK_INT >= 36) {
+                    // Background incoming calls use the system full-screen notification path.
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
+                } else {
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                }
             )
             .toBundle()
     }
@@ -393,9 +418,7 @@ class InternetCallForegroundService : Service() {
         PendingIntent.getService(
             this,
             requestCode,
-            Intent(this, InternetCallForegroundService::class.java)
-                .setComponent(ComponentName(this, InternetCallForegroundService::class.java))
-                .setAction(action),
+            Intent(this, InternetCallForegroundService::class.java).setAction(action),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -459,7 +482,6 @@ class InternetCallForegroundService : Service() {
     }
 
     /** Posts the dedicated ring notification for whichever engine (P2P / SFU) is ringing. */
-    @SuppressLint("MissingPermission") // Guarded by canPostNotifications(); runCatching handles races.
     private fun postRingNotification() {
         ensureChannels()
         val call = InternetCallManager.call.value
@@ -471,19 +493,22 @@ class InternetCallForegroundService : Service() {
             val name = sfu.peerName.ifBlank { getString(R.string.internet_call_unknown_peer) }
             buildRingNotification(name, callPerson(name, resolveAvatar(sfu.peerUid, name)))
         }
-        if (canPostNotifications()) {
-            runCatching { NotificationManagerCompat.from(this).notify(RING_NOTIFICATION_ID, notification) }
+        runCatching { postCallNotification(RING_NOTIFICATION_ID, notification) }
+    }
+
+    private fun postCallNotification(id: Int, notification: Notification) {
+        try {
+            // Self-managed call notifications may be exempt from POST_NOTIFICATIONS.
+            // Let Android apply that rule and handle a permission revocation safely.
+            NotificationManagerCompat.from(this).notify(id, notification)
+        } catch (error: SecurityException) {
+            android.util.Log.w(TAG, "Call notification permission unavailable", error)
         }
     }
 
     private fun cancelRingNotification() {
         runCatching { NotificationManagerCompat.from(this).cancel(RING_NOTIFICATION_ID) }
     }
-
-    private fun canPostNotifications(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
 
     private fun buildNotification(call: InternetCallManager.CallInfo?): Notification {
         ensureChannels()
@@ -642,6 +667,7 @@ class InternetCallForegroundService : Service() {
     }
 
     companion object {
+        private const val TAG = "InternetCallForegroundService"
         private const val ACTION_STOP = "com.auralis.crisisconnect.messaging.call.ACTION_STOP"
         private const val ACTION_ENABLE_MEDIA_PROJECTION =
             "com.auralis.crisisconnect.messaging.call.ACTION_ENABLE_MEDIA_PROJECTION"

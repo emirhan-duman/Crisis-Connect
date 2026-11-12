@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rescue_delivery_play_install_required">Google Play cannot deliver Rescue to this installation. Install Crisis Connect from Google Play or use the complete test package.</string>
+    <string name="rescue_delivery_not_available">Rescue is not available for this app version. Update Crisis Connect and try again.</string>
+    <string name="rescue_delivery_play_unavailable">Google Play is unavailable on this device. Check that Google Play is installed and enabled.</string>
+    <string name="rescue_delivery_network_error">Rescue could not be downloaded from Google Play. Check your internet connection and try again.</string>
+    <string name="rescue_delivery_storage_error">There is not enough storage for Rescue. Free some space and try again.</string>
+</resources>

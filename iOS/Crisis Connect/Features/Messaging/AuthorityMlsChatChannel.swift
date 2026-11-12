@@ -94,6 +94,8 @@ actor AuthorityMlsChatChannel {
     private let peerUid: String
     private let session: AuthorityMlsConversationSession
     private let messageStore: AuthorityMlsMessageStore
+    private let legacyConversationIds: [String]
+    private var legacyPendingApplications: [AuthorityMlsPendingReceivedApplication]
     private var active = false
 
     var conversationId: String {
@@ -104,12 +106,16 @@ actor AuthorityMlsChatChannel {
         selfUid: String,
         peerUid: String,
         session: AuthorityMlsConversationSession,
-        messageStore: AuthorityMlsMessageStore
+        messageStore: AuthorityMlsMessageStore,
+        legacyConversationIds: [String],
+        legacyPendingApplications: [AuthorityMlsPendingReceivedApplication]
     ) {
         self.selfUid = selfUid
         self.peerUid = peerUid
         self.session = session
         self.messageStore = messageStore
+        self.legacyConversationIds = legacyConversationIds
+        self.legacyPendingApplications = legacyPendingApplications
     }
 
     static func prepare(
@@ -117,22 +123,93 @@ actor AuthorityMlsChatChannel {
         peerUid: String,
         scopeType: AuthorityMlsScopeType,
         channelId: String,
-        deviceLabel: String
+        deviceLabel: String,
+        compatibility: Bool = false,
+        resolvedBinding: AuthorityMlsBinding? = nil
     ) async throws -> AuthorityMlsChatChannel {
+        let unresolved = AuthorityMlsBinding(
+            scopeType: scopeType,
+            channelId: channelId,
+            participants: [selfUid, peerUid], routeResolved: compatibility
+        )
+        let binding: AuthorityMlsBinding
+        if let resolvedBinding {
+            guard resolvedBinding.routeResolved, resolvedBinding.scopeType == scopeType,
+                  resolvedBinding.channelId == channelId,
+                  Set(resolvedBinding.participants) == Set([selfUid, peerUid]) else {
+                throw AuthorityMlsError.identityMismatch
+            }
+            binding = try AuthorityMlsIdentifiers.canonicalBinding(resolvedBinding)
+        } else { binding = try await ResilientApplicationStore.resolve(unresolved) }
+        let currentConversationId = try AuthorityMlsIdentifiers.conversationId(binding)
+        let legacyConversationIds = try AuthorityMlsIdentifiers.legacyConversationIds(binding)
+        var legacyHistoryById: [String: AuthorityMlsPendingReceivedApplication] = [:]
+        var legacyPendingIds = Set<String>()
+        for legacyConversationId in legacyConversationIds.reversed() {
+            for application in try await AuthorityMlsMessageStore(conversationId: legacyConversationId).load() {
+                let message = try decode(application, selfUid: selfUid, peerUid: peerUid)
+                if let existing = legacyHistoryById[application.messageId] {
+                    let existingMessage = try decode(existing, selfUid: selfUid, peerUid: peerUid)
+                    guard existingMessage.senderUid == message.senderUid,
+                          existing.plaintext == application.plaintext else {
+                        throw AuthorityMlsMessagePayloadError.malformed
+                    }
+                }
+                legacyHistoryById[application.messageId] = application
+            }
+        }
+        for (index, legacyConversationId) in legacyConversationIds.enumerated() {
+            do {
+                legacyPendingIds.formUnion(try PersistentAuthorityMlsContext.pendingApplicationMessageIds(
+                    accountUid: selfUid,
+                    channelId: legacyConversationId
+                ))
+            } catch {
+                // The immediately previous generation is the authoritative recovery source. Older
+                // corrupt generations are ignored rather than blocking a healthy current session.
+                if index == 0 { throw error }
+            }
+        }
+        let currentMessageStore = AuthorityMlsMessageStore(conversationId: currentConversationId)
+        var migrationSourcesById = legacyHistoryById
+        let currentHistory = try await currentMessageStore.load()
+        for application in currentHistory {
+            let message = try decode(application, selfUid: selfUid, peerUid: peerUid)
+            if let legacy = migrationSourcesById[application.messageId] {
+                let legacyMessage = try decode(legacy, selfUid: selfUid, peerUid: peerUid)
+                guard legacyMessage.senderUid == message.senderUid,
+                      legacy.plaintext == application.plaintext else {
+                    throw AuthorityMlsMessagePayloadError.malformed
+                }
+                legacyHistoryById.removeValue(forKey: application.messageId)
+            }
+            migrationSourcesById[application.messageId] = application
+        }
+        try await currentMessageStore.merge(
+            legacyHistoryById.values.sorted { $0.messageId < $1.messageId }
+        )
+        let pendingApplications = try legacyPendingIds.sorted().map { messageId in
+            guard let application = migrationSourcesById[messageId],
+                  AuthorityMlsCredential.decode(application.senderCredential)?.accountUid == selfUid else {
+                throw AuthorityMlsMessagePayloadError.malformed
+            }
+            return application
+        }
         let session = try await AuthorityMlsConversationSession.prepare(
             accountUid: selfUid,
-            binding: AuthorityMlsBinding(
-                scopeType: scopeType,
-                channelId: channelId,
-                participants: [selfUid, peerUid]
-            ),
+            binding: binding,
             deviceLabel: String(deviceLabel.prefix(64))
         )
+        guard session.conversationId == currentConversationId else {
+            throw AuthorityMlsError.identityMismatch
+        }
         return AuthorityMlsChatChannel(
             selfUid: selfUid,
             peerUid: peerUid,
             session: session,
-            messageStore: AuthorityMlsMessageStore(conversationId: session.conversationId)
+            messageStore: currentMessageStore,
+            legacyConversationIds: legacyConversationIds,
+            legacyPendingApplications: pendingApplications
         )
     }
 
@@ -145,7 +222,9 @@ actor AuthorityMlsChatChannel {
     }
 
     func isReadyToSend() async throws -> Bool {
-        try await session.isReadyToSend()
+        guard try await session.isReadyToSend() else { return false }
+        try await migrateLegacyPendingApplications()
+        return true
     }
 
     func activate(
@@ -175,17 +254,33 @@ actor AuthorityMlsChatChannel {
         scopeType: AuthorityMlsScopeType,
         channelId: String
     ) async throws -> [AuthorityMlsChatMessage] {
-        let conversationId = try AuthorityMlsIdentifiers.conversationId(
-            AuthorityMlsBinding(
-                scopeType: scopeType,
-                channelId: channelId,
-                participants: [selfUid, peerUid]
-            )
+        let binding = AuthorityMlsBinding(
+            scopeType: scopeType,
+            channelId: channelId,
+            participants: [selfUid, peerUid], routeResolved: true
         )
-        let applications = try await AuthorityMlsMessageStore(conversationId: conversationId).load()
-        return try applications.map {
-            try decode($0, selfUid: selfUid, peerUid: peerUid)
+        let conversationIds = try Array(AuthorityMlsIdentifiers.legacyConversationIds(binding).reversed()) + [
+            AuthorityMlsIdentifiers.conversationId(binding),
+            AuthorityMlsIdentifiers.conversationId(AuthorityMlsBinding(scopeType: scopeType,
+                channelId: channelId, participants: [selfUid, peerUid], resilient: true))
+        ]
+        var applicationsById: [String: AuthorityMlsPendingReceivedApplication] = [:]
+        var messagesById: [String: AuthorityMlsChatMessage] = [:]
+        for conversationId in conversationIds {
+            for application in try await AuthorityMlsMessageStore(conversationId: conversationId).load() {
+                if let message = try? decode(application, selfUid: selfUid, peerUid: peerUid) {
+                    if let existing = applicationsById[message.id],
+                       let existingMessage = messagesById[message.id],
+                       (existingMessage.senderUid != message.senderUid ||
+                        existing.plaintext != application.plaintext) {
+                        throw AuthorityMlsMessagePayloadError.malformed
+                    }
+                    applicationsById[message.id] = application
+                    messagesById[message.id] = message
+                }
+            }
         }
+        return messagesById.values.sorted { $0.payload.sentAtMillis < $1.payload.sentAtMillis }
     }
 
     func send(_ payload: AuthorityMlsMessagePayload) async throws -> AuthorityMlsChatMessage {
@@ -210,6 +305,7 @@ actor AuthorityMlsChatChannel {
     }
 
     func publishPending() async throws {
+        if try await session.isReadyToSend() { try await migrateLegacyPendingApplications() }
         try await ChannelAttachments.ensureAuthorityMlsAttachmentsUploaded(
             pendingAttachmentDescriptors().values.flatMap { $0 }
         )
@@ -259,6 +355,28 @@ actor AuthorityMlsChatChannel {
     func close() async {
         active = false
         await session.close()
+    }
+
+    private func migrateLegacyPendingApplications() async throws {
+        guard active, !legacyPendingApplications.isEmpty else { return }
+        for application in legacyPendingApplications {
+            if try await !session.isApplicationPublished(messageId: application.messageId) {
+                _ = try await session.queueApplicationForOfflineRelay(
+                    application.plaintext,
+                    messageId: application.messageId
+                )
+            }
+            try await messageStore.append(application)
+            for legacyConversationId in legacyConversationIds {
+                try PersistentAuthorityMlsContext.removePendingApplicationMessage(
+                    accountUid: selfUid,
+                    channelId: legacyConversationId,
+                    messageId: application.messageId
+                )
+            }
+        }
+        try await session.publishPendingApplications()
+        legacyPendingApplications = []
     }
 
     private func decode(_ application: AuthorityMlsPendingReceivedApplication) throws -> AuthorityMlsChatMessage {

@@ -236,7 +236,9 @@ object InternetCallManager {
         runCatching { RfcommTelecomCoordinator.initialize(context.applicationContext) }
         // Warm the Cloudflare TURN creds now so the first call already has a relay (mobile/CGNAT
         // peers can't connect on STUN alone). Best-effort; failures leave STUN-only in place.
-        scope.launch { runCatching { TurnCredentialsProvider.refresh() } }
+        if (!com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value) {
+            scope.launch { runCatching { TurnCredentialsProvider.refresh() } }
+        }
     }
 
     fun hasActiveCall(): Boolean = synchronized(lock) { peerConnection != null }
@@ -249,6 +251,7 @@ object InternetCallManager {
      * call (e.g. an authority channel's Firestore callSignals); pass null for the citizen relay.
      */
     fun startCall(target: Contact, sender: SignalSender? = null) {
+        if (com.auralis.crisisconnect.connectivity.DisasterTrafficController.saving.value && sender == null) return
         synchronized(lock) {
             if (peerConnection != null) {
                 Log.w(TAG, "Refusing outgoing call: another call is active")
@@ -292,6 +295,9 @@ object InternetCallManager {
         }
     }
 
+    @Volatile
+    private var pendingAccept = false
+
     /** Answers the current incoming call. */
     fun accept() {
         synchronized(lock) {
@@ -303,13 +309,39 @@ object InternetCallManager {
             configureCallAudio()
             appContext?.let { InternetCallForegroundService.start(it) }
             callId?.let { id -> runCatching { RfcommTelecomCoordinator.answerIncomingCall(id, id) {} } }
-            pc.createAnswer(object : SimpleSdpObserver() {
-                override fun onCreateSuccess(sdp: SessionDescription) {
-                    pc.setLocalDescription(SimpleSdpObserver(), sdp)
-                    sendSignal(jsonOf("answer", id).put("sdp", sdp.description))
-                }
-            }, audioConstraints())
+            if (!remoteDescriptionSet) {
+                Log.i(TAG, "accept: remoteDescription not set yet; queuing pendingAccept")
+                pendingAccept = true
+                return
+            }
+            createAndSendAnswer(pc, id)
         }
+    }
+
+    private fun createAndSendAnswer(pc: PeerConnection, id: String) {
+        pc.createAnswer(object : SimpleSdpObserver() {
+            override fun onCreateSuccess(sdp: SessionDescription) {
+                pc.setLocalDescription(SimpleSdpObserver(), sdp)
+                sendSignal(jsonOf("answer", id).put("sdp", sdp.description))
+            }
+
+            override fun onCreateFailure(error: String?) {
+                Log.e(TAG, "createAnswer failed: $error; retrying in 200ms")
+                scope.launch {
+                    delay(200)
+                    synchronized(lock) {
+                        if (callId == id && !isCaller) {
+                            pc.createAnswer(object : SimpleSdpObserver() {
+                                override fun onCreateSuccess(retrySdp: SessionDescription) {
+                                    pc.setLocalDescription(SimpleSdpObserver(), retrySdp)
+                                    sendSignal(jsonOf("answer", id).put("sdp", retrySdp.description))
+                                }
+                            }, audioConstraints())
+                        }
+                    }
+                }
+            }
+        }, audioConstraints())
     }
 
     /** Rejects the current incoming call. */
@@ -592,6 +624,7 @@ object InternetCallManager {
         callId = id
         isCaller = false
         remoteDescriptionSet = false
+        pendingAccept = false
         pendingRemoteCandidates.clear()
         _call.value = CallInfo(
             id, senderUid, from.name,
@@ -610,11 +643,20 @@ object InternetCallManager {
         registerNetworkWatcher()
         pc.setRemoteDescription(object : SimpleSdpObserver() {
             override fun onSetSuccess() {
-                remoteDescriptionSet = true
-                // The remote offer's video m-lines auto-created transceivers; adopt their senders so
-                // we can send camera/screen too (null slots when the peer is older / audio-only).
-                grabVideoSendersFromRemote()
-                drainPendingCandidates()
+                synchronized(lock) {
+                    remoteDescriptionSet = true
+                    // The remote offer's video m-lines auto-created transceivers; adopt their senders so
+                    // we can send camera/screen too (null slots when the peer is older / audio-only).
+                    grabVideoSendersFromRemote()
+                    drainPendingCandidates()
+                    if (pendingAccept) {
+                        pendingAccept = false
+                        val currentId = callId
+                        if (currentId != null && !isCaller) {
+                            createAndSendAnswer(pc, currentId)
+                        }
+                    }
+                }
             }
         }, SessionDescription(SessionDescription.Type.OFFER, sdp))
     }
@@ -1442,6 +1484,7 @@ object InternetCallManager {
         callId = null
         isCaller = false
         remoteDescriptionSet = false
+        pendingAccept = false
         pendingRemoteCandidates.clear()
         _call.value = null
     }

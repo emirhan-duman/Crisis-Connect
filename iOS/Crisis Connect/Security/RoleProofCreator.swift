@@ -102,7 +102,7 @@ final class RoleProofCreator {
     init(
         securityRepository: SecurityRepository = .shared,
         deviceStore: DeviceIdentityStore = .shared,
-        allowExpiredCertificate: Bool = true,
+        allowExpiredCertificate: Bool = false,
         nowProvider: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
     ) {
         self.securityRepository = securityRepository

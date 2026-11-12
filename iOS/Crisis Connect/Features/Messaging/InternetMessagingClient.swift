@@ -12,6 +12,7 @@ import Foundation
 import FirebaseFunctions
 import FirebaseAuth
 import FirebaseFirestore
+import FirebaseCore
 
 /// Public identity key resolved for a contact.
 struct PeerIdentityKey {
@@ -21,6 +22,7 @@ struct PeerIdentityKey {
     let alg: String
     let displayName: String
     let photoUrl: String
+    var isChild: Bool = false
 }
 
 /// An address-book number that turned out to belong to a discoverable Crisis Connect user.
@@ -143,6 +145,7 @@ struct OutgoingSignalInternetEnvelope: RelayableInternetEnvelope {
 enum InternetMessagingClientError: Error {
     case notSignedIn
     case malformedResponse
+    case constrainedNetworkDisallowed
 }
 
 final class InternetMessagingClient {
@@ -150,21 +153,58 @@ final class InternetMessagingClient {
     static let region = "us-central1"
     static let defaultTtlMs = 24 * 60 * 60 * 1000
 
+    private let securityCapabilitiesLock = NSLock()
+    private var securityCapabilities: [String: (TimeInterval, Bool)] = [:]
     private let functions: Functions
     private let auth: Auth
     private let firestore: Firestore
+    private let regionalCalls: RegionalMessagingCalls?
 
     init(
-        functions: Functions = Functions.functions(region: InternetMessagingClient.region),
+        functions: Functions? = nil,
         auth: Auth = Auth.auth(),
-        firestore: Firestore = Firestore.firestore()
+        firestore: Firestore? = nil,
+        regionalCalls: RegionalMessagingCalls? = nil
     ) {
-        self.functions = functions
+        self.functions = functions ?? Functions.functions(region: InternetMessagingClient.region)
         self.auth = auth
-        self.firestore = firestore
+        self.firestore = firestore ?? (functions == nil && MessagingDatabaseTarget.highAvailabilityEnabled
+            ? Firestore.firestore(app: FirebaseApp.app()!, database: MessagingDatabaseTarget.databaseID)
+            : Firestore.firestore())
+        self.regionalCalls = regionalCalls ?? (functions == nil ? RegionalMessagingCalls() : nil)
+    }
+
+    func supportsSignalIdentityBinding(peerUid: String) async -> Bool {
+        guard let owner = currentUid else { return false }
+        let scope = owner + "|" + peerUid, now = ProcessInfo.processInfo.systemUptime
+        securityCapabilitiesLock.lock()
+        let cached = securityCapabilities[scope]
+        securityCapabilitiesLock.unlock()
+        if let cached, now >= cached.0, now - cached.0 <= 60 { return cached.1 }
+        var supported = false
+        if let result = try? await functions.httpsCallable("getMessagingSecurityCapabilitiesV2")
+            .callAsync(["targetUid": peerUid]), let data = result.data as? [String: Any] {
+            supported = currentUid == owner && (data["protocolVersion"] as? NSNumber)?.doubleValue == 2 && data["signalIdentityBinding"] as? Bool == true
+        }
+        securityCapabilitiesLock.lock()
+        if securityCapabilities.count >= 128 { securityCapabilities.removeAll() }
+        securityCapabilities[scope] = (now, supported)
+        securityCapabilitiesLock.unlock()
+        return supported
     }
 
     var currentUid: String? { auth.currentUser?.uid }
+    var usesRegionalDelivery: Bool { regionalCalls != nil }
+    private func callRegional(_ operation: String, _ payload: [String: Any]) async throws -> Any {
+        guard let uid = currentUid, let regionalCalls else { throw InternetMessagingClientError.notSignedIn }
+        var request=payload;request["requestUid"]=uid
+        return try await regionalCalls.call(operation, request, accountCurrent: { self.currentUid == uid })
+    }
+    func callRouted(_ operation: String, _ payload: [String: Any] = [:]) async throws -> Any {
+        if regionalCalls != nil { return try await callRegional(operation, payload) }
+        return try await functions.httpsCallable(operation).callAsync(payload).data
+    }
+    var messageStore: Firestore { firestore }
 
     // MARK: - Identity directory
 
@@ -189,7 +229,7 @@ final class InternetMessagingClient {
         }
         if let displayName, !displayName.isEmpty { payload["displayName"] = displayName }
         if let photoUrl, !photoUrl.isEmpty { payload["photoUrl"] = photoUrl }
-        _ = try await functions.httpsCallable("publishIdentityKey").callAsync(payload)
+        _ = try await callRouted("publishIdentityKey", payload)
     }
 
     func lookupIdentityKey(uid: String? = nil, phone: String? = nil, username: String? = nil) async throws -> PeerIdentityKey {
@@ -198,8 +238,8 @@ final class InternetMessagingClient {
         if let phone, !phone.isEmpty { payload["phone"] = phone }
         if let username, !username.isEmpty { payload["username"] = username }
 
-        let result = try await functions.httpsCallable("lookupIdentityKey").callAsync(payload)
-        guard let data = result.data as? [String: Any],
+        let result = try await callRouted("lookupIdentityKey", payload)
+        guard let data = result as? [String: Any],
               let uid = data["uid"] as? String,
               let publicKey = data["publicKey"] as? String else {
             throw InternetMessagingClientError.malformedResponse
@@ -210,7 +250,8 @@ final class InternetMessagingClient {
             keyId: data["keyId"] as? String ?? "",
             alg: data["alg"] as? String ?? "",
             displayName: data["displayName"] as? String ?? "",
-            photoUrl: data["photoUrl"] as? String ?? ""
+            photoUrl: data["photoUrl"] as? String ?? "",
+            isChild: data["isChild"] as? Bool ?? false
         )
     }
 
@@ -218,9 +259,8 @@ final class InternetMessagingClient {
     /// the ones that belong to discoverable Crisis Connect users. The server never stores the query.
     func findContacts(phones: [String]) async throws -> [DiscoveredContact] {
         guard !phones.isEmpty else { return [] }
-        let result = try await functions.httpsCallable("findContactsOnCrisisConnect")
-            .callAsync(["phones": phones])
-        guard let data = result.data as? [String: Any],
+        let result = try await callRouted("findContactsOnCrisisConnect", ["phones": phones])
+        guard let data = result as? [String: Any],
               let matches = data["matches"] as? [Any] else {
             return []
         }
@@ -245,16 +285,20 @@ final class InternetMessagingClient {
     // MARK: - Push tokens
 
     func registerPushToken(_ token: String, platform: String = "ios") async throws {
-        _ = try await functions.httpsCallable("registerPushToken")
-            .callAsync(["token": token, "platform": platform])
+        _ = try await callRouted("registerPushToken", ["token": token, "platform": platform,
+                "installationId": MessagingInstallation.id, "trafficPolicyVersion": 1])
     }
 
     func unregisterPushToken(_ token: String) async throws {
-        _ = try await functions.httpsCallable("unregisterPushToken").callAsync(["token": token])
+        _ = try await callRouted("unregisterPushToken", ["token": token])
     }
 
     /// Content-free wake; the callable authorizes the caller and derives the peer from the MLS parent.
     func requestAuthorityMlsPreparation(conversationId: String) async throws {
+        if ResilientApplicationStore.enabled {
+            _ = try await callRouted("requestAuthorityMlsPreparation", ["conversationId": conversationId])
+            return
+        }
         _ = try await functions.httpsCallable("requestAuthorityMlsPreparation")
             .callAsync(["conversationId": conversationId])
     }
@@ -264,12 +308,25 @@ final class InternetMessagingClient {
     /// Crisis-mode compact uplink. Returns the accepted messageId.
     @discardableResult
     func relayMessage(_ envelope: RelayableInternetEnvelope) async throws -> String {
-        _ = try await functions.httpsCallable("relayMessage").callAsync(envelope.toMap())
+        if let regionalCalls {
+            var payload = envelope.toMap(); payload["trafficPolicyVersion"] = 2
+            _ = try await callRegional("relayMessage", payload)
+            return envelope.messageId
+        }
+        let callable = functions.httpsCallable("relayMessage")
+        callable.timeoutInterval = 20
+        var payload = envelope.toMap(); payload["trafficPolicyVersion"] = 2
+        _ = try await callable.callAsync(payload)
         return envelope.messageId
     }
 
     /// Normal-mode direct Firestore write of the same ciphertext envelope (realtime path).
     func writeMessageDoc(_ envelope: RelayableInternetEnvelope) async throws {
+        if let regionalCalls {
+            var payload = envelope.toMap(); payload["trafficPolicyVersion"] = 1
+            _ = try await callRegional("relayMessage", payload)
+            return
+        }
         guard let uid = currentUid else { throw InternetMessagingClientError.notSignedIn }
         var data = envelope.toMap()
         data["senderUid"] = uid
@@ -278,12 +335,75 @@ final class InternetMessagingClient {
         data["expireAt"] = Timestamp(
             date: Date(timeIntervalSince1970: Double(envelope.createdAtMs + envelope.ttlMs) / 1000)
         )
-        try await firestore.collection("messages").document(envelope.messageId).setDataAsync(data)
+        // Firestore queues offline writes indefinitely. Bound the wait; the relay uses the SAME
+        // ID/envelope, so a late SDK completion cannot create a second message or push.
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let completion = MessageWriteCompletion(continuation)
+            firestore.collection("messages").document(envelope.messageId).setData(data) { error in
+                completion.finish(error: error)
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 12) {
+                completion.finish(error: URLError(.timedOut))
+            }
+        }
     }
 
     /// Confirms a message was received and stored so the server deletes its copy (WhatsApp-style).
     /// Best-effort: failure just means the server's safety-net purge cleans it up later.
-    func acknowledgeMessage(_ messageId: String) async {
-        _ = try? await functions.httpsCallable("acknowledgeMessage").callAsync(["messageId": messageId])
+    func acknowledgeMessage(_ messageId: String, expectedUid: String? = nil) async {
+        guard let uid = currentUid else { return }
+        if let expectedUid, uid != expectedUid { return }
+        CompactInboxState.enqueue(uid: uid,id: messageId)
+        guard !DisasterTrafficController.shared.isSaving else { return }
+        do {
+            let callable = functions.httpsCallable("acknowledgeMessage")
+            callable.timeoutInterval = 12
+            if regionalCalls != nil { _ = try await callRegional("acknowledgeMessage", ["messageId": messageId]) }
+            else { _ = try await callable.callAsync(["messageId": messageId]) }
+            CompactInboxState.confirm(uid: uid,ids: [messageId])
+        } catch { /* The persisted journal is retried by the inbox worker. */ }
+    }
+
+    func compactInbox(cursor: String?, receive: Bool = true) async throws -> (messages: [[String: Any]], cursor: String?) {
+        guard let uid = currentUid else { throw InternetMessagingClientError.notSignedIn }
+        let ids = CompactInboxState.pending(uid: uid)
+        var payload: [String: Any] = ["acknowledgements": ids]
+        payload["installationId"] = MessagingInstallation.id
+        payload["policyVersion"] = 2
+        payload["profileRevision"] = CompactInboxState.nextRevision(uid: uid)
+        payload["receive"] = receive
+        payload["saving"] = DisasterTrafficController.shared.isSaving
+        if let cursor { payload["cursor"] = cursor }
+        let callable = functions.httpsCallable("compactInbox")
+        callable.timeoutInterval = 20
+        let result: Any
+        do {
+            if regionalCalls != nil { result = try await callRegional("compactInbox", payload) }
+            else { result = try await callable.callAsync(payload).data }
+        }
+        catch { TrafficMeasurements.shared.request(succeeded:false); throw error }
+        try Task.checkCancellation()
+        guard currentUid == uid, let data = result as? [String: Any],
+              let messages = data["messages"] as? [[String: Any]] else {
+            throw InternetMessagingClientError.malformedResponse
+        }
+        CompactInboxState.confirm(uid: uid, ids: ids)
+        TrafficMeasurements.shared.request(succeeded:true,responseJsonBytes:(try? JSONSerialization.data(withJSONObject:data).count) ?? 0)
+        DisasterTrafficController.shared.applyServerPolicy(data["policy"] as? [String: Any])
+        UserDefaults.standard.set(payload["saving"] as? Bool ?? false, forKey: "messaging.compactProfile.\(uid)")
+        return (messages, data["cursor"] as? String)
+    }
+}
+
+private final class MessageWriteCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    init(_ continuation: CheckedContinuation<Void, Error>) { self.continuation = continuation }
+    func finish(error: Error?) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        if let error { pending?.resume(throwing: error) } else { pending?.resume() }
     }
 }

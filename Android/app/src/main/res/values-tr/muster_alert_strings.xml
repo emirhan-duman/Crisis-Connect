@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Bildirim sesini, titreşimi ve kilit ekranı görünümünü Android ayarlarından seçebilirsin. Tam ekran uyarıları izin gerektirir; Rahatsız Etmeyin, pil ayarları veya uygulamanın zorla durdurulması uyarıyı engelleyebilir.</string>
+    <string name="muster_alert_settings_title">Ses, titreşim ve kilit ekranı</string>
+    <string name="muster_alerts_blocked">Android ayarlarında uygulama bildirimleri kapalı</string>
+    <string name="muster_alerts_quiet">Bu bildirim kanalı sessiz veya düşük önemde; Android ayarlarından açılır uyarıları etkinleştir</string>
+    <string name="muster_locked_screen_note">Android izin verirse telefon kilitliyken veya ekran kapalıyken tam ekran uyarı açılır. Telefonu kullanırken Android bunun yerine üst bildirim gösterebilir.</string>
+
+    <string name="muster_urgent_sound">Sessizde sesli uyarı</string>
+    <string name="muster_urgent_sound_help">Yalnız acil afet yoklamalarında. Yoklama ekranı görünürken mevcut alarm ses düzeyinde sınırlı süre çalar. Ekrana dokununca durur.</string>
+    <string name="muster_urgent_ready">Sistem izinleri kapsamında kullanılabilir. Rahatsız Etmeyin ve alarm ses düzeyi senin kontrolünde kalır.</string>
+    <string name="muster_urgent_not_ready">Alarm ses düzeyini, bildirim izinlerini ve Rahatsız Etmeyin ayarını kontrol et. Sistem kısıtlarına uyulur.</string>
+    <string name="muster_urgent_seconds">%1$d saniye</string>
+    <string name="muster_flash_settings">Flaş uyarı ayarları</string>
+    <string name="muster_flash_help">Telefonun destekliyorsa Android erişilebilirlik ayarlarında flaş bildirimlerini aç. Uygulama kapalıyken de flaş uyarısını Android yönetir.</string>
+</resources>

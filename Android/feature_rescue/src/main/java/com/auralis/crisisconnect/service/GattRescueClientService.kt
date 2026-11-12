@@ -1,5 +1,7 @@
 package com.auralis.crisisconnect.service
 
+import com.auralis.crisisconnect.core.media.LocalMedia
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -635,7 +637,7 @@ class GattRescueClientService : Service() {
                 val contact = upsertContactForNotification(sessionCode, normalizedAddress)
                 val destination = voiceMessageFile(applicationContext, fileName)
                 destination.parentFile?.mkdirs()
-                destination.writeBytes(bytes)
+                LocalMedia.write(destination, bytes)
                 saveRemoteAudioMessage(
                     context = applicationContext,
                     sessionCode = sessionCode,
@@ -1296,7 +1298,7 @@ class GattRescueClientService : Service() {
                 val destination = imageMessageFile(applicationContext, fileName)
                 val thumbnail = imageThumbnailFile(applicationContext, thumbnailName)
                 destination.parentFile?.mkdirs()
-                destination.writeBytes(bytes)
+                LocalMedia.write(destination, bytes)
                 val thumbnailCreated = generateImageThumbnail(
                     source = destination,
                     target = thumbnail,
@@ -1496,7 +1498,7 @@ class GattRescueClientService : Service() {
     private fun hasRescueAccess(): Boolean {
         return runCatching {
             runBlocking(Dispatchers.IO) {
-                SecurityRepository(applicationContext).hasUsableStoredCertificate(allowExpired = true)
+                SecurityRepository(applicationContext).hasUsableStoredCertificate(allowExpired = false)
             }
         }.getOrDefault(false)
     }

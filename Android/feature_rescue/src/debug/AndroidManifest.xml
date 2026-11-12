@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:dist="http://schemas.android.com/apk/distribution"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Local test installs cannot request this app's on-demand modules from Play. -->
+    <dist:module dist:instant="false" dist:title="@string/feature_rescue_title" tools:node="replace">
+        <dist:delivery>
+            <dist:install-time />
+        </dist:delivery>
+        <dist:fusing dist:include="true" />
+    </dist:module>
+</manifest>

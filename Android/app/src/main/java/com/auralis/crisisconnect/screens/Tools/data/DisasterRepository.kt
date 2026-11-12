@@ -53,7 +53,7 @@ data class DisasterEvent(
 )
 
 /** Why a load failed. Only set when every network source actually failed. */
-enum class DisasterErrorType { OFFLINE, TIMEOUT, NO_DATA }
+enum class DisasterErrorType { OFFLINE, TIMEOUT, NO_DATA, DEFERRED }
 
 /**
  * Outcome of a load. [isStale] is true only when we are showing cached data
@@ -126,6 +126,11 @@ class DisasterRepository(context: Context) {
                 }
             }
 
+            if (!com.auralis.crisisconnect.connectivity.DisasterTrafficController.permits(
+                    com.auralis.crisisconnect.connectivity.NetworkWork.FEED_REFRESH, forceRefresh)) {
+                val cached = fallbackToCache(cache, feed)
+                return@withContext cached.copy(isStale = true, error = DisasterErrorType.DEFERRED)
+            }
             // 2. Query every source in parallel; null = that source failed.
             val specs = sourcesFor(feed, region)
             val results = coroutineScope {

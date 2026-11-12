@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Android সেটিংসে একটি বিজ্ঞপ্তি শব্দ, কম্পন এবং লক-স্ক্রিন দৃশ্যমানতা চয়ন করুন৷ পূর্ণ-স্ক্রীন সতর্কতার জন্য আপনার অনুমতি প্রয়োজন এবং বিরক্ত করবেন না, ব্যাটারি সেটিংস বা জোর করে বন্ধ করা অ্যাপ দ্বারা সীমাবদ্ধ হতে পারে।</string>
+    <string name="muster_alert_settings_title">সাউন্ড, ভাইব্রেশন এবং লক স্ক্রিন</string>
+    <string name="muster_alerts_blocked">অ্যাপ বিজ্ঞপ্তিগুলি Android সেটিংসে অক্ষম করা হয়েছে</string>
+    <string name="muster_alerts_quiet">এই বিজ্ঞপ্তি চ্যানেলটি নীরব বা কম অগ্রাধিকার; Android সেটিংসে পপ-আপ সতর্কতা সক্ষম করুন৷</string>
+    <string name="muster_locked_screen_note">Android অনুমতি দিলে আপনার ফোন লক থাকলে বা এর স্ক্রিন বন্ধ থাকলে পূর্ণ-স্ক্রীন সতর্কতাগুলি উপস্থিত হয়৷ আপনি ফোন ব্যবহার করার সময়, Android পরিবর্তে একটি হেড-আপ বিজ্ঞপ্তি দেখাতে পারে।</string>
+    <string name="muster_urgent_sound">সাইলেন্ট মোডে সাউন্ড</string>
+    <string name="muster_urgent_sound_help">শুধুমাত্র জরুরী দুর্যোগ নিরাপত্তা যাচাইের জন্য। নিরাপত্তা যাচাই স্ক্রীন দৃশ্যমান থাকাকালীন একটি সীমিত সময়ের জন্য আপনার বিদ্যমান অ্যালার্ম ভলিউম ব্যবহার করে। আপনি স্ক্রীন স্পর্শ করলে থামে।</string>
+    <string name="muster_urgent_ready">সিস্টেম অনুমতির মধ্যে উপলব্ধ। বিরক্ত করবেন না এবং অ্যালার্মের ভলিউম আপনার নিয়ন্ত্রণে থাকবে।</string>
+    <string name="muster_urgent_not_ready">অ্যালার্ম ভলিউম, বিজ্ঞপ্তি অনুমতি এবং বিরক্ত করবেন না চেক করুন। সিস্টেম সীমাবদ্ধতা সম্মান করা হয়.</string>
+    <string name="muster_urgent_seconds">%1$d সেকেন্ড</string>
+    <string name="muster_flash_settings">ফ্ল্যাশ সতর্কতা সেটিংস</string>
+    <string name="muster_flash_help">ফোনে সমর্থিত হলে Android-এর অ্যাক্সেসিবিলিটি সেটিংসে ফ্ল্যাশ বিজ্ঞপ্তি চালু করুন। অ্যাপ বন্ধ থাকলেও Android এই সতর্কতা নিয়ন্ত্রণ করে।</string>
+</resources>

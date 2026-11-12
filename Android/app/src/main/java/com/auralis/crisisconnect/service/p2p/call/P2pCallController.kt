@@ -207,11 +207,20 @@ internal class P2pCallController private constructor(private val appContext: Con
         return true
     }
 
+    private fun sessionCodesMatch(a: String?, b: String?): Boolean {
+        if (a == null || b == null) return false
+        if (a.equals(b, ignoreCase = true)) return true
+        val normA = a.removePrefix("ble:").removePrefix("BLE:").trim().uppercase()
+        val normB = b.removePrefix("ble:").removePrefix("BLE:").trim().uppercase()
+        return normA.isNotEmpty() && normA == normB
+    }
+
     fun acceptCall(sessionCode: String, callId: String, acceptedByTelecom: Boolean = false): Boolean {
         val call = synchronized(stateLock) {
             session?.takeIf {
-                it.sessionCode == sessionCode && it.callId == callId && !it.isOutgoing &&
-                    it.state == CallState.Ringing
+                (sessionCodesMatch(it.sessionCode, sessionCode) || it.callId == callId) &&
+                    it.callId == callId && !it.isOutgoing &&
+                    (it.state == CallState.Ringing || it.state == CallState.Connecting)
             }
         } ?: return false
         stopRingtone()
@@ -237,19 +246,22 @@ internal class P2pCallController private constructor(private val appContext: Con
             }
         }
         scope.launch {
-            val accepted = sendSignal(
-                call,
-                P2pCallProtocol.CallSignal(
-                    kind = P2pBleProtocol.CHAT_KIND_CALL_ACCEPT,
-                    callId = call.callId,
-                    sampleRateHz = call.sampleRate,
-                    frameMs = call.frameMs,
-                    framesPerPacket = call.framesPerPacket,
-                    bitrateBps = call.bitrate,
-                    saltHex = call.localSaltHex
-                )
+            val acceptSignal = P2pCallProtocol.CallSignal(
+                kind = P2pBleProtocol.CHAT_KIND_CALL_ACCEPT,
+                callId = call.callId,
+                sampleRateHz = call.sampleRate,
+                frameMs = call.frameMs,
+                framesPerPacket = call.framesPerPacket,
+                bitrateBps = call.bitrate,
+                saltHex = call.localSaltHex
             )
+            var accepted = sendSignal(call, acceptSignal)
             if (!accepted) {
+                delay(150)
+                accepted = sendSignal(call, acceptSignal)
+            }
+            if (!accepted) {
+                Log.w(TAG, "GATT call send accept signal retry failed for ${call.sessionCode}/${call.callId}")
                 endCallInternal(call, sendEnd = false, reason = "error")
                 return@launch
             }
@@ -260,7 +272,7 @@ internal class P2pCallController private constructor(private val appContext: Con
 
     fun rejectCall(sessionCode: String, callId: String) {
         val call = synchronized(stateLock) {
-            session?.takeIf { it.sessionCode == sessionCode && it.callId == callId }
+            session?.takeIf { (sessionCodesMatch(it.sessionCode, sessionCode) || it.callId == callId) && it.callId == callId }
         } ?: return
         scope.launch {
             sendSignal(

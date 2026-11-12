@@ -291,6 +291,11 @@ struct GattMeshView: View {
 
     private var composerCard: some View {
         VStack(spacing: 12) {
+            if profile.id == "public" {
+                Text("ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let replyTargetMessage {
                 ChatComposerReplyBanner(
                     authorLabel: replyAuthorLabel(for: replyTargetMessage),
@@ -453,26 +458,9 @@ struct GattMeshView: View {
     }
 
     private func bubbleContent(for message: GattMeshChatMessage) -> some View {
-        let directPeer = manager.snapshot.connectedPeers.first { peer in
-            guard let sourcePeerId = message.sourcePeerId else { return false }
-            return peer.routeKeys.contains(sourcePeerId)
-        }
-        let originVerifiedRoleLabel = resolveGattMeshVerifiedRoleLabel(message.originVerifiedRole)
-        let directPeerVerifiedRoleLabel: String?
-        if let directPeer, directPeer.verificationStatus == .verified {
-            directPeerVerifiedRoleLabel = resolveGattMeshVerifiedAffiliationLabel(
-                agency: directPeer.verifiedAgency,
-                role: directPeer.verifiedRole
-            )
-        } else {
-            directPeerVerifiedRoleLabel = nil
-        }
-        let effectiveVerifiedRoleLabel: String?
-        if !message.isLocal && message.originVerifiedAtMillis != nil {
-            effectiveVerifiedRoleLabel = originVerifiedRoleLabel
-        } else {
-            effectiveVerifiedRoleLabel = originVerifiedRoleLabel ?? directPeerVerifiedRoleLabel
-        }
+        // The connected peer may only be a relay. Trust belongs to the signed message author.
+        let effectiveVerifiedRoleLabel = !message.isLocal && message.originVerifiedAtMillis != nil
+            ? resolveGattMeshVerifiedRoleLabel(message.originVerifiedRole) : nil
 
         return VStack(alignment: message.isLocal ? .trailing : .leading, spacing: 6) {
             if !message.isLocal {

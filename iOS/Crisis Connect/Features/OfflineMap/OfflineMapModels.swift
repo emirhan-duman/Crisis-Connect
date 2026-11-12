@@ -79,6 +79,12 @@ struct OfflineMapRegion: Identifiable, Codable, Equatable, Sendable {
     var lastError: String?
     var downloadCursorOrdinal: Int? = nil
 
+    var unavailableTileCount: Int { max(missingTiles, max(0, tileCount - downloadedTiles)) }
+    var hasIncompleteCoverage: Bool { status == .complete && unavailableTileCount > 0 }
+    var coverageStatusLabel: String {
+        hasIncompleteCoverage ? NSLocalizedString("OFFLINE_MAP_PARTIAL_COVERAGE", comment: "") : status.label
+    }
+
     var progress: Double {
         if status == .complete { return 1 }
         guard tileCount > 0 else { return 0 }

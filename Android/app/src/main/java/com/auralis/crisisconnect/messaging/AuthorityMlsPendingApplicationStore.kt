@@ -84,6 +84,72 @@ object AuthorityMlsPendingApplicationStore {
         }
     }
 
+    /**
+     * Copies still-sealed plaintext from retired MLS generations into the current outbox. The target
+     * index is committed before source cleanup, making migration restart-safe and idempotent across
+     * app or process crashes without reviving delivered messages during a later protocol rollover.
+     */
+    suspend fun migrate(
+        context: Context,
+        accountUid: String,
+        fromConversationIds: List<String>,
+        toConversationId: String,
+    ): Int = withContext(Dispatchers.IO) {
+        validateBinding(accountUid, toConversationId)
+        fromConversationIds.forEach { validateBinding(accountUid, it) }
+        synchronized(lock) {
+            val targetIds = loadIndex(context, accountUid, toConversationId).toMutableList()
+            var migrated = 0
+            for (sourceConversationId in fromConversationIds.distinct()) {
+                if (sourceConversationId == toConversationId) continue
+                for (messageId in loadIndex(context, accountUid, sourceConversationId)) {
+                    val source = loadEntry(context, accountUid, sourceConversationId, messageId) ?: continue
+                    val existing = if (messageId in targetIds) {
+                        loadEntry(context, accountUid, toConversationId, messageId)
+                    } else {
+                        null
+                    }
+                    if (existing != null) {
+                        check(existing.senderCredential == source.senderCredential &&
+                            existing.plaintext.contentEquals(source.plaintext)) {
+                            "Authority MLS migration found a reused message ID with different plaintext."
+                        }
+                        continue
+                    }
+                    check(targetIds.size < MAX_PENDING) { "Authority MLS protected outbox is full." }
+                    MlsStateVault.saveProtectedData(
+                        context,
+                        entryContext(accountUid, toConversationId, messageId),
+                        encode(source),
+                    )
+                    targetIds += messageId
+                    migrated += 1
+                }
+            }
+            saveIndex(context, accountUid, toConversationId, targetIds)
+            for (sourceConversationId in fromConversationIds.distinct()) {
+                if (sourceConversationId == toConversationId) continue
+                val remaining = loadIndex(context, accountUid, sourceConversationId).filter { messageId ->
+                    val source = loadEntry(context, accountUid, sourceConversationId, messageId)
+                        ?: return@filter false
+                    val target = loadEntry(context, accountUid, toConversationId, messageId)
+                        ?: return@filter true
+                    check(target.senderCredential == source.senderCredential &&
+                        target.plaintext.contentEquals(source.plaintext)) {
+                        "Authority MLS migration found a reused message ID with different plaintext."
+                    }
+                    MlsStateVault.deleteProtectedData(
+                        context,
+                        entryContext(accountUid, sourceConversationId, messageId),
+                    )
+                    false
+                }
+                saveIndex(context, accountUid, sourceConversationId, remaining)
+            }
+            migrated
+        }
+    }
+
     private fun loadIndex(context: Context, accountUid: String, conversationId: String): List<String> {
         val encoded = MlsStateVault.loadProtectedData(context, indexContext(accountUid, conversationId))
             ?: return emptyList()

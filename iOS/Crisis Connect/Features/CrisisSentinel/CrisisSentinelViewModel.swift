@@ -96,6 +96,7 @@ final class CrisisSentinelViewModel: ObservableObject {
         cloudSummariesTask = Task { [weak self] in
             guard let self else { return }
             for await summaries in await self.cloudStore.summariesStream() {
+                guard !Task.isCancelled, self.isOnlineEngineAllowed else { return }
                 self.cloudSummaries = summaries.map {
                     CrisisSentinelConversationSummary(
                         id: CrisisSentinelConversationIds.cloud($0.docId),
@@ -121,10 +122,12 @@ final class CrisisSentinelViewModel: ObservableObject {
         }
         isLoadingProviders = true
         providersLoadFailed = false
-        Task { [weak self] in
+        let uid = cloudAccessUid
+        providersTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let providers = try await self.onlineClient.fetchProviders()
+                guard !Task.isCancelled, uid == self.cloudAccessUid, uid == Auth.auth().currentUser?.uid else { return }
                 self.onlineProviders = providers
                 self.providersFetchedAt = Date()
                 // A pinned model whose provider/model vanished server-side falls back to default.
@@ -135,6 +138,12 @@ final class CrisisSentinelViewModel: ObservableObject {
                     self.selectedOnlineModel = nil
                 }
             } catch {
+                guard !Task.isCancelled, uid == self.cloudAccessUid, uid == Auth.auth().currentUser?.uid else { return }
+                if let failure = error as? CrisisSentinelOnlineError,
+                   failure.kind == .forbidden || failure.kind == .unauthorized {
+                    self.revokeCloudAccess()
+                    return
+                }
                 self.providersLoadFailed = true
             }
             self.isLoadingProviders = false
@@ -184,6 +193,10 @@ final class CrisisSentinelViewModel: ObservableObject {
     private var generationTimeoutTask: Task<Void, Never>?
     private var modelInstallObserver: NSObjectProtocol?
     private var roleChangeObserver: NSObjectProtocol?
+    private var authListener: AuthStateDidChangeListenerHandle?
+    private var cloudAccessUid: String?
+    private var accessCheckID = UUID()
+    private var providersTask: Task<Void, Never>?
     // Gemma 3n E2B (~3.6GB) is far larger than the old 1B model; first-load + generation can run
     // well past a minute on mid/low-end devices, so 90s cut answers off prematurely.
     private let generationTimeoutNanoseconds: UInt64 = 200_000_000_000
@@ -230,12 +243,19 @@ final class CrisisSentinelViewModel: ObservableObject {
 
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
-            Task { @MainActor in self?.hasInternet = online }
+            Task { @MainActor in
+                guard let self else { return }
+                let reconnected = online && !self.hasInternet
+                self.hasInternet = online
+                if reconnected { await self.refreshRoleAccess() }
+            }
         }
         pathMonitor.start(queue: DispatchQueue(label: "crisis.sentinel.reachability"))
 
+        authListener = Auth.auth().addStateDidChangeListener { [weak self] _, _ in
+            Task { @MainActor in await self?.refreshRoleAccess() }
+        }
         Task { [weak self] in
-            await self?.refreshRoleAccess()
             await self?.resolveLatestModelRelease(
                 shouldDownloadIfNeeded: false,
                 forceDownload: false,
@@ -270,6 +290,7 @@ final class CrisisSentinelViewModel: ObservableObject {
     }
 
     deinit {
+        if let authListener { Auth.auth().removeStateDidChangeListener(authListener) }
         if let modelInstallObserver {
             NotificationCenter.default.removeObserver(modelInstallObserver)
         }
@@ -295,31 +316,63 @@ final class CrisisSentinelViewModel: ObservableObject {
     }
 
     func refreshRoleAccess() async {
+        let uid = signedInUid
+        if uid != cloudAccessUid {
+            cloudAccessUid = uid
+            revokeCloudAccess()
+        }
+        let check = UUID()
+        accessCheckID = check
         let certRole = await SecurityRepository.shared
             .getUsableStoredCertificateRole(allowExpired: true)?
             .lowercased()
-        // The online engine's REAL authorization is the server's Firestore role check (see
-        // CrisisSentinelOnlineClient's header: "the server enforces the same gate from the Firestore
-        // user document") — NOT the device certificate. A field-team user who is signed in but whose
-        // rescue certificate hasn't been provisioned yet (or failed to) is still allowed by the
-        // server, so fall back to the cached rescue role (mirrors users/{uid}.role, populated by
-        // FirebaseBootstrapper). This lets field team chat via the CLOUD without being forced to
-        // download the on-device model, matching the authorized-user experience on Android.
+        guard !Task.isCancelled, accessCheckID == check, signedInUid == uid else { return }
         let cachedRole = SecureLocalStore.shared.loadRole()?
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let role = certRole ?? (cachedRole?.isEmpty == false ? cachedRole : nil)
-        let modes = Self.availableModes(for: role)
-        let preferredMode = Self.preferredMode(for: role)
-        // Mode is derived purely from the role (no manual default-mode picker):
-        // field team → field, authorized → coordinator, everyone else → public.
-        availableModes = modes
+        availableModes = Self.availableModes(for: role)
         certificateRole = role
-        mode = modes.contains(preferredMode) ? preferredMode : .publicUser
-        // The FirebaseAuth check is deliberately independent of the certificate: a stored cert can
-        // outlive the sign-in session, but the online engine needs a real (non-anonymous) ID token.
-        let signedIn = Auth.auth().currentUser.map { !$0.isAnonymous } ?? false
-        isOnlineEngineAllowed = role.map(Self.onlineEngineRoles.contains) == true && signedIn
+        mode = Self.preferredMode(for: role)
+
+        guard uid != nil, role.map(Self.onlineEngineRoles.contains) == true else {
+            revokeCloudAccess()
+            return
+        }
+        guard hasInternet else { return }
+        let allowed = (try? await onlineClient.checkCloudAccess()) == true
+        guard !Task.isCancelled, accessCheckID == check, signedInUid == uid else { return }
+        guard allowed else {
+            revokeCloudAccess()
+            return
+        }
+        isOnlineEngineAllowed = true
         startCloudSummaries()
+    }
+
+    private var signedInUid: String? {
+        guard let user = Auth.auth().currentUser, !user.isAnonymous else { return nil }
+        return user.uid
+    }
+
+    private func revokeCloudAccess() {
+        let wasAllowed = isOnlineEngineAllowed
+        let hadCloudChat = activeConversation.map { CrisisSentinelConversationIds.isCloud($0.id) } == true
+        if isGenerating && (hadCloudChat || streamingReply != nil) { cancelGeneration() }
+        isOnlineEngineAllowed = false
+        cloudMessagesTask?.cancel()
+        cloudMessagesTask = nil
+        providersTask?.cancel()
+        providersTask = nil
+        onlineProviders = []
+        providersFetchedAt = nil
+        isLoadingProviders = false
+        providersLoadFailed = false
+        if hadCloudChat {
+            activeConversation = nil
+            prompt = ""
+            response = nil
+        }
+        if wasAllowed || !cloudSummaries.isEmpty { startCloudSummaries() }
     }
 
     func openConversation(id: String?) {
@@ -348,6 +401,7 @@ final class CrisisSentinelViewModel: ObservableObject {
 
     /// Listens to a cloud chat's messages and reflects them into `activeConversation`.
     private func openCloudConversation(docId: String) {
+        guard isOnlineEngineAllowed else { return }
         let id = CrisisSentinelConversationIds.cloud(docId)
         activeConversation = CrisisSentinelConversation(
             id: id, title: "", mode: .fieldTeam,
@@ -683,8 +737,11 @@ final class CrisisSentinelViewModel: ObservableObject {
                     startedAt: startedAt
                 )
             } catch let error as CrisisSentinelOnlineError {
-                if Task.isCancelled == false { self.messageKey = self.onlineErrorKey(error.kind) }
-                self.finishGeneration()
+                if !Task.isCancelled {
+                    self.messageKey = self.onlineErrorKey(error.kind)
+                    self.finishGeneration()
+                    if error.kind == .forbidden || error.kind == .unauthorized { self.revokeCloudAccess() }
+                }
                 return
             } catch {
                 if Task.isCancelled == false { self.messageKey = self.onlineErrorKey(.network) }
@@ -790,8 +847,11 @@ final class CrisisSentinelViewModel: ObservableObject {
                 startedAt: startedAt
             )
         } catch let onlineError as CrisisSentinelOnlineError {
-            if Task.isCancelled == false { messageKey = onlineErrorKey(onlineError.kind) }
-            finishGeneration()
+            if !Task.isCancelled {
+                messageKey = onlineErrorKey(onlineError.kind)
+                finishGeneration()
+                if onlineError.kind == .forbidden || onlineError.kind == .unauthorized { revokeCloudAccess() }
+            }
             return
         } catch {
             if Task.isCancelled == false { messageKey = onlineErrorKey(.network) }

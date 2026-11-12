@@ -1,5 +1,7 @@
 package com.auralis.crisisconnect.screens.Chat
 
+import com.auralis.crisisconnect.core.media.LocalMedia
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ClipData
@@ -637,29 +639,29 @@ private fun clampFullScreenImageOffset(
     )
 }
 
-private fun toShareableImageUri(context: Context, uri: Uri): Uri {
+private fun toShareableImageUri(context: Context, uri: Uri): Uri? {
     if (uri.scheme == ContentResolver.SCHEME_CONTENT) {
         return uri
     }
     if (uri.scheme == ContentResolver.SCHEME_FILE) {
-        val sourcePath = uri.path ?: return uri
+        val sourcePath = uri.path ?: return null
         val sourceFile = File(sourcePath)
         if (!sourceFile.exists()) {
-            return uri
+            return null
         }
         return runCatching {
             FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
-                sourceFile
+                LocalMedia.export(context, sourceFile)
             )
-        }.getOrDefault(uri)
+        }.getOrNull()
     }
     return uri
 }
 
 private fun shareFullScreenImage(context: Context, uri: Uri): Boolean {
-    val shareUri = toShareableImageUri(context, uri)
+    val shareUri = toShareableImageUri(context, uri) ?: return false
     return runCatching {
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             type = "image/*"
@@ -677,7 +679,7 @@ private fun shareFullScreenImage(context: Context, uri: Uri): Boolean {
 }
 
 private fun openImageInExternalViewer(context: Context, uri: Uri): Boolean {
-    val targetUri = toShareableImageUri(context, uri)
+    val targetUri = toShareableImageUri(context, uri) ?: return false
     return runCatching {
         val openIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(targetUri, "image/*")
@@ -781,7 +783,7 @@ internal fun AudioMessageContent(
                     val retriever = MediaMetadataRetriever()
                     try {
                         if (message.audioFilePath != null) {
-                            retriever.setDataSource(message.audioFilePath)
+                            retriever.setDataSource(LocalMedia.dataSource(File(message.audioFilePath)))
                         } else {
                             retriever.setDataSource(context, audioUri)
                         }

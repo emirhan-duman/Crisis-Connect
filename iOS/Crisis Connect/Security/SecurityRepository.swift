@@ -200,6 +200,8 @@ final class SecurityRepository {
     }
 
     func clearStoredCertificate() {
+        AuthorityMeshKeyStore.clearGroupKey()
+        DispatchQueue.main.async { AdvancedSettingsStore.shared.authorityMeshEnabled = false }
         KeychainStore.delete(Keys.certificate)
         KeychainStore.delete(Keys.publicKey)
         KeychainStore.delete(Keys.certificateOwnerUID)
@@ -313,7 +315,8 @@ final class SecurityRepository {
         guard roleCertificate.isOwned(by: currentUID) else { return nil }
         guard roleCertificate.isUsable(
             at: nowMillis(),
-            allowOfflineGrace: allowExpired
+            allowOfflineGrace: allowExpired,
+            maxClockSkewMillis: allowExpired ? RoleCertificate.defaultMaxClockSkewMillis : 0
         ) else {
             return nil
         }

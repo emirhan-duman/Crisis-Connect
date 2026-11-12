@@ -13,6 +13,7 @@
 		<string>com.auralis.crisisconnect.cert-renewal</string>
 		<string>com.auralis.crisisconnect.sos-followup</string>
 		<string>com.auralis.crisisconnect.resource-alert-wake-ack</string>
+		<string>com.auralis.crisisconnect.muster-send</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
@@ -63,6 +64,11 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- SwiftUI lifecycle apps must forward Firebase callbacks explicitly. Keeping this disabled
+	     also prevents Phone Auth from depending on AppDelegate swizzling, which is unreliable when
+	     Firebase is initialized before didFinishLaunching. -->
+	<key>FirebaseAppDelegateProxyEnabled</key>
+	<false/>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>CRISIS_CONNECT_WEB_URL</key>

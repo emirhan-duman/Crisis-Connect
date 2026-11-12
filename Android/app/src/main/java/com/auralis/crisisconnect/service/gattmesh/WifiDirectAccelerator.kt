@@ -45,9 +45,9 @@ import kotlinx.coroutines.launch
  *  - All authority peers exchange a persisted random nodeId over Wi-Fi Direct DNS-SD service discovery.
  *  - The **lowest nodeId** becomes Group Owner: `createGroup()` with a `networkName`/`passphrase`
  *    deterministically derived from the authority group key (API 29+), and opens a [ServerSocket] on a
- *    fixed port. A Wi-Fi Direct GO is always reachable at 192.168.49.1.
+ *    fixed port. This path uses the AOSP Wi-Fi Direct group owner default.
  *  - The other peers join that derived SSID as Wi-Fi clients ([WifiNetworkSpecifier]) and connect a
- *    TCP socket to 192.168.49.1:[FIXED_PORT].
+ *    TCP socket to the group owner at [FIXED_PORT].
  *  - Both sides carry the identical [BlobLink] wire frame, so the receive + dedupe path is unchanged.
  *
  * Security: SSID + passphrase derive from the authority group key (same trust model as the Aware PSK),
@@ -420,20 +420,8 @@ internal class WifiDirectAccelerator(
         return awareManager?.isAvailable == true
     }
 
-    private fun hasDirectPermissions(): Boolean {
-        val fineOrNearby = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                appContext,
-                Manifest.permission.NEARBY_WIFI_DEVICES
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            ContextCompat.checkSelfPermission(
-                appContext,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        }
-        return fineOrNearby
-    }
+    private fun hasDirectPermissions(): Boolean =
+        com.auralis.crisisconnect.util.LocalNetworkPermissions.hasWifiPermissions(appContext)
 
     private companion object {
         private const val TAG = "AuthorityMeshDirect"
@@ -441,6 +429,7 @@ internal class WifiDirectAccelerator(
         private const val SERVICE_TYPE = "_ccauthblob._tcp"
         private const val TXT_NODE_ID = "nid"
         private const val FIXED_PORT = 52395 // 0xCCAB
+        // AOSP WifiP2pServiceImpl.GO_EAPOL_IP_ADDRESS.
         private const val GROUP_OWNER_ADDRESS = "192.168.49.1"
         private const val ELECTION_DEBOUNCE_MS = 1_500L
         private const val PREFS_NAME = "cc_authmesh_direct"

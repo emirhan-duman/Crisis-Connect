@@ -19,6 +19,7 @@ import Foundation
 import CryptoKit
 
 enum Spake2P256 {
+    enum InvalidPoint: Error { case malformed, infinity }
     // P-256 domain parameters.
     private static let p = BigUInt(hex: "FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF")
     private static let aCoef = BigUInt(hex: "FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFC") // -3 mod p
@@ -30,8 +31,8 @@ enum Spake2P256 {
         y: BigUInt(hex: "4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5")
     )
     // Fixed SPAKE2 points for P-256 (RFC 9382 §4).
-    private static let m = decodePoint(hexToBytes("02886e2f97ace46e55ba9dd7242579f2993b64e16ef3dcab95afd497333d8fa12f"))
-    private static let n = decodePoint(hexToBytes("03d8bbd6c639c62937b04d997f38c3770719c629d7014d49a24b4f98baa1292b49"))
+    private static let m = try! decodePoint(hexToBytes("02886e2f97ace46e55ba9dd7242579f2993b64e16ef3dcab95afd497333d8fa12f"))
+    private static let n = try! decodePoint(hexToBytes("03d8bbd6c639c62937b04d997f38c3770719c629d7014d49a24b4f98baa1292b49"))
 
     // MARK: - SPAKE2 API (points encoded uncompressed: 0x04 || X[32] || Y[32])
 
@@ -46,13 +47,17 @@ enum Spake2P256 {
     }
 
     /// Side A computes the shared point K = x·(pB − w·N).
-    static func keyA(w: BigUInt, x: BigUInt, pB: Data) -> Data {
-        encode(scalarMul(x, sub(decodePoint(pB), scalarMul(w, n))))
+    static func keyA(w: BigUInt, x: BigUInt, pB: Data) throws -> Data {
+        let shared = scalarMul(x, sub(try decodePoint(pB), scalarMul(w, n)))
+        guard !shared.infinity else { throw InvalidPoint.infinity }
+        return encode(shared)
     }
 
     /// Side B computes the shared point K = y·(pA − w·M).
-    static func keyB(w: BigUInt, y: BigUInt, pA: Data) -> Data {
-        encode(scalarMul(y, sub(decodePoint(pA), scalarMul(w, m))))
+    static func keyB(w: BigUInt, y: BigUInt, pA: Data) throws -> Data {
+        let shared = scalarMul(y, sub(try decodePoint(pA), scalarMul(w, m)))
+        guard !shared.infinity else { throw InvalidPoint.infinity }
+        return encode(shared)
     }
 
     /// RFC 9382 §3.3 transcript (8-byte little-endian length prefixes; no M/N; w as 32-byte scalar).
@@ -183,25 +188,26 @@ enum Spake2P256 {
         return out
     }
 
-    private static func decodePoint(_ bytes: Data) -> Point {
+    private static func decodePoint(_ bytes: Data) throws -> Point {
         let b = [UInt8](bytes)
         let point: Point
         if b.count == 65 && b[0] == 0x04 {
             point = Point(x: BigUInt(bytes: Data(b[1..<33])), y: BigUInt(bytes: Data(b[33..<65])))
         } else if b.count == 33 && (b[0] == 0x02 || b[0] == 0x03) {
-            point = decompress(x: BigUInt(bytes: Data(b[1..<33])), odd: b[0] == 0x03)
+            point = try decompress(x: BigUInt(bytes: Data(b[1..<33])), odd: b[0] == 0x03)
         } else {
-            fatalError("Unsupported point encoding.")
+            throw InvalidPoint.malformed
         }
-        precondition(isOnCurve(point), "Point is not on the P-256 curve.")
+        guard point.x < p, point.y < p, isOnCurve(point) else { throw InvalidPoint.malformed }
         return point
     }
 
-    private static func decompress(x: BigUInt, odd: Bool) -> Point {
+    private static func decompress(x: BigUInt, odd: Bool) throws -> Point {
+        guard x < p else { throw InvalidPoint.malformed }
         let rhs = modAdd(modAdd(modMul(modMul(x, x), x), modMul(aCoef, x)), bCoef)
         // p ≡ 3 (mod 4) ⇒ sqrt(a) = a^((p+1)/4) mod p
         var y = rhs.modPow(p.adding(BigUInt(small: 1)).shiftedRight1().shiftedRight1(), p)
-        precondition(modMul(y, y) == rhs, "No square root: invalid compressed point.")
+        guard modMul(y, y) == rhs else { throw InvalidPoint.malformed }
         if y.testBit(0) != odd { y = modSub(BigUInt.zero, y) }
         return Point(x: x, y: y)
     }

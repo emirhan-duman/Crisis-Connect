@@ -4,10 +4,31 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- Outer glass sphere rim -->
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.5"
+        android:pathData="M12,2A10,10 0 1,0 12,22A10,10 0 1,0 12,2Z" />
+    <!-- Upper pinched ribbon strand -->
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M4.5,8.5C8,13 10,13 12,12C14,11 16,11 19.5,15.5" />
+    <!-- Lower pinched ribbon strand -->
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M4.5,15.5C8,11 10,11 12,12C14,13 16,13 19.5,8.5" />
+    <!-- Incandescent central convergence core -->
     <path
         android:fillColor="#FF000000"
-        android:pathData="M10,2C10,6.418 6.418,10 2,10C6.418,10 10,13.582 10,18C10,13.582 13.582,10 18,10C13.582,10 10,6.418 10,2Z" />
+        android:pathData="M12,10.8A1.2,1.2 0 1,0 12,13.2A1.2,1.2 0 1,0 12,10.8Z" />
+    <!-- Specular highlight arc -->
     <path
-        android:fillColor="#FF000000"
-        android:pathData="M19,14C19,15.933 17.433,17.5 15.5,17.5C17.433,17.5 19,19.067 19,21C19,19.067 20.567,17.5 22.5,17.5C20.567,17.5 19,15.933 19,14Z" />
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:pathData="M7,5A8,8 0 0,1 11,3.5" />
 </vector>

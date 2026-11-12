@@ -64,6 +64,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 const val CRISIS_SENTINEL_NEW_CONVERSATION_ID = "new"
 
@@ -152,6 +153,12 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
     private var generationJob: Job? = null
     private var generationTimeoutJob: Job? = null
     private val onlineClient = CrisisSentinelOnlineClient()
+    private val firebaseAuth = FirebaseAuth.getInstance()
+    private val authListener = FirebaseAuth.AuthStateListener { refreshRoleAccess() }
+    private var accessJob: Job? = null
+    private var accessUid: String? = null
+    private var providersJob: Job? = null
+    private var providersCache: Pair<Long, List<CrisisSentinelOnlineProvider>>? = null
     private val cloudChatStore = CrisisSentinelCloudChatStore.getInstance(application)
     private var cloudSummaries: List<CrisisSentinelConversationSummary> = emptyList()
     private var cloudSummariesJob: Job? = null
@@ -207,7 +214,7 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
         _uiState.update { it.copy(hasInternet = hasUsableInternet()) }
         registerConnectivityWatcher()
         observeModelDownloadWork()
-        refreshRoleAccess()
+        firebaseAuth.addAuthStateListener(authListener)
     }
 
     private fun hasUsableInternet(): Boolean {
@@ -245,6 +252,7 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
         if (_uiState.value.hasInternet == hasInternet) return
         _uiState.update { it.copy(hasInternet = hasInternet) }
         recomputeEngineSelection()
+        if (hasInternet) refreshRoleAccess()
     }
 
     /**
@@ -287,7 +295,8 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
     /** Loads the provider/model list for the picker (memory-cached across VM instances). */
     fun refreshOnlineProviders() {
         val state = _uiState.value
-        if (!state.isOnlineEngineAllowed || state.isLoadingProviders) return
+        if (!state.onlineEngineAvailable || state.isLoadingProviders) return
+        val uid = accessUid ?: return
         val cached = providersCache
         val now = System.currentTimeMillis()
         if (cached != null && now - cached.first < PROVIDERS_CACHE_TTL_MS) {
@@ -296,10 +305,22 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
             return
         }
         _uiState.update { it.copy(isLoadingProviders = true, providersLoadFailed = false) }
-        viewModelScope.launch(exceptionHandler) {
-            val providers = runCatching { onlineClient.fetchProviders() }
-                .onFailure { Log.w(TAG, "Provider list fetch failed", it) }
-                .getOrNull()
+        providersJob = viewModelScope.launch(exceptionHandler) {
+            val providers = try {
+                onlineClient.fetchProviders()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: CrisisSentinelOnlineException) {
+                if (error.kind == CrisisSentinelOnlineException.Kind.Forbidden ||
+                    error.kind == CrisisSentinelOnlineException.Kind.Unauthorized
+                ) {
+                    revokeCloudAccess()
+                    return@launch
+                }
+                Log.w(TAG, "Provider list fetch failed", error)
+                null
+            }
+            if (uid != accessUid || uid != firebaseAuth.currentUser?.uid || !_uiState.value.isOnlineEngineAllowed) return@launch
             if (providers == null) {
                 _uiState.update {
                     it.copy(
@@ -394,31 +415,78 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
 
 
     fun refreshRoleAccess() {
-        viewModelScope.launch(exceptionHandler) {
-            val role = withContext(Dispatchers.IO) {
-                securityRepository.getUsableStoredCertificateRole(allowExpired = true)
-            }?.lowercase(Locale.US)
-            val modes = availableModesForRole(role)
-            // The FirebaseAuth check is deliberately independent of the certificate: a stored
-            // cert can outlive the sign-in session, but the online engine needs an ID token
-            // from a real (non-anonymous) user.
-            val onlineAllowed = role in ONLINE_ENGINE_ROLES &&
-                FirebaseAuth.getInstance().currentUser?.takeUnless { it.isAnonymous } != null
-            _uiState.update { state ->
-                // Mode is now derived purely from the role (no manual default-mode picker):
-                // field team → field, authorized → coordinator, everyone else → public.
-                val preferredMode = preferredModeForRole(role)
-                val nextMode = if (preferredMode in modes) preferredMode else CrisisSentinelUserMode.Public
-                conversationStore.saveDefaultMode(nextMode)
-                state.copy(
-                    mode = nextMode,
-                    availableModes = modes,
-                    certificateRole = role,
-                    isOnlineEngineAllowed = onlineAllowed
-                )
+        viewModelScope.launch(Dispatchers.Main.immediate) {
+            val uid = firebaseAuth.currentUser?.takeUnless { it.isAnonymous }?.uid
+            if (accessUid != uid) {
+                accessJob?.cancel()
+                accessUid = uid
+                revokeCloudAccess()
+            } else if (accessJob?.isActive == true) {
+                return@launch
             }
-            recomputeEngineSelection()
-            refreshCloudSync()
+            accessJob = viewModelScope.launch(exceptionHandler) accessCheck@{
+                val role = withContext(Dispatchers.IO) {
+                    securityRepository.getUsableStoredCertificateRole(allowExpired = false)
+                }?.lowercase(Locale.US)
+                val modes = availableModesForRole(role)
+                val preferredMode = preferredModeForRole(role)
+                conversationStore.saveDefaultMode(preferredMode)
+                _uiState.update { it.copy(mode = preferredMode, availableModes = modes, certificateRole = role) }
+
+                val onlineAllowed = uid != null && role in ONLINE_ENGINE_ROLES && (
+                    if (_uiState.value.hasInternet) {
+                        withTimeoutOrNull(8_000) {
+                            try {
+                                onlineClient.checkCloudAccess()
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                false
+                            }
+                        } == true
+                    } else {
+                        _uiState.value.isOnlineEngineAllowed
+                    }
+                )
+                if (uid != firebaseAuth.currentUser?.takeUnless { it.isAnonymous }?.uid) return@accessCheck
+                if (!onlineAllowed) {
+                    revokeCloudAccess()
+                    return@accessCheck
+                }
+                _uiState.update { it.copy(isOnlineEngineAllowed = true) }
+                recomputeEngineSelection()
+                refreshCloudSync()
+            }
+        }
+    }
+
+    private fun revokeCloudAccess() {
+        if (activeGenerationEngine == CrisisSentinelEngine.Online && _uiState.value.isGenerating) {
+            cancelGeneration()
+        }
+        cloudSummariesJob?.cancel()
+        cloudSummariesJob = null
+        cloudMessagesJob?.cancel()
+        cloudMessagesJob = null
+        providersJob?.cancel()
+        providersJob = null
+        providersCache = null
+        if (_uiState.value.isOnlineEngineAllowed) cloudChatStore.invalidatePanelKey()
+        cloudSummaries = emptyList()
+        _uiState.update { state ->
+            val hadCloudChat = state.activeConversation?.id?.let(CrisisSentinelConversationIds::isCloud) == true
+            state.copy(
+                isOnlineEngineAllowed = false,
+                selectedEngine = CrisisSentinelEngine.Edge,
+                cloudSyncState = CrisisSentinelCloudSyncState.Unknown,
+                onlineProviders = emptyList(),
+                isLoadingProviders = false,
+                providersLoadFailed = false,
+                conversations = mergedSummaries(),
+                activeConversation = state.activeConversation.takeUnless { hadCloudChat },
+                prompt = if (hadCloudChat) "" else state.prompt,
+                response = state.response.takeUnless { hadCloudChat }
+            )
         }
     }
 
@@ -732,6 +800,7 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
      * the phone in real time.
      */
     private fun openCloudConversation(id: String) {
+        if (!_uiState.value.isOnlineEngineAllowed) return
         val docId = CrisisSentinelConversationIds.cloudDocId(id)
         val knownTitle = _uiState.value.conversations.firstOrNull { it.id == id }?.title
         _uiState.update { state ->
@@ -1302,7 +1371,7 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
                 if (online.kind == CrisisSentinelOnlineException.Kind.Unauthorized ||
                     online.kind == CrisisSentinelOnlineException.Kind.Forbidden
                 ) {
-                    // The certificate/session may have been revoked; re-evaluate the gate.
+                    revokeCloudAccess()
                     refreshRoleAccess()
                 }
                 return@launchGeneration
@@ -1577,6 +1646,7 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
     }
 
     override fun onCleared() {
+        firebaseAuth.removeAuthStateListener(authListener)
         networkCallback?.let { callback ->
             runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
         }
@@ -1606,10 +1676,6 @@ class CrisisSentinelViewModel(application: Application) : AndroidViewModel(appli
         const val UNSUPPORTED_TOOL_TEXT_THRESHOLD = 40
 
         const val PROVIDERS_CACHE_TTL_MS = 15 * 60_000L
-
-        // Shared across the multiple VM instances (one per NavBackStackEntry).
-        @Volatile
-        private var providersCache: Pair<Long, List<CrisisSentinelOnlineProvider>>? = null
 
         // "This chat is saved on this device only" is surfaced once per app start.
         @Volatile

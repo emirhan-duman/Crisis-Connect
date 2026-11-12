@@ -154,6 +154,10 @@ enum ChannelAttachments {
                   let cipher = cachedAuthorityMlsCiphertext(path: attachment.path) else {
                 throw ChannelAttachmentsError.cryptoFailed
             }
+            if ResilientApplicationStore.isResilientConversation(String(components[1])) {
+                try await ResilientMediaClient.uploadAttachment(path: attachment.path, data: cipher)
+                continue
+            }
             let reference = Storage.storage().reference(withPath: attachment.path)
             let digest = Data(SHA256.hash(data: cipher)).base64EncodedString()
             func uploadedObjectMatches() async -> Bool {
@@ -281,11 +285,16 @@ enum ChannelAttachments {
                 try? FileManager.default.removeItem(at: cacheURL)
             }
         }
-        guard let cipher = try? await Storage.storage()
-            .reference(withPath: attachment.path)
-            .data(maxSize: Int64(maxAttachmentBytes + 4096)) else {
-            return nil
-        }
+        let cipher: Data
+        do {
+            let conversationId = attachment.path.split(separator: "/").dropFirst().first.map(String.init) ?? ""
+            if ResilientApplicationStore.isResilientConversation(conversationId) {
+                cipher = try await ResilientMediaClient.downloadAttachment(path: attachment.path)
+            } else {
+                cipher = try await Storage.storage().reference(withPath: attachment.path)
+                    .data(maxSize: Int64(maxAttachmentBytes + 4096))
+            }
+        } catch { return nil }
         guard let plain = decryptAttachment(
             legacyChannelKey: key,
             legacyAad: aad,

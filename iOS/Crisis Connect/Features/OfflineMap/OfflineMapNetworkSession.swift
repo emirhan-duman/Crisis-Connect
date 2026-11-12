@@ -21,7 +21,7 @@ enum OfflineMapNetworkSession {
         configuration.httpMaximumConnectionsPerHost = backgroundFriendly ? 2 : 4
         configuration.allowsCellularAccess = true
         configuration.allowsExpensiveNetworkAccess = true
-        configuration.allowsConstrainedNetworkAccess = true
-        return URLSession(configuration: configuration)
+        configuration.allowsConstrainedNetworkAccess = false
+        return URLSession(configuration: configuration, delegate: TrafficSessionDelegate.shared, delegateQueue: nil)
     }
 }

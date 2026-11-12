@@ -21,7 +21,11 @@ final class MessagingIdentity {
     private let lock = NSLock()
     private var cached: Stored?
 
-    init() {}
+    private let readOverride: (() throws -> Data?)?
+    private let addOverride: ((Data) throws -> Void)?
+    init(read: (() throws -> Data?)? = nil, add: ((Data) throws -> Void)? = nil) {
+        readOverride = read; addOverride = add
+    }
 
     /// The identity public key as base64 SPKI — the exact wire form Android/web publish and pin.
     func publicKeyBase64() throws -> String {
@@ -80,7 +84,8 @@ final class MessagingIdentity {
         defer { lock.unlock() }
         if let cached { return cached }
 
-        if let blob = readKeychain(), let restored = decode(blob) {
+        if let blob = try readKeychain() {
+            guard let restored = decode(blob) else { throw KeychainStore.AccessError.status(errSecDecode) }
             cached = restored
             return restored
         }
@@ -127,7 +132,7 @@ final class MessagingIdentity {
             blob.append(StorageKind.software.rawValue)
             blob.append(key.rawRepresentation)
         }
-        writeKeychain(blob)
+        try writeKeychain(blob)
     }
 
     // MARK: - Keychain (device-only, survives restarts, excluded from backups)
@@ -140,21 +145,27 @@ final class MessagingIdentity {
         ]
     }
 
-    private func readKeychain() -> Data? {
+    private func readKeychain() throws -> Data? {
+        if let readOverride { return try readOverride() }
         var query = baseQuery()
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess else { return nil }
-        return item as? Data
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else { throw KeychainStore.AccessError.status(status) }
+        guard let data = item as? Data else { throw KeychainStore.AccessError.status(errSecDecode) }
+        return data
     }
 
-    private func writeKeychain(_ data: Data) {
-        SecItemDelete(baseQuery() as CFDictionary)
+    private func writeKeychain(_ data: Data) throws {
+        if let addOverride { try addOverride(data); return }
+        // Creation follows only errSecItemNotFound. Never delete/overwrite an identity on an
+        // access failure or a competing first-use request.
         var query = baseQuery()
         query[kSecValueData as String] = data
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(query as CFDictionary, nil)
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else { throw KeychainStore.AccessError.status(status) }
     }
 }

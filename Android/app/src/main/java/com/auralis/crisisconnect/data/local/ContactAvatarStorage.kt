@@ -1,5 +1,7 @@
 package com.auralis.crisisconnect.data.local
 
+import com.auralis.crisisconnect.core.media.LocalMedia
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -56,7 +58,7 @@ object ContactAvatarStorage {
             return null
         }
         return runCatching {
-            BitmapFactory.decodeFile(file.absolutePath)
+            LocalMedia.read(file).let { BitmapFactory.decodeByteArray(it, 0, it.size) }
         }.getOrElse { throwable ->
             Log.w(TAG, "Failed to decode avatar for session=$sessionCode", throwable)
             null
@@ -133,7 +135,7 @@ object ContactAvatarStorage {
         val toFile = avatarFile(context, toKey)
         val moved = runCatching {
             toFile.parentFile?.mkdirs()
-            fromFile.copyTo(toFile, overwrite = true)
+            LocalMedia.copy(fromFile, toFile)
             true
         }.getOrDefault(false)
         if (!moved) {
@@ -193,28 +195,8 @@ object ContactAvatarStorage {
     }
 
     private fun writeAtomically(target: File, bytes: ByteArray): Boolean {
-        val parent = target.parentFile ?: return false
-        if (!parent.exists() && !parent.mkdirs()) {
-            return false
-        }
-        val temp = File(parent, "${target.name}.tmp")
-        return runCatching {
-            FileOutputStream(temp).use { output ->
-                output.write(bytes)
-                output.flush()
-                output.fd.sync()
-            }
-            if (target.exists() && !target.delete()) {
-                Log.w(TAG, "Failed to replace existing avatar file: ${target.absolutePath}")
-            }
-            if (!temp.renameTo(target)) {
-                temp.copyTo(target, overwrite = true)
-                temp.delete()
-            }
-            true
-        }.getOrElse { throwable ->
-            Log.w(TAG, "Failed writing avatar file ${target.absolutePath}", throwable)
-            runCatching { temp.delete() }
+        return runCatching { LocalMedia.write(target, bytes); true }.getOrElse {
+            Log.w(TAG, "Failed writing protected avatar", it)
             false
         }
     }

@@ -96,6 +96,22 @@ class CrisisSentinelOnlineClient(
         executeStream(token, messages, modelChoice, onDelta)
     }
 
+    /** An explicit server grant is required before showing any cloud controls. */
+    suspend fun checkCloudAccess(): Boolean = withIdToken { token ->
+        val request = Request.Builder()
+            .url(endpoint("api/chat/providers").newBuilder().addQueryParameter("accessOnly", "1").build())
+            .header("Authorization", "Bearer $token")
+            .get()
+            .build()
+        executeCall(request) { response ->
+            when {
+                response.code == 403 -> false
+                !response.isSuccessful -> throw mapStatus(response.code, "Cloud access check failed")
+                else -> JSONObject(response.body?.string().orEmpty()).opt("allowed") == true
+            }
+        }
+    }
+
     /** Providers/models the signed-in user's panel can use. Server omits unconfigured ones. */
     suspend fun fetchProviders(): List<CrisisSentinelOnlineProvider> = withIdToken { token ->
         executeFetchProviders(token)
@@ -112,12 +128,19 @@ class CrisisSentinelOnlineClient(
                 kind = CrisisSentinelOnlineException.Kind.Unauthorized,
                 message = "No signed-in Firebase user"
             )
+        fun requireCurrentUser() {
+            if (FirebaseAuth.getInstance().currentUser?.uid != user.uid) {
+                throw CrisisSentinelOnlineException(CrisisSentinelOnlineException.Kind.Unauthorized, message = "Account changed")
+            }
+        }
         val token = fetchIdToken(user::getIdToken, forceRefresh = false)
+        requireCurrentUser()
         return try {
             block(token)
         } catch (unauthorized: CrisisSentinelOnlineException) {
             if (unauthorized.kind != CrisisSentinelOnlineException.Kind.Unauthorized) throw unauthorized
             val freshToken = fetchIdToken(user::getIdToken, forceRefresh = true)
+            requireCurrentUser()
             block(freshToken)
         }
     }

@@ -18,15 +18,18 @@ plugins {
     id("com.google.firebase.firebase-perf") version "2.0.2" apply false
 }
 
+val sbomBuildType = providers.gradleProperty("sbomBuildType").orElse("release").get()
+require(sbomBuildType in setOf("release", "internal")) { "Unsupported SBOM build type" }
+
 allprojects {
     group = "com.auralis"
     version = providers.gradleProperty("releaseVersion").orElse("development").get()
 
     tasks.cyclonedxDirectBom {
-        // The release SBOM describes production runtime dependencies. Test, debug, lint, and
-        // build-tool configurations are intentionally outside the distributed application.
+        // Resolve the runtime graph of the published variant; internal review packages
+        // include their own debug dependencies. Test, lint and build tools stay excluded.
         enabled = project.path == ":app" || project.path == ":feature_rescue"
-        includeConfigs = listOf("releaseRuntimeClasspath")
+        includeConfigs = listOf("${sbomBuildType}RuntimeClasspath")
         testConfigs = emptyList()
         componentGroup = "com.auralis"
         componentName = when (project.path) {

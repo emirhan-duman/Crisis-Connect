@@ -17,16 +17,18 @@ private struct SourceSpec {
 
 final class DisasterRepository: Sendable {
 
+    private let allowsAutomaticRefresh: @Sendable () -> Bool
     private let session: URLSession
     private let cacheDirectory: URL
 
-    init() {
+    init(allowsAutomaticRefresh: @escaping @Sendable () -> Bool = { true }, delegate: (any URLSessionDelegate)? = nil) {
+        self.allowsAutomaticRefresh = allowsAutomaticRefresh
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 25
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.urlCache = nil
-        self.session = URLSession(configuration: configuration)
+        self.session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
 
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
@@ -52,6 +54,11 @@ final class DisasterRepository: Sendable {
             )
         }
 
+        if !forceRefresh && !allowsAutomaticRefresh() {
+            let cached = readCache(cache)
+            return DisasterFetchResult(events:cached?.events ?? [],lastUpdatedMillis:cached?.modifiedMillis ?? 0,
+                isStale:true,error:.deferred,primarySource:sourcesLabel(cached?.events ?? [],feed:feed))
+        }
         // 2. Query every source in parallel; nil = that source failed.
         let specs = sources(for: feed, region: region)
         let results = await withTaskGroup(of: [DisasterEvent]?.self) { group -> [[DisasterEvent]?] in

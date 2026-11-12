@@ -103,6 +103,8 @@ actor AuthorityMlsConversationSession {
         deviceLabel: String,
         transport: AuthorityMlsTransport = AuthorityMlsTransport()
     ) async throws -> AuthorityMlsConversationSession {
+        let binding = transport.usesApplicationRouting ? try await ResilientApplicationStore.resolve(binding) : binding
+        transport.configure(binding)
         let canonical = try AuthorityMlsIdentifiers.canonicalBinding(binding)
         let conversationId = try AuthorityMlsIdentifiers.conversationId(canonical)
         let leaseKey = "\(accountUid)\u{0}\(conversationId)"
@@ -281,6 +283,15 @@ actor AuthorityMlsConversationSession {
                 ciphertext: $0.ciphertext
             )
         }
+    }
+
+    func isApplicationPublished(messageId: String) async throws -> Bool {
+        try ensureOpen()
+        return try await transport.isCiphertextPublished(
+            conversationId: conversationId,
+            messageId: messageId,
+            senderUid: accountUid
+        )
     }
 
     func publishPendingApplications() async throws {

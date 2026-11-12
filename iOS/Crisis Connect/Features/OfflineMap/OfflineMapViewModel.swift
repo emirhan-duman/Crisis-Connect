@@ -173,6 +173,14 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
 
     func resumeRegion(_ region: OfflineMapRegion) {
         guard region.status != .downloading else { return }
+        var region = region
+        if region.hasIncompleteCoverage {
+            // Scan cached tiles again and retry only the holes. A completed cursor must not
+            // skip the missing tiles, and the old missing count must not complete the retry.
+            region.missingTiles = 0
+            region.downloadedTiles = 0
+            region.downloadCursorOrdinal = nil
+        }
         showToast(NSLocalizedString("Download resumed", comment: ""), style: .info)
         beginDownload(region, announce: false)
     }
@@ -331,7 +339,11 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
             regions[index].lastError = nil
             regions[index].downloadCursorOrdinal = nil
             tileRefreshToken = UUID()
-            showToast(String(format: NSLocalizedString("Download complete: %@", comment: ""), regions[index].name), style: .success)
+            if regions[index].hasIncompleteCoverage {
+                showToast(String(format: NSLocalizedString("OFFLINE_MAP_PARTIAL_DOWNLOAD", comment: ""), regions[index].name), style: .info)
+            } else {
+                showToast(String(format: NSLocalizedString("Download complete: %@", comment: ""), regions[index].name), style: .success)
+            }
         case .paused:
             regions[index].status = .paused
         case .failed(let error):
@@ -453,6 +465,7 @@ final class OfflineMapViewModel: NSObject, ObservableObject, CLLocationManagerDe
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if let location=locations.last {MessagingRegionHint.observe(location)}
         lastKnownLocation = locations.last
         if pendingLocationFocus {
             centerOnUserToken = UUID()
@@ -581,10 +594,12 @@ enum OfflineMapDownloader {
             0,
             min(plan.region.missingTiles, max(0, total - plan.initialDownloaded))
         )
-        var downloaded = plan.initialDownloaded
-        var lastReportedDownloaded = plan.initialDownloaded
-        var missing = persistedMissing
-        var lastReportedMissing = persistedMissing
+        // Without a cursor we enumerate the entire cache. Starting at the persisted count
+        // would count existing tiles twice, including when retrying an incomplete region.
+        var downloaded = plan.resumeOrdinal == nil ? 0 : plan.initialDownloaded
+        var lastReportedDownloaded = downloaded
+        var missing = plan.resumeOrdinal == nil ? 0 : persistedMissing
+        var lastReportedMissing = missing
         var lastReportedAt = ProcessInfo.processInfo.systemUptime
         var currentOrdinal = 0
         var lastCompletedOrdinal: Int?
@@ -638,7 +653,7 @@ enum OfflineMapDownloader {
                            currentOrdinal <= resumeOrdinal {
                             continue
                         }
-                        if Task.isCancelled { return .paused }
+                        if Task.isCancelled || !DisasterTrafficController.shared.permits(.mapDownload) { return .paused }
                         if tileStore.tileExists(regionId: plan.region.id, z: zoom, x: x, y: y) {
                             downloaded += 1
                             lastCompletedOrdinal = currentOrdinal
@@ -662,7 +677,7 @@ enum OfflineMapDownloader {
                                 lastCompletedOrdinal = currentOrdinal
                                 await reportProgressIfNeeded(force: downloaded + missing == total)
                             } catch {
-                                if Task.isCancelled { return .paused }
+                                if Task.isCancelled || !DisasterTrafficController.shared.permits(.mapDownload) { return .paused }
                                 return .failed(error.localizedDescription)
                             }
                         case .missing:

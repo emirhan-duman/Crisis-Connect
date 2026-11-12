@@ -12,6 +12,8 @@ final class LanguageSettingsViewModel: ObservableObject {
     @Published var selectedLanguage: String {
         didSet {
             settings.appLanguage = selectedLanguage
+            MusterNotificationCenter.refreshLocalizedActions()
+            Task { await MusterClient.shared.synchronizeLanguagePreference() }
         }
     }
 

@@ -187,7 +187,7 @@
     <string name="advanced_settings_title">تنظیمات پیشرفته</string>
     <string name="advanced_settings_screen_description">رفتار برنامه را برای تشخیص و تحویل پیام تنظیم دقیق کنید.</string>
     <string name="advanced_setting_public_mesh_title">حالت مش عمومی</string>
-    <string name="advanced_setting_public_mesh_description">این گره را در محیط‌های مش باز برای آزمایش‌های هماهنگی گسترده‌تر قابل کشف کنید.</string>
+    <string name="advanced_setting_public_mesh_description">گفتگوی عمومی: هر فرد نزدیک می‌تواند پیام‌ها را بخواند و شرکت کند. اطلاعات حساس را به اشتراک نگذارید.</string>
     <string name="advanced_setting_gatt_mesh_notifications_title">اعلان‌های گره مش باز</string>
     <string name="advanced_setting_gatt_mesh_notifications_description">فقط برای پیام‌های جدید از گره چت عمومی مش GATT عمومی اعلان می‌دهد.</string>
     <string name="advanced_setting_high_range_title">حالت برد بالا</string>
@@ -480,7 +480,6 @@
     <string name="gatt_mesh_action_message_info">اطلاعات پیام</string>
     <string name="gatt_mesh_message_info_sender">فرستنده</string>
     <string name="gatt_mesh_message_info_origin">منشأ پیام</string>
-    <string name="gatt_mesh_message_info_direct_peer">همتای مستقیم</string>
     <string name="gatt_mesh_message_info_time">زمان</string>
     <string name="gatt_mesh_message_info_you">شما</string>
     <string name="gatt_mesh_message_info_sent_to">ارسال به</string>
@@ -608,7 +607,7 @@
     <string name="add_from_contacts_empty">هنوز هیچ‌کس از مخاطبان شما در Crisis Connect نیست.</string>
     <string name="add_from_contacts_permission_needed">برای یافتن افرادی که می‌شناسید مجوز مخاطبان لازم است.</string>
     <string name="add_from_contacts_sign_in_required">برای یافتن مخاطبان در Crisis Connect وارد شوید.</string>
-    <string name="add_from_contacts_privacy_note">شماره‌های شما با هش مطابقت داده می‌شوند و هرگز روی سرور ذخیره نمی‌شوند. فقط افرادی که انتخاب کرده‌اند قابل کشف باشند نمایش داده می‌شوند.</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect نام‌ها و شماره‌های تلفن مخاطبان را می‌خواند تا کاربران برنامه را پیدا کند. شماره‌ها برای تطبیق به سرورهای Crisis Connect با میزبانی Google Firebase در ایالات متحده ارسال می‌شوند. نام‌ها روی دستگاه شما می‌مانند. شماره‌های جستجوشده بدون ذخیره دائمی پردازش می‌شوند؛ نتایج تطبیق روی دستگاه می‌مانند. تازه‌سازی این صفحه یا بازگشت به آن در حالی که باز است ممکن است شماره‌ها را دوباره ارسال کند. انتخاب شما برای این حساب روی این دستگاه ذخیره می‌شود. می‌توانید در تنظیمات، بخش دسترسی به مخاطبان، رضایت خود را پس بگیرید.</string>
     <string name="add_from_contacts_found_count">%1$d نفر در Crisis Connect</string>
     <string name="add_from_contacts_empty_hint">به‌محض اینکه شماره تلفن خود را در برنامه تأیید کنند، اینجا نمایش داده می‌شوند.</string>
     <string name="add_from_contacts_search_hint">جستجوی نام یا شماره</string>
@@ -637,7 +636,6 @@
     <string name="nearby_match_notification_text">برای اتصال از طریق بلوتوث ضربه بزنید</string>
     <string name="nearby_pairing_channel_name">درخواست‌های جفت شدن نزدیک</string>
     <string name="nearby_pairing_request_title">%1$s می‌خواهد در نزدیکی متصل شود</string>
-    <string name="nearby_pairing_request_text">برای چت از طریق بلوتوث بپذیرید.</string>
     <string name="nearby_pairing_accept">پذیرش</string>
     <string name="nearby_pairing_decline">رد</string>
     <string name="manual_connect_button">جفت شدن با دستگاه</string>
@@ -1199,6 +1197,7 @@
     <string name="chat_status_connected">متصل</string>
     <string name="chat_status_connected_bluetooth">متصل از طریق بلوتوث</string>
     <string name="chat_status_connected_internet">متصل از طریق اینترنت</string>
+    <string name="chat_status_connected_satellite">متصل از طریق ماهواره</string>
     <string name="internet_message_channel_name">پیام‌های اینترنتی</string>
     <string name="internet_message_notification_title">پیام جدید</string>
     <string name="channel_message_notification_body">پیام جدید</string>
@@ -1327,7 +1326,6 @@
     <string name="notification_photo_message_body">پیام تصویری</string>
     <string name="chat_encryption_setup_title">این چت را امن کنید</string>
     <string name="chat_encryption_setup_instruction">برای وارد کردن کلید رمزگذاری مشترک، کد QR نمایش‌داده‌شده در صفحه چت جدید دستگاه دیگر را اسکن کنید.</string>
-    <string name="chat_encryption_setup_session_mismatch">این QR متعلق به یک جلسه چت دیگر است.</string>
     <string name="chat_encryption_setup_invalid_qr">قالب QR پشتیبانی‌نشده.</string>
     <string name="chat_encryption_setup_handshake_in_progress">در حال تأیید کلید رمزگذاری…</string>
     <string name="chat_encryption_setup_handshake_failed">کلید رمزگذاری تأیید نشد. دوباره تلاش کنید.</string>
@@ -1781,4 +1779,20 @@
     <string name="profile_delete_account_error_verification">حذف در این دستگاه تأیید نشد. اتصال خود را بررسی کنید و دوباره تلاش کنید.</string>
     <string name="profile_delete_account_error_signed_out">برای حذف حساب باید وارد شده باشید.</string>
     <string name="profile_delete_account_reauth_needed">برای امنیت شما، پیش از حذف باید هویتتان تأیید شود. خارج شوید، دوباره وارد شوید و سپس دوباره تلاش کنید.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">یافتن مخاطبان به‌صورت آنلاین</string>
+    <string name="contacts_disclosure_body">Crisis Connect نام‌ها و شماره‌های تلفن مخاطبان را می‌خواند تا کاربران برنامه را پیدا کند. شماره‌ها برای تطبیق به سرورهای Crisis Connect با میزبانی Google Firebase در ایالات متحده ارسال می‌شوند. نام‌ها روی دستگاه شما می‌مانند. شماره‌های جستجوشده بدون ذخیره دائمی پردازش می‌شوند؛ نتایج تطبیق روی دستگاه می‌مانند. تازه‌سازی این صفحه یا بازگشت به آن در حالی که باز است ممکن است شماره‌ها را دوباره ارسال کند. انتخاب شما برای این حساب روی این دستگاه ذخیره می‌شود. می‌توانید در تنظیمات، بخش دسترسی به مخاطبان، رضایت خود را پس بگیرید.</string>
+    <string name="contacts_local_disclosure_title">یافتن مخاطبان نزدیک</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect فقط نام و شماره‌ای را می‌خواند که از طریق انتخابگر مخاطبان سیستم به اشتراک می‌گذارید تا فردی را در نزدیکی پیدا کنید. شماره انتخابی برای تأیید هویت از طریق Bluetooth استفاده می‌شود. این قابلیت مخاطبان شما را به سرور ارسال نمی‌کند. انتخاب شما برای این حساب روی این دستگاه ذخیره می‌شود. می‌توانید در تنظیمات، بخش دسترسی به مخاطبان، رضایت خود را پس بگیرید.</string>
+    <string name="contacts_disclosure_accept">موافقم</string>
+    <string name="contacts_disclosure_decline">اکنون نه</string>
+    <string name="contacts_consent_settings_title">دسترسی به مخاطبان</string>
+    <string name="contacts_consent_settings_hint">انتخاب شما برای این حساب روی این دستگاه ذخیره می‌شود. می‌توانید در تنظیمات، بخش دسترسی به مخاطبان، رضایت خود را پس بگیرید.</string>
+    <string name="contacts_consent_revoke_online">لغو رضایت تطبیق آنلاین</string>
+    <string name="contacts_consent_revoke_nearby">لغو رضایت مخاطبان نزدیک</string>
+    <string name="nearby_choose_contact">انتخاب مخاطب</string>
+    <string name="nearby_contact_selection_failed">شماره انتخابی خوانده نشد. لطفاً مخاطب دیگری انتخاب کنید.</string>
+    <string name="chat_status_internet_available">اینترنت در دسترس است</string>
+    <string name="chat_status_satellite_available">اتصال ماهواره‌ای در دسترس است</string>
 </resources>

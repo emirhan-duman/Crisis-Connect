@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Choisissez un son de notification, une vibration et une visibilité de l\'écran de verrouillage dans les paramètres Android. Les alertes en plein écran nécessitent votre autorisation et peuvent être limitées par Ne pas déranger, les paramètres de la batterie ou une application arrêtée de force.</string>
+    <string name="muster_alert_settings_title">Son, vibration et écran de verrouillage</string>
+    <string name="muster_alerts_blocked">Les notifications d\'application sont désactivées dans les paramètres Android</string>
+    <string name="muster_alerts_quiet">Ce canal de notification est silencieux ou de faible priorité ; activer les alertes contextuelles dans les paramètres Android</string>
+    <string name="muster_locked_screen_note">Des alertes en plein écran apparaissent lorsque votre téléphone est verrouillé ou que son écran est éteint, si Android le permet. Pendant que vous utilisez le téléphone, le Android peut afficher une notification tête haute.</string>
+    <string name="muster_urgent_sound">Son en mode silencieux</string>
+    <string name="muster_urgent_sound_help">Pour les pointages de sécurité urgents en cas de catastrophe uniquement. Utilise le volume de votre alarme existant pendant une durée limitée pendant que l\'écran d\'pointage de sécurité est visible. S\'arrête lorsque vous touchez l\'écran.</string>
+    <string name="muster_urgent_ready">Disponible dans les autorisations système. Ne pas déranger et le volume de l\'alarme restent sous votre contrôle.</string>
+    <string name="muster_urgent_not_ready">Vérifiez le volume de l\'alarme, les autorisations de notification et Ne pas déranger. Les restrictions du système sont respectées.</string>
+    <string name="muster_urgent_seconds">%1$d secondes</string>
+    <string name="muster_flash_settings">Paramètres d\'alerte Flash</string>
+    <string name="muster_flash_help">Si votre téléphone le permet, activez les notifications par flash dans les paramètres d’accessibilité d’Android. Android gère ces alertes même lorsque l’application est fermée.</string>
+</resources>

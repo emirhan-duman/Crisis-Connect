@@ -451,6 +451,15 @@ class ClientConnection(
             try {
                 emitState(ConnectionStatus.Connecting)
                 startGattConnection()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (throwable: Exception) {
+                // Some Bluetooth stacks return null from connectGatt() during transient adapter
+                // or vendor-stack failures. Treat that as a failed attempt and use the existing
+                // backoff path instead of letting an uncaught coroutine exception terminate the app.
+                Log.w(TAG, "[$address] Failed to start GATT connection; scheduling retry", throwable)
+                emitState(ConnectionStatus.Failed, reason = throwable.message ?: "GATT_START_FAILED")
+                scheduleReconnect()
             } finally {
                 connectLaunchInProgress.set(false)
             }
@@ -509,7 +518,9 @@ class ClientConnection(
         val gatt = gatt ?: throw IllegalStateException("Not connected to $address")
         val ackCharacteristic = secureAckCharacteristic
             ?: throw IllegalStateException("Ack characteristic missing for $address")
-        val payload = BleChatEnvelope.encodeReadAck(messageIds)
+        val key = sessionKey ?: throw IllegalStateException("Handshake not complete")
+        val payload = com.auralis.crisisconnect.service.SecureBleReceipt.seal(key, BleChatEnvelope.encodeReadAck(messageIds))
+            ?: throw IllegalStateException("Invalid receipt")
         if (!writeCharacteristic(gatt, ackCharacteristic, payload)) {
             throw IllegalStateException("Failed to send read receipt to $address")
         }
@@ -530,12 +541,21 @@ class ClientConnection(
             lastServiceDiscoveryRequestAtMs = 0L
             val knownPeer = BleKnownPeersStore.isKnown(context, address)
             val useAutoConnect = knownPeer && reconnectAttemptCount > 0
-            val newGatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                device.connectGatt(context, useAutoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE)
-            } else {
-                device.connectGatt(context, useAutoConnect, gattCallback)
+            val newGatt = runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    device.connectGatt(context, useAutoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                } else {
+                    device.connectGatt(context, useAutoConnect, gattCallback)
+                }
+            }.getOrNull()
+            if (newGatt == null) {
+                Log.w(TAG, "[$address] connectGatt returned null (Bluetooth stack busy/restarting); scheduling retry")
+                gatt = null
+                emitState(ConnectionStatus.Failed, reason = "GATT_START_FAILED_NULL")
+                scheduleReconnect()
+                return
             }
-            gatt = newGatt ?: throw IllegalStateException("connectGatt returned null for $address")
+            gatt = newGatt
             Log.d(TAG, "[$address] connectGatt started autoConnect=$useAutoConnect knownPeer=$knownPeer retry=$reconnectAttemptCount")
             emitState(ConnectionStatus.Connecting)
             scheduleConnectTimeout(newGatt)
@@ -934,7 +954,9 @@ class ClientConnection(
             return true
         }
         val sessionCode = resolveSessionCodeForAddress(address.uppercase(Locale.US))
-        val ack = BleChatEnvelope.decodeAck(bytes)
+        val key = sessionKey ?: return false
+        val authenticated = com.auralis.crisisconnect.service.SecureBleReceipt.open(key, bytes) ?: return false
+        val ack = BleChatEnvelope.decodeAck(authenticated)
         if (ack == null) {
             val text = String(bytes, StandardCharsets.UTF_8)
             Log.d(TAG, "[$address] Received ACK payload '$text'")
@@ -1050,7 +1072,8 @@ class ClientConnection(
         connectionScope.launch {
             val currentGatt = gatt ?: return@launch
             val ackCharacteristic = secureAckCharacteristic ?: return@launch
-            val payload = BleChatEnvelope.encodeDeliveredAck(ackId)
+            val key = sessionKey ?: return@launch
+            val payload = com.auralis.crisisconnect.service.SecureBleReceipt.seal(key, BleChatEnvelope.encodeDeliveredAck(ackId)) ?: return@launch
             runCatching {
                 operationMutex.withLock {
                     writeCharacteristic(currentGatt, ackCharacteristic, payload)
@@ -1080,6 +1103,13 @@ class ClientConnection(
 
     private suspend fun handlePeerIdentity(identity: BlePeerIdentityUtils.PeerIdentity) {
         val normalizedAddress = address.uppercase(Locale.US)
+        identity.broadcastId?.let { stableId ->
+            userId = "ccid:$stableId"
+            BleBroadcastDirectory.update(stableId, address, System.currentTimeMillis())
+            BlePeerIdentityUtils.SignalLocationRegistry.bindSignalId(address, stableId)
+            RescueFeatureManager(context).notifySignalLocationUpdated()
+            emitState(lastStatus, userId = userId, peerBatteryPercent = identity.batteryPercent)
+        }
         val sessionCode = resolveSessionCodeForAddress(normalizedAddress)
         val claimedRoleValue = BlePeerIdentityUtils.normalizePeerRoleValue(identity.role)
         if (claimedRoleValue == BlePeerIdentityUtils.ROLE_RESCUE) {

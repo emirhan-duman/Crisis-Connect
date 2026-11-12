@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bluetooth_capabilities_section">Device capabilities</string>
+    <string name="bluetooth_capabilities_title">Bluetooth capabilities</string>
+    <string name="bluetooth_capabilities_device">%1$s · Android %2$s</string>
+    <string name="bluetooth_capabilities_refresh">Refresh Bluetooth capabilities</string>
+    <string name="bluetooth_capabilities_supported">Supported</string>
+    <string name="bluetooth_capabilities_unsupported">Not supported</string>
+    <string name="bluetooth_capabilities_unknown">Not available</string>
+    <string name="bluetooth_capabilities_loading">Checking device capabilities…</string>
+    <string name="bluetooth_capabilities_off">Turn on Bluetooth to check this device’s capabilities.</string>
+    <string name="bluetooth_capabilities_permission">Nearby devices permission is needed to check Bluetooth capabilities.</string>
+    <string name="bluetooth_capabilities_no_adapter">No Bluetooth adapter is available on this device.</string>
+    <string name="bluetooth_capabilities_unavailable">Bluetooth capabilities could not be read. Try refreshing.</string>
+    <string name="bluetooth_capabilities_grant">Allow access</string>
+    <string name="bluetooth_capabilities_settings">Bluetooth settings</string>
+    <string name="bluetooth_capabilities_app_settings">App permissions</string>
+    <string name="bluetooth_capabilities_long_range">LONG RANGE</string>
+    <string name="bluetooth_capabilities_coded">LE Coded PHY</string>
+    <string name="bluetooth_capabilities_coded_description">Error correction for longer-range Bluetooth LE communication.</string>
+    <string name="bluetooth_capabilities_s8">S=8 · 125 kbit/s</string>
+    <string name="bluetooth_capabilities_s2">S=2 · 500 kbit/s</string>
+    <string name="bluetooth_capabilities_s8_description">Stronger error correction</string>
+    <string name="bluetooth_capabilities_s2_description">Higher data rate</string>
+    <string name="bluetooth_capabilities_coding_note">S=8 and S=2 are shown as part of LE Coded PHY support. Android does not report separate support flags for these coding schemes.</string>
+    <string name="bluetooth_capabilities_le">Bluetooth Low Energy</string>
+    <string name="bluetooth_capabilities_le_description">Low-power device discovery and communication.</string>
+    <string name="bluetooth_capabilities_2m">LE 2M PHY</string>
+    <string name="bluetooth_capabilities_2m_description">2 Mbit/s physical layer for faster BLE transfers.</string>
+    <string name="bluetooth_capabilities_extended">Extended advertising</string>
+    <string name="bluetooth_capabilities_extended_description">Larger Bluetooth LE advertisement payloads.</string>
+    <string name="bluetooth_capabilities_max_bytes">Maximum advertising data (bytes): %1$d</string>
+    <string name="bluetooth_capabilities_periodic">Periodic advertising</string>
+    <string name="bluetooth_capabilities_periodic_description">Advertisements sent at synchronized intervals.</string>
+    <string name="bluetooth_capabilities_multiple">Multiple advertisements</string>
+    <string name="bluetooth_capabilities_multiple_description">Support for simultaneous advertising instances.</string>
+    <string name="bluetooth_capabilities_filtering">Hardware scan filtering</string>
+    <string name="bluetooth_capabilities_filtering_description">The Bluetooth controller filters scan results.</string>
+    <string name="bluetooth_capabilities_batching">Hardware scan batching</string>
+    <string name="bluetooth_capabilities_batching_description">The controller batches scan results to reduce CPU wakeups.</string>
+    <string name="bluetooth_capabilities_api_note">Coded PHY, 2M PHY, extended and periodic advertising checks require Android 8 or later.</string>
+    <string name="bluetooth_capabilities_disclaimer">Reported by this device through Android. Support does not indicate the current connection mode or a measured range.</string>
+</resources>

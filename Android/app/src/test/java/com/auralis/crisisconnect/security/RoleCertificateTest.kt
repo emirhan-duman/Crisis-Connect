@@ -9,6 +9,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.nio.charset.StandardCharsets
 
+@org.robolectric.annotation.Config(sdk = [34], application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
 class RoleCertificateTest {
     private val deviceId = "cc-0123456789abcdef01234567"

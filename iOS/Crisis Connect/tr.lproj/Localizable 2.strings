@@ -388,7 +388,7 @@
 "ADVANCED_SETTINGS_DESCRIPTION" = "Tanılama ve mesaj iletim davranışını ayrıntılı olarak ayarlayın.";
 "ADVANCED_SETTINGS_LINK_SUBTITLE" = "Radyo davranışı, tanılama ve teslim kontrolleri.";
 "ADVANCED_SETTING_PUBLIC_MESH_TITLE" = "Açık mesh modu";
-"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Bu düğümü, daha geniş koordinasyon testleri için açık mesh ortamlarında keşfedilebilir hale getirir.";
+"ADVANCED_SETTING_PUBLIC_MESH_DESCRIPTION" = "Herkese açık sohbet: yakındaki herkes mesajları okuyabilir ve katılabilir. Hassas bilgi paylaşmayın.";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_TITLE" = "Açık mesh düğüm bildirimleri";
 "ADVANCED_SETTING_GATT_MESH_NOTIFICATIONS_DESCRIPTION" = "Yalnızca açık GATT mesh genel sohbet düğümünden gelen yeni mesajlar için bildirim gösterir.";
 "ADVANCED_SETTING_HIGH_RANGE_TITLE" = "Yüksek menzil modu";

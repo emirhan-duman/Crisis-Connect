@@ -234,8 +234,8 @@ open class MeshChatStoreCore(val sessionCode: String) {
                 text = normalizedText,
                 senderLabel = normalizeRecipientLabel(message.senderLabel),
                 sourceAddress = normalizeStoredSenderAddress(message.sourceAddress),
-                originVerifiedRole = normalizeVerifiedRole(message.originVerifiedRole),
-                originVerifiedAtMillis = normalizeVerifiedAtMillis(message.originVerifiedAtMillis)
+                originVerifiedRole = null,
+                originVerifiedAtMillis = null
             )
         }
         _messages.value = normalizeMessageList(deduplicated.values.toList())

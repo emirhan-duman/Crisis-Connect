@@ -240,7 +240,14 @@ final class OnboardingPhoneVerification: ObservableObject {
                     "OnboardingPhone: verifyPhoneOtp failed domain=%@ code=%ld: %@",
                     nsError.domain, nsError.code, nsError.localizedDescription
                 )
-                self.errorText = NSLocalizedString("ONBOARDING_PHONE_CODE_ERROR", comment: "")
+                let authCode = AuthErrorCode(rawValue: nsError.code)
+                if authCode == .invalidVerificationCode || authCode == .missingVerificationCode {
+                    self.errorText = NSLocalizedString("ONBOARDING_PHONE_CODE_ERROR", comment: "")
+                } else {
+                    // Do not label account-linking, stale-session, network, or configuration
+                    // failures as a mistyped SMS code. The exact Firebase code remains in NSLog.
+                    self.errorText = NSLocalizedString("ONBOARDING_PHONE_UNAVAILABLE", comment: "")
+                }
             }
         }
     }

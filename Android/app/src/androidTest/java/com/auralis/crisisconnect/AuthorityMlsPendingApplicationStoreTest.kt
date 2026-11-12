@@ -47,4 +47,60 @@ class AuthorityMlsPendingApplicationStoreTest {
         AuthorityMlsPendingApplicationStore.remove(context, accountUid, conversationId, messageId)
         assertTrue(AuthorityMlsPendingApplicationStore.load(context, accountUid, conversationId).isEmpty())
     }
+
+    @Test
+    fun migratesRetiredOutboxAndCleansItsRecoveryCopy() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val accountUid = "instrumented-migration-account"
+        val oldConversationId = "am2_" + "B".repeat(43)
+        val currentConversationId = "am2_" + "C".repeat(43)
+        val messageId = "instrumented-migration-message"
+        val credential = AuthorityMlsCredential.encode(accountUid, "instrumented-device")
+        val plaintext = AuthorityMlsMessagePayloadCodec.encode(
+            AuthorityMlsMessagePayload(
+                recipientUid = "instrumented-peer",
+                recipientName = "Demo",
+                senderName = "Test",
+                text = "migrate me",
+                sentAtMillis = 2,
+            ),
+        )
+
+        AuthorityMlsPendingApplicationStore.remove(context, accountUid, oldConversationId, messageId)
+        AuthorityMlsPendingApplicationStore.remove(context, accountUid, currentConversationId, messageId)
+        AuthorityMlsPendingApplicationStore.stage(
+            context,
+            accountUid,
+            oldConversationId,
+            AuthorityMlsStagedApplication(messageId, credential, plaintext),
+        )
+
+        assertEquals(
+            1,
+            AuthorityMlsPendingApplicationStore.migrate(
+                context,
+                accountUid,
+                listOf(oldConversationId),
+                currentConversationId,
+            ),
+        )
+        assertEquals(
+            0,
+            AuthorityMlsPendingApplicationStore.migrate(
+                context,
+                accountUid,
+                listOf(oldConversationId),
+                currentConversationId,
+            ),
+        )
+        assertEquals(messageId, AuthorityMlsPendingApplicationStore.load(
+            context, accountUid, currentConversationId,
+        ).single().messageId)
+        assertTrue(AuthorityMlsPendingApplicationStore.load(
+            context, accountUid, oldConversationId,
+        ).isEmpty())
+
+        AuthorityMlsPendingApplicationStore.remove(context, accountUid, oldConversationId, messageId)
+        AuthorityMlsPendingApplicationStore.remove(context, accountUid, currentConversationId, messageId)
+    }
 }

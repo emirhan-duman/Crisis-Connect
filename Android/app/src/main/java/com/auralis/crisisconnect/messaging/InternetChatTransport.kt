@@ -4,12 +4,19 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
+import android.os.SystemClock
+import com.auralis.crisisconnect.connectivity.DisasterTrafficController
+import com.auralis.crisisconnect.analytics.Analytics
+import com.auralis.crisisconnect.analytics.SatelliteCrashReporter
+import com.auralis.crisisconnect.connectivity.ConstrainedMessagePolicy
+import com.auralis.crisisconnect.connectivity.SatelliteNetworkStatus
 import com.auralis.crisisconnect.data.Contact
 import com.auralis.crisisconnect.messaging.signal.SignalSessionGate
 import java.util.UUID
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
 
 /**
  * Sends chat messages over the E2E internet transport. This is the third drain of the chat
@@ -47,21 +54,46 @@ class InternetChatTransport(
         directWriteOnly: Boolean = false,
         // Stamped on the wire doc (not the ciphertext) so the backend can fire an iOS PushKit
         // VoIP ring for this message — set only for a call OFFER.
-        callRing: Boolean = false
+        callRing: Boolean = false,
+        allowSatellite: Boolean = false,
+        forceIdentityBinding: Boolean = false
         // The Signal gate hits libsignal's blocking Room store — hop off the caller's dispatcher
         // here so every send entry point (some launch on Main) is safe.
     ) = withContext(Dispatchers.IO) {
+        if (DisasterTrafficController.saving.value &&
+            (content.attachment != null || !DisasterTrafficController.allowsText(content.templateCode, content.text))) {
+            throw IllegalStateException("Message deferred by automatic traffic policy.")
+        }
+        if (SatelliteNetworkStatus.isConstrained(context) && !allowSatellite) {
+            throw IllegalStateException("Message deferred on a constrained network.")
+        }
         val myUid = client.currentUid() ?: throw IllegalStateException("Not signed in.")
         val peerUid = contact.peerUid.trim()
+        check(forceIdentityBinding || (!contact.peerKeyChanged && !gate.identityChangePending(peerUid))) { "Peer identity changed; re-verify this contact" }
+        if (!forceIdentityBinding && forceEstablish) {
+            runCatching { sendSignalIdentityBinding(contact, requestReply = true) }
+        }
+        // A pending unbound migration (including old flags set by queued legacy input) cannot
+        // strand contacts while the cohort is closed. Authenticated bindings remain pinned below.
+        check(forceIdentityBinding || !gate.peerUpgradeRequired(peerUid) ||
+            !client.supportsSignalIdentityBinding(peerUid)) { "PEER_SECURITY_UPGRADE_REQUIRED" }
         val conversationId = InternetConversation.pairId(myUid, peerUid)
+        DisasterTrafficController.awaitSendSlot(content.templateCode == SOS_ALERT_TEMPLATE)
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        val wirePriority = if (content.templateCode == SOS_ALERT_TEMPLATE) PRIORITY_HIGH else priority
+        val signalReady = !forceIdentityBinding && peerUid.isNotBlank() && gate.ensureOutbound(peerUid, forceEstablish)
+        check(forceIdentityBinding || com.auralis.crisisconnect.messaging.signal.SignalMigrationPolicy.permitsApplication(
+            signalReady, gate.hasIdentityBinding(peerUid), gate.identityChangePending(peerUid))) {
+            "Authenticated Signal session temporarily unavailable"
+        }
         val envelope: RelayableEnvelope =
-            if (peerUid.isNotBlank() && gate.ensureOutbound(peerUid, forceEstablish)) {
+            if (signalReady) {
                 val wire = gate.encrypt(peerUid, content)
                 OutgoingSignalEnvelope(
                     messageId = messageId,
                     conversationId = conversationId,
                     recipientUid = peerUid,
-                    priority = priority,
+                    priority = wirePriority,
                     createdAtMs = createdAtMs,
                     ttlMs = ttlMs,
                     ctype = gate.typeLabel(wire.type),
@@ -83,7 +115,7 @@ class InternetChatTransport(
                     messageId = messageId,
                     conversationId = conversationId,
                     recipientUid = peerUid,
-                    priority = priority,
+                    priority = wirePriority,
                     createdAtMs = createdAtMs,
                     ttlMs = ttlMs,
                     sealed = sealed,
@@ -101,7 +133,7 @@ class InternetChatTransport(
     }
 
     /** True when signed in AND there is an internet-capable network. */
-    fun isAvailable(): Boolean {
+    fun isAvailable(allowSatellite: Boolean = false): Boolean {
         val uid = client.currentUid()
         if (uid == null) {
             Log.d(TAG, "isAvailable=false: no signed-in uid (anonymous session not ready)")
@@ -113,6 +145,7 @@ class InternetChatTransport(
             return false
         }
         val caps = cm.getNetworkCapabilities(network) ?: return false
+        if (SatelliteNetworkStatus.isConstrained(context) && !allowSatellite) return false
         val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         // VALIDATED is preferred but NOT required: some networks never report it even when
         // connectivity works (captive-portal probe blocked / old devices). We'd rather attempt the
@@ -137,8 +170,33 @@ class InternetChatTransport(
         priority: String = PRIORITY_NORMAL,
         templateCode: Int = TEMPLATE_FREE_TEXT
     ): Boolean {
-        if (client.currentUid() == null) return false
-        if (!contact.supportsInternet) return false
+        val onSatellite = SatelliteNetworkStatus.isSatellite(context)
+        val payloadBytes = text.toByteArray(Charsets.UTF_8).size
+        val messageType = when (templateCode) {
+            TEMPLATE_FREE_TEXT -> "free_text"
+            SOS_ALERT_TEMPLATE -> "sos_alert"
+            else -> "other"
+        }
+        if (onSatellite) {
+            Analytics.satelliteMessage("attempted", messageType, payloadBytes)
+        }
+        if (client.currentUid() == null) {
+            if (onSatellite) {
+                Analytics.satelliteMessage(
+                    "skipped", messageType, payloadBytes, "identity_unavailable"
+                )
+            }
+            return false
+        }
+        if (!contact.supportsInternet) {
+            if (onSatellite) {
+                Analytics.satelliteMessage(
+                    "skipped", messageType, payloadBytes, "contact_not_internet_capable"
+                )
+            }
+            return false
+        }
+        val satelliteTextAllowed = ConstrainedMessagePolicy.allowsText(templateCode, text)
         return runCatching {
             sealAndRelay(
                 contact = contact,
@@ -146,29 +204,67 @@ class InternetChatTransport(
                 messageId = messageId,
                 createdAtMs = createdAtMs,
                 priority = priority,
-                ttlMs = DEFAULT_TTL_MS
+                ttlMs = DEFAULT_TTL_MS,
+                allowSatellite = satelliteTextAllowed
             )
+            if (onSatellite) {
+                Analytics.satelliteMessage("accepted_by_relay", messageType, payloadBytes)
+            }
             true
-        }.getOrElse {
-            Log.w(TAG, "Internet send failed for $messageId", it)
+        }.getOrElse { throwable ->
+            if (throwable is kotlinx.coroutines.CancellationException) throw throwable
+            val failureCategory = if (
+                throwable is IllegalStateException &&
+                throwable.message == "Message deferred on a constrained network."
+            ) {
+                "constrained_policy"
+            } else {
+                "relay_failure"
+            }
+            if (onSatellite) {
+                Analytics.satelliteMessage(
+                    if (failureCategory == "constrained_policy") "deferred" else "failed",
+                    messageType,
+                    payloadBytes,
+                    failureCategory
+                )
+                if (failureCategory != "constrained_policy") {
+                    SatelliteCrashReporter.recordFailure("chat_message", failureCategory, throwable)
+                }
+            }
+            Log.w(TAG, "Internet send failed for $messageId", throwable)
             false
         }
     }
 
     /**
-     * Delivers one sealed envelope. Fast path: direct Firestore write — the "normal mode" path the
-     * security rules were written for. The relayMessage callable adds a Cloud Function round-trip
-     * (cold start = seconds of latency) AND rejects the store-and-forward uuid format
-     * ("uuid~createdAt": '~' fails its id regex), which silently broke internet text sends. The
-     * callable stays as the fallback, with the id sanitized to its stricter charset.
+     * Normal mode uses a bounded direct write; conservation uses the callable immediately.
+     * The deployed relay must accept '~' so both paths keep the original ID for safe retries.
      */
     private suspend fun relayEnvelope(envelope: RelayableEnvelope) {
-        runCatching { client.writeMessageDoc(envelope) }
-            .recoverCatching {
-                client.relayMessage(envelope.sanitizedForCallable())
-                Unit
+        val started = SystemClock.elapsedRealtime()
+        try {
+            if (DisasterTrafficController.saving.value) {
+                client.relayMessage(envelope)
+            } else {
+                try { client.writeMessageDoc(envelope) }
+                catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (client.usesRegionalDelivery) throw timeout
+                    DisasterTrafficController.record(false, 12_000, java.net.SocketTimeoutException())
+                    client.relayMessage(envelope)
+                }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (error: Exception) { if (client.usesRegionalDelivery) throw error else client.relayMessage(envelope) }
             }
-            .getOrThrow()
+            com.auralis.crisisconnect.connectivity.TrafficMeasurements.request(true)
+            DisasterTrafficController.record(true, SystemClock.elapsedRealtime() - started)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (error: Exception) {
+            com.auralis.crisisconnect.connectivity.TrafficMeasurements.request(false)
+            DisasterTrafficController.record(false, SystemClock.elapsedRealtime() - started, error)
+            throw error
+        }
     }
 
     /**
@@ -272,13 +368,20 @@ class InternetChatTransport(
     suspend fun sendReceipt(
         contact: Contact,
         templateCode: Int,
-        messageIds: Collection<String>
+        messageIds: Collection<String>,
+        journal: Boolean = true
     ): Boolean {
         val myUid = client.currentUid() ?: return false
         if (!contact.supportsInternet) return false
         val ids = messageIds.mapNotNull { id -> id.trim().takeIf { it.isNotEmpty() } }.distinct()
         if (ids.isEmpty()) return true
         return runCatching {
+            val pending = ReceiptJournal(context)
+            val batch = ReceiptBatch(contact.peerUid, templateCode, ids)
+            if (journal) {
+                pending.enqueue(myUid, batch)
+                if (DisasterTrafficController.saving.value || ids.size > 6) return@runCatching true
+            }
             val payload = org.json.JSONObject().put("ids", org.json.JSONArray(ids)).toString()
             sealAndRelay(
                 contact = contact,
@@ -288,6 +391,7 @@ class InternetChatTransport(
                 priority = PRIORITY_NORMAL,
                 ttlMs = DEFAULT_TTL_MS
             )
+            if (journal && client.currentUid() == myUid) pending.confirm(myUid,batch)
             true
         }.getOrElse {
             Log.w(TAG, "Receipt send failed", it)
@@ -310,15 +414,16 @@ class InternetChatTransport(
      * can match this to the right contact. Durable 24h TTL so a briefly-offline peer still heals.
      */
     suspend fun sendIdentityAnnounce(contact: Contact, mySessionCode: String, myName: String?): Boolean {
-        if (client.currentUid() == null) return false
+        val myUid = client.currentUid() ?: return false
         if (!contact.supportsInternet) return false
         return runCatching {
             // Carry our OWN v2 messaging public key in the (authenticated, E2E) payload so the peer
             // heals its contact WITHOUT a directory lookup of our uid — the lookup can lag right after
             // a fresh install, and a v3 announce leaves the receiver's senderKey empty otherwise.
-            val myPublicKey = runCatching { MessagingIdentity(context).publicKeyBase64() }.getOrNull()
+            val myPublicKey = MessagingIdentity(context).publicKeyBase64()
             val payload = org.json.JSONObject()
                 .put("rsc", mySessionCode)
+                .put("binding", ContactIdentityBinding.sign(contact.aesKey, myUid, mySessionCode, myPublicKey))
                 .apply {
                     myName?.takeIf { it.isNotBlank() }?.let { put("name", it) }
                     myPublicKey?.takeIf { it.isNotBlank() }?.let { put("pk", it) }
@@ -330,13 +435,30 @@ class InternetChatTransport(
                 messageId = UUID.randomUUID().toString(),
                 createdAtMs = System.currentTimeMillis(),
                 priority = PRIORITY_NORMAL,
-                ttlMs = DEFAULT_TTL_MS
+                ttlMs = DEFAULT_TTL_MS,
+                // QR capability proof bootstraps the reciprocal contact before the peer
+                // can accept a Signal identity-binding exchange. This is control traffic.
+                forceIdentityBinding = true
             )
             true
         }.getOrElse {
             Log.w(TAG, "Identity announce send failed", it)
             false
         }
+    }
+
+    suspend fun sendSignalIdentityBinding(contact: Contact, requestReply: Boolean): Boolean {
+        if (!contact.supportsInternet) return false
+        val bound = gate.hasIdentityBinding(contact.peerUid)
+        val cohort = if (requestReply && !bound) client.supportsSignalIdentityBinding(contact.peerUid) else false
+        if (!com.auralis.crisisconnect.messaging.signal.SignalMigrationPolicy.permitsBindingControl(requestReply, bound, cohort)) return false
+        if (requestReply && !gate.claimBindingAnnouncement(contact.peerUid, contact.peerPublicKey)) return false
+        if (!bound && !gate.markPeerUpgradeRequired(contact.peerUid)) return false
+        val payload = JSONObject().put("signal", gate.localIdentityBase64()).put("reply", requestReply).toString()
+        sealAndRelay(contact, MessageContent(templateCode = SIGNAL_IDENTITY_BINDING_TEMPLATE, text = payload),
+            UUID.randomUUID().toString(), System.currentTimeMillis(), PRIORITY_NORMAL, DEFAULT_TTL_MS,
+            forceIdentityBinding = true)
+        return true
     }
 
     /** Answers a parent request ([PARENT_RESPONSE_TEMPLATE]) with accept/decline. */
@@ -398,6 +520,7 @@ class InternetChatTransport(
     }
 
     companion object {
+        const val SIGNAL_IDENTITY_BINDING_TEMPLATE = 209
         private const val TAG = "InternetChatTransport"
         private const val TEMPLATE_FREE_TEXT = 0
         // Reserved templateCode marking a message as a WebRTC call signal (never a chat message).

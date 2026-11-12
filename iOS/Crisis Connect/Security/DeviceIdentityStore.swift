@@ -16,7 +16,9 @@ final class DeviceIdentityStore {
 
     private init() {}
 
-    func loadPrivateKey() -> SecKey? {
+    func loadPrivateKey() -> SecKey? { try? loadPrivateKeyStrict() }
+
+    private func loadPrivateKeyStrict() throws -> SecKey? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: tag,
@@ -25,12 +27,13 @@ final class DeviceIdentityStore {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let item else { return nil }
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let item else { throw KeychainStore.AccessError.status(status) }
         return unsafeBitCast(item, to: SecKey.self)
     }
 
     func getOrCreatePrivateKey() throws -> SecKey {
-        if let existing = loadPrivateKey() {
+        if let existing = try loadPrivateKeyStrict() {
             return existing
         }
         if let secureKey = try? generatePrivateKey(useSecureEnclave: true) {

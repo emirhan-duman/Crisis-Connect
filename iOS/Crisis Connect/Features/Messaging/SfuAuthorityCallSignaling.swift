@@ -321,7 +321,7 @@ enum SfuAuthorityCallReceiver {
             }
             return
         }
-        let profile = try? await Firestore.firestore().collection("users").document(fromUid).getDocument()
+        let profile = try? await ResilientApplicationStore.profiles().collection("users").document(fromUid).getDocument()
         let peerName = ["displayName", "name", "fullName"]
             .compactMap { (profile?.get($0) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
@@ -376,7 +376,7 @@ enum SfuAuthorityCallReceiver {
 
     /// users/{uid}.agencySlug, falling back to the stored role certificate's agency.
     private static func resolveAgencySlug(uid: String) async -> String? {
-        let fromDoc = try? await Firestore.firestore().document("users/\(uid)").getDocument()
+        let fromDoc = try? await ResilientApplicationStore.profiles().document("users/\(uid)").getDocument()
             .get("agencySlug") as? String
         if let slug = fromDoc?.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
             return slug

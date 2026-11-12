@@ -69,7 +69,9 @@ data class MessageEntity(
     val originVerifiedAtMillis: Long? = null,
     val sentToRecipients: String = EMPTY_RECIPIENT_TRACKING_JSON,
     val deliveredToRecipients: String = EMPTY_RECIPIENT_TRACKING_JSON,
-    val readByRecipients: String = EMPTY_RECIPIENT_TRACKING_JSON
+    val readByRecipients: String = EMPTY_RECIPIENT_TRACKING_JSON,
+    val deliveredAtMillis: Long? = null,
+    val readAtMillis: Long? = null
 )
 
 internal const val EMPTY_RECIPIENT_TRACKING_JSON = "[]"
@@ -185,11 +187,13 @@ fun MessageEntity.toMessage(): ChatMessage = ChatMessage(
     outboundRoute = outboundRoute,
     senderDisplayName = normalizeStoredSenderDisplayName(senderDisplayName),
     senderAddress = normalizeStoredSenderAddress(senderAddress),
-    originVerifiedRole = normalizeStoredVerifiedRole(originVerifiedRole),
-    originVerifiedAtMillis = normalizeStoredVerifiedAtMillis(originVerifiedAtMillis),
+    originVerifiedRole = if (sessionCode == GattMeshChatStore.SESSION_CODE || sessionCode == AuthorityMeshChatStore.sessionCode) null else normalizeStoredVerifiedRole(originVerifiedRole),
+    originVerifiedAtMillis = if (sessionCode == GattMeshChatStore.SESSION_CODE || sessionCode == AuthorityMeshChatStore.sessionCode) null else normalizeStoredVerifiedAtMillis(originVerifiedAtMillis),
     sentTo = decodeTrackedRecipients(sentToRecipients),
     deliveredTo = decodeTrackedRecipients(deliveredToRecipients),
-    readBy = decodeTrackedRecipients(readByRecipients)
+    readBy = decodeTrackedRecipients(readByRecipients),
+    deliveredAtMillis = deliveredAtMillis,
+    readAtMillis = readAtMillis
 )
 
 fun ChatMessage.toEntity(): MessageEntity = MessageEntity(
@@ -221,5 +225,7 @@ fun ChatMessage.toEntity(): MessageEntity = MessageEntity(
     originVerifiedAtMillis = normalizeStoredVerifiedAtMillis(originVerifiedAtMillis),
     sentToRecipients = encodeTrackedRecipients(sentTo),
     deliveredToRecipients = encodeTrackedRecipients(deliveredTo),
-    readByRecipients = encodeTrackedRecipients(readBy)
+    readByRecipients = encodeTrackedRecipients(readBy),
+    deliveredAtMillis = deliveredAtMillis,
+    readAtMillis = readAtMillis
 )

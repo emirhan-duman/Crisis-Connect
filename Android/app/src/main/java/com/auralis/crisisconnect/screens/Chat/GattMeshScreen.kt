@@ -53,6 +53,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -398,6 +399,11 @@ fun GattMeshScreen(
                                 Text(text = stringResource(R.string.gatt_mesh_action_join_general_chat))
                             }
                         }
+                        Text(
+                            text = stringResource(R.string.advanced_setting_public_mesh_description),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         GattMeshMessageComposer(
                             value = messageDraft,
                             enabled = canCompose,
@@ -1001,38 +1007,10 @@ private fun GattMeshMessageInfoSheet(
         MeshMessageStatus.FAILED -> MaterialTheme.colorScheme.errorContainer
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
-    val directPeerVerifiedRoleLabel = remember(
-        directPeer?.verificationStatus,
-        directPeer?.verifiedRole
-    ) {
-        if (directPeer?.verificationStatus == GattMeshPeerVerificationStatus.VERIFIED) {
-            resolveGattMeshVerifiedRoleLabel(directPeer.verifiedRole, context)
-        } else {
-            null
-        }
-    }
-    val originVerifiedRoleLabel = remember(
-        message.originVerifiedRole,
-        message.originVerifiedAtMillis
-    ) {
-        if (!message.isLocal) {
-            resolveGattMeshVerifiedRoleLabel(message.originVerifiedRole, context)
-        } else {
-            null
-        }
-    }
-    val canShowDirectPeerVerifiedFallback = remember(
-        message.isLocal,
-        message.originVerifiedAtMillis,
-        directPeer?.verificationStatus
-    ) {
-        !message.isLocal &&
-            message.originVerifiedAtMillis == null &&
-            directPeer?.verificationStatus == GattMeshPeerVerificationStatus.VERIFIED
-    }
-    val showOriginVerifiedBadge = !message.isLocal &&
-        (message.originVerifiedAtMillis != null || canShowDirectPeerVerifiedFallback)
-    val effectiveOriginVerifiedRoleLabel = originVerifiedRoleLabel ?: directPeerVerifiedRoleLabel
+    val effectiveOriginVerifiedRoleLabel = if (!message.isLocal && message.originVerifiedAtMillis != null) {
+        resolveGattMeshVerifiedRoleLabel(message.originVerifiedRole, context)
+    } else null
+    val showOriginVerifiedBadge = effectiveOriginVerifiedRoleLabel != null
 
     Column(
         modifier = Modifier
@@ -1119,20 +1097,7 @@ private fun GattMeshMessageInfoSheet(
                         GattMeshVerifiedPeerBadge(verifiedRoleLabel = effectiveOriginVerifiedRoleLabel)
                     }
                 }
-                if (!message.isLocal && directPeerVerifiedRoleLabel != null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.gatt_mesh_message_info_direct_peer),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        GattMeshVerifiedPeerBadge(verifiedRoleLabel = directPeerVerifiedRoleLabel)
-                    }
-                }
+
             }
         }
 
@@ -1638,39 +1603,8 @@ private fun GattMeshMessageBubble(
     ) {
         resolveGattMeshVerifiedRoleLabel(message.originVerifiedRole, context)
     }
-    val directPeer = remember(message.sourceAddress, connectedPeers) {
-        val normalizedSourceAddress = message.sourceAddress?.trim().orEmpty()
-        if (normalizedSourceAddress.isEmpty()) {
-            null
-        } else {
-            connectedPeers.firstOrNull { peer ->
-                peer.address.equals(normalizedSourceAddress, ignoreCase = true)
-            }
-        }
-    }
-    val isDirectPeerVerifiedSender = remember(
-        message.isLocal,
-        message.originVerifiedAtMillis,
-        directPeer?.address,
-        directPeer?.verificationStatus
-    ) {
-        !message.isLocal &&
-            message.originVerifiedAtMillis == null &&
-            directPeer?.verificationStatus == GattMeshPeerVerificationStatus.VERIFIED
-    }
-    val directPeerVerifiedRoleLabel = remember(
-        isDirectPeerVerifiedSender,
-        directPeer?.verifiedRole
-    ) {
-        if (isDirectPeerVerifiedSender) {
-            resolveGattMeshVerifiedRoleLabel(directPeer?.verifiedRole, context)
-        } else {
-            null
-        }
-    }
-    val showVerifiedBadge = !message.isLocal &&
-        (message.originVerifiedAtMillis != null || isDirectPeerVerifiedSender)
-    val effectiveVerifiedRoleLabel = verifiedRoleLabel ?: directPeerVerifiedRoleLabel
+    val showVerifiedBadge = !message.isLocal && message.originVerifiedAtMillis != null && verifiedRoleLabel != null
+    val effectiveVerifiedRoleLabel = if (showVerifiedBadge) verifiedRoleLabel else null
     val effectiveLocalStatus = remember(message) {
         resolveGattMeshLocalVisualStatus(message)
     }
@@ -1797,49 +1731,57 @@ private fun GattMeshMessageBubble(
                         textAlign = if (message.isLocal) TextAlign.End else TextAlign.Start
                     )
                     if (message.isLocal) {
-                        val (icon, tint, statusLabel) = when (effectiveLocalStatus) {
-                            MeshMessageStatus.QUEUED -> Triple(
-                                Icons.Outlined.Schedule,
-                                contentColor.copy(alpha = 0.62f),
-                                R.string.chat_message_status_pending
+                        if (effectiveLocalStatus == MeshMessageStatus.SENDING) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(13.dp),
+                                strokeWidth = 1.6.dp,
+                                color = contentColor.copy(alpha = 0.65f)
                             )
+                        } else {
+                            val (icon, tint, statusLabel) = when (effectiveLocalStatus) {
+                                MeshMessageStatus.QUEUED -> Triple(
+                                    Icons.Outlined.Schedule,
+                                    contentColor.copy(alpha = 0.62f),
+                                    R.string.chat_message_status_pending
+                                )
 
-                            MeshMessageStatus.SENDING -> Triple(
-                                Icons.Filled.MoreVert,
-                                contentColor.copy(alpha = 0.62f),
-                                R.string.chat_message_status_sending
-                            )
+                                MeshMessageStatus.SENDING -> Triple(
+                                    Icons.Filled.Done,
+                                    contentColor.copy(alpha = 0.62f),
+                                    R.string.chat_message_status_sending
+                                )
 
-                            MeshMessageStatus.FAILED -> Triple(
-                                Icons.Filled.Close,
-                                MaterialTheme.colorScheme.error,
-                                R.string.chat_message_status_failed
-                            )
+                                MeshMessageStatus.FAILED -> Triple(
+                                    Icons.Filled.Close,
+                                    MaterialTheme.colorScheme.error,
+                                    R.string.chat_message_status_failed
+                                )
 
-                            MeshMessageStatus.READ -> Triple(
-                                Icons.Filled.DoneAll,
-                                MaterialTheme.colorScheme.primary,
-                                R.string.chat_message_status_read
-                            )
+                                MeshMessageStatus.READ -> Triple(
+                                    Icons.Filled.DoneAll,
+                                    MaterialTheme.colorScheme.primary,
+                                    R.string.chat_message_status_read
+                                )
 
-                            MeshMessageStatus.DELIVERED -> Triple(
-                                Icons.Filled.DoneAll,
-                                contentColor.copy(alpha = 0.62f),
-                                R.string.chat_message_status_delivered
-                            )
+                                MeshMessageStatus.DELIVERED -> Triple(
+                                    Icons.Filled.DoneAll,
+                                    contentColor.copy(alpha = 0.62f),
+                                    R.string.chat_message_status_delivered
+                                )
 
-                            else -> Triple(
-                                Icons.Filled.Done,
-                                contentColor.copy(alpha = 0.62f),
-                                R.string.chat_message_status_sent
+                                else -> Triple(
+                                    Icons.Filled.Done,
+                                    contentColor.copy(alpha = 0.62f),
+                                    R.string.chat_message_status_sent
+                                )
+                            }
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = stringResource(statusLabel),
+                                tint = tint,
+                                modifier = Modifier.size(16.dp)
                             )
                         }
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = stringResource(statusLabel),
-                            tint = tint,
-                            modifier = Modifier.size(16.dp)
-                        )
                     }
                 }
             }

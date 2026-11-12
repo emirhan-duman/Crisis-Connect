@@ -39,7 +39,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +48,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -58,9 +58,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -109,19 +109,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -138,14 +137,16 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
@@ -166,25 +167,36 @@ import com.auralis.crisisconnect.core.chat.parseReplyMetadata
 import com.auralis.crisisconnect.core.chat.stripReplyMetadata
 import com.auralis.crisisconnect.core.search.normalizeForSearch
 import com.auralis.crisisconnect.core.search.searchableMessageBody
-import com.auralis.crisisconnect.data.BlePeerStore
+import com.auralis.crisisconnect.data.AppDatabase
+import com.auralis.crisisconnect.data.AuthorityMeshChatStore
 import com.auralis.crisisconnect.data.ChatMessage
 import com.auralis.crisisconnect.data.Contact
-import com.auralis.crisisconnect.data.AuthorityMeshChatStore
 import com.auralis.crisisconnect.data.GattMeshChatStore
-import com.auralis.crisisconnect.data.MessageType
 import com.auralis.crisisconnect.data.MeshChatMessage
 import com.auralis.crisisconnect.data.MeshMessageStatus
-import com.auralis.crisisconnect.data.normalizePreferredTransport
+import com.auralis.crisisconnect.data.MessageType
 import com.auralis.crisisconnect.data.PREFERRED_TRANSPORT_BLE_GATT
 import com.auralis.crisisconnect.data.database.LocalKeyStorage
 import com.auralis.crisisconnect.data.local.ContactAvatarStorage
+import com.auralis.crisisconnect.data.normalizePreferredTransport
+import com.auralis.crisisconnect.data.toAuthorityConversationEntity
+import com.auralis.crisisconnect.data.toChannelConversation
 import com.auralis.crisisconnect.feature.RescueFeatureManager
+import com.auralis.crisisconnect.feature.rescueAuthChanges
 import com.auralis.crisisconnect.isScreenshotDemoModeEnabledSync
-import com.auralis.crisisconnect.screens.Chat.ChatScreenshotDemoScenario
-import com.auralis.crisisconnect.navigation.buildConversationRoute
+import com.auralis.crisisconnect.messaging.AuthorityBridgeContacts
+import com.auralis.crisisconnect.messaging.AuthorityMlsPrewarmTarget
+import com.auralis.crisisconnect.messaging.AuthorityMlsPrewarmer
+import com.auralis.crisisconnect.messaging.AuthorityMlsScopeType
+import com.auralis.crisisconnect.messaging.AuthorityRosterClient
+import com.auralis.crisisconnect.messaging.HierarchyMessagingClient
+import com.auralis.crisisconnect.messaging.InternetConversation
 import com.auralis.crisisconnect.navigation.ChatSharedElements
+import com.auralis.crisisconnect.navigation.buildConversationRoute
+import com.auralis.crisisconnect.screens.Chat.ChatScreenshotDemoScenario
 import com.auralis.crisisconnect.screens.Chat.formatCallDuration
 import com.auralis.crisisconnect.screens.Chat.parseSharedFilePayload
+import com.auralis.crisisconnect.screens.authority.ChannelConversation
 import com.auralis.crisisconnect.security.FirebaseRoleHelper
 import com.auralis.crisisconnect.security.FirebaseRoleHelper.RescueRoleResult
 import com.auralis.crisisconnect.security.SecurityRepository
@@ -196,39 +208,26 @@ import com.auralis.crisisconnect.service.RfcommForegroundService
 import com.auralis.crisisconnect.service.RfcommForegroundService.CallDirection
 import com.auralis.crisisconnect.service.RfcommForegroundService.CallEvent
 import com.auralis.crisisconnect.service.RfcommForegroundService.CallResult
-import com.auralis.crisisconnect.service.p2p.P2pGattChatManager
 import com.auralis.crisisconnect.ui.components.AppBottomBar
 import com.auralis.crisisconnect.ui.components.ContactAvatar
 import com.auralis.crisisconnect.ui.components.GroupChatAvatar
 import com.auralis.crisisconnect.ui.components.rememberConnectedSessions
 import com.auralis.crisisconnect.ui.theme.StatusConnectedContainer
 import com.auralis.crisisconnect.ui.theme.StatusConnectedOnContainer
-import com.auralis.crisisconnect.data.AppDatabase
-import com.auralis.crisisconnect.data.toAuthorityConversationEntity
-import com.auralis.crisisconnect.data.toChannelConversation
-import com.auralis.crisisconnect.messaging.AuthorityBridgeContacts
-import com.auralis.crisisconnect.messaging.AuthorityMlsPrewarmer
-import com.auralis.crisisconnect.messaging.AuthorityMlsPrewarmTarget
-import com.auralis.crisisconnect.messaging.AuthorityMlsScopeType
-import com.auralis.crisisconnect.messaging.AuthorityRosterClient
-import com.auralis.crisisconnect.messaging.HierarchyMessagingClient
-import com.auralis.crisisconnect.messaging.InternetConversation
-import com.auralis.crisisconnect.screens.authority.ChannelConversation
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -380,7 +379,7 @@ private fun welcomePermissionRequirements(): List<WelcomePermissionRequirement> 
                 WelcomePermissionRequirement(
                     labelRes = R.string.permission_group_nearby_wifi,
                     descriptionRes = R.string.welcome_permission_nearby_wifi_description,
-                    permissions = listOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+                    permissions = com.auralis.crisisconnect.util.LocalNetworkPermissions.wifiPermissions()
                 )
             )
             add(
@@ -620,6 +619,7 @@ fun MainScreen(
     onOnboardingCompleted: () -> Unit = {}
 ) {
     val viewModel: MainScreenViewModel = viewModel()
+    var showingEmptyConversations by remember { mutableStateOf(false) }
     val showDialog by viewModel.showDialog.collectAsStateWithLifecycle()
     val publicMeshEnabled by viewModel.publicMeshEnabled.collectAsStateWithLifecycle()
     val authorityMeshEnabled by viewModel.authorityMeshEnabled.collectAsStateWithLifecycle()
@@ -642,7 +642,10 @@ fun MainScreen(
     var rescueRoleResult by remember { mutableStateOf<RescueRoleResult?>(null) }
     var rescueLaunchInFlight by remember { mutableStateOf(false) }
     var rescueInstallProgress by remember { mutableStateOf<Int?>(null) }
-    var rescuePrefetchRequested by rememberSaveable { mutableStateOf(false) }
+    var detachRescueInstall by remember { mutableStateOf<(() -> Unit)?>(null) }
+    DisposableEffect(Unit) {
+        onDispose { detachRescueInstall?.invoke() }
+    }
     var welcomeContinueBlocker by remember(context) {
         mutableStateOf(resolveWelcomeContinueBlocker(context))
     }
@@ -655,10 +658,12 @@ fun MainScreen(
     val showAuthorityMeshEntry = authorityMeshEnabled &&
         rescueRoleResult is RescueRoleResult.Authorized
     val onAuthorityMeshSelected: () -> Unit = {
-        rescueFeatureManager.launchInstalled(
-            context,
-            startDestination = RescueFeatureManager.START_DESTINATION_MESH_CHAT
-        )
+        if (!rescueFeatureManager.launchInstalled(
+                context,
+                startDestination = RescueFeatureManager.START_DESTINATION_MESH_CHAT
+            )) {
+            navController.navigate("mesh_chat") { launchSingleTop = true }
+        }
     }
     val sosCountdownNavigator = remember(navController) {
         {
@@ -697,74 +702,81 @@ fun MainScreen(
     }
 
     LaunchedEffect(Unit) {
-        val securityRepository = SecurityRepository(context)
-        val authUser = FirebaseAuth.getInstance().currentUser?.takeUnless { it.isAnonymous }
-        if (authUser == null) {
-            val cachedRescueRole = securityRepository
-                .getUsableStoredCertificateRole(allowExpired = true)
-                ?.takeIf { it in ALLOWED_RESCUE_ROLES }
+        rescueAuthChanges().collectLatest {
+            rescueRoleResult = null
+            detachRescueInstall?.invoke()
+            detachRescueInstall = null
+            rescueLaunchInFlight = false
+            rescueInstallProgress = null
+            val securityRepository = SecurityRepository(context)
+            val authUser = FirebaseAuth.getInstance().currentUser?.takeUnless { it.isAnonymous }
+            if (authUser == null) {
+                val cachedRescueRole = securityRepository
+                    .getUsableStoredCertificateRole(allowExpired = false)
+                    ?.takeIf { it in ALLOWED_RESCUE_ROLES }
+                rescueRoleResult = if (cachedRescueRole != null) {
+                    LocalKeyStorage.saveRole(context, cachedRescueRole)
+                    RescueRoleResult.Authorized(cachedRescueRole)
+                } else {
+                    LocalKeyStorage.clearRole(context)
+                    RescueRoleResult.Unauthorized
+                }
+                return@collectLatest
+            }
+
+            LocalKeyStorage.saveUid(context, authUser.uid)
+            val cachedCertificateRole = securityRepository
+                .getUsableStoredCertificateRole(allowExpired = false)
+            val cachedRescueRole = cachedCertificateRole?.let {
+                it.takeIf { role -> role in ALLOWED_RESCUE_ROLES }
+            }
+
+            val hasInternet = context.hasUsableInternetConnection()
             rescueRoleResult = if (cachedRescueRole != null) {
                 LocalKeyStorage.saveRole(context, cachedRescueRole)
                 RescueRoleResult.Authorized(cachedRescueRole)
+            } else if (hasInternet) {
+                LocalKeyStorage.clearRole(context)
+                null
             } else {
                 LocalKeyStorage.clearRole(context)
                 RescueRoleResult.Unauthorized
             }
-            return@LaunchedEffect
-        }
 
-        LocalKeyStorage.saveUid(context, authUser.uid)
-        val cachedCertificateRole = securityRepository
-            .getUsableStoredCertificateRole(allowExpired = true)
-        val cachedRescueRole = cachedCertificateRole?.let {
-            it.takeIf { role -> role in ALLOWED_RESCUE_ROLES }
-        }
-
-        val hasInternet = context.hasUsableInternetConnection()
-        rescueRoleResult = if (cachedRescueRole != null) {
-            LocalKeyStorage.saveRole(context, cachedRescueRole)
-            RescueRoleResult.Authorized(cachedRescueRole)
-        } else if (hasInternet) {
-            LocalKeyStorage.clearRole(context)
-            null
-        } else {
-            LocalKeyStorage.clearRole(context)
-            RescueRoleResult.Unauthorized
-        }
-
-        if (!hasInternet) {
-            return@LaunchedEffect
-        }
-
-        val fetchedResult = FirebaseRoleHelper.fetchRescueRole()
-        rescueRoleResult = when (fetchedResult) {
-            is RescueRoleResult.Authorized -> {
-                LocalKeyStorage.saveRole(context, fetchedResult.role)
-                securityRepository.warmUpCertificateInBackground()
-                fetchedResult
+            if (!hasInternet) {
+                return@collectLatest
             }
 
-            RescueRoleResult.Unauthorized -> {
-                LocalKeyStorage.clearRole(context)
-                securityRepository.clearStoredCertificate()
-                RescueRoleResult.Unauthorized
-            }
+            val fetchedResult = FirebaseRoleHelper.fetchRescueRole()
+            rescueRoleResult = when (fetchedResult) {
+                is RescueRoleResult.Authorized -> {
+                    LocalKeyStorage.saveRole(context, fetchedResult.role)
+                    securityRepository.warmUpCertificateInBackground()
+                    fetchedResult
+                }
 
-            RescueRoleResult.Unauthenticated -> {
-                if (cachedRescueRole != null) {
-                    LocalKeyStorage.saveRole(context, cachedRescueRole)
-                    RescueRoleResult.Authorized(cachedRescueRole)
-                } else {
+                RescueRoleResult.Unauthorized -> {
+                    LocalKeyStorage.clearRole(context)
+                    securityRepository.clearStoredCertificate()
                     RescueRoleResult.Unauthorized
                 }
-            }
 
-            is RescueRoleResult.Failure -> {
-                if (cachedRescueRole != null) {
-                    LocalKeyStorage.saveRole(context, cachedRescueRole)
-                    RescueRoleResult.Authorized(cachedRescueRole)
-                } else {
-                    fetchedResult
+                RescueRoleResult.Unauthenticated -> {
+                    if (cachedRescueRole != null) {
+                        LocalKeyStorage.saveRole(context, cachedRescueRole)
+                        RescueRoleResult.Authorized(cachedRescueRole)
+                    } else {
+                        RescueRoleResult.Unauthorized
+                    }
+                }
+
+                is RescueRoleResult.Failure -> {
+                    if (cachedRescueRole != null) {
+                        LocalKeyStorage.saveRole(context, cachedRescueRole)
+                        RescueRoleResult.Authorized(cachedRescueRole)
+                    } else {
+                        fetchedResult
+                    }
                 }
             }
         }
@@ -773,14 +785,6 @@ fun MainScreen(
     LaunchedEffect(rescueRoleResult) {
         val failure = rescueRoleResult as? RescueRoleResult.Failure ?: return@LaunchedEffect
         Log.w(RESCUE_ROLE_LOG_TAG, "Unable to verify rescue role", failure.exception)
-    }
-
-    LaunchedEffect(rescueRoleResult, rescuePrefetchRequested) {
-        if (rescueRoleResult !is RescueRoleResult.Authorized || rescuePrefetchRequested) {
-            return@LaunchedEffect
-        }
-        rescuePrefetchRequested = true
-        rescueFeatureManager.prefetchIfNeeded()
     }
 
     LaunchedEffect(Unit) {
@@ -917,8 +921,9 @@ fun MainScreen(
         return
     }
 
+    val isDarkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     Box(modifier = Modifier.fillMaxSize()) {
-        MainScreenTextureBackground(
+        MainScreenBackground(
             modifier = Modifier.matchParentSize()
         )
 
@@ -932,6 +937,7 @@ fun MainScreen(
                 hoveredElevation = 10.dp
             )
             val isSosActive by GattSOSServerService.isDeclared.collectAsStateWithLifecycle()
+            val savedSos by com.auralis.crisisconnect.watch.WatchRecoveryStore.get(context).state.collectAsStateWithLifecycle()
             val sosStartTimestamp by GattSOSServerService.startTimestampMillis.collectAsStateWithLifecycle()
             val sosElapsedText = rememberSosElapsedText(
                 startTimestamp = sosStartTimestamp,
@@ -943,7 +949,7 @@ fun MainScreen(
                     sosElapsedText ?: "--:--"
                 )
             } else {
-                stringResource(R.string.emergency_button_label)
+                stringResource(if ((savedSos.startedAt != null || savedSos.unavailable)) R.string.sos_recovery_title else R.string.emergency_button_label)
             }
             val sosContainerColor = if (isSosActive) {
                 Color(0xFFB71C1C)
@@ -964,7 +970,7 @@ fun MainScreen(
                         .widthIn(min = 108.dp, max = 184.dp),
                     shape = RoundedCornerShape(18.dp),
                     onClick = {
-                        if (isSosActive) {
+                        if (isSosActive || (savedSos.startedAt != null || savedSos.unavailable)) {
                             navController.navigate("sos_status") {
                                 launchSingleTop = true
                             }
@@ -1038,8 +1044,8 @@ fun MainScreen(
                         is RescueRoleResult.Authorized -> {
                             FloatingActionButton(
                                 modifier = Modifier.size(56.dp),
-                                containerColor = Color(0xFF1D3E66),
-                                contentColor = Color(0xFFF2F6FB),
+                                containerColor = if (isDarkTheme) MaterialTheme.colorScheme.primaryContainer else Color(0xFF1D3E66),
+                                contentColor = if (isDarkTheme) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFFF2F6FB),
                                 elevation = defaultFabElevation,
                                 onClick = {
                                     if (rescueLaunchInFlight) {
@@ -1057,7 +1063,8 @@ fun MainScreen(
                                         ).show()
                                         return@FloatingActionButton
                                     }
-                                    rescueFeatureManager.installAndLaunch(
+                                    detachRescueInstall?.invoke()
+                                    detachRescueInstall = rescueFeatureManager.installAndLaunch(
                                         activity = hostActivity,
                                         confirmationLauncher = rescueInstallConfirmationLauncher,
                                         onStateChanged = { state ->
@@ -1088,7 +1095,7 @@ fun MainScreen(
                                 if (rescueLaunchInFlight) {
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(24.dp),
-                                        color = Color(0xFFF2F6FB)
+                                        color = if (isDarkTheme) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFFF2F6FB)
                                     )
                                 } else {
                                     Icon(
@@ -1107,21 +1114,22 @@ fun MainScreen(
                         }
                     }
 
-                    FloatingActionButton(
-                        modifier = Modifier.size(60.dp),
-                        containerColor = Color(0xFF304A76),
-                        contentColor = Color.White,
-                        elevation = defaultFabElevation,
-                        onClick = {
-                            navController.navigate("new_chat")
+                    if (!showingEmptyConversations) {
+                        FloatingActionButton(
+                            modifier = Modifier.size(60.dp),
+                            containerColor = if (isDarkTheme) MaterialTheme.colorScheme.primary else Color(0xFF304A76),
+                            contentColor = if (isDarkTheme) MaterialTheme.colorScheme.onPrimary else Color.White,
+                            elevation = defaultFabElevation,
+                            onClick = {
+                                navController.navigate("new_chat")
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PersonAdd,
+                                contentDescription = stringResource(R.string.new_chat_title),
+                                modifier = Modifier.size(32.dp)
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PersonAdd,
-                            contentDescription = stringResource(R.string.new_chat_title),
-                            modifier = Modifier.size(32.dp),
-                            tint = Color.White
-                        )
                     }
                 }
             }
@@ -1147,6 +1155,7 @@ fun MainScreen(
                 showAuthorityMeshEntry = showAuthorityMeshEntry,
                 onAuthorityMeshSelected = onAuthorityMeshSelected,
                 meshGeneralUnreadCount = effectiveMeshUnreadCount,
+                onEmptyStateChanged = { showingEmptyConversations = it },
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope
             )
@@ -1229,6 +1238,7 @@ private fun MainConversationContent(
     showAuthorityMeshEntry: Boolean,
     onAuthorityMeshSelected: () -> Unit,
     meshGeneralUnreadCount: Int,
+    onEmptyStateChanged: (Boolean) -> Unit,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
@@ -1625,6 +1635,13 @@ private fun MainConversationContent(
         }
     }
 
+    val showEmptyConversations = isContactsLoaded && searchQuery.isBlank() &&
+        contacts.isEmpty() && channelConversations.isEmpty() &&
+        !showGeneralMeshEntry && !(isCrisisSentinelReady || isCurrentUserRescue)
+    LaunchedEffect(showEmptyConversations) {
+        onEmptyStateChanged(showEmptyConversations)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1653,19 +1670,52 @@ private fun MainConversationContent(
                     )
                 }
             }
-        } else if (searchQuery.isBlank() && contacts.isEmpty() && channelConversations.isEmpty() &&
-            !showGeneralMeshEntry && !(isCrisisSentinelReady || isCurrentUserRescue)) {
+        } else if (showEmptyConversations) {
             Box(
                 modifier = contentModifier,
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = stringResource(R.string.no_contacts_message),
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                    textAlign = TextAlign.Center
-                )
+                        .widthIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp, vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                        Box(modifier = Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.People,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = stringResource(R.string.messages_empty_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.semantics { heading() }
+                    )
+                    Text(
+                        text = stringResource(R.string.messages_empty_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                    Button(
+                        onClick = { navController.navigate("new_chat") },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.new_chat_title))
+                    }
+                }
             }
         } else {
             val listModifier = if (isExpandedScreen) {
@@ -1712,6 +1762,9 @@ private fun MainConversationContent(
                     meshGeneralMessages = meshGeneralMessages,
                     onContactSelected = onContactSelected,
                     onCrisisSentinelSelected = { navController.navigate("crisis_sentinel_home") },
+                    onMusterSelected = { panel, session ->
+                        navController.navigate("personnel_muster?panel=${Uri.encode(panel.orEmpty())}&session=${Uri.encode(session.orEmpty())}") { launchSingleTop = true }
+                    },
                     listState = listState,
                     // Real layout padding only while search is open; the drag preview moves the
                     // rows with a placement-phase offset instead so pulling never relayouts.
@@ -1779,55 +1832,10 @@ private fun MainConversationContent(
 }
 
 @Composable
-private fun MainScreenTextureBackground(
+private fun MainScreenBackground(
     modifier: Modifier = Modifier
 ) {
-    val baseColor = MaterialTheme.colorScheme.background
-    val gridColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f)
-    val vignetteColor = if (baseColor.luminance() > 0.5f) {
-        Color.Black.copy(alpha = 0.09f)
-    } else {
-        Color.Black.copy(alpha = 0.14f)
-    }
-    Box(
-        modifier = modifier
-            .background(baseColor)
-            .drawWithCache {
-                val gridSpacing = 28.dp.toPx()
-                val vignette = Brush.radialGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        Color.Transparent,
-                        vignetteColor
-                    ),
-                    center = Offset(size.width * 0.5f, size.height * 0.5f),
-                    radius = size.maxDimension * 0.92f
-                )
-                onDrawBehind {
-                    var x = 0f
-                    while (x <= size.width) {
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(x, 0f),
-                            end = Offset(x, size.height),
-                            strokeWidth = 1f
-                        )
-                        x += gridSpacing
-                    }
-                    var y = 0f
-                    while (y <= size.height) {
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(0f, y),
-                            end = Offset(size.width, y),
-                            strokeWidth = 1f
-                        )
-                        y += gridSpacing
-                    }
-                    drawRect(brush = vignette)
-                }
-            }
-    )
+    Box(modifier = modifier.background(MaterialTheme.colorScheme.background))
 }
 
 @Composable
@@ -1987,6 +1995,7 @@ private fun ContactList(
     meshGeneralMessages: List<MeshChatMessage>,
     onContactSelected: (String, String?, String?) -> Unit,
     onCrisisSentinelSelected: () -> Unit,
+    onMusterSelected: (String?, String?) -> Unit,
     listState: LazyListState,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     sharedTransitionScope: SharedTransitionScope? = null,
@@ -2131,6 +2140,7 @@ private fun ContactList(
         )
     }
 
+    val musterInbox = com.auralis.crisisconnect.muster.rememberMusterInbox()
     val hasChatResults = showCrisisSentinelEntry || showGeneralMeshEntry ||
         showAuthorityMeshEntry || homeRows.isNotEmpty()
 
@@ -2139,6 +2149,11 @@ private fun ContactList(
         state = listState,
         contentPadding = contentPadding
     ) {
+        if (!isSearchActive && (musterInbox.cards.isNotEmpty() || musterInbox.unreadable)) {
+            item(key = "personnel_muster_home", contentType = "personnel_muster") {
+                com.auralis.crisisconnect.muster.MusterHomeSection(musterInbox, onMusterSelected)
+            }
+        }
         // While searching, split the results WhatsApp-style: chats that match by name first,
         // then the individual messages whose text matched.
         if (isSearchActive && hasChatResults) {
@@ -3163,17 +3178,10 @@ private fun CrisisSentinelMainListItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier
-                    .size(52.dp)
-                    .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                modifier = Modifier.size(52.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_tool_crisis_sentinel_shine),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(28.dp)
-                )
+                com.auralis.crisisconnect.screens.Tools.CrisisSentinelOrb(size = 48.dp)
             }
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {

@@ -52,14 +52,27 @@ struct ProfileView: View {
         .navigationBarTitleDisplayMode(.inline)
         .appNavigationBarStyle()
         .sheet(isPresented: $isEmailSignInSheetPresented, onDismiss: dismissEmailSignInSheet) {
-            ProfileEmailSignInSheet(
-                viewModel: viewModel,
-                onDismiss: dismissEmailSignInSheet
-            )
-            .presentationDetents([.height(500), .large])
+            Group {
+                if viewModel.isAwaitingSecondFactor {
+                    ProfileSecondFactorView(viewModel: viewModel, onCancel: dismissEmailSignInSheet)
+                } else {
+                    ProfileEmailSignInSheet(viewModel: viewModel, onDismiss: dismissEmailSignInSheet)
+                }
+            }
+            .presentationDetents(viewModel.isAwaitingSecondFactor ? [.large] : [.height(500), .large])
             .presentationDragIndicator(.visible)
             .presentationBackground(Color.appSurfaceElevated)
             .interactiveDismissDisabled(viewModel.isAuthLoading)
+        }
+        .sheet(isPresented: Binding(
+            get: { viewModel.isAwaitingSecondFactor && !isEmailSignInSheetPresented },
+            set: { if !$0 { viewModel.cancelSecondFactor() } }
+        )) {
+            ProfileSecondFactorView(viewModel: viewModel, onCancel: viewModel.cancelSecondFactor)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(Color.appSurfaceElevated)
+                .interactiveDismissDisabled(viewModel.isAuthLoading)
         }
         .alert("PROFILE_EDIT_NAME_TITLE", isPresented: $isNameEditorPresented) {
             TextField("Full Name", text: $draftFullName)
@@ -105,8 +118,13 @@ struct ProfileView: View {
         .onChange(of: viewModel.agency) { _, _ in viewModel.scheduleAutosave(context: context) }
         .onChange(of: viewModel.signInEmail) { _, _ in viewModel.clearAuthError() }
         .onChange(of: viewModel.signInPassword) { _, _ in viewModel.clearAuthError() }
+        .onChange(of: viewModel.isAwaitingSecondFactor) { _, awaiting in
+            if !awaiting && !viewModel.isAnonymous && isEmailSignInSheetPresented {
+                dismissEmailSignInSheet()
+            }
+        }
         .onChange(of: viewModel.isAnonymous) { _, isAnonymous in
-            if !isAnonymous && isEmailSignInSheetPresented {
+            if !isAnonymous && isEmailSignInSheetPresented && !viewModel.isAwaitingSecondFactor {
                 dismissEmailSignInSheet()
             }
         }
@@ -535,6 +553,7 @@ struct ProfileView: View {
     }
 
     private func dismissEmailSignInSheet() {
+        if viewModel.isAwaitingSecondFactor { viewModel.cancelSecondFactor() }
         if isEmailSignInSheetPresented {
             isEmailSignInSheetPresented = false
         }

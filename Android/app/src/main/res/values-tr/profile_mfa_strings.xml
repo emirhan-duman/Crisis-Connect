@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_mfa_title">İki adımlı doğrulama</string>
+    <string name="profile_mfa_totp_message">Kimlik doğrulayıcı uygulamanızdaki 6 haneli kodu girin.</string>
+    <string name="profile_mfa_sms_message">Kayıtlı telefonunuza doğrulama kodu gönderin, ardından SMS kodunu girin.</string>
+    <string name="profile_mfa_unsupported">Bu doğrulama yöntemi desteklenmiyor. Başka bir kayıtlı yöntem seçin veya iptal edip web üzerinden giriş yapın.</string>
+    <string name="profile_mfa_authenticator">Kimlik doğrulayıcı</string>
+    <string name="profile_mfa_sms">SMS</string>
+    <string name="profile_mfa_code">Doğrulama kodu</string>
+    <string name="profile_mfa_send">SMS kodu gönder</string>
+    <string name="profile_mfa_resend">SMS kodunu tekrar gönder</string>
+    <string name="profile_mfa_verify">Doğrula</string>
+    <string name="profile_mfa_cancel">İptal</string>
+</resources>

@@ -491,6 +491,13 @@ final class Crisis_ConnectTests: XCTestCase {
         XCTAssertEqual(lastProgress?.downloadedTiles, 0)
         XCTAssertEqual(lastProgress?.missingTiles, 1)
         XCTAssertEqual(tileStore.countTiles(regionId: region.id), 0)
+        var completedRegion = region
+        completedRegion.status = .complete
+        completedRegion.downloadedTiles = lastProgress?.downloadedTiles ?? 0
+        completedRegion.missingTiles = lastProgress?.missingTiles ?? 0
+        XCTAssertTrue(completedRegion.hasIncompleteCoverage)
+        XCTAssertEqual(completedRegion.unavailableTileCount, 1)
+        XCTAssertNotEqual(completedRegion.coverageStatusLabel, completedRegion.status.label)
     }
 
     @MainActor
@@ -525,7 +532,8 @@ final class Crisis_ConnectTests: XCTestCase {
             MockURLProtocol.handler = nil
         }
 
-        let plan = OfflineMapDownloadPlan(region: region, initialDownloaded: 0, resumeOrdinal: nil)
+        // A persisted tile count with no cursor must be recounted, not added to the cache scan.
+        let plan = OfflineMapDownloadPlan(region: region, initialDownloaded: 1, resumeOrdinal: nil)
         var lastProgress: OfflineMapDownloadProgress?
         let result = await OfflineMapDownloader.run(
             plan: plan,
@@ -806,6 +814,34 @@ final class Crisis_ConnectTests: XCTestCase {
             .appendingPathComponent(fileName)
         temporaryURLs.append(directoryURL)
         return url
+    }
+
+    func testRetryOfMissingMapTileReplacesGapWithDownloadedCoverage() async throws {
+        var region = makeTinyOfflineMapRegion()
+        region.status = .complete
+        region.missingTiles = 1
+        let store = OfflineTileStore()
+        defer { store.removeRegion(regionId: region.id) }
+        let session = makeMockURLSession()
+        MockURLProtocol.requestCount = 0
+        MockURLProtocol.handler = { request, _ in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data("retried-tile".utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+        var lastProgress: OfflineMapDownloadProgress?
+        let result = await OfflineMapDownloader.run(
+            plan: OfflineMapDownloadPlan(region: region, initialDownloaded: 0, resumeOrdinal: nil),
+            tileStore: store, session: session, tileTemplate: mockTileTemplate()
+        ) { lastProgress = $0 }
+        XCTAssertEqual(result, .completed)
+        XCTAssertEqual(MockURLProtocol.requestCount, 1)
+        XCTAssertEqual(lastProgress?.downloadedTiles, 1)
+        XCTAssertEqual(lastProgress?.missingTiles, 0)
+        region.downloadedTiles = lastProgress?.downloadedTiles ?? 0
+        region.missingTiles = lastProgress?.missingTiles ?? 0
+        XCTAssertFalse(region.hasIncompleteCoverage)
+        XCTAssertEqual(store.countTiles(regionId: region.id), 1)
     }
 
     private func makeTinyOfflineMapRegion() -> OfflineMapRegion {

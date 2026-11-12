@@ -18,9 +18,7 @@ struct SfuCallOverlayHost: View {
     var body: some View {
         if let call = manager.uiCall, call.state != .idle {
             SfuCallCard(call: call, media: manager.media)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .padding(.horizontal, AppTheme.screenPadding)
-                .padding(.top, 8)
+                .modifier(AdaptiveCallOverlay())
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .animation(.spring(duration: 0.3), value: call.state)
         }
@@ -32,16 +30,33 @@ private struct SfuVideoTrackView: UIViewRepresentable {
     let track: RTCVideoTrack
     var contentMode: UIView.ContentMode = .scaleAspectFill
 
+    final class Coordinator {
+        var track: RTCVideoTrack?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIView(context: Context) -> RTCMTLVideoView {
         let view = RTCMTLVideoView()
         view.videoContentMode = contentMode
         view.clipsToBounds = true
         track.add(view)
+        context.coordinator.track = track
         return view
     }
 
     func updateUIView(_ uiView: RTCMTLVideoView, context: Context) {
         uiView.videoContentMode = contentMode
+        if context.coordinator.track !== track {
+            context.coordinator.track?.remove(uiView)
+            track.add(uiView)
+            context.coordinator.track = track
+        }
+    }
+
+    static func dismantleUIView(_ uiView: RTCMTLVideoView, coordinator: Coordinator) {
+        coordinator.track?.remove(uiView)
+        coordinator.track = nil
     }
 }
 

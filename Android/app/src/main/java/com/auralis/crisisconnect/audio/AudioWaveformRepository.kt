@@ -1,5 +1,7 @@
 package com.auralis.crisisconnect.audio
 
+import com.auralis.crisisconnect.core.media.LocalMedia
+
 import android.content.ContentResolver
 import android.content.Context
 import android.media.AudioFormat
@@ -94,7 +96,7 @@ class AudioWaveformRepository(private val context: Context) {
                         if (path.isNullOrEmpty()) {
                             throw IOException("Invalid file uri: $uri")
                         }
-                        extractor.setDataSource(path)
+                        extractor.setDataSource(LocalMedia.dataSource(java.io.File(path)))
                     }
 
                     else -> {

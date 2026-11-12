@@ -6,14 +6,9 @@
 //
 
 import Combine
+import FirebaseAuth
 import SwiftUI
 import UIKit
-
-/// Which transport the connection pill is talking about — Android's `ChatTransport` twin.
-enum ChatBadgeTransport {
-    case bluetooth
-    case internet
-}
 
 struct ChatNavigationTitleContainer: View {
     let sessionId: UUID
@@ -29,6 +24,7 @@ struct ChatNavigationTitleContainer: View {
     let internetCapable: Bool
     @StateObject private var directStatusState: ChatNavigationDirectStatusState
     @StateObject private var presenceState: ChatPeerPresenceState
+    @ObservedObject private var traffic = DisasterTrafficController.shared
 
     init(
         sessionId: UUID,
@@ -63,7 +59,8 @@ struct ChatNavigationTitleContainer: View {
     }
 
     var body: some View {
-        let directStatus = directStatusState.status
+        let snapshot = directStatusState.snapshot
+        let directStatus = snapshot.legacyStatus
         ChatNavigationTitleView(
             title: title,
             subtitle: liveSubtitle,
@@ -75,10 +72,9 @@ struct ChatNavigationTitleContainer: View {
             // "connected" badge must never light the verified seal on its own.
             showsVerifiedTitleIcon: allowVerifiedTitleIcon &&
                 (showsVerifiedTrust ||
-                    (directStatusState.transport == .bluetooth &&
-                        directStatus?.showsVerifiedTitleIcon == true)),
+                    (snapshot.bluetoothReady)),
             directStatus: directStatus,
-            transport: directStatusState.transport
+            transport: snapshot.transport
         )
         .task(id: showsDirectStatus) {
             directStatusState.setEnabled(showsDirectStatus)
@@ -89,12 +85,17 @@ struct ChatNavigationTitleContainer: View {
         .task(id: peerUid) {
             presenceState.setPeerUid(peerUid)
         }
+        .onDisappear {
+            directStatusState.setEnabled(false)
+            directStatusState.setInternetCapable(false)
+        }
     }
 
     /// The peer's stored internet profile photo (directory/message-added citizen contacts) when this
     /// header has no locally captured BLE avatar. Looked up by the chat's contact id, falling back to
     /// the peer uid, so the header shows the same photo as the conversation list row.
     private var resolvedPeerPhotoUrl: String? {
+        if traffic.saving { return nil }
         if avatarImageRelativePath != nil { return nil }
         if let byId = ContactStore.shared.contact(for: sessionId)?.peerPhotoUrl {
             return byId
@@ -104,6 +105,12 @@ struct ChatNavigationTitleContainer: View {
 
     /// Typing beats presence beats the static role subtitle — same precedence as Android.
     private var liveSubtitle: String? {
+        switch traffic.presence {
+        case .sos: return NSLocalizedString("TRAFFIC_LOCAL_SOS",comment:"")
+        case .offline: return NSLocalizedString("TRAFFIC_LOCAL_OFFLINE",comment:"")
+        case .limited: return NSLocalizedString("TRAFFIC_LOCAL_LIMITED",comment:"")
+        case .normal: break
+        }
         if presenceState.isTyping {
             return NSLocalizedString("CHAT_TYPING", comment: "")
         }
@@ -129,29 +136,23 @@ struct ChatNavigationTitleContainer: View {
 
 @MainActor
 final class ChatNavigationDirectStatusState: ObservableObject {
-    @Published private(set) var status: RescueConnectionStatus?
-    @Published private(set) var transport: ChatBadgeTransport = .bluetooth
+    @Published private(set) var snapshot = ChatConnectionBadgeSnapshot(phase: .idle)
+    var status: RescueConnectionStatus? { snapshot.legacyStatus }
+    var transport: ChatBadgeTransport { snapshot.transport }
 
     private let sessionId: UUID
-    private var isHostConnected = false
     private var p2pStatus: RescueConnectionStatus = .disconnected
     private var isEnabled = false
     private var screenshotStatusOverride: RescueConnectionStatus?
     private var screenshotStatusTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
 
-    // Internet side of the badge (Android parity): reachable = signed-in + online + the contact
-    // has an internet identity. Polled cheaply while the header is visible.
     private var internetCapable = false
     private var internetAvailable = false
-    private var internetPollTask: Task<Void, Never>?
-    // Hysteresis for the internet→Bluetooth handover: a marginal BT link bounces, and flipping
-    // the badge on every link-up would ping-pong it. While the internet carries the chat, a
-    // fresh BT link must stay up for `btTakeoverStability` before it takes the badge over.
-    // Message routing does NOT wait for this — it is presentation-only, same as Android.
-    private var btLinkedSince: Date?
-    private var btTakeoverTask: Task<Void, Never>?
-    private static let btTakeoverStability: TimeInterval = 2.5
+    private var internetObservation: AnyCancellable?
+    private var authObservation: ChatBadgeAuthObservation?
+    private var p2pManager: P2pGattChatManager?
+    private var bindingGeneration: UInt64 = 0
 
     init(sessionId: UUID) {
         self.sessionId = sessionId
@@ -160,6 +161,7 @@ final class ChatNavigationDirectStatusState: ObservableObject {
     func setEnabled(_ enabled: Bool) {
         guard enabled != isEnabled else { return }
         isEnabled = enabled
+        bindingGeneration &+= 1
 
         if enabled {
             bindDeferred()
@@ -168,38 +170,32 @@ final class ChatNavigationDirectStatusState: ObservableObject {
             screenshotStatusTask = nil
             screenshotStatusOverride = nil
             cancellables.removeAll()
-            isHostConnected = false
             p2pStatus = .disconnected
-            btLinkedSince = nil
-            btTakeoverTask?.cancel()
-            btTakeoverTask = nil
+            p2pManager = nil
             recomputeStatus()
         }
     }
 
-    /// Arms/disarms the internet half of the badge. Independent of [setEnabled]: a contact can be
-    /// internet-reachable while Bluetooth status tracking is off entirely.
+    /// Local path and authentication events only; no polling or additional network requests.
     func setInternetCapable(_ capable: Bool) {
         guard capable != internetCapable else { return }
         internetCapable = capable
-        internetPollTask?.cancel()
-        internetPollTask = nil
+        internetObservation = nil
+        authObservation = nil
         if capable {
-            internetAvailable = InternetChatTransport.shared.isAvailable()
-            internetPollTask = Task { @MainActor [weak self] in
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    guard let self, !Task.isCancelled else { return }
-                    let now = InternetChatTransport.shared.isAvailable()
-                    if now != self.internetAvailable {
-                        self.internetAvailable = now
-                        self.recomputeStatus()
-                    }
-                }
+            internetObservation = InternetChatTransport.shared.availabilityChanges
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] in self?.refreshInternetAvailability() }
+            authObservation = ChatBadgeAuthObservation { [weak self] in
+                Task { @MainActor [weak self] in self?.refreshInternetAvailability() }
             }
-        } else {
-            internetAvailable = false
         }
+        refreshInternetAvailability()
+    }
+
+    private func refreshInternetAvailability() {
+        // Constrained text paths remain usable; the separate traffic policy limits payloads.
+        internetAvailable = internetCapable && InternetChatTransport.shared.isAvailable(allowUltraConstrained: true)
         recomputeStatus()
     }
 
@@ -210,22 +206,22 @@ final class ChatNavigationDirectStatusState: ObservableObject {
         screenshotStatusOverride = nil
         let hostManager = ContactBroadcastManager.shared
 
-        isHostConnected = hostManager.connectedSessionIds.contains(sessionId)
         hostManager.$connectedSessionIds
             .map { [sessionId] in $0.contains(sessionId) }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] isConnected in
+            .sink { [weak self] _ in
                 guard let self else { return }
-                self.isHostConnected = isConnected
                 self.recomputeStatus()
             }
             .store(in: &cancellables)
 
         let capturedSessionId = sessionId
+        let generation = bindingGeneration
         Task { @MainActor [weak self] in
             let p2pManager = P2pGattChatManager.shared(sessionId: capturedSessionId)
-            guard let self, self.isEnabled else { return }
+            guard let self, self.isEnabled, self.bindingGeneration == generation else { return }
+            self.p2pManager = p2pManager
             self.p2pStatus = p2pManager.status
             p2pManager.$status
                 .receive(on: DispatchQueue.main)
@@ -247,58 +243,21 @@ final class ChatNavigationDirectStatusState: ObservableObject {
 
     private func recomputeStatus() {
         if let screenshotStatusOverride {
-            transport = .bluetooth
-            status = screenshotStatusOverride
+            snapshot = ChatConnectionBadgeSnapshot(phase: screenshotStatusOverride.showsVerifiedTitleIcon
+                ? .bluetoothConnected : .connecting)
             return
         }
-        let btStatus: RescueConnectionStatus? = {
-            if isHostConnected { return .connected }
-            switch p2pStatus {
-            case .connecting, .discovering, .authenticating, .connected, .ready, .failed:
-                return p2pStatus
-            case .disconnected:
-                return nil
-            }
-        }()
-        let btLinked = btStatus == .connected || btStatus == .ready
-        let internetUp = internetCapable && internetAvailable
-
-        if btLinked {
-            if btLinkedSince == nil { btLinkedSince = Date() }
-            let stable = Date().timeIntervalSince(btLinkedSince ?? Date()) >= Self.btTakeoverStability
-            if transport == .internet, internetUp, !stable {
-                scheduleBtTakeoverRecompute()
-                return // keep the internet badge until the BT link proves stable
-            }
-            btTakeoverTask?.cancel()
-            btTakeoverTask = nil
-            transport = .bluetooth
-            status = btStatus
-            return
+        let connecting: Bool
+        switch p2pStatus {
+        case .connecting, .discovering, .authenticating, .connected: connecting = true
+        default: connecting = false
         }
-        btLinkedSince = nil
-        btTakeoverTask?.cancel()
-        btTakeoverTask = nil
-
-        // Mid-handshake / failed Bluetooth states stay visible only when the internet can't
-        // carry the chat — otherwise the calm "connected via internet" wins (Android behavior).
-        if internetUp {
-            transport = .internet
-            status = .connected
-            return
-        }
-        transport = .bluetooth
-        status = btStatus
-    }
-
-    private func scheduleBtTakeoverRecompute() {
-        guard btTakeoverTask == nil else { return }
-        btTakeoverTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(Self.btTakeoverStability * 1_000_000_000))
-            guard let self, !Task.isCancelled else { return }
-            self.btTakeoverTask = nil
-            self.recomputeStatus()
-        }
+        // Use the same verified, writable Bluetooth route as message routing, without a UI delay.
+        snapshot = .resolve(bluetoothReady: isEnabled && (ContactBroadcastManager.shared.isSessionConnected(sessionId) || p2pManager?.isReady() == true),
+            internetAvailable: internetCapable && internetAvailable,
+            bluetoothConnecting: isEnabled && connecting,
+            bluetoothFailed: isEnabled && p2pStatus == .failed,
+            enabled: isEnabled || internetCapable)
     }
 
     private var shouldSimulateScreenshotConnection: Bool {
@@ -308,12 +267,12 @@ final class ChatNavigationDirectStatusState: ObservableObject {
 
     private func startScreenshotConnectionTransition() {
         screenshotStatusOverride = .connecting
-        status = .connecting
+        recomputeStatus()
         screenshotStatusTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard let self, !Task.isCancelled, self.isEnabled else { return }
             self.screenshotStatusOverride = .connected
-            self.status = .connected
+            self.recomputeStatus()
         }
     }
 }
@@ -408,6 +367,7 @@ struct VerifiedSealIcon: View {
 }
 
 struct ChatAvatarCircleView: View {
+    @ObservedObject private var traffic = DisasterTrafficController.shared
     let avatarImageRelativePath: String?
     let initials: String
     let avatarHue: Double
@@ -436,7 +396,7 @@ struct ChatAvatarCircleView: View {
                     .frame(width: size, height: size)
                     .clipShape(Circle())
             } else if let remotePhotoURL {
-                AsyncImage(url: remotePhotoURL) { phase in
+                AsyncImage(url: traffic.saving ? nil : remotePhotoURL) { phase in
                     if let image = phase.image {
                         image
                             .resizable()
@@ -566,7 +526,7 @@ struct InlineConnectionPill: View {
             // Same split as Android's ConnectionStatusBadge: the connected label names the
             // transport that is actually carrying the conversation.
             return transport == .internet
-                ? "CHAT_STATUS_CONNECTED_INTERNET"
+                ? "CHAT_STATUS_INTERNET_AVAILABLE"
                 : "CHAT_STATUS_CONNECTED_BLUETOOTH"
         case .disconnected:
             return "DIRECT_CHAT_STATUS_DISCONNECTED"
@@ -578,7 +538,7 @@ struct InlineConnectionPill: View {
     private var statusColor: Color {
         switch status {
         case .connected, .ready:
-            return .green
+            return transport == .internet ? .blue : .green
         case .connecting, .discovering, .authenticating:
             return .orange
         case .failed:
@@ -587,4 +547,27 @@ struct InlineConnectionPill: View {
             return .gray
         }
     }
+}
+
+// Keep the shared Bluetooth status enum out of the pure presentation policy.
+private extension ChatConnectionBadgeSnapshot {
+    var legacyStatus: RescueConnectionStatus? {
+        switch phase {
+        case .idle: return nil
+        case .connecting: return .connecting
+        case .bluetoothConnected: return .ready
+        case .internetAvailable: return .connected // The pill explicitly labels this availability.
+        case .disconnected: return .disconnected
+        case .failed: return .failed
+        }
+    }
+}
+
+/// Owns Firebase's observer independently of the MainActor view model's teardown.
+private final class ChatBadgeAuthObservation {
+    private let handle: AuthStateDidChangeListenerHandle
+    init(changed: @escaping () -> Void) {
+        handle = Auth.auth().addStateDidChangeListener { _, _ in changed() }
+    }
+    deinit { Auth.auth().removeStateDidChangeListener(handle) }
 }

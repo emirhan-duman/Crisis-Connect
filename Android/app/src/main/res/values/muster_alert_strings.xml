@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Choose a notification sound, vibration and lock-screen visibility in Android settings. Full-screen alerts require your permission and may be limited by Do Not Disturb, battery settings or a force-stopped app.</string>
+    <string name="muster_alert_settings_title">Sound, vibration and lock screen</string>
+    <string name="muster_alerts_blocked">App notifications are disabled in Android settings</string>
+    <string name="muster_alerts_quiet">This notification channel is silent or low priority; enable pop-up alerts in Android settings</string>
+    <string name="muster_locked_screen_note">Full-screen alerts appear when your phone is locked or its screen is off, if Android allows them. While you are using the phone, Android may show a heads-up notification instead.</string>
+
+    <string name="muster_urgent_sound">Sound in silent mode</string>
+    <string name="muster_urgent_sound_help">For urgent disaster check-ins only. Uses your existing alarm volume for a limited time while the check-in screen is visible. Stops when you touch the screen.</string>
+    <string name="muster_urgent_ready">Available within system permissions. Do Not Disturb and alarm volume remain under your control.</string>
+    <string name="muster_urgent_not_ready">Check alarm volume, notification permissions and Do Not Disturb. System restrictions are respected.</string>
+    <string name="muster_urgent_seconds">%1$d seconds</string>
+    <string name="muster_flash_settings">Flash alert settings</string>
+    <string name="muster_flash_help">In Android accessibility settings, enable flash notifications if supported by your phone. Android controls flash alerts, including while the app is closed.</string>
+</resources>

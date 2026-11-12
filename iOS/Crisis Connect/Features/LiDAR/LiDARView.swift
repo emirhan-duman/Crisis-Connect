@@ -167,35 +167,45 @@ private struct LiDARCameraView: UIViewRepresentable {
     func updateUIView(_ uiView: MTKView, context: Context) {}
 }
 
-private struct LiDARViewportObserver: View {
+private struct LiDARViewportObserver: UIViewRepresentable {
     let viewModel: LiDARViewModel
-    @State private var interfaceOrientation: UIInterfaceOrientation = .portrait
 
-    var body: some View {
-        GeometryReader { proxy in
-            Color.clear
-                .onAppear { updateViewport(size: proxy.size) }
-                .onChange(of: proxy.size) { _, newSize in
-                    updateViewport(size: newSize)
-                }
-                .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-                    updateViewport(size: proxy.size)
-                }
-        }
-        .allowsHitTesting(false)
+    func makeUIView(context: Context) -> ViewportView {
+        let view = ViewportView()
+        view.isUserInteractionEnabled = false
+        return view
     }
 
-    private func updateViewport(size: CGSize) {
-        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-            if #available(iOS 26.0, *) {
-                interfaceOrientation = scene.effectiveGeometry.interfaceOrientation
-            } else {
-                interfaceOrientation = scene.interfaceOrientation
-            }
-        } else {
-            interfaceOrientation = .portrait
+    func updateUIView(_ view: ViewportView, context: Context) {
+        view.viewModel = viewModel
+        view.setNeedsLayout()
+    }
+
+    final class ViewportView: UIView {
+        weak var viewModel: LiDARViewModel?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            setNeedsLayout()
         }
-        viewModel.updateViewport(size: size, interfaceOrientation: interfaceOrientation)
+
+        override func safeAreaInsetsDidChange() {
+            super.safeAreaInsetsDidChange()
+            setNeedsLayout()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard let scene = window?.windowScene else { return }
+            let orientation: UIInterfaceOrientation
+            if #available(iOS 26.0, *) {
+                orientation = scene.effectiveGeometry.interfaceOrientation
+            } else {
+                orientation = scene.interfaceOrientation
+            }
+            // ARKit needs the rotation, independently of this viewport's aspect ratio.
+            viewModel?.updateViewport(size: bounds.size, interfaceOrientation: orientation)
+        }
     }
 }
 

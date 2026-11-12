@@ -356,19 +356,8 @@ internal class AuthorityMeshAwareAccelerator(
         }.take(32)
     }
 
-    private fun hasAwarePermissions(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                appContext,
-                Manifest.permission.NEARBY_WIFI_DEVICES
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            ContextCompat.checkSelfPermission(
-                appContext,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        }
-    }
+    private fun hasAwarePermissions(): Boolean =
+        com.auralis.crisisconnect.util.LocalNetworkPermissions.hasWifiPermissions(appContext)
 
     private companion object {
         private const val TAG = "AuthorityMeshAware"

@@ -17,10 +17,16 @@ plutil -lint "$PROJECT/project.pbxproj"
 xmllint --noout "$SCHEME"
 python3 -m json.tool "$TEST_PLAN" >/dev/null
 
-# Weblate edits Apple .strings files; validate the files shipped in both targets.
+# Validate the localization resources for the app, widget, and watch targets.
 while IFS= read -r -d '' strings_file; do
     plutil -lint "$strings_file"
-done < <(find "$IOS_ROOT/Crisis Connect" "$IOS_ROOT/WidgetExtension" -type f -name '*.strings' -print0)
+done < <(
+    find \
+        "$IOS_ROOT/Crisis Connect" \
+        "$IOS_ROOT/WidgetExtension" \
+        "$IOS_ROOT/CrisisConnectWatch Watch App" \
+        -type f -name '*.strings' -print0
+)
 
 swift package --package-path "$IOS_ROOT/Packages/LibSignalClient" dump-package >/dev/null
 swift package --package-path "$IOS_ROOT/Packages/LiteRT-LM" dump-package >/dev/null
@@ -32,6 +38,7 @@ done < <(
         "$IOS_ROOT/Crisis Connect" \
         "$IOS_ROOT/Crisis ConnectTests" \
         "$IOS_ROOT/Crisis ConnectUITests" \
+        "$IOS_ROOT/CrisisConnectWatch Watch App" \
         "$IOS_ROOT/BroadcastExtension" \
         "$IOS_ROOT/WidgetExtension" \
         -type f -name '*.swift' -print0

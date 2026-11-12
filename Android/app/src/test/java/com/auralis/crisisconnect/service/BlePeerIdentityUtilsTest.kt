@@ -11,6 +11,7 @@ import org.robolectric.RobolectricTestRunner
 import java.util.Locale
 
 @RunWith(RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(sdk = [34], application = android.app.Application::class)
 class BlePeerIdentityUtilsTest {
     private val trLocale = Locale("tr", "TR")
     private val enLocale = Locale.US

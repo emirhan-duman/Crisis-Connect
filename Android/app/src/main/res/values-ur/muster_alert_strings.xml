@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Android سیٹنگز میں نوٹیفکیشن ساؤنڈ، وائبریشن اور لاک اسکرین کی مرئیت کا انتخاب کریں۔ فل سکرین الرٹس کے لیے آپ کی اجازت درکار ہوتی ہے اور اسے ڈسٹرب نہ کریں، بیٹری کی ترتیبات یا زبردستی روکی گئی ایپ کے ذریعے محدود کیا جا سکتا ہے۔</string>
+    <string name="muster_alert_settings_title">آواز، کمپن اور لاک اسکرین</string>
+    <string name="muster_alerts_blocked">ایپ کی اطلاعات Android ترتیبات میں غیر فعال ہیں۔</string>
+    <string name="muster_alerts_quiet">یہ اطلاعی چینل خاموش یا کم ترجیحی ہے؛ Android ترتیبات میں پاپ اپ الرٹس کو فعال کریں۔</string>
+    <string name="muster_locked_screen_note">فل سکرین الرٹس اس وقت ظاہر ہوتے ہیں جب آپ کا فون لاک ہو یا اس کی سکرین آف ہو، اگر Android انہیں اجازت دیتا ہے۔ جب آپ فون استعمال کر رہے ہوں تو، Android اس کے بجائے ایک ہیڈ اپ نوٹیفکیشن دکھا سکتا ہے۔</string>
+    <string name="muster_urgent_sound">خاموش موڈ میں آواز</string>
+    <string name="muster_urgent_sound_help">صرف فوری ڈیزاسٹر چیک ان کے لیے۔ چیک ان اسکرین کے نظر آنے کے دوران آپ کے موجودہ الارم والیوم کو محدود وقت کے لیے استعمال کرتا ہے۔ جب آپ اسکرین کو چھوتے ہیں تو رک جاتا ہے۔</string>
+    <string name="muster_urgent_ready">سسٹم کی اجازت کے اندر دستیاب ہے۔ ڈسٹرب نہ کریں اور الارم والیوم آپ کے کنٹرول میں رہتا ہے۔</string>
+    <string name="muster_urgent_not_ready">الارم والیوم، نوٹیفکیشن کی اجازت اور ڈسٹرب نہ کریں۔ سسٹم کی پابندیوں کا احترام کیا جاتا ہے۔</string>
+    <string name="muster_urgent_seconds">%1$d سیکنڈ</string>
+    <string name="muster_flash_settings">فلیش الرٹ کی ترتیبات</string>
+    <string name="muster_flash_help">اگر آپ کا فون سہولت فراہم کرتا ہے، تو Android کی رسائی کی ترتیبات میں فلیش اطلاعات فعال کریں۔ ایپ بند ہونے پر بھی Android ان اطلاعات کو کنٹرول کرتا ہے۔</string>
+</resources>

@@ -76,7 +76,7 @@ enum NearbySpakePairing {
 
         func onMessage2(_ msg2: Data) throws -> Data {
             let (pB, cB) = try decodeMsg2(msg2)
-            let k = Spake2P256.keyA(w: w, x: x, pB: pB)
+            let k = try Spake2P256.keyA(w: w, x: x, pB: pB)
             let tt = Spake2P256.transcript(idA: idA, idB: idB, pA: pA, pB: pB, k: k, w: w)
             let keys = Spake2P256.deriveKeys(tt)
             guard constantTimeEquals(cB, Spake2P256.confirm(confirmKey: keys.confirmKeyB, tt: tt)) else {
@@ -119,7 +119,7 @@ enum NearbySpakePairing {
         func onMessage1(_ msg1: Data) throws -> Data {
             let pA = try decodeMsg1(msg1)
             let pB = Spake2P256.shareB(w: w, y: y)
-            let k = Spake2P256.keyB(w: w, y: y, pA: pA)
+            let k = try Spake2P256.keyB(w: w, y: y, pA: pA)
             let transcript = Spake2P256.transcript(idA: idA, idB: idB, pA: pA, pB: pB, k: k, w: w)
             let keys = Spake2P256.deriveKeys(transcript)
             ke = keys.sharedKey

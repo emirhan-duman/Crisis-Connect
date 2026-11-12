@@ -3,10 +3,9 @@
 Swift / SwiftUI client for [Crisis Connect](../README.md). Offline-first crisis communication over
 Bluetooth, with an end-to-end encrypted internet layer on top.
 
-- **Deployment target:** iOS 17.0
-- **Toolchain:** Xcode 16+, Swift 6 language mode where the package sets it
-- **Build verification:** Xcode 16+ with code signing disabled for public-source checks
-- **Version:** 1.1.9 (build 36)
+- **Deployment targets:** iOS 17.0 and watchOS 10.0 for the companion
+- **Toolchain:** Xcode 26 or later
+- **Version:** 1.2.0 (build 44)
 
 ## Targets
 
@@ -15,7 +14,8 @@ Bluetooth, with an end-to-end encrypted internet layer on top.
 | `Crisis Connect` | Main app |
 | `WidgetExtension` | WidgetKit SOS + Recent Disasters widgets, iOS 18 SOS control, SOS Live Activity |
 | `BroadcastExtension` | ReplayKit upload extension for full-device screen sharing during calls |
-| `Crisis ConnectTests` | 175 unit tests |
+| `CrisisConnectWatch Watch App` | Apple Watch companion for SOS, connection status and messaging |
+| `Crisis ConnectTests` | Unit and integration tests |
 | `Crisis ConnectUITests` | UI tests |
 
 ## Layout
@@ -33,6 +33,7 @@ iOS/
 │   └── *.lproj/             19 localizations
 ├── WidgetExtension/
 ├── BroadcastExtension/
+├── CrisisConnectWatch Watch App/
 ├── Config/                  Info.plist, entitlements
 ├── Frameworks/              OrangeMlsWorker.xcframework (headers only — see below)
 ├── Packages/                Vendored Swift packages
@@ -44,10 +45,8 @@ iOS/
 
 ## Prebuilt binaries are not committed
 
-Two `.xcframework` bundles in this tree ship as **prebuilt static libraries**. Together they are
-roughly **375 MB** of build output, so the `.a` slices are deliberately kept out of this
-repository — only the headers, module maps and `Info.plist` are committed. You need to produce
-them locally before the app will link.
+The two XCFramework directories contain headers, module maps and metadata. Supply their
+matching static libraries locally before linking the app or running its Xcode tests.
 
 ### 1. `Packages/LibSignalClient/SignalFfi.xcframework`
 
@@ -55,44 +54,39 @@ The Rust core of [libsignal](https://github.com/signalapp/libsignal), which back
 messaging. The Swift sources under `Packages/LibSignalClient/Sources` are copied verbatim from
 upstream `swift/Sources/LibSignalClient`.
 
-Build it from a checkout of libsignal at the **matching tag** (`v0.86.5` — keep this aligned with
-the `org.signal:libsignal-android` version used by the Android app):
+Build it from a checkout of libsignal at the matching `v0.86.5` tag. Set `CC_IOS_SOURCE` to
+the absolute path to this repository's `iOS` directory.
 
 ```bash
 # In a checkout of https://github.com/signalapp/libsignal at v0.86.5
-cargo build --release -p libsignal-ffi --features libsignal-bridge-testing \
+cargo build --locked --release -p libsignal-ffi --features libsignal-bridge-testing \
   --target aarch64-apple-ios
-cargo build --release -p libsignal-ffi --features libsignal-bridge-testing \
+cargo build --locked --release -p libsignal-ffi --features libsignal-bridge-testing \
   --target aarch64-apple-ios-sim
 
-xcodebuild -create-xcframework \
-  -library target/aarch64-apple-ios/release/libsignal_ffi.a \
-  -headers swift/Sources/SignalFfi \
-  -library target/aarch64-apple-ios-sim/release/libsignal_ffi.a \
-  -headers swift/Sources/SignalFfi \
-  -output SignalFfi.xcframework
+CC_SIGNAL_FRAMEWORK="$CC_IOS_SOURCE/Packages/LibSignalClient/SignalFfi.xcframework"
+cp target/aarch64-apple-ios/release/libsignal_ffi.a \
+  "$CC_SIGNAL_FRAMEWORK/ios-arm64/libSignalFfi.a"
+cp target/aarch64-apple-ios-sim/release/libsignal_ffi.a \
+  "$CC_SIGNAL_FRAMEWORK/ios-arm64_x86_64-simulator/libSignalFfi.a"
 ```
 
-Drop the resulting `SignalFfi.xcframework` into `Packages/LibSignalClient/`. The
-`libsignal-bridge-testing` feature is required: it bakes in the `signal_ffi_testing.h` symbols
-that `LibSignalClient`'s fake-connection test helpers reference, so a single static library links
-both the app and the tests.
+The project also needs device and simulator slices for watchOS. With the iOS libraries in the
+paths listed by `Packages/LibSignalClient/SignalFfi.xcframework/Info.plist`, run
+`./Scripts/build-watch-signal.sh` from the `iOS` directory. The script verifies the libsignal
+revision and prints the path to the combined XCFramework. Review the generated bundle and put
+it in `Packages/LibSignalClient/`. For an Intel simulator, combine an `x86_64-apple-ios` build
+with the iOS simulator library using `lipo` before running the script.
 
-To upgrade: bump the tag, rebuild both slices, re-run `-create-xcframework`, and re-copy the Swift
-sources.
+Use `libsignal-bridge-testing` for every slice so the same static library supplies the
+`signal_ffi_testing.h` symbols used by the test helpers.
 
 ### 2. `Frameworks/OrangeMlsWorker.xcframework`
 
-The OpenMLS core used by the **experimental SFU group-call backend**
-(see [`docs/SFU_GROUP_CALLS.md`](docs/SFU_GROUP_CALLS.md)). This feature is gated off
-(`SfuCallConfig.enabled = false`) and is **not part of the shipped app**.
-
-Its Rust crate is not currently part of this open-source mirror, so this binary cannot be rebuilt
-from what is published here. Because the feature is disabled, the practical options are to stub
-`RustMlsWorkerBackend` out, or to remove the framework reference from the Xcode target, until the
-crate is published. If you are working on group calls, open an
-[issue](https://github.com/emirhan-duman/Crisis-Connect/issues) and we will sort the source drop
-out.
+The iOS target links this OpenMLS library for authority messaging and SFU group calls. A full
+build requires the device and simulator slices from the matching `rust-mls-ios` crate described
+in [the SFU group-call notes](docs/SFU_GROUP_CALLS.md). Obtain the crate or matching artifacts
+separately. The public checkout includes the C interface and XCFramework metadata.
 
 ## Firebase configuration
 
@@ -111,6 +105,9 @@ App Attest must be enabled for the iOS app in the Firebase Console for App Check
 release builds.
 
 ## Build & test
+
+After configuring Firebase and supplying the static libraries above, open the project or run
+the test plan from the `iOS` directory.
 
 ```bash
 open "Crisis Connect.xcodeproj"      # SPM dependencies resolve on first open

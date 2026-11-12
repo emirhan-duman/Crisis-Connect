@@ -43,26 +43,42 @@ class SecurityRepository(private val context: Context) {
      * key to verified admin/fieldteam callers, so this should be gated behind the authority role;
      * on civilian devices it simply fails and the authority mesh stays off.
      */
-    suspend fun ensureAuthorityMeshGroupKey(): Boolean = withContext(Dispatchers.IO) {
-        if (AuthorityMeshKeyStore.loadGroupKey(context) != null) {
-            return@withContext true
+    suspend fun ensureAuthorityMeshGroupKey(): Boolean =
+        requestAuthorityMeshGroupKey() == AuthorityMeshKeyAccess.Available
+
+    /** Keeps delivery/rollout failures distinct from a rejected authority identity. */
+    suspend fun requestAuthorityMeshGroupKey(): AuthorityMeshKeyAccess = withContext(Dispatchers.IO) {
+        if (AuthorityMeshKeyStore.loadGroupKey(context) != null && AuthorityMeshKeyStore.hasNextLease(context)) {
+            return@withContext AuthorityMeshKeyAccess.Available
         }
         runCatching {
-            val result = functions.getHttpsCallable("issueAuthorityMeshKey")
-                .call(emptyMap<String, Any>())
+            val owner = FirebaseAuth.getInstance().currentUser?.uid?.takeIf { it.isNotBlank() }
+                ?: return@runCatching AuthorityMeshKeyAccess.SignInRequired
+            val proof = RoleProofCreator(context, this@SecurityRepository, allowExpiredCertificate = false)
+                .createProof(sessionNonce = "cc-authority-mesh-key-v2")
+            val json = proof.toJson()
+            val request = json.keys().asSequence().associateWith { json.get(it) }
+            val result = functions.getHttpsCallable("issueAuthorityMeshKeyV2")
+                .call(request)
                 .awaitResult()
-            val data = result.data as? Map<*, *>
-            val keyBase64 = (data?.get("keyBase64") as? String)?.trim()?.replace("\n", "")
-            val bytes = keyBase64?.let { Base64.decode(it, Base64.NO_WRAP or Base64.NO_PADDING) }
-            if (bytes != null && bytes.size == 32) {
-                AuthorityMeshKeyStore.saveGroupKey(context, bytes)
-                true
-            } else {
-                false
-            }
+            val data = result.data as? Map<*, *> ?: return@runCatching AuthorityMeshKeyAccess.Failed
+            fun lease(fields: Map<*, *>): AuthorityMeshKeyLease = AuthorityMeshKeyLease(
+                fields["keyId"] as? String ?: error("Missing authority key id"),
+                (fields["keyBase64"] as? String)?.trim()?.replace("\n", "") ?: error("Missing authority key"),
+                owner,
+                (fields["notBeforeMs"] as? Number)?.toLong() ?: error("Missing activation time"),
+                (fields["expiresAtMs"] as? Number)?.toLong() ?: error("Missing expiry"),
+                (fields["receiveUntilMs"] as? Number)?.toLong()
+                    ?: (fields["expiresAtMs"] as Number).toLong(),
+            )
+            AuthorityMeshKeyStore.saveGroupKeys(context,
+                listOfNotNull(lease(data), (data["nextLease"] as? Map<*, *>)?.let(::lease)))
+            AuthorityMeshKeyAccess.Available
         }.getOrElse { throwable ->
+            if (throwable is CancellationException) throw throwable
             Log.w("SecurityRepository", "Unable to fetch authority mesh group key", throwable)
-            false
+            if (AuthorityMeshKeyStore.loadGroupKey(context) != null) AuthorityMeshKeyAccess.Available
+            else authorityMeshKeyFailure(throwable)
         }
     }
 
@@ -133,9 +149,12 @@ class SecurityRepository(private val context: Context) {
             }
         }
 
-        val deviceId = LocalKeyStorage.getOrCreateRescueDeviceId(context.applicationContext)
         val flow = CertificateProvisioningFlow(context.applicationContext, functions)
         val result = try {
+            val deviceId = RescueDeviceRegistry.registerLocalDevice(
+                context = context.applicationContext,
+                uid = currentUid,
+            )
             flow.provisionCertificate(deviceId)
         } catch (throwable: Throwable) {
             // Fall back to a still-usable cached cert if provisioning failed
@@ -326,6 +345,7 @@ class SecurityRepository(private val context: Context) {
     }
 
     suspend fun clearStoredCertificate() {
+        AuthorityMeshKeyStore.clearGroupKey(context)
         context.securityDataStore.edit { prefs ->
             prefs.remove(CERTIFICATE_KEY)
             prefs.remove(PUBLIC_KEY_KEY)

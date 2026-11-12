@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.auralis.crisisconnect.baselineprofile"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         // Baseline profile generation needs API 28+ (rooted) or API 33+ (unrooted, e.g. the S21).
         minSdk = 28
-        targetSdk = 36
+        targetSdk = 37
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

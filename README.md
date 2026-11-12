@@ -25,7 +25,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-8b0000.svg" alt="License" /></a>&nbsp;
   <a href="https://www.bestpractices.dev/projects/14600"><img src="https://www.bestpractices.dev/projects/14600/badge" alt="OpenSSF Best Practices" /></a>&nbsp;
   <img src="https://img.shields.io/badge/platforms-Android%20%7C%20iOS-blue" alt="Platforms" />&nbsp;
-  <img src="https://img.shields.io/badge/version-1.1.9-green" alt="Version" />&nbsp;
+  <a href="docs/releases/1.2.0.md"><img src="https://img.shields.io/badge/source-1.2.0-green" alt="Source version 1.2.0" /></a>&nbsp;
   <img src="https://img.shields.io/badge/kotlin-161k%20LOC-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />&nbsp;
   <img src="https://img.shields.io/badge/swift-92k%20LOC-F05138?logo=swift&logoColor=white" alt="Swift" />&nbsp;
   <a href="#testing"><img src="https://img.shields.io/badge/tests-see%20Testing-lightgrey" alt="Testing" /></a>&nbsp;
@@ -551,7 +551,7 @@ installing: `f690576ab7a1dd5d6266247a469bd5893bfbd082307d994982d918d69c3124e8`.
 
 | Platform | Requirements |
 |:--|:--|
-| **Android** | Android Studio Ladybug+ · JDK 21 · Android SDK 36 |
+| **Android** | Android Studio Ladybug+ · JDK 21 · Android SDK 37 |
 | **iOS** | Xcode 16+ · iOS 17+ deployment target · macOS Sequoia+ · Rust toolchain (to build the vendored native libraries) |
 | **Backend** | Node.js 20+ · Firebase CLI · Firebase project (Firestore, Auth, Functions) |
 
@@ -722,7 +722,7 @@ checkout cannot currently link or run the Xcode test plan because the vendored
 These commands are available to contributors but, unless noted in the table above, are **not**
 executed by public CI.
 
-**Android** -- requires JDK 21 and Android SDK 36, plus the configuration files from
+**Android** -- requires JDK 21 and Android SDK 37, plus the configuration files from
 [Build From Source](#build-from-source) (`app/google-services.json` can be the example file for
 local unit tests):
 

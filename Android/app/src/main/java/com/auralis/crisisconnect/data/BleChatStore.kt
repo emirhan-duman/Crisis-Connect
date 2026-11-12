@@ -250,7 +250,11 @@ object BleChatStore {
         }
     }
 
-    fun markDelivered(sessionCode: String, messageIds: Collection<String>) {
+    fun markDelivered(
+        sessionCode: String,
+        messageIds: Collection<String>,
+        deliveredAtMillis: Long = System.currentTimeMillis()
+    ) {
         if (messageIds.isEmpty()) {
             return
         }
@@ -259,7 +263,10 @@ object BleChatStore {
         flow.update { current ->
             current.map { message ->
                 if (message.isLocal && message.id in targetIds && message.status != BleMessageStatus.READ) {
-                    message.copy(status = BleMessageStatus.DELIVERED)
+                    message.copy(
+                        status = BleMessageStatus.DELIVERED,
+                        deliveredAtMillis = message.deliveredAtMillis ?: deliveredAtMillis
+                    )
                 } else {
                     message
                 }
@@ -267,7 +274,10 @@ object BleChatStore {
         }
     }
 
-    fun markDeliveredForAllSent(sessionCode: String) {
+    fun markDeliveredForAllSent(
+        sessionCode: String,
+        deliveredAtMillis: Long = System.currentTimeMillis()
+    ) {
         val flow = obtainSessionFlow(canonicalSessionCode(sessionCode))
         flow.update { current ->
             current.map { message ->
@@ -275,7 +285,10 @@ object BleChatStore {
                     message.isLocal &&
                     (message.status == BleMessageStatus.SENT || message.status == BleMessageStatus.SENDING)
                 ) {
-                    message.copy(status = BleMessageStatus.DELIVERED)
+                    message.copy(
+                        status = BleMessageStatus.DELIVERED,
+                        deliveredAtMillis = message.deliveredAtMillis ?: deliveredAtMillis
+                    )
                 } else {
                     message
                 }
@@ -283,7 +296,11 @@ object BleChatStore {
         }
     }
 
-    fun markRead(sessionCode: String, messageIds: Collection<String>) {
+    fun markRead(
+        sessionCode: String,
+        messageIds: Collection<String>,
+        readAtMillis: Long = System.currentTimeMillis()
+    ) {
         if (messageIds.isEmpty()) {
             return
         }
@@ -292,7 +309,11 @@ object BleChatStore {
         flow.update { current ->
             current.map { message ->
                 if (message.isLocal && message.id in targetIds && message.status != BleMessageStatus.READ) {
-                    message.copy(status = BleMessageStatus.READ)
+                    message.copy(
+                        status = BleMessageStatus.READ,
+                        readAtMillis = message.readAtMillis ?: readAtMillis,
+                        deliveredAtMillis = message.deliveredAtMillis ?: readAtMillis
+                    )
                 } else {
                     message
                 }
@@ -300,12 +321,19 @@ object BleChatStore {
         }
     }
 
-    fun markReadAllLocal(sessionCode: String) {
+    fun markReadAllLocal(
+        sessionCode: String,
+        readAtMillis: Long = System.currentTimeMillis()
+    ) {
         val flow = obtainSessionFlow(canonicalSessionCode(sessionCode))
         flow.update { current ->
             current.map { message ->
                 if (message.isLocal && message.status != BleMessageStatus.READ) {
-                    message.copy(status = BleMessageStatus.READ)
+                    message.copy(
+                        status = BleMessageStatus.READ,
+                        readAtMillis = message.readAtMillis ?: readAtMillis,
+                        deliveredAtMillis = message.deliveredAtMillis ?: readAtMillis
+                    )
                 } else {
                     message
                 }
@@ -374,7 +402,9 @@ fun ChatMessage.toBleChatMessage(statusOverride: BleMessageStatus? = null): BleC
         retryCount = retryCount,
         nextRetryAtMillis = nextRetryAtMillis,
         lastError = lastError,
-        outboundRoute = outboundRoute
+        outboundRoute = outboundRoute,
+        deliveredAtMillis = deliveredAtMillis,
+        readAtMillis = readAtMillis
     )
 }
 
@@ -397,7 +427,9 @@ data class BleChatMessage(
     val retryCount: Int = 0,
     val nextRetryAtMillis: Long? = null,
     val lastError: String? = null,
-    val outboundRoute: String? = null
+    val outboundRoute: String? = null,
+    val deliveredAtMillis: Long? = null,
+    val readAtMillis: Long? = null
 )
 
 enum class BleMessageStatus {

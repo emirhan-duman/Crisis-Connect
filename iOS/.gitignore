@@ -36,8 +36,15 @@ fastlane/test_output
 *-os-log.xml
 *-process-info.xml
 
-# Rust MLS core (OrangeMlsWorker.xcframework) is now tracked via git-lfs — see .gitattributes
-# and docs/SFU_GROUP_CALLS.md. Rebuild with crisis-connect-web/rust-mls-ios/build-xcframework.sh.
+# Local configuration and signing material
+GoogleService-Info.plist
+*.mobileprovision
+*.p8
+*.p12
+
+# Locally supplied XCFramework libraries
+/Frameworks/OrangeMlsWorker.xcframework/**/*.a
+/Packages/LibSignalClient/SignalFfi.xcframework/**/*.a
 
 # Local build output (xcodebuild -derivedDataPath, exported .app bundles)
 build-artifacts/

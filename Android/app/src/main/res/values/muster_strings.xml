@@ -1,0 +1,78 @@
+<resources>
+    <string name="muster_full_screen">Full-screen check-in alerts</string>
+    <string name="muster_full_screen_description">When enabled, check-in alerts can wake the screen and open over the lock screen. Android may show a heads-up notification while you use your phone. Normal notifications remain available when this is off.</string>
+    <string name="muster_full_screen_permission">Android’s full-screen notification permission is also required.</string>
+    <string name="muster_full_screen_settings">Open full-screen permission</string>
+    <string name="muster_unlock">Unlock to respond</string>
+    <string name="muster_later">Later</string>
+    <string name="muster_outbox">Pending and undelivered answers</string>
+    <string name="muster_title">Personnel check-in</string>
+    <string name="muster_description">Safety check-ins from your organization</string>
+    <string name="muster_notification">Your organization requests your safety status.</string>
+    <string name="muster_connect_instructions">A check-in request arrived. Connect for the full instructions; your answer can be saved offline.</string>
+    <string name="muster_safe">I am safe</string><string name="muster_help">I need help</string><string name="muster_at_point">I am at the assembly point</string>
+    <string name="muster_queued">Saved on this phone · waiting to send</string><string name="muster_sent">Received by your organization</string><string name="muster_failed">Could not deliver this response. Open the app and contact your organization by another available channel.</string>
+    <string name="muster_back">Back</string><string name="muster_sign_in">Sign in with your organization account to view your assignments.</string>
+    <string name="muster_delivery_explanation">Responses are saved securely before sending. “Saved on this phone” does not mean your organization has received them.</string>
+    <string name="muster_refresh">Refresh and retry delivery</string><string name="muster_error">Could not complete the operation. Cached requests and saved answers remain on this phone.</string>
+    <string name="muster_empty">No check-in requests.</string><string name="muster_drill">DRILL</string><string name="muster_note">Optional note</string><string name="muster_closed">This check-in is closed.</string>
+    <string name="muster_ui_institutional">ORGANIZATION CHECK-IN</string>
+    <string name="muster_ui_home_waiting">Your organization needs your response</string>
+    <string name="muster_ui_home_failed">Your response could not be delivered</string>
+    <string name="muster_ui_home_pending">Your response is waiting to send</string>
+    <string name="muster_ui_home_update">Your check-in status</string>
+    <string name="muster_ui_respond">Report my status</string>
+    <string name="muster_ui_view">View status</string>
+    <string name="muster_ui_offline_short">Respond even while offline</string>
+    <string name="muster_ui_history_settings">History and settings</string>
+    <string name="muster_ui_your_status">Your status</string>
+    <string name="muster_ui_settings">Check-in settings</string>
+    <string name="muster_ui_sign_in_title">Organization account required</string>
+    <string name="muster_ui_checkins">Check-ins</string>
+    <string name="muster_ui_outbox_count">Outbox (%1$d)</string>
+    <string name="muster_ui_refresh_error">Could not refresh. You can still respond to saved requests.</string>
+    <string name="muster_ui_delivery_explanation">Saved answers stay on this phone until the organization confirms receipt. Pending answers retry when a connection is available.</string>
+    <string name="muster_ui_outbox_empty">No pending answers</string>
+    <string name="muster_ui_outbox_empty_detail">Answers waiting to send or requiring your attention appear here.</string>
+    <string name="muster_ui_inbox_title">Your safety, clearly shared</string>
+    <string name="muster_ui_inbox_detail">View requests and follow the delivery of your response.</string>
+    <string name="muster_ui_empty_detail">Requests from your organization will appear on your home screen.</string>
+    <string name="muster_ui_less">Show less</string>
+    <string name="muster_ui_instructions">Read all instructions</string>
+    <string name="muster_ui_deadline">Requested by %1$s</string>
+    <string name="muster_ui_save_error">Could not save your answer. Try again or use another available channel to contact your organization.</string>
+    <string name="muster_ui_help_open">Your help request is still open. Changing your status does not close it.</string>
+    <string name="muster_ui_received_detail">Your organization has confirmed receipt of this response.</string>
+    <string name="muster_ui_change_answer">Update my response</string>
+    <string name="muster_ui_question">How are you?</string>
+    <string name="muster_ui_add_note">Add a note</string>
+    <string name="muster_ui_safe_detail">I am safe right now</string>
+    <string name="muster_ui_help_detail">I need assistance</string>
+    <string name="muster_ui_point_detail">I have reached the assembly point</string>
+    <string name="muster_ui_offline_detail">Your answer is saved securely before sending. Without a connection, it waits on this phone and retries automatically. For immediate help, use any available emergency channel.</string>
+    <string name="muster_ui_refreshing">Updating request…</string>
+    <string name="muster_ui_not_delivered">Not delivered</string>
+    <string name="muster_ui_awaiting">Awaiting your response</string>
+    <string name="muster_ui_your_answer">Your response</string>
+    <string name="muster_ui_enabled">Enabled</string>
+    <string name="muster_ui_disabled">Disabled</string>
+    <string name="muster_ui_permission_required">Android permission required</string>
+    <string name="muster_ui_notification_settings">Notification settings</string>
+    <string name="muster_ui_locked_detail">Unlock your phone to view the request and safely report your status.</string>
+    <string name="muster_drill_title">Personnel drill</string>
+    <string name="muster_drill_notification">Your organization requests a drill safety response.</string>
+    <string name="muster_ui_drill_awaiting">Drill · response requested</string>
+    <string name="muster_ui_help_status">Your help request is open</string>
+
+    <string name="muster_response_message">Message only</string>
+    <string name="muster_response_send_message">Send message only</string>
+    <string name="muster_response_message_hint">A message alone does not confirm your safety.</string>
+    <string name="muster_voice_record">Record voice message</string>
+    <string name="muster_voice_stop">Stop</string>
+    <string name="muster_voice_play">Play voice message</string>
+    <string name="muster_voice_discard">Discard recording</string>
+    <string name="muster_voice_limit">Up to 30 seconds. Audio is sent when a connection is available.</string>
+    <string name="muster_voice_error">Voice message unavailable. Try again.</string>
+    <string name="muster_voice_permission">Allow microphone access in Android settings to record a voice message.</string>
+    <string name="muster_voice_duration">%1$d s</string>
+</resources>

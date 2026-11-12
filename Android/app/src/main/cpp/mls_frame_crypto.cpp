@@ -168,6 +168,7 @@ class MlsEncryptor final : public RefCounted<shim::FrameEncryptorInterface> {
               shim::ArrayView<const uint8_t> frame,
               shim::ArrayView<uint8_t> encrypted_frame,
               size_t* bytes_written) override {
+    if (!bytes_written) return 0;
     *bytes_written = 0;
     if (!resolveRust()) return 0;  // no crypto lib → emit empty (silence), never crash
     size_t out_len = 0;

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Escolha um som de notificação, vibração e visibilidade da tela de bloqueio nas configurações do Android. Os alertas em tela cheia exigem sua permissão e podem ser limitados pelo modo Não perturbe, pelas configurações da bateria ou por um aplicativo com parada forçada.</string>
+    <string name="muster_alert_settings_title">Som, vibração e tela de bloqueio</string>
+    <string name="muster_alerts_blocked">As notificações de aplicativos estão desativadas nas configurações do Android</string>
+    <string name="muster_alerts_quiet">Este canal de notificação é silencioso ou de baixa prioridade; ativar alertas pop-up nas configurações do Android</string>
+    <string name="muster_locked_screen_note">Alertas em tela cheia aparecem quando o telefone está bloqueado ou a tela desligada, se o Android permitir. Enquanto você estiver usando o telefone, Android poderá mostrar uma notificação de alerta.</string>
+    <string name="muster_urgent_sound">Som no modo silencioso</string>
+    <string name="muster_urgent_sound_help">Somente para verificações de segurança urgentes em caso de desastre. Usa o volume do alarme existente por um tempo limitado enquanto a tela de verificação de segurança está visível. Pára quando você toca na tela.</string>
+    <string name="muster_urgent_ready">Disponível nas permissões do sistema. O modo Não perturbe e o volume do alarme permanecem sob seu controle.</string>
+    <string name="muster_urgent_not_ready">Verifique o volume do alarme, permissões de notificação e Não perturbe. As restrições do sistema são respeitadas.</string>
+    <string name="muster_urgent_seconds">%1$d segundos</string>
+    <string name="muster_flash_settings">Configurações de alerta Flash</string>
+    <string name="muster_flash_help">Se o aparelho oferecer suporte, ative as notificações por flash nos ajustes de acessibilidade do Android. O Android controla esses alertas mesmo com o aplicativo fechado.</string>
+</resources>

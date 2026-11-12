@@ -1,0 +1,6 @@
+<resources>
+    <string name="safety_number_repair_required">This contact’s secure identity changed. Sending is blocked. Scan a fresh QR code together to verify and pair this contact again.</string>
+    <string name="nearby_pairing_identity_warning">This person knows your phone number. Their name and identity have not been verified. This creates a local connection only; use a fresh QR code to bind an account or pair an existing contact again.</string>
+    <string name="offline_pairing_upgrade_required">Bluetooth pairing was upgraded for security. Ask this contact to update the app and generate a new QR code, then scan it again. Your conversation history is retained.</string>
+    <string name="peer_security_upgrade_required">Update both apps to securely verify this conversation. Messages remain queued; no weaker encryption is selected.</string>
+</resources>

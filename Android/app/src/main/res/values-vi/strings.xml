@@ -205,7 +205,7 @@
     <string name="advanced_settings_title">Cài đặt nâng cao</string>
     <string name="advanced_settings_screen_description">Tinh chỉnh hành vi ứng dụng cho việc chẩn đoán và gửi tin nhắn.</string>
     <string name="advanced_setting_public_mesh_title">Chế độ mesh công khai</string>
-    <string name="advanced_setting_public_mesh_description">Cho phép nút này được phát hiện trong môi trường mesh mở để thử nghiệm phối hợp rộng hơn.</string>
+    <string name="advanced_setting_public_mesh_description">Trò chuyện công khai: bất kỳ ai ở gần đều có thể đọc tin nhắn và tham gia. Không chia sẻ thông tin nhạy cảm.</string>
     <string name="advanced_setting_gatt_mesh_notifications_title">Thông báo nút mesh mở</string>
     <string name="advanced_setting_gatt_mesh_notifications_description">Chỉ thông báo cho tin nhắn mới từ nút trò chuyện chung của mesh GATT công khai.</string>
     <string name="advanced_setting_high_range_title">Chế độ tầm xa cao</string>
@@ -503,7 +503,6 @@ Android: %3$s</string>
     <string name="gatt_mesh_action_message_info">Thông tin tin nhắn</string>
     <string name="gatt_mesh_message_info_sender">Người gửi</string>
     <string name="gatt_mesh_message_info_origin">Nguồn tin nhắn</string>
-    <string name="gatt_mesh_message_info_direct_peer">Thiết bị trực tiếp</string>
     <string name="gatt_mesh_message_info_time">Thời gian</string>
     <string name="gatt_mesh_message_info_you">Bạn</string>
     <string name="gatt_mesh_message_info_sent_to">Đã gửi tới</string>
@@ -631,7 +630,7 @@ Android: %3$s</string>
     <string name="add_from_contacts_empty">Chưa có ai trong danh bạ của bạn dùng Crisis Connect.</string>
     <string name="add_from_contacts_permission_needed">Cần quyền danh bạ để tìm những người bạn quen.</string>
     <string name="add_from_contacts_sign_in_required">Đăng nhập để tìm liên hệ trên Crisis Connect.</string>
-    <string name="add_from_contacts_privacy_note">Số của bạn được khớp bằng hàm băm và không bao giờ lưu trên máy chủ. Chỉ những người chọn cho phép được phát hiện mới xuất hiện.</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect đọc tên và số điện thoại trong danh bạ để tìm người dùng ứng dụng. Số điện thoại được gửi để đối chiếu đến máy chủ Crisis Connect do Google Firebase lưu trữ tại Hoa Kỳ. Tên vẫn ở trên thiết bị. Các số được tra cứu được xử lý mà không lưu trữ vĩnh viễn; kết quả đối chiếu nằm trên thiết bị. Làm mới hoặc quay lại màn hình này khi màn hình còn mở có thể gửi lại các số. Lựa chọn được ghi nhớ cho tài khoản này trên thiết bị này. Bạn có thể rút lại sự đồng ý trong Cài đặt, mục Quyền truy cập danh bạ.</string>
     <string name="add_from_contacts_found_count">%1$d người trên Crisis Connect</string>
     <string name="add_from_contacts_empty_hint">Họ sẽ xuất hiện ở đây khi xác minh số điện thoại trong ứng dụng.</string>
     <string name="add_from_contacts_search_hint">Tìm tên hoặc số</string>
@@ -660,7 +659,6 @@ Android: %3$s</string>
     <string name="nearby_match_notification_text">Chạm để kết nối qua Bluetooth</string>
     <string name="nearby_pairing_channel_name">Yêu cầu ghép nối lân cận</string>
     <string name="nearby_pairing_request_title">%1$s muốn kết nối ở gần</string>
-    <string name="nearby_pairing_request_text">Chấp nhận để trò chuyện qua Bluetooth.</string>
     <string name="nearby_pairing_accept">Chấp nhận</string>
     <string name="nearby_pairing_decline">Từ chối</string>
     <string name="manual_connect_button">Ghép nối với thiết bị</string>
@@ -1227,6 +1225,7 @@ Ngày: %4$s</string>
     <string name="chat_status_connected">Đã kết nối</string>
     <string name="chat_status_connected_bluetooth">Đã kết nối qua Bluetooth</string>
     <string name="chat_status_connected_internet">Đã kết nối qua internet</string>
+    <string name="chat_status_connected_satellite">Đã kết nối qua vệ tinh</string>
     <string name="internet_message_channel_name">Tin nhắn internet</string>
     <string name="internet_message_notification_title">Tin nhắn mới</string>
     <string name="channel_message_notification_body">Tin nhắn mới</string>
@@ -1355,7 +1354,6 @@ Ngày: %4$s</string>
     <string name="notification_photo_message_body">Tin nhắn ảnh</string>
     <string name="chat_encryption_setup_title">Bảo mật cuộc trò chuyện này</string>
     <string name="chat_encryption_setup_instruction">Quét mã QR hiển thị trên màn hình Trò chuyện mới của thiết bị kia để nhập khóa mã hóa chung.</string>
-    <string name="chat_encryption_setup_session_mismatch">QR này thuộc về một phiên trò chuyện khác.</string>
     <string name="chat_encryption_setup_invalid_qr">Định dạng QR không được hỗ trợ.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Đang xác minh khóa mã hóa…</string>
     <string name="chat_encryption_setup_handshake_failed">Không thể xác minh khóa mã hóa. Hãy thử lại.</string>
@@ -1789,4 +1787,20 @@ Ngày: %4$s</string>
     <string name="profile_delete_account_error_verification">Không thể xác minh việc xóa trên thiết bị này. Hãy kiểm tra kết nối và thử lại.</string>
     <string name="profile_delete_account_error_signed_out">Bạn cần đăng nhập để xóa tài khoản.</string>
     <string name="profile_delete_account_reauth_needed">Vì lý do bảo mật, chúng tôi cần xác nhận đúng là bạn trước khi xóa. Hãy đăng xuất, đăng nhập lại rồi thử lại.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">Tìm liên hệ trực tuyến</string>
+    <string name="contacts_disclosure_body">Crisis Connect đọc tên và số điện thoại trong danh bạ để tìm người dùng ứng dụng. Số điện thoại được gửi để đối chiếu đến máy chủ Crisis Connect do Google Firebase lưu trữ tại Hoa Kỳ. Tên vẫn ở trên thiết bị. Các số được tra cứu được xử lý mà không lưu trữ vĩnh viễn; kết quả đối chiếu nằm trên thiết bị. Làm mới hoặc quay lại màn hình này khi màn hình còn mở có thể gửi lại các số. Lựa chọn được ghi nhớ cho tài khoản này trên thiết bị này. Bạn có thể rút lại sự đồng ý trong Cài đặt, mục Quyền truy cập danh bạ.</string>
+    <string name="contacts_local_disclosure_title">Tìm liên hệ ở gần</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect chỉ đọc tên và số điện thoại bạn chia sẻ qua trình chọn danh bạ của hệ thống để tìm người ở gần. Số được chọn dùng để xác minh danh tính qua Bluetooth. Tính năng này không gửi danh bạ đến máy chủ. Lựa chọn được ghi nhớ cho tài khoản này trên thiết bị này. Bạn có thể rút lại sự đồng ý trong Cài đặt, mục Quyền truy cập danh bạ.</string>
+    <string name="contacts_disclosure_accept">Tôi đồng ý</string>
+    <string name="contacts_disclosure_decline">Để sau</string>
+    <string name="contacts_consent_settings_title">Quyền truy cập danh bạ</string>
+    <string name="contacts_consent_settings_hint">Lựa chọn được ghi nhớ cho tài khoản này trên thiết bị này. Bạn có thể rút lại sự đồng ý trong Cài đặt, mục Quyền truy cập danh bạ.</string>
+    <string name="contacts_consent_revoke_online">Rút lại đồng ý đối chiếu trực tuyến</string>
+    <string name="contacts_consent_revoke_nearby">Rút lại đồng ý truy cập liên hệ ở gần</string>
+    <string name="nearby_choose_contact">Chọn liên hệ</string>
+    <string name="nearby_contact_selection_failed">Không thể đọc số đã chọn. Vui lòng chọn liên hệ khác.</string>
+    <string name="chat_status_internet_available">Có kết nối Internet</string>
+    <string name="chat_status_satellite_available">Có kết nối vệ tinh</string>
 </resources>

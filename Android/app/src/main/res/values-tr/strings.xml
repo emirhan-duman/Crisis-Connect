@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="app_name">Kriz Bağlantısı</string>
     <string name="Home">Ev</string>
@@ -166,6 +166,79 @@
     <string name="permission_group_notifications">Bildirim izni</string>
     <string name="settings_advanced_title">Gelişmiş ayarlar</string>
     <string name="settings_advanced_description">Tanılama, güvenilirlik ve deneysel özellikleri yapılandırın.</string>
+    <string name="settings_watch_title">Saat mesajları</string>
+    <string name="settings_watch_description">Bağlı saat yetkilendirmesi, mesaj senkronizasyonu ve cihaz onayları.</string>
+    <string name="watch_settings_title">Saat Mesajları</string>
+    <string name="watch_settings_header_desc">Saatten gelen şifreli mesajlar normal sohbetlerinde görünür. Gönderen cihazı ve kişiyi burada onayla.</string>
+    <string name="watch_settings_status_receiver_active">Telefon alıcısı aktif</string>
+    <string name="watch_settings_status_receiver_inactive">Telefon alıcısı aktif değil</string>
+    <string name="watch_settings_status_watch">Eşleşmiş saat</string>
+    <string name="watch_settings_status_watch_paired">Bağlı saat bu hesapla eşleşti</string>
+    <string name="watch_settings_status_watch_unpaired">Henüz bağlı saat eşleşmedi</string>
+    <string name="watch_settings_section_status">Durum ve Kontroller</string>
+    <string name="watch_settings_section_actions">İşlemler</string>
+    <string name="watch_settings_enable_phone">Bu telefonda mesaj almayı aç</string>
+    <string name="watch_settings_enable_phone_subtitle">Bu telefonun bağımsız saat mesajlarını almasını sağlar</string>
+    <string name="watch_settings_pair_watch">Bağlı saatimi bu hesapla yetkilendir</string>
+    <string name="watch_settings_pair_watch_subtitle">Bağlı Wear OS saatini bu hesapla eşleştirir</string>
+    <string name="watch_settings_refresh">Mesajları kontrol et ve eşitle</string>
+    <string name="watch_settings_refresh_subtitle">Bekleyen mesajları ve teslim durumlarını günceller</string>
+    <string name="watch_settings_disable_phone">Bu telefonun yetkisini kaldır</string>
+    <string name="watch_settings_disable_phone_subtitle">Alıcı yetkisini kaldırır; sohbet geçmişi korunur</string>
+    <string name="watch_settings_section_contacts">Kayıtlı kişiler</string>
+    <string name="watch_settings_contacts_desc">Kişinin kayıtlı saat veya telefon cihazlarını incelemek ve onaylamak için dokunun.</string>
+    <string name="watch_settings_no_contacts">Saat mesajlaşması için uygun kayıtlı kişi bulunamadı.</string>
+    <string name="watch_settings_no_devices">Bu kişi henüz bağımsız mesajlaşmayı açmamış.</string>
+    <string name="watch_settings_device_phone">Telefon</string>
+    <string name="watch_settings_device_watch">Saat</string>
+    <string name="watch_settings_device_approved">Onaylı</string>
+    <string name="watch_settings_device_pending">İncelemek için dokunun</string>
+    <string name="watch_settings_device_dialog_title">%1$s · %2$s</string>
+    <string name="watch_settings_device_dialog_message">Bu cihazdan mesaj almaya izin verilsin mi? Karşı tarafta da onay gereklidir.\n\nCihaz doğrulama kodu:\n%1$s</string>
+    <string name="watch_settings_approve_btn">Cihazı onayla</string>
+    <string name="watch_settings_revoke_btn">Yetkiyi kaldır</string>
+    <string name="watch_settings_cancel_btn">İptal</string>
+    <string name="watch_settings_sign_in_required">Devam etmek için hesabına giriş yap.</string>
+    <string name="watch_settings_phone_not_enabled_hint">Önce bu telefonda mesaj almayı aç.</string>
+    <string name="watch_settings_phone_ready">Telefon alıcısı hazır. Kişinin cihazını seçip onayla.</string>
+    <string name="watch_settings_watch_paired_msg">Saat yetkilendirildi. Kişi cihazlarını onaylayabilirsin.</string>
+    <string name="watch_settings_sync_success">Kayıtlı mesajlar ve teslim durumları güncellendi.</string>
+    <string name="watch_settings_revoked_msg">Alıcı yetkisi kaldırıldı; sohbet geçmişi korundu.</string>
+    <string name="watch_settings_contact_revoked_msg">Cihazın kişi onayı kaldırıldı.</string>
+    <string name="watch_settings_contact_approved_msg">Cihaz onaylandı.</string>
+    <string name="watch_settings_unpair_watch">Saatin eşleşmesini kaldır</string>
+    <string name="watch_settings_unpair_watch_subtitle">Saati bu hesaptan ayırır; telefon alıcısı aktif kalır</string>
+    <string name="watch_settings_unpair_confirm_title">Saatin eşleşmesi kaldırılsın mı?</string>
+    <string name="watch_settings_unpair_confirm_msg">Bu saat artık hesabınız adına mesaj göndermek için yetkilendirilmeyecektir.</string>
+    <string name="watch_settings_unpaired_notice">Saat eşleşmesi başarıyla kaldırıldı.</string>
+    <string name="watch_settings_last_sync">Son eşitleme: %1$s</string>
+    <string name="watch_settings_never_synced">Henüz eşitlenmedi</string>
+    <string name="watch_settings_hw_title">Wear OS bağlantısı</string>
+    <string name="watch_settings_hw_connected">Yakında bağlı</string>
+    <string name="watch_settings_hw_disconnected">Bağlı saat yok</string>
+    <string name="watch_settings_companion_title">Saat SOS ve Hızlı Yanıtlar</string>
+    <string name="watch_settings_companion_desc">Acil durumlarda saatiniz iptal için 5 saniye geri sayar, BLE acil durum yayını yapar ve kurtarma ekiplerine hazır şifreli yanıtlar göndermenizi sağlar.</string>
+    <string name="watch_settings_quick_replies_title">Hazır hızlı yanıtlar</string>
+    <string name="watch_settings_quick_replies_desc">“İyiyim”, “Yaralıyım”, “Yardım lazım”</string>
+    <string name="watch_settings_quick_replies_manage">Özelleştirilebilir Hızlı Yanıtlar</string>
+    <string name="watch_settings_quick_replies_manage_desc">Acil durumda veya sohbette saatinizde görünecek hazır şablonları yönetin.</string>
+    <string name="watch_settings_quick_reply_add">Hızlı yanıt ekle</string>
+    <string name="watch_settings_quick_reply_add_placeholder">örn. Toplanma noktasındayım</string>
+    <string name="watch_settings_quick_reply_reset">Varsayılanlara sıfırla</string>
+    <string name="watch_settings_quick_reply_default_tag">Varsayılan</string>
+    <string name="watch_settings_quick_reply_custom_tag">Özel</string>
+    <string name="watch_settings_quick_reply_limit_notice">Hızlı yanıt 50 karakteri geçemez.</string>
+    <string name="watch_settings_scan_qr_title">Saati QR Kod ile Eşleştir</string>
+    <string name="watch_settings_scan_qr_desc">Saatin ekranındaki tek seferlik eşleşme QR kodunu kamerayla tarayın</string>
+    <string name="watch_settings_battery_title">Saat Pili</string>
+    <string name="watch_settings_battery_level">%%%1$d · %2$s</string>
+    <string name="watch_settings_battery_unknown">Eşitleme bekleniyor</string>
+    <string name="watch_settings_battery_charging">Şarj oluyor</string>
+    <string name="watch_settings_battery_normal">Normal</string>
+    <string name="watch_settings_battery_low">Düşük pil</string>
+    <string name="watch_settings_qr_scanned_success">Saat QR kodu başarıyla tarandı ve eşleştirildi.</string>
+    <string name="watch_settings_device_already_approved">Onaylı cihaz</string>
+    <string name="watch_settings_device_already_approved_msg">Bu cihaz hesabınızla mesajlaşmak üzere zaten onaylanmıştır.\n\nDoğrulama Kodu:\n%1$s\n\nYetkisini kaldırmak istiyor musunuz?</string>
     <string name="settings_section_account">Hesap</string>
     <string name="settings_section_general">Genel</string>
     <string name="child_profile_title">Çocuk profili</string>
@@ -206,7 +279,7 @@
     <string name="advanced_settings_title">Gelişmiş ayarlar</string>
     <string name="advanced_settings_screen_description">Tanılama ve mesaj iletim davranışını ayrıntılı olarak ayarlayın.</string>
     <string name="advanced_setting_public_mesh_title">Açık mesh modu</string>
-    <string name="advanced_setting_public_mesh_description">Bu düğümü, daha geniş koordinasyon testleri için açık mesh ortamlarında keşfedilebilir hale getirir.</string>
+    <string name="advanced_setting_public_mesh_description">Herkese açık sohbet: yakındaki herkes mesajları okuyabilir ve katılabilir. Hassas bilgi paylaşmayın.</string>
     <string name="advanced_setting_gatt_mesh_notifications_title">Açık mesh düğüm bildirimleri</string>
     <string name="advanced_setting_gatt_mesh_notifications_description">Yalnızca açık GATT mesh genel sohbet düğümünden gelen yeni mesajlar için bildirim gösterir.</string>
     <string name="advanced_setting_high_range_title">Yüksek menzil modu</string>
@@ -243,7 +316,7 @@
     <string name="rescue_tools_button_description">Kurtarma koordinasyon araçlarını aç</string>
     <string name="feature_rescue_title">Kurtarma Koordinasyonu</string>
     <string name="rescue_module_title">Kurtarma koordinasyonu</string>
-    <string name="rescue_module_install_failed">Kurtarma modülü yüklenemedi. Google Play ve internet erişimi varken tekrar deneyin.</string>
+    <string name="rescue_module_install_failed">Kurtarma modülü yüklenemedi. Lütfen tekrar deneyin.</string>
     <string name="rescue_module_unavailable">Kurtarma modülü şu anda bu cihazda kullanılamıyor.</string>
     <string name="chat_search_messages">Mesajlarda ara</string>
     <string name="chat_search_title">Mesajlarda ara</string>
@@ -514,7 +587,6 @@
     <string name="gatt_mesh_action_message_info">Mesaj bilgisi</string>
     <string name="gatt_mesh_message_info_sender">Gönderen</string>
     <string name="gatt_mesh_message_info_origin">Mesajın kaynağı</string>
-    <string name="gatt_mesh_message_info_direct_peer">Doğrudan eş</string>
     <string name="gatt_mesh_message_info_time">Zaman</string>
     <string name="gatt_mesh_message_info_you">Sen</string>
     <string name="gatt_mesh_message_info_sent_to">Kimlere gitti</string>
@@ -591,9 +663,9 @@
     <string name="qr_scan_status_saved">Kişi kaydedildi</string>
     <string name="qr_scan_status_already_registered">Kişi zaten kayıtlı</string>
     <string name="qr_scan_status_title_searching">Cihaz aranıyor</string>
-    <string name="qr_scan_status_title_pairing">Eşleştiriliyor</string>
+    <string name="qr_scan_status_title_pairing">Güvenli eşleştirme</string>
     <string name="qr_scan_status_title_saving">Kişi kaydediliyor</string>
-    <string name="qr_scan_status_title_saved">Kişi hazır</string>
+    <string name="qr_scan_status_title_saved">Kişi eklendi</string>
     <string name="qr_scan_status_title_already_registered">Kişi zaten kayıtlı</string>
     <string name="qr_scan_status_badge_scanned">QR okundu</string>
     <string name="qr_scan_status_badge_pairing">Güvenli eşleştirme</string>
@@ -602,10 +674,10 @@
     <string name="qr_scan_status_badge_already_registered">Kayıt bulundu</string>
     <string name="qr_scan_status_badge_error">İşlem gerekli</string>
     <string name="qr_scan_status_detail_scanned">Kod başarıyla okundu. Devam etmek için kişi adını gir.</string>
-    <string name="qr_scan_status_detail_searching">Tarama doğrulandı. Yakındaki Bluetooth oturumları şimdi kontrol ediliyor.</string>
-    <string name="qr_scan_status_detail_pairing">Diğer cihaz yanıt verdi. Güvenilir Bluetooth bağlantısı kuruluyor.</string>
-    <string name="qr_scan_status_detail_saving">Bağlantı tamamlandı. Kişi kartı güvenli şekilde kaydediliyor.</string>
-    <string name="qr_scan_status_detail_saved">Kişi artık rehberde. Hemen sohbet başlatabilirsin.</string>
+    <string name="qr_scan_status_detail_searching">Diğer cihazı yakında tutun ve QR ekranını açık bırakın.</string>
+    <string name="qr_scan_status_detail_pairing">Güvenli bağlantı kurmak için diğer cihaz doğrulanıyor.</string>
+    <string name="qr_scan_status_detail_saving">Sohbetiniz hazırlanıyor…</string>
+    <string name="qr_scan_status_detail_saved">Sohbetiniz açılıyor…</string>
     <string name="qr_scan_status_detail_already_registered">Bu kişi zaten kayıtlı olduğu için ikinci bir kayıt oluşturulmadı.</string>
     <string name="qr_scan_status_detail_error">QR okundu ancak sonraki adım tamamlanamadı.</string>
     <string name="qr_scan_status_hint_hold_steady">İşlem bitene kadar telefonu sabit tut.</string>
@@ -642,7 +714,7 @@
     <string name="add_from_contacts_empty">Rehberinde henüz Crisis Connect kullanan yok.</string>
     <string name="add_from_contacts_permission_needed">Tanıdıklarını bulmak için rehber erişim izni gerekli.</string>
     <string name="add_from_contacts_sign_in_required">Rehberdeki kişileri bulmak için giriş yap.</string>
-    <string name="add_from_contacts_privacy_note">Numaraların hash ile eşleştirilir, sunucuda asla saklanmaz. Yalnızca keşfedilebilir olmayı seçenler görünür.</string>
+    <string name="add_from_contacts_privacy_note">Crisis Connect, uygulamayı kullanan kişileri bulmak için rehberindeki adları ve telefon numaralarını okur. Telefon numaralarını eşleştirme amacıyla Google Firebase tarafından ABD’de barındırılan Crisis Connect sunucularına gönderir. Rehberdeki adlar cihazında kalır. Sorgulanan numaralar kalıcı olarak saklanmadan işlenir; eşleşmeler cihazında tutulur. Bu ekran açıkken yenileme veya ekrana geri dönme numaraların tekrar gönderilmesine yol açabilir. Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.</string>
     <string name="add_from_contacts_found_count">%1$d kişi Crisis Connect\'te</string>
     <string name="add_from_contacts_empty_hint">Uygulamada telefon numaralarını doğruladıklarında burada görünecekler.</string>
     <string name="add_from_contacts_error_title">Kişiler yüklenemedi</string>
@@ -669,7 +741,6 @@
     <string name="nearby_match_notification_text">Bluetooth ile bağlanmak için dokun</string>
     <string name="nearby_pairing_channel_name">Yakında bağlanma istekleri</string>
     <string name="nearby_pairing_request_title">%1$s yakından bağlanmak istiyor</string>
-    <string name="nearby_pairing_request_text">Bluetooth ile sohbet için kabul et.</string>
     <string name="nearby_pairing_accept">Kabul et</string>
     <string name="nearby_pairing_decline">Reddet</string>
     <string name="manual_connect_button">Cihazı eşle</string>
@@ -1232,6 +1303,7 @@
     <string name="chat_status_connected">Bağlandı</string>
     <string name="chat_status_connected_bluetooth">Bluetooth ile bağlı</string>
     <string name="chat_status_connected_internet">İnternet ile bağlı</string>
+    <string name="chat_status_connected_satellite">Uydu üzerinden bağlı</string>
     <string name="internet_message_channel_name">İnternet mesajları</string>
     <string name="internet_message_notification_title">Yeni mesaj</string>
     <string name="channel_message_notification_body">Yeni mesaj</string>
@@ -1286,6 +1358,65 @@
     <string name="chat_message_status_delivered">Teslim edildi</string>
     <string name="chat_message_status_read">Okundu</string>
     <string name="chat_message_status_failed">Başarısız</string>
+    <string name="chat_message_info_transport">İletim Yolu</string>
+    <string name="chat_message_info_transport_bluetooth">Bluetooth</string>
+    <string name="chat_message_info_transport_bluetooth_desc">Doğrudan eşler arası (P2P) bağlantı</string>
+    <string name="chat_message_info_transport_internet">İnternet</string>
+    <string name="chat_message_info_transport_internet_desc">Şifreli bulut aktarımı</string>
+    <string name="chat_message_info_transport_satellite">Uydu</string>
+    <string name="chat_message_info_transport_satellite_desc">Acil durum uydu bağlantısı</string>
+    <string name="chat_message_info_sent">Gönderildi</string>
+    <string name="chat_message_info_delivered">İletildi</string>
+    <string name="chat_message_info_read">Görüldü</string>
+    <string name="chat_message_info_received">Alındı</string>
+    <string name="chat_message_info_not_delivered_yet">Henüz iletilmedi</string>
+    <string name="chat_message_info_not_read_yet">Henüz görülmedi</string>
+    <string name="chat_message_info_store_forward">Depola ve İlet (Store &amp; Forward)</string>
+    <string name="chat_message_info_sf_badge">Store &amp; Forward</string>
+    <string name="chat_message_info_sf_queued">Mesaj yerel depoda kuyruğa alındı. Bluetooth veya İnternet bağlantısı sağlandığında otomatik olarak aktarılacaktır.</string>
+    <string name="chat_message_info_sf_retried">Çevrimdışı kuyrukta depolandı ve %1$d yeniden deneme sonrası başarıyla aktarıldı.</string>
+    <string name="chat_message_info_sf_delayed_inbound">Gecikmeli/Aktarmalı iletim: Gönderici çevrimdışıyken depolandı ve %1$s sonra bu cihaza ulaştı.</string>
+    <string name="chat_message_info_sf_delayed_outbound">Çevrimdışıyken yerel olarak depolandı ve bağlantı kurulduğunda (%1$s sonra) başarıyla iletildi.</string>
+    <string name="chat_message_info_sf_direct">Afet İletişim Protokolü: Çevrimdışı Depola ve İlet (Store &amp; Forward) korumasıyla kaydedildi ve iletildi.</string>
+    <string name="chat_message_info_sf_retries_label">Yeniden Deneme</string>
+    <string name="chat_message_info_sf_delay_label">Kuyruk / Aktarım Süresi</string>
+    <string name="chat_message_info_sf_protocol_label">Protokol</string>
+    <string name="chat_message_info_sf_protocol_active">Depola ve İlet (S&amp;F)</string>
+    <string name="chat_pinned_message_title">Sabitlenen mesaj</string>
+    <string name="chat_action_pin">Sabitle</string>
+    <string name="chat_action_unpin">Sabitlemeyi kaldır</string>
+    <string name="chat_message_pinned">Mesaj sabitlendi</string>
+    <string name="chat_message_unpinned">Mesaj sabitlemesi kaldırıldı</string>
+    <string name="chat_verify_security_code">Güvenlik kodunu doğrula</string>
+    <string name="chat_action_verify_security_code">Güvenlik kodunu doğrula</string>
+    <string name="chat_security_code_marked_verified">Güvenlik kodu doğrulandı olarak işaretlendi</string>
+    <string name="safety_number_verified_badge">Doğrulandı</string>
+    <string name="safety_number_code_copied">Güvenlik kodu panoya kopyalandı</string>
+    <string name="safety_number_copy_code">Kodu Kopyala</string>
+    <string name="chat_action_forward">İlet</string>
+    <string name="chat_forward_title">Mesajı İlet</string>
+    <string name="chat_forward_search_hint">Kişi veya sohbet ara…</string>
+    <string name="chat_forward_send_action">İlet</string>
+    <string name="chat_forward_action_single">1 sohbete ilet</string>
+    <string name="chat_forward_action_multiple">%1$d sohbete ilet</string>
+    <string name="chat_forward_success_single">Mesaj iletildi</string>
+    <string name="chat_forward_success_multiple">Mesaj %1$d kişiye iletildi</string>
+    <string name="chat_forward_no_contacts">İletilecek kişi bulunamadı</string>
+    <string name="chat_message_forwarded">İletildi</string>
+    <string name="chat_forward_preview_label">İletilen mesaj</string>
+    <string name="chat_action_share">Paylaş</string>
+    <string name="share_target_title">CrisisConnect ile Paylaş</string>
+    <string name="share_target_send_to_single">%1$s adlı kişiye gönder</string>
+    <string name="share_target_send_to_multiple">%1$d sohbete gönder</string>
+    <string name="share_target_search_hint">Kişilerde ara…</string>
+    <string name="share_target_sending">Paylaşılıyor…</string>
+    <string name="share_target_sent_success">Başarıyla paylaşıldı</string>
+    <string name="share_target_caption_hint">Bir başlık veya not ekleyin…</string>
+    <string name="share_target_no_contacts">Henüz kayıtlı kişi yok</string>
+    <string name="share_target_no_results">Eşleşen kişi bulunamadı</string>
+    <string name="share_target_select_recipients">Lütfen en az bir kişi seçin</string>
+    <string name="share_target_audio_note">Ses kaydı</string>
+    <string name="share_target_file">Dosya</string>
     <string name="conversation_preview_text_placeholder">Mesaj</string>
     <string name="conversation_preview_voice_message">Sesli mesaj</string>
     <string name="conversation_preview_photo_message">Fotoğraf</string>
@@ -1374,7 +1505,6 @@
     <string name="notification_photo_message_body">Fotoğraf mesajı</string>
     <string name="chat_encryption_setup_title">Bu sohbeti güvene al</string>
     <string name="chat_encryption_setup_instruction">Paylaşılan şifreleme anahtarını içe aktarmak için diğer cihazın Yeni Sohbet ekranında gösterilen QR kodunu tara.</string>
-    <string name="chat_encryption_setup_session_mismatch">Bu QR farklı bir sohbet oturumuna ait.</string>
     <string name="chat_encryption_setup_invalid_qr">Desteklenmeyen QR biçimi.</string>
     <string name="chat_encryption_setup_handshake_in_progress">Şifreleme anahtarı doğrulanıyor…</string>
     <string name="chat_encryption_setup_handshake_failed">Şifreleme anahtarı doğrulanamadı. Tekrar deneyin.</string>
@@ -1589,6 +1719,7 @@
     <string name="profile_verify_server_managed">Kurtarma profili doğrulaması sunucu tarafından yönetilir.</string>
     <string name="profile_logout_button">Çıkış yap</string>
     <string name="profile_logout_success">Çıkış yapıldı.</string>
+
     <!-- Profil ekranındaki kurtarma rol sertifikası kartı -->
     <string name="profile_cert_card_title">Kurtarma sertifikası</string>
     <string name="profile_cert_card_subtitle">Kurtarma sunucusunun verdiği, bu cihaza özel kimlik.</string>
@@ -1623,6 +1754,7 @@
     <string name="profile_cert_inactive_subtitle">Yeni sertifika alana kadar kurtarma modu kapalı kalır.</string>
     <string name="profile_cert_expires_relative">%1$s sona erecek</string>
     <string name="profile_cert_manage_label">Sertifika yönetimi</string>
+
     <!-- Giriş sonrası kurtarma sertifikası verilirken görünen kayar banner -->
     <string name="cert_banner_in_progress_title">Kurtarma sertifikası alınıyor…</string>
     <string name="cert_banner_in_progress_body">Cihazın kurtarma modunda yetkili olacak şekilde güvenceye alınıyor.</string>
@@ -1723,12 +1855,14 @@
     <string name="ble_peer_role_victim_label">Kazazede</string>
     <string name="gatt_mesh_default_sender_label">Yakındaki Kullanıcı</string>
     <string name="mesh_service_default_node_label_prefix">KurtarmaMesh</string>
+
     <string name="advanced_settings_section_mesh">Örgüsel Ağ (Mesh) Bağlantısı</string>
     <string name="advanced_settings_section_privacy">Gizlilik</string>
     <string name="advanced_setting_share_last_seen_title">Son görülmeyi paylaş</string>
     <string name="advanced_setting_share_last_seen_description">Kişilerin en son ne zaman çevrimiçi olduğunu görmesine izin ver. Kapatırsan çevrimiçi durumun tamamen gizlenir.</string>
     <string name="advanced_settings_section_performance">Performans ve Optimizasyon</string>
     <string name="advanced_settings_section_diagnostics">Hata Tanılama ve Deneysel</string>
+
     <string name="rescue_settings_section_scanning">Tarama ve Bağlantı Ayarları</string>
     <string name="rescue_settings_section_connectivity">Acil Durum Bağlantısı</string>
     <string name="rescue_settings_section_display">Ekran ve Arayüz Seçenekleri</string>
@@ -1780,6 +1914,7 @@
     <string name="rescue_remote_signals_empty_title">Her şey sakin</string>
     <string name="rescue_remote_hero_count">%1$d aktif sinyal</string>
     <string name="rescue_remote_signals_subtitle">Kurum panelinden canlı akış</string>
+
     <!-- Account and data deletion (Play data-safety requirement) -->
     <string name="profile_delete_account_button">Hesabı ve verileri sil</string>
     <string name="profile_delete_account_progress">Siliniyor…</string>
@@ -1938,6 +2073,7 @@
     <string name="cpr_session_ended">Oturum tamamlandı</string>
     <string name="cpr_session_summary">Yardım süresi: %1$s\nZamanlanan göğüs basısı: %2$d</string>
     <string name="cpr_new_session">Yeni oturum başlat</string>
+
     <string name="cpr_aed_guide_title">AED yardımcısı</string>
     <string name="cpr_aed_step_count">Adım %1$d / %2$d</string>
     <string name="cpr_aed_power_title">AED’yi açın</string>
@@ -1957,6 +2093,7 @@
     <string name="cpr_aed_shock_delivered">AED: şok uygulandı</string>
     <string name="cpr_aed_no_shock">AED: şok önerilmedi</string>
     <string name="cpr_aed_resume_now">CPR sayacına dön</string>
+
     <string name="cpr_info_title">CPR Assist hakkında</string>
     <string name="cpr_info_scope_title">Bu akış kimler içindir?</string>
     <string name="cpr_info_scope_body">Bu sürüm; tepkisiz ve normal nefes almayan yetişkin veya ergen için 2025 temel yaşam desteği akışını izler. Çocuk, bebek, boğulma, travma ve diğer özel durumlarda farklı uygulamalar gerekebilir.</string>
@@ -1967,6 +2104,7 @@
     <string name="cpr_info_offline_title">İnternetsiz çalışır</string>
     <string name="cpr_info_offline_body">Metronom, sayaçlar, AED rehberi ve yazılı talimatlar tamamen çevrimdışıdır. Sesli yönlendirme cihazdaki sistem sesini kullanır; çevrimdışı ses yoksa görsel ritim ve metronom çalışmaya devam eder.</string>
     <string name="cpr_disclaimer_long">CPR Assist acil durum zamanlama yardımcısıdır; tıbbi tanı, sertifikalı CPR eğitimi veya profesyonel yardımın yerine geçmez. Acil servisi arayın, hoparlörü açın ve çağrı görevlisi ile AED’yi izleyin.</string>
+
     <string name="cpr_voice_start">Göğüs basısına şimdi başlayın. Göğsün ortasına güçlü ve hızlı basın. Ritmi izleyin.</string>
     <string name="cpr_voice_resume">Göğüs basısına şimdi devam edin.</string>
     <string name="cpr_voice_two_breaths">Eğitimliyseniz iki soluk verin. Göğsün yükselmesini izleyin.</string>
@@ -2013,4 +2151,48 @@
     <string name="dossier_file_unreadable">Seçilen dosya güvenli biçimde okunamadı.</string>
     <string name="dossier_error_title">Güvenli dosya</string>
     <string name="dossier_error_generic">Güvenli dosya işlemi tamamlanamadı.</string>
+
+    <!-- Contact access: shown before OS permission and before any lookup. -->
+    <string name="contacts_disclosure_title">Rehberindeki kişileri internette bul</string>
+    <string name="contacts_disclosure_body">Crisis Connect, uygulamayı kullanan kişileri bulmak için rehberindeki adları ve telefon numaralarını okur. Telefon numaralarını eşleştirme amacıyla Google Firebase tarafından ABD’de barındırılan Crisis Connect sunucularına gönderir. Rehberdeki adlar cihazında kalır. Sorgulanan numaralar kalıcı olarak saklanmadan işlenir; eşleşmeler cihazında tutulur. Bu ekran açıkken yenileme veya ekrana geri dönme numaraların tekrar gönderilmesine yol açabilir. Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.</string>
+    <string name="contacts_local_disclosure_title">Yakındaki rehber kişilerini bul</string>
+    <string name="contacts_local_disclosure_body">Crisis Connect, yakınında arayacağın kişi için yalnızca sistem kişi seçicisinden paylaştığın adı ve telefon numarasını okur. Seçilen numara Bluetooth üzerinden kimlik doğrulamada kullanılır. Bu özellik rehberini sunucuya göndermez. Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.</string>
+    <string name="contacts_disclosure_accept">Kabul ediyorum</string>
+    <string name="contacts_disclosure_decline">Şimdi değil</string>
+    <string name="contacts_consent_settings_title">Rehber erişimi</string>
+    <string name="contacts_consent_settings_hint">Seçimin bu cihazda, bu hesap için hatırlanır. Ayarlar içindeki Rehber erişimi bölümünden onayını geri alabilirsin.</string>
+    <string name="contacts_consent_revoke_online">İnternet eşleştirme onayını kaldır</string>
+    <string name="contacts_consent_revoke_nearby">Yakındaki kişiler onayını kaldır</string>
+    <string name="nearby_choose_contact">Kişi seç</string>
+    <string name="nearby_contact_selection_failed">Seçilen telefon numarası okunamadı. Lütfen başka bir kişi seç.</string>
+
+    <!-- Mobile UI: task-based grouping and connection hierarchy. -->
+    <string name="tools_section_quick">Hızlı erişim</string>
+    <string name="tools_section_guidance">Rehberlik ve koordinasyon</string>
+    <string name="tools_section_navigate">Yön bulma</string>
+    <string name="tools_section_detect">Algılama</string>
+    <string name="tools_section_awareness">Çevrede olup bitenler</string>
+    <string name="tools_section_other">Diğer araçlar</string>
+    <string name="new_chat_nearby_title">Yakındaki kişiye bağlan</string>
+    <string name="new_chat_nearby_description">Sohbet başlatmak için karşı tarafın QR kodunu tara.</string>
+    <string name="new_chat_other_ways">Diğer bağlantı yolları</string>
+    <string name="new_chat_share_qr_description">Bağlanmak için QR kodunu karşı tarafa göster.</string>
+    <string name="new_chat_qr_preparing">QR hazırlanıyor…</string>
+    <string name="new_chat_qr_ready">Taramaya hazır</string>
+    <string name="qr_scan_step_search">Ara</string>
+    <string name="qr_scan_step_pair">Eşleştir</string>
+    <string name="qr_scan_step_save">Kaydet</string>
+    <string name="qr_scan_step_done">Tamamlandı</string>
+    <string name="qr_scan_step_active">Devam ediyor</string>
+    <string name="qr_scan_step_waiting">Bekliyor</string>
+    <string name="qr_pairing_notification_title">Kişiye bağlanılıyor</string>
+    <string name="qr_pairing_notification_message">Bu ekrandan ayrılsanız da eşleşme devam eder.</string>
+    <string name="authority_session">Sohbet</string>
+    <string name="authority_resilient_session">Dayanıklı</string>
+    <string name="authority_compatibility_session">Eski sürüm uyumu</string>
+    <string name="authority_resilient_notice">Güncel uygulamalar için ayrı sohbet. Mesajlar yalnız bu oturuma katılan doğrulanmış cihazlara ulaşır; eski uygulamalar uyum sohbetini kullanır.</string>
+    <string name="authority_compatibility_notice">Eski uygulamalarla ayrı sohbet. İlk bölgenin bağlantısı gerekir; dayanıklı oturumun mesajları buraya aktarılmaz.</string>
+    <string name="chat_status_internet_available">İnternet kullanılabilir</string>
+    <string name="chat_status_satellite_available">Uydu bağlantısı kullanılabilir</string>
+    <string name="sos_broadcast_pending">Bluetooth bekleniyor</string>
 </resources>

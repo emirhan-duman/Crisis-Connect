@@ -63,7 +63,8 @@ internal data class MeshPacket(
     val blobWidth: Int? = null,
     val blobHeight: Int? = null,
     val blobKind: String? = null,
-    val blobDurationMillis: Long? = null
+    val blobDurationMillis: Long? = null,
+    val securePttWire: ByteArray? = null
 )
 
 internal data class MessageOriginAuth(

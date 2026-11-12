@@ -45,7 +45,7 @@ object FirebaseRoleHelper {
     suspend fun fetchRescueKeyFor(
         userId: String,
         auth: FirebaseAuth = FirebaseAuth.getInstance(),
-        firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+        firestore: FirebaseFirestore = com.auralis.crisisconnect.messaging.ResilientApplicationStore.profiles()
     ): ByteArray = withContext(Dispatchers.IO) {
         val caller = auth.currentUser?.takeUnless { it.isAnonymous }
             ?: throw IllegalStateException("User must be authenticated")

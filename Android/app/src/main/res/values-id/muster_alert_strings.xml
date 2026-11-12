@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="muster_alert_settings_help">Pilih suara notifikasi, getaran, dan visibilitas layar kunci di pengaturan Android. Peringatan layar penuh memerlukan izin Anda dan mungkin dibatasi oleh mode Jangan Ganggu, pengaturan baterai, atau aplikasi yang dihentikan paksa.</string>
+    <string name="muster_alert_settings_title">Suara, getaran dan layar kunci</string>
+    <string name="muster_alerts_blocked">Notifikasi aplikasi dinonaktifkan di pengaturan Android</string>
+    <string name="muster_alerts_quiet">Saluran notifikasi ini senyap atau berprioritas rendah; aktifkan peringatan pop-up di pengaturan Android</string>
+    <string name="muster_locked_screen_note">Peringatan layar penuh muncul ketika ponsel Anda terkunci atau layarnya mati, jika Android mengizinkannya. Saat Anda menggunakan telepon, Android mungkin menampilkan pemberitahuan pendahuluan.</string>
+    <string name="muster_urgent_sound">Suara dalam mode senyap</string>
+    <string name="muster_urgent_sound_help">Hanya untuk pemeriksaan keselamatan bencana yang mendesak. Menggunakan volume alarm yang ada untuk waktu terbatas saat layar pemeriksaan keselamatan terlihat. Berhenti ketika Anda menyentuh layar.</string>
+    <string name="muster_urgent_ready">Tersedia dalam izin sistem. Jangan Ganggu dan volume alarm tetap di bawah kendali Anda.</string>
+    <string name="muster_urgent_not_ready">Periksa volume alarm, izin notifikasi, dan Jangan Ganggu. Pembatasan sistem dipatuhi.</string>
+    <string name="muster_urgent_seconds">%1$d detik</string>
+    <string name="muster_flash_settings">Pengaturan peringatan kilat</string>
+    <string name="muster_flash_help">Jika ponsel mendukungnya, aktifkan notifikasi lampu kilat di setelan aksesibilitas Android. Android mengendalikan peringatan ini, termasuk saat aplikasi ditutup.</string>
+</resources>
