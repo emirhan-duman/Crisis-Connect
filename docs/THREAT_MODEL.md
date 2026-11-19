@@ -80,7 +80,7 @@ and rehearse certificate/key revocation plus Firebase/TURN/provider outage proce
   and availability requirements remain.
 - Only behavior present in released mobile builds is treated as production. The repository labels
   SFU group calls with MLS media encryption as experimental and unshipped
-  ([README](../README.md#L346-L353)); those paths are assessed conditionally.
+  ([Security Model](SECURITY_MODEL.md#what-is-not-end-to-end-encrypted)); those paths are assessed conditionally.
 - Firebase Auth, App Check, Play Integrity, App Attest, Secret Manager, Firestore, Storage, FCM/APNs,
   Cloudflare TURN, and the SMS provider are correctly configured in the deployed project. Source
   review cannot prove console policy, IAM, quota, log retention, backup, key rotation, or deployed
@@ -135,7 +135,7 @@ external providers, native binaries, release signing, or data retention changes.
 | Firebase identity and control plane | Firebase Auth identifies accounts; App Check attests app instances; Functions perform privileged validation; Rules mediate direct database/storage access. The backend interface inventory is in [External Interfaces](EXTERNAL_INTERFACES.md#L30-L61). |
 | Role-certificate service | Issues ECDSA P-256 certificates after account/role, device ownership, one-time nonce, and platform attestation checks; certificates bind owner, role, agency, device key, and expiry ([issuance](../Android/functions/src/certificates/issuance.ts#L719-L786)). |
 | SOS and agency data plane | Accepts victim GPS and state, owns a signal to its first authenticated reporter, routes it to an agency panel, records route cause/history, and maintains visibility during fallback upgrades ([SOS handler](../Android/functions/src/sos/reportSignal.ts#L265-L349), [write path](../Android/functions/src/sos/reportSignal.ts#L369-L450)). |
-| Voice/video and TURN | WebRTC provides DTLS-SRTP transport encryption; authenticated users can request one-hour TURN credentials from a server-side provider bridge ([TURN function](../Android/functions/src/messaging/turnCredentials.ts#L6-L84)). Media is not additionally application-layer E2EE for released 1:1 calls ([README](../README.md#L346-L352)). |
+| Voice/video and TURN | WebRTC provides DTLS-SRTP transport encryption; authenticated users can request one-hour TURN credentials from a server-side provider bridge ([TURN function](../Android/functions/src/messaging/turnCredentials.ts#L6-L84)). Media is not additionally application-layer E2EE for released 1:1 calls ([Security Model](SECURITY_MODEL.md#what-is-not-end-to-end-encrypted)). |
 | Crisis Sentinel | Retrieves an App-Check-gated model manifest and ten-minute signed Storage URL ([model function](../Android/functions/src/crisisSentinel/modelManifest.ts#L278-L343)); clients enforce filename bounds, expected size, and optional SHA-256 before use ([Android model store](../Android/app/src/main/java/com/auralis/crisisconnect/ai/CrisisSentinelModelFileStore.kt#L9-L25), [checksum](../Android/app/src/main/java/com/auralis/crisisconnect/ai/CrisisSentinelModelFileStore.kt#L94-L140)). |
 | CI and release pipeline | Builds/tests Android and Functions, runs CodeQL, npm audit, native fuzzing, Scorecard, and signs release assets. Actions are pinned by commit and jobs default to read-only permissions ([Android CI](../.github/workflows/android-ci.yml#L12-L55), [Functions CI](../.github/workflows/functions-ci.yml#L15-L51), [release signing](../.github/workflows/sign-release-assets.yml#L11-L60)). |
 | External providers | Firebase/GCP, Apple/Google attestation, FCM/APNs, Cloudflare TURN, SMS, app stores, map/model hosting, and optional online AI providers are separate administrative and availability domains. |
@@ -149,7 +149,7 @@ external providers, native binaries, release signing, or data retention changes.
    screenshots, clipboard, accessibility services, backups, and inter-process entry points cross a
    device boundary. Android disables backups and cleartext and limits exported components
    ([manifest](../Android/app/src/main/AndroidManifest.xml#L80-L166)); local data is described as
-   SQLCipher/Keychain-backed ([README](../README.md#L324-L334)).
+   SQLCipher/Keychain-backed ([Security Model](SECURITY_MODEL.md#data-storage)).
 3. **Mobile ↔ nearby untrusted radio.** Any nearby party can advertise, connect, fragment, replay,
    corrupt, delay, or flood packets. Confidentiality begins above BLE/RFCOMM; transport discovery and
    timing remain observable. Mesh code applies payload, queue, hop, freshness, and rate bounds
@@ -259,7 +259,7 @@ including SOS records and operational metadata.
 | Role certificate and attestation | Device IDs, public keys, attestation chains/tokens, nonces, account role/profile | Role escalation, cloned device identity, replay, weak/dev attestation acceptance | Single-use owned nonce ([issuance](../Android/functions/src/certificates/issuance.ts#L352-L402)); issuance binding ([issuance](../Android/functions/src/certificates/issuance.ts#L719-L786)) |
 | SOS ingestion and agency panels | Signal ID, status, GPS, country, battery, rescue sightings/updates | False incident, suppression, stale/false location, misrouting, unauthorized resolve/transfer | App Check, ownership, throttle, routing provenance ([SOS](../Android/functions/src/sos/reportSignal.ts#L265-L349)) |
 | Message relay, push, presence | Routing metadata, ciphertext, priority, timestamps, tokens, receipts | Spam, notification amplification, graph/timing leakage, malicious ciphertext pressure | Idempotent relay/expiry ([relay](../Android/functions/src/messaging/relay.ts#L6-L43)); sender binding and bounds ([envelope](../Android/functions/src/messaging/envelope.ts#L108-L169)) |
-| Calls and TURN | Bearer token, SDP/ICE, room ID, media, screen share | Credential farming, metadata leakage, call spam, media interception at endpoint/relay, resource exhaustion | Token verification and one-hour TURN TTL ([TURN](../Android/functions/src/messaging/turnCredentials.ts#L32-L84)); call encryption boundary ([README](../README.md#L346-L352)) |
+| Calls and TURN | Bearer token, SDP/ICE, room ID, media, screen share | Credential farming, metadata leakage, call spam, media interception at endpoint/relay, resource exhaustion | Token verification and one-hour TURN TTL ([TURN](../Android/functions/src/messaging/turnCredentials.ts#L32-L84)); call encryption boundary ([Security Model](SECURITY_MODEL.md#what-is-not-end-to-end-encrypted)) |
 | Crisis Sentinel and online AI | Prompt/context, model manifest, large model artifact, provider response/tool output | Sensitive-data disclosure, unsafe emergency advice, prompt/tool abuse, poisoned model, storage exhaustion | Short-lived allowlisted Storage downloads ([model function](../Android/functions/src/crisisSentinel/modelManifest.ts#L278-L343)); checksum checks ([model store](../Android/app/src/main/java/com/auralis/crisisconnect/ai/CrisisSentinelModelFileStore.kt#L94-L140)) |
 | Build, dependencies, native binaries, release | PRs, actions, package updates, secrets, artifacts, model metadata | Malicious code/artifact, secret theft, unsigned release, source/binary mismatch | Read-only/pinned CI and tests ([CI](../.github/workflows/android-ci.yml#L12-L55)); CodeQL ([workflow](../.github/workflows/codeql.yml#L14-L50)); Sigstore bundles ([release](../.github/workflows/sign-release-assets.yml#L19-L60)) |
 | Operator/admin consoles and logs | Role changes, routing config, model release config, exports, credentials | Privilege escalation, mass data access, audit tampering, accidental destructive change | Some collections are explicitly server-only and audit writes are denied to clients ([rules](../Android/firestore.rules#L967-L1027)); deployed IAM and console controls remain unverified |
@@ -278,7 +278,7 @@ including SOS records and operational metadata.
 2. **Stolen responder device remains trusted while offline.** A thief uses an unlocked device and its
    non-exportable key to sign proofs. The server revokes the certificate, but disconnected peers
    cannot learn that fact until connectivity returns; the certificate remains acceptable until its
-   72-hour expiry ([certificate design](../README.md#L297-L322)). Reduce operational validity where
+   72-hour expiry ([certificate design](SECURITY_MODEL.md#identity--certificates)). Reduce operational validity where
    feasible, display freshness and last online revocation check, and give operators an incident-wide
    denylist distribution path over every available transport.
 
